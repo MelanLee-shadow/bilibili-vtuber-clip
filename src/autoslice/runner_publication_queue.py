@@ -37,7 +37,8 @@ def consume_tick(
     suffix = f" publication_queue={status}"
     if skipped_count:
         suffix += f" publication_skipped_backoff={skipped_count}"
-    if status not in {"NO_READY_ACTION", "ACTION_COMPLETED"} or skipped_count:
+    if (status not in {"NO_READY_ACTION", "ACTION_COMPLETED"}
+            or skipped_count or result.get("quarantined_attempts")):
         log(f"publication queue: {status} {result}")
     return suffix
 

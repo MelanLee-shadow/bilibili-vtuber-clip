@@ -13,6 +13,185 @@ from src.autoslice.boundary_semantic_review import (
 from src.autoslice.jingting_chunker import SrtCue
 
 
+def _completed_boundary_fixture(tmp_path):
+    calls = []
+    response = json.dumps({
+        "syntax_complete": False, "story_closed": False, "next_topic_separated": False,
+        "content_anchor_covered": False, "recommended_end_cue_index": 1,
+        "evidence_cue_indexes": [1], "reason_codes": ["CONTENT_UNRESOLVED"],
+        "summary": "完整负面观察仍须阻断。",
+    }, ensure_ascii=False)
+
+    def call(prompt):
+        calls.append(prompt)
+        return response
+
+    call.cpa_cache_identity = {"transport": "cpa_command", "models": ["fixture-model"], "effort": "medium"}
+    call.provider_runtime_binding = {"provider_transport": "runtime_cpa", "provider_credential_source": str(tmp_path / "cpa.env"), "provider_endpoint_host": "fixture.invalid"}
+    call.completed_review_root = tmp_path / "observations"
+    call.completed_review_binding = {"owner": "current", "source": "sha256:" + "a" * 64, "projection": "current"}
+    kwargs = dict(cues=[_cue(1, 0, 9000, "当前完整文字")], target_ms=9000,
+                  candidate_id="ordinary", selection_hook="当前故事", selection_scorecard=_scorecard(),
+                  structured_context="", candidate_context="当前源语境", llm_call=call, extract_json=_extract)
+    return kwargs, call, calls
+
+
+@pytest.mark.parametrize("change", ["body", "clock", "owner", "source", "projection", "context", "model", "provider"])
+def test_completed_boundary_response_reuses_block_and_invalidates_exact_inputs(tmp_path, change):
+    kwargs, call, calls = _completed_boundary_fixture(tmp_path)
+    first = review_talk_boundary_semantics(**kwargs)
+    original = {p: p.read_bytes() for p in call.completed_review_root.rglob("*.json")}
+    assert first["status"] == "BLOCK" and original
+    assert review_talk_boundary_semantics(**kwargs) == first
+    assert len(calls) == 1
+    changed = dict(kwargs)
+    if change == "body":
+        changed["cues"] = [_cue(1, 0, 9000, "当前完整文字已变化")]
+    elif change == "clock":
+        changed.update(cues=[_cue(1, 500, 9500, "当前完整文字")], target_ms=9500)
+    elif change in {"owner", "source", "projection"}:
+        call.completed_review_binding[change] += "-changed"
+    elif change == "context":
+        changed["candidate_context"] += "已变化"
+    elif change == "model":
+        call.cpa_cache_identity["models"] = ["another-fixture-model"]
+    else:
+        call.provider_runtime_binding["provider_endpoint_host"] = "another.invalid"
+    changed_review = review_talk_boundary_semantics(**changed)
+    assert changed_review["status"] == "BLOCK" and len(calls) == 2
+    assert review_talk_boundary_semantics(**changed) == changed_review and len(calls) == 2
+    assert all(path.read_bytes() == raw for path, raw in original.items())
+
+
+@pytest.mark.parametrize("failure", ["transport", "incomplete"])
+def test_completed_boundary_response_does_not_cache_failed_or_incomplete_call(tmp_path, failure):
+    kwargs, original, calls = _completed_boundary_fixture(tmp_path)
+
+    def call(prompt):
+        if not calls:
+            calls.append(prompt)
+            if failure == "transport":
+                raise RuntimeError("offline transport failed")
+            return '{"syntax_complete": false}'
+        return original(prompt)
+
+    call.__dict__.update(original.__dict__)
+    kwargs["llm_call"] = call
+    with pytest.raises(BoundarySemanticReviewError):
+        review_talk_boundary_semantics(**kwargs)
+    if failure == 'incomplete':
+        saved = list(call.completed_review_root.rglob('*.json'))
+        assert len(saved) == 1
+        original_bytes = {path: path.read_bytes() for path in saved}
+        assert json.loads(saved[0].read_text())['response'] == '{"syntax_complete": false}'
+        with pytest.raises(BoundarySemanticReviewError):
+            review_talk_boundary_semantics(**kwargs)
+        assert len(calls) == 1
+        assert all(path.read_bytes() == raw for path, raw in original_bytes.items())
+        return
+    assert not list(call.completed_review_root.rglob("*.json"))
+    assert review_talk_boundary_semantics(**kwargs)["status"] == "BLOCK"
+    assert len(calls) == 2
+    review_talk_boundary_semantics(**kwargs)
+    assert len(calls) == 2
+
+
+def test_completed_boundary_response_corruption_blocks_without_redispatch(tmp_path):
+    kwargs, call, calls = _completed_boundary_fixture(tmp_path)
+    review_talk_boundary_semantics(**kwargs)
+    saved = next(call.completed_review_root.rglob("*.json"))
+    saved.write_bytes(saved.read_bytes() + b" corrupted")
+    damaged = saved.read_bytes()
+    with pytest.raises(BoundarySemanticReviewError, match="COMPLETED_REVIEW_BYTES_DRIFT"):
+        review_talk_boundary_semantics(**kwargs)
+    assert len(calls) == 1 and saved.read_bytes() == damaged
+
+
+def test_completed_boundary_response_parser_pass_reuses_raw_without_new_vote(tmp_path):
+    kwargs, original, calls = _completed_boundary_fixture(tmp_path)
+    kwargs["cues"].append(_cue(2, 9100, 12000, "谢谢下一条SC"))
+
+    def call(prompt):
+        calls.append(prompt)
+        return json.dumps({"syntax_complete": True, "story_closed": True, "next_topic_separated": True,
+                           "content_anchor_covered": True, "recommended_end_cue_index": 1,
+                           "evidence_cue_indexes": [1, 2], "reason_codes": [], "summary": "仅供 parser 契约检查。"})
+
+    call.__dict__.update(original.__dict__)
+    kwargs["llm_call"] = call
+    first = review_talk_boundary_semantics(**kwargs)
+    assert first["status"] == "PASS" and first["independent_semantic_vote_count"] == 1
+    assert review_talk_boundary_semantics(**kwargs) == first and len(calls) == 1
+
+
+def test_completed_boundary_response_requires_producer_source_binding(tmp_path):
+    kwargs, call, calls = _completed_boundary_fixture(tmp_path)
+    del call.completed_review_binding
+    assert review_talk_boundary_semantics(**kwargs)["status"] == "BLOCK"
+    assert review_talk_boundary_semantics(**kwargs)["status"] == "BLOCK"
+    assert len(calls) == 2 and not list(call.completed_review_root.rglob("*.json"))
+
+
+@pytest.mark.parametrize("changed", ["endpoint_port", "request_framing"])
+def test_completed_boundary_response_binds_actual_transport_without_storing_secret(tmp_path, monkeypatch, changed):
+    from src.autoslice import llm_client
+    kwargs, fixture, _ = _completed_boundary_fixture(tmp_path)
+    calls = []
+    response = json.dumps({"syntax_complete": False, "story_closed": False, "next_topic_separated": False,
+                           "content_anchor_covered": False, "recommended_end_cue_index": 1,
+                           "evidence_cue_indexes": [1], "reason_codes": ["CONTENT_UNRESOLVED"], "summary": "端口对照仍阻断。"})
+    monkeypatch.setattr(llm_client, "_call_command", lambda prompt, config: calls.append(prompt) or response)
+    framing = tmp_path / "llm_via_cpa.sh"
+    framing.write_text('max_output_tokens=16000\n')
+
+    def bind(port):
+        call = llm_client.build_llm_call(llm_client.LlmConfig(
+            transport="command", runtime_root=str(tmp_path),
+            command_template=f"bash {framing} {{prompt_file}} {{completion_file}} fixture-model medium 1",
+            command_child_env={"CPA_BASE_URL": f"https://fixture.invalid:{port}/v1", "CPA_API_KEY": "explicit-noncredential-test-key"},
+        ))
+        call.provider_runtime_binding = fixture.provider_runtime_binding
+        call.completed_review_root = fixture.completed_review_root
+        call.completed_review_binding = fixture.completed_review_binding
+        return call
+
+    kwargs["llm_call"] = bind(443)
+    assert review_talk_boundary_semantics(**kwargs)["status"] == "BLOCK"
+    review_talk_boundary_semantics(**kwargs)
+    assert len(calls) == 1
+    original = {path: path.read_bytes() for path in fixture.completed_review_root.rglob("*.json")}
+    if changed == "endpoint_port":
+        kwargs["llm_call"] = bind(8443)
+    else:
+        framing.write_text('max_output_tokens=16001\n')
+    assert review_talk_boundary_semantics(**kwargs)["status"] == "BLOCK"
+    review_talk_boundary_semantics(**kwargs)
+    assert len(calls) == (2 if changed == "endpoint_port" else 1)
+    assert all(path.read_bytes() == raw for path, raw in original.items())
+    for path in fixture.completed_review_root.rglob("*.json"):
+        assert b"explicit-noncredential-test-key" not in path.read_bytes()
+
+
+def test_completed_boundary_response_requires_known_command_framing(tmp_path, monkeypatch):
+    from src.autoslice import llm_client
+    kwargs, fixture, _ = _completed_boundary_fixture(tmp_path)
+    calls = []
+    response = fixture("offline fixture response")
+    monkeypatch.setattr(llm_client, "_call_command", lambda prompt, config: calls.append(prompt) or response)
+    call = llm_client.build_llm_call(llm_client.LlmConfig(
+        transport="command", runtime_root=str(tmp_path),
+        command_template=f"bash {tmp_path}/llm_via_cpa.sh {{prompt_file}} {{completion_file}} fixture-model medium 1",
+        command_child_env={"CPA_BASE_URL": "https://fixture.invalid/v1", "CPA_API_KEY": "explicit-noncredential-test-key"},
+    ))
+    call.provider_runtime_binding = fixture.provider_runtime_binding
+    call.completed_review_root = fixture.completed_review_root
+    call.completed_review_binding = fixture.completed_review_binding
+    kwargs["llm_call"] = call
+    review_talk_boundary_semantics(**kwargs)
+    review_talk_boundary_semantics(**kwargs)
+    assert len(calls) == 2 and not list(fixture.completed_review_root.rglob("*.json"))
+
+
 def _cue(index: int, start_ms: int, end_ms: int, text: str) -> SrtCue:
     return SrtCue(index=str(index), start_ms=start_ms, end_ms=end_ms, text=text)
 
@@ -339,7 +518,7 @@ def test_source_review_contract_scans_closing_exchange_before_transition():
 
     assert seen_request["next_topic_witness_cue_indexes"] == [5]
     assert seen_request["endpoint_selection_contract_version"] == (
-        "talk-boundary-endpoint-selection-contract.v2"
+        "talk-boundary-endpoint-selection-contract.v3"
     )
     assert seen_request["review_scope"] == "source_full_window"
     assert result["status"] == "PASS"
@@ -934,6 +1113,9 @@ def test_final_delivery_terminal_cue_accepts_bound_source_separation_witness():
     assert result["review_scope"] == "final_delivery"
     assert result["next_topic_witness_valid"] is True
     assert result["source_separation_witness"]["status"] == "PASS"
+    assert result['source_boundary_review'] == _source_window_review()
+    from src.autoslice.boundary_semantic_review import semantic_review_sha256
+    assert semantic_review_sha256(result['source_boundary_review']) == result['source_separation_witness']['source_review_sha256']
     assert seen_request["terminal_source_separation_witness"] == result[
         "source_separation_witness"
     ]
@@ -1651,3 +1833,179 @@ def test_exact_pin_mode_ignores_baseline_tail_cap():
         baseline_tail_cap_ms=95_000,
     )
     assert lower["max_recommended_end_ms"] == 95_000
+
+
+def _same_topic_beyond_window(*, evidence, story_closed=False, max_forward_ms=30_000):
+    """厦大 shape: best in-window cue named, same-topic conclusion past the window."""
+    cues = [
+        _cue(1, 0, 9_000, "目标问题"),
+        _cue(2, 9_100, 20_000, "窗内一句完整话"),
+        _cue(3, 20_100, 31_000, "同话题回答继续"),
+        _cue(4, 31_100, 45_000, "同话题总结在窗外收束"),
+    ]
+    response = json.dumps(
+        {
+            "syntax_complete": True,
+            "story_closed": story_closed,
+            "next_topic_separated": False,
+            "content_anchor_covered": True,
+            "recommended_end_cue_index": 2,
+            "evidence_cue_indexes": evidence,
+            "same_topic_continues_after_target": True,
+            "needs_more_context": True,
+            "reason_codes": ["SAME_TOPIC_CONCLUSION_EXCEEDS_RECOMMENDATION_WINDOW"],
+            "summary": "窗内2是完整话语，但同话题总结尚未闭环。",
+        },
+        ensure_ascii=False,
+    )
+    return review_talk_boundary_semantics(
+        cues=cues,
+        target_ms=9_000,
+        candidate_id="same-topic-beyond-window",
+        selection_hook="回答问题",
+        selection_scorecard=_scorecard(),
+        structured_context="",
+        candidate_context="",
+        llm_call=lambda _prompt: response,
+        extract_json=_extract,
+        max_forward_ms=max_forward_ms,
+    )
+
+
+def test_same_topic_conclusion_beyond_window_takes_bounded_retry_despite_in_window_cue():
+    """30-boundary: first-round cap 30 s, one bounded same-spec retry to 60 s.
+
+    The named in-window cue stays a BLOCK, never a PASS endpoint.
+    """
+    result = _same_topic_beyond_window(evidence=[1, 2, 3, 4])
+
+    assert result["status"] == "BLOCK"
+    assert result["recommended_end_cue_index"] == 2
+    assert result["same_topic_continues_after_target"] is True
+    assert result["needs_more_context"] is True
+    assert result["retry_scope"] == "same_topic_continues"
+    assert "BOUNDARY_CONTEXT_EXHAUSTED" in result["reason_codes"]
+    assert "STORY_CLOSED_NOT_PROVEN" in result["reason_codes"]
+
+
+def test_in_window_cue_without_cited_continuation_after_it_gets_no_retry():
+    result = _same_topic_beyond_window(evidence=[1, 2])
+
+    assert result["status"] == "BLOCK"
+    assert result["needs_more_context"] is False
+    assert result["retry_scope"] == "none"
+
+
+def test_story_closed_wording_does_not_decide_the_context_retry():
+    """30-boundary bounded retry is decided by cited post-end same-topic
+    evidence without a proven topic change, not by the story_closed flag."""
+    result = _same_topic_beyond_window(evidence=[1, 2, 3, 4], story_closed=True)
+
+    assert result["status"] == "BLOCK"
+    assert result["needs_more_context"] is True
+    assert result["retry_scope"] == "same_topic_continues"
+
+
+def test_proven_in_window_topic_change_is_not_a_context_retry():
+    cues = [
+        _cue(1, 0, 9_000, "目标问题"),
+        _cue(2, 9_100, 20_000, "回答收束"),
+        _cue(3, 20_100, 31_000, "谢谢某某的SC，下一个话题"),
+    ]
+    response = json.dumps(
+        {
+            "syntax_complete": True, "story_closed": True, "next_topic_separated": True,
+            "content_anchor_covered": True, "recommended_end_cue_index": 2,
+            "evidence_cue_indexes": [1, 2, 3],
+            "same_topic_continues_after_target": True, "needs_more_context": True,
+            "reason_codes": [], "summary": "2收束，3已进入下一条SC。",
+        },
+        ensure_ascii=False,
+    )
+    result = review_talk_boundary_semantics(
+        cues=cues, target_ms=9_000, candidate_id="proven-topic-change",
+        selection_hook="回答问题", selection_scorecard=_scorecard(),
+        structured_context="", candidate_context="",
+        llm_call=lambda _prompt: response, extract_json=_extract, max_forward_ms=30_000,
+    )
+
+    assert result["status"] == "PASS"
+    assert result["recommended_end_cue_index"] == 2
+    assert result["needs_more_context"] is False
+    assert result["retry_scope"] == "none"
+
+
+def _xiamen_case(name, *, max_forward_ms=None):
+    from pathlib import Path
+    fixture = json.loads((Path(__file__).parent / "fixtures" / "xiamen_boundary_reviews.json")
+                         .read_text(encoding="utf-8"))["cases"][name]
+    cues = [_cue(index, start, end, f"第{index}句") for index, start, end in fixture["cues"]]
+    reply = json.dumps(fixture["reply"], ensure_ascii=False)
+    return review_talk_boundary_semantics(
+        cues=cues, target_ms=fixture["target_ms"], candidate_id="semantictalk_1438010_1548390",
+        selection_hook="", selection_scorecard=_scorecard(),
+        structured_context="", candidate_context="",
+        llm_call=lambda _prompt: reply, extract_json=_extract,
+        max_forward_ms=max_forward_ms or fixture["max_forward_ms"],
+    )
+
+
+@pytest.mark.parametrize("name", ["v2", "v3"])
+def test_real_xiamen_replies_take_the_same_bounded_retry(name):
+    """v2 said story_closed=false with the conclusion past the window, v3 said
+    story_closed=true with same-topic talk after cue 57: the same window and
+    the same evidence, so both take the one 60 s retry; neither in-window cue
+    becomes a PASS endpoint."""
+    result = _xiamen_case(name)
+
+    assert result["status"] == "BLOCK"
+    assert result["max_forward_ms"] == 30_000
+    assert result["needs_more_context"] is True
+    assert result["retry_scope"] == "same_topic_continues"
+    assert "BOUNDARY_CONTEXT_EXHAUSTED" in result["reason_codes"]
+
+
+def test_real_xiamen_v3_reply_at_sixty_seconds_without_topic_change_stays_block():
+    result = _xiamen_case("v3", max_forward_ms=60_000)
+
+    assert result["status"] == "BLOCK"
+
+
+def test_sixty_second_cap_still_unclosed_stays_block():
+    result = _same_topic_beyond_window(evidence=[1, 2, 3, 4], max_forward_ms=60_000)
+
+    assert result["status"] == "BLOCK"
+    assert result["max_forward_ms"] == 60_000
+
+
+def test_conclusion_cue_named_outside_window_also_takes_bounded_retry():
+    """Naming the out-of-window conclusion cue itself is the same signal."""
+    cues = [
+        _cue(1, 0, 9_000, "目标问题"),
+        _cue(2, 9_100, 20_000, "窗内一句完整话"),
+        _cue(3, 20_100, 31_000, "同话题回答继续"),
+        _cue(4, 31_100, 45_000, "同话题总结在窗外收束"),
+    ]
+    response = json.dumps(
+        {
+            "syntax_complete": True, "story_closed": False, "next_topic_separated": False,
+            "content_anchor_covered": True, "recommended_end_cue_index": 4,
+            "evidence_cue_indexes": [1, 2, 3, 4],
+            "same_topic_continues_after_target": True, "needs_more_context": True,
+            "reason_codes": ["SAME_TOPIC_CONCLUSION_EXCEEDS_RECOMMENDATION_WINDOW"],
+            "summary": "结论在窗外的4才收束。",
+        },
+        ensure_ascii=False,
+    )
+    result = review_talk_boundary_semantics(
+        cues=cues, target_ms=9_000, candidate_id="conclusion-outside-window",
+        selection_hook="回答问题", selection_scorecard=_scorecard(),
+        structured_context="", candidate_context="",
+        llm_call=lambda _prompt: response, extract_json=_extract, max_forward_ms=30_000,
+    )
+
+    assert result["status"] == "BLOCK"
+    assert "BOUNDARY_RECOMMENDATION_OUT_OF_SCOPE" in result["reason_codes"]
+    assert result["recommended_end_ms"] is None
+    assert result["needs_more_context"] is True
+    assert result["retry_scope"] == "same_topic_continues"

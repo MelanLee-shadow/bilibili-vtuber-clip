@@ -42,6 +42,19 @@ def _recovery_queue_fixture(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[str, dict[str, object]]:
+    from src.autoslice.runner_pipeline_fingerprints import (
+        TALK_DEPENDENCY_FIELD, TALK_DEPENDENCY_SCHEMA, TALK_STAGE_ROOTS,
+    )
+    # Generic retry now compares classified stage dependencies. Model a real
+    # package/review change while testing preservation of the budget ledger.
+    previous_dependencies = {
+        'schema_version': TALK_DEPENDENCY_SCHEMA, 'candidate_id': CANDIDATE_ID,
+        'stages': {stage: 'sha256:' + 'a' * 64 for stage in TALK_STAGE_ROOTS},
+    }
+    current_dependencies = {
+        **previous_dependencies,
+        'stages': {**previous_dependencies['stages'], 'package': 'sha256:' + 'c' * 64},
+    }
     date = "2026-08-08"
     rec_root = tmp_path / "recordings"
     segment_dir = rec_root / date
@@ -59,6 +72,7 @@ def _recovery_queue_fixture(
         REC_ROOT=rec_root,
         BASE=base,
         TALK_REPAIR_LIFETIME_RETRY_CAP=3,
+        capture_talk_dependency_snapshot=lambda _date, _record: current_dependencies,
         find_danmaku_xml=lambda _segment: None,
         talk_pipeline_fingerprint=lambda _candidate_id: (
             "sha256:" + "c" * 64
@@ -85,7 +99,8 @@ def _recovery_queue_fixture(
         "end_ms": 60_000,
         "hook": "test",
         "status": "failed",
-        "failure_kind": "producer_error",
+        "failure_kind": "final_review_contract",
+        TALK_DEPENDENCY_FIELD: previous_dependencies,
         "failure_recoverable": True,
         "pipeline_fingerprint": "sha256:" + "a" * 64,
     }

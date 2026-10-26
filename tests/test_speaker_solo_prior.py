@@ -564,6 +564,7 @@ def test_binary_wrapper_transports_and_verifies_portrait_context_receipt(
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
     monkeypatch.setattr("src.autoslice.producer_speaker.subprocess.run", fake_run)
+    monkeypatch.setattr("src.autoslice.producer_speaker.validate_producer_runtime_prerequisites", lambda **_kwargs: None)
 
     manifest = run_speaker_finalizer(
         host="localhost",

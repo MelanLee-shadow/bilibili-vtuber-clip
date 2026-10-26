@@ -1,3 +1,7 @@
+# 当前版本说明
+
+下文保留已公开的完整说明；执行命令前同时阅读文末的接口兼容说明。
+
 # 30 边界解析
 
 本文件是边界步骤的**分步权威**。
@@ -238,7 +242,7 @@ SHA、source review/request/grid SHA 全部一致，delivery 仍推荐唯一最�
 变化会使 source 回执及其下游 witness 失效；materialize 后 SRT 的任何字节/cue 变化会使
 final-delivery 回执与 exact-final 放行回执失效，均须从相应层重新评审，不能只重绑 hash。
 
-唯一窄例外是 维护者 2026-08-08 优化①边界重放 + wsl 重产 BLOCK 实证所批准的
+唯一窄例外是 公开规则优化①边界重放 + wsl 重产 BLOCK 实证所批准的
 `talk-boundary-frozen-receipt-ref.v1`。该引用只能随
 `subtitle_redelivery_baseline` 出现在 redelivery spec；loader 必须先核对 pristine
 `record.json` 原始字节 SHA、candidate、冻结 source/final 两份 PASS 及其 source witness
@@ -361,3 +365,25 @@ media/subtitle pair 实际消费；它不生成或替代普通包要求的 sourc
 final-delivery 两层语义回执、StoryContract、最终音轨见证、标题封面联合质检、canonical
 package audit、生产接纳或发布授权。后续若要进入 ordinary review-package chain，仍须按本页
 及 [80](80-package-delivery.md) 从该已验 pair 构造完整当前包，不能把诊断预览改名冒充成片。
+
+## 本版接口兼容说明
+
+本页保留此前公开的完整设计、判例与操作细节。代码已经继续演进：
+CLI 参数、模块是否存在和机器强制层以本版源码及 `--help` 为准；历史回执或
+旧入口名不授予当前执行权。当前补充规则如下；冲突时按当前规则和代码处理。
+
+# 30 内容边界
+
+候选区间只是内容锚点，不是最终剪辑边界。边界解析先读取区间前后的源语境，再
+由 `source_context_planner.py`、`source_context_executor.py` 和
+`boundary_resolver.py` 共同决定起止点。
+
+最终区间应保留完整的铺垫、因果、问答、反馈、笑点、回应、收束和必要的自然
+停顿。无法确认语义是否完整时扩大上下文或返回 UNKNOWN/BLOCK；不得依据旧成片
+时长、单个关键词或模型自报结果自动截断。
+
+边界结果必须绑定源媒体哈希、绝对时间、上下文覆盖摘要和解析版本。边界解析器、
+字幕链和渲染器消费同一份绑定结果，任意一方看到不同版本都应拒绝继续。
+
+同一候选的局部修复只能改变明确授权的边界字段。已交付媒体的修复应生成隔离
+候选并保留原件，不能在原包上覆盖写入。

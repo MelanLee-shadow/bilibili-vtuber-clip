@@ -29,6 +29,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from src.autoslice.agy_gemini_client import build_generation_config
+
 
 FILES_UPLOAD_URL = (
     "https://generativelanguage.googleapis.com/upload/v1beta/files"
@@ -47,6 +49,7 @@ _MAX_FILE_BYTES = 2_000_000_000
 _MAX_JSON_BYTES = 8_000_000
 _MAX_TEXT_BYTES = 2_000_000
 _CHUNK_BYTES = 1024 * 1024
+_MAX_RAW_ERROR_CHARS = 16_384
 _FILE_NAME_RE = re.compile(r"^files/[A-Za-z0-9._~-]{1,512}$")
 _MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _MIME_RE = re.compile(r"^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$")
@@ -65,6 +68,8 @@ class GeminiFileApiError(RuntimeError):
         ambiguous: bool = False,
         failures: Sequence[Mapping[str, object]] = (),
         cleanup_status: str | None = None,
+        raw_body: str | None = None,
+        response_payload: Mapping[str, object] | None = None,
     ):
         super().__init__(f"{reason_code}: {detail}")
         self.reason_code = reason_code
@@ -74,6 +79,13 @@ class GeminiFileApiError(RuntimeError):
         self.ambiguous = ambiguous
         self.failures = [dict(row) for row in failures]
         self.cleanup_status = cleanup_status
+        # Returned provider bytes kept verbatim (bounded) for the caller's
+        # create-only error record; the summary ``detail`` stays short.
+        self.raw_body = raw_body
+        self.response_payload = (
+            dict(response_payload) if isinstance(response_payload, Mapping) else None
+        )
+        self.http_requests_completed: int | None = None
 
 
 @dataclass(frozen=True)
@@ -156,7 +168,7 @@ def _http_error(
     phase: str,
 ) -> GeminiFileApiError:
     try:
-        body = exc.read(4096).decode("utf-8", errors="replace")
+        body = exc.read(_MAX_RAW_ERROR_CHARS).decode("utf-8", errors="replace")
     except Exception:
         body = ""
     detail = re.sub(r"\s+", " ", body).strip()[:500]
@@ -166,6 +178,7 @@ def _http_error(
         phase=phase,
         http_status=exc.code,
         ambiguous=500 <= exc.code <= 599,
+        raw_body=body or None,
     )
 
 
@@ -227,6 +240,7 @@ def _response_json(response: object, *, phase: str) -> dict[str, object]:
             "GEMINI_API_INVALID_OUTPUT",
             f"{phase} response is not UTF-8 JSON",
             phase=phase,
+            raw_body=data[:_MAX_RAW_ERROR_CHARS].decode("utf-8", errors="replace"),
         ) from exc
     if not isinstance(value, dict):
         raise GeminiFileApiError(
@@ -284,14 +298,15 @@ def _bounded_http_json(
 ) -> dict[str, object]:
     data = response.read(_MAX_JSON_BYTES + 1)
     if not 200 <= response.status <= 299:
-        detail = data.decode("utf-8", errors="replace")[:500]
+        body = data[:_MAX_RAW_ERROR_CHARS].decode("utf-8", errors="replace")
         raise GeminiFileApiError(
             _error_reason(response.status),
-            re.sub(r"\s+", " ", detail).strip()
+            re.sub(r"\s+", " ", body[:500]).strip()
             or f"Gemini API returned HTTP {response.status}",
             phase=phase,
             http_status=response.status,
             ambiguous=500 <= response.status <= 599,
+            raw_body=body or None,
         )
     if not 0 < len(data) <= _MAX_JSON_BYTES:
         raise GeminiFileApiError(
@@ -306,6 +321,7 @@ def _bounded_http_json(
             "GEMINI_API_INVALID_OUTPUT",
             f"{phase} response is not UTF-8 JSON",
             phase=phase,
+            raw_body=data[:_MAX_RAW_ERROR_CHARS].decode("utf-8", errors="replace"),
         ) from exc
     if not isinstance(value, dict):
         raise GeminiFileApiError(
@@ -481,11 +497,10 @@ class UrllibGeminiFileTransport:
                         ]
                     }
                 ],
-                "generationConfig": {
-                    "temperature": 0.1,
-                    "maxOutputTokens": 65_536,
-                    "responseMimeType": "application/json",
-                },
+                "generationConfig": build_generation_config(
+                    model=model,
+                    response_mime_type="application/json",
+                ),
             }
         )
         request = urllib.request.Request(
@@ -759,14 +774,17 @@ def call_file_model(
     poll_interval_seconds: float = 2.0,
     transport: GeminiFileTransport | None = None,
     sleeper: Callable[[float], None] = time.sleep,
+    environment: Mapping[str, str] | None = None,
 ) -> GeminiFileCallOutcome:
     """Upload exact bytes, wait for ACTIVE, generate, and attempt cleanup."""
 
+    from . import cpa_gemini_client
+    cpa_managed = cpa_gemini_client.enabled(environment)
     if (
         _MODEL_RE.fullmatch(model) is None
         or _MIME_RE.fullmatch(mime_type) is None
         or not prompt.strip()
-        or not key
+        or (not key and not cpa_managed)
         or (
             mime_type.startswith("video/")
             and (
@@ -785,6 +803,30 @@ def call_file_model(
             "model, MIME type, video FPS, prompt, key, or timeout configuration is invalid",
             phase="local_request",
         )
+    if cpa_managed:
+        with _stable_file(media_path, expected_sha256=expected_sha256, expected_bytes=expected_bytes) as stable:
+            data, _ = cpa_gemini_client.file_part(media_path, mime_type)
+            if hashlib.sha256(data).hexdigest() != stable.sha256:
+                raise ValueError('CPA_GEMINI_INPUT_DRIFT')
+            import base64
+            part: cpa_gemini_client.JsonObject = {'inline_data': {'mime_type': mime_type,
+                'data': base64.b64encode(data).decode('ascii')}}
+            if video_fps is not None:
+                part['video_metadata'] = {'fps': video_fps}
+            completion = cpa_gemini_client.generate_native(model=model,
+                body={'contents': [{'parts': [{'text': prompt}, part]}],
+                    'generationConfig': build_generation_config(model=model, response_mime_type=None)},
+                purpose='file_model_inline', timeout_seconds=timeout_seconds, environment=environment)
+            return GeminiFileCallOutcome(completion.text, {
+                'provider': 'gemini_api', 'model': model, 'transport': 'cpa_gemini_native',
+                'media_sha256': stable.sha256, 'media_bytes': stable.size, 'mime_type': mime_type,
+                'video_fps': video_fps, 'active_state': 'INLINE', 'poll_count': 0,
+                'http_request_count': 1, 'cleanup_status': 'NO_REMOTE_FILE_CREATED',
+                'response_text_sha256': hashlib.sha256(completion.text.encode()).hexdigest(),
+                'response_payload_sha256': completion.receipt['response_sha256'],
+                'key_tier': 'UNKNOWN', 'key_name': 'UNKNOWN', 'key_ordinal': None,
+                'configured_free_key_count': 0, 'paid_backup_used': 'UNKNOWN',
+                'cpa_transport_receipt': dict(completion.receipt)})
     selected = transport or UrllibGeminiFileTransport()
     resource: dict[str, object] | None = None
     cleanup_status = "NOT_STARTED"
@@ -864,10 +906,15 @@ def call_file_model(
             http_request_count += 1
             text = _response_text(generated)
             if not text:
+                # A completed, consumed call: keep the returned payload (usage,
+                # finish reason, model version) for the caller's error record.
                 raise GeminiFileApiError(
                     "GEMINI_API_INVALID_OUTPUT",
                     "generateContent returned no bounded text response",
                     phase="generate_content",
+                    response_payload=(
+                        generated if isinstance(generated, Mapping) else None
+                    ),
                 )
             response_sha = hashlib.sha256(
                 json.dumps(
@@ -879,6 +926,8 @@ def call_file_model(
                 ).encode("utf-8")
             ).hexdigest()
         except GeminiFileApiError as exc:
+            # Requests answered before the failing one; cleanup is recorded apart.
+            exc.http_requests_completed = http_request_count
             if resource is not None:
                 try:
                     selected.delete_file(
@@ -950,6 +999,12 @@ def run_free_key_file_call(
 ) -> GeminiFileCallOutcome:
     """Try configured free keys only; never read or spend the paid backup key."""
 
+    from . import cpa_gemini_client
+    if cpa_gemini_client.enabled(environment):
+        return call_file_model(media_path=media_path, expected_sha256=expected_sha256,
+            expected_bytes=expected_bytes, mime_type=mime_type, prompt=prompt, key='', model=model,
+            video_fps=video_fps, timeout_seconds=timeout_seconds, poll_timeout_seconds=poll_timeout_seconds,
+            environment=environment)
     keys = configured_free_keys(environment)
     if not keys:
         raise GeminiFileApiError(

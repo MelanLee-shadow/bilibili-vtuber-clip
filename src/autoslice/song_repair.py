@@ -113,6 +113,8 @@ from src.autoslice.song_alignment import (
     AudioLrcGroups as AudioLrcGroups,
     _group_audio_lrc_candidates as _group_audio_lrc_candidates,
 )
+from src.autoslice.song_clip_bounds import song_clip_start
+from src.autoslice.song_spoken_interlude import lyric_texts
 from src.autoslice.song_performance import (
     _sha256_file as _sha256_file,
     _require_bound_artifact as _require_bound_artifact,
@@ -279,7 +281,7 @@ def _select_audio_lrc(
             candidate_id,
             attempts,
             output_dir,
-            reason_codes=("SONG_AUDIO_LRC_IDENTITY_AMBIGUOUS",),
+            reason_codes=("SONG_LRC_REFERENCE_UNRESOLVED",),
         )
     verification_candidates = _audio_lrc_retry_candidates(
         ranked,
@@ -316,7 +318,16 @@ def _select_audio_lrc(
         # artifact and proves its canonical LRC is exactly this selected LRC;
         # a stale or mismatched receipt simply falls through to a fresh call.
         current_source_sha = _sha256_file(Path(source_media_path)) if prior_audio_lrc_runs else None
-        for prior in prior_audio_lrc_runs:
+        completed_observation_failure = None
+        prior_clock_run = None
+        completed_direct_observation = False
+        def completed_at(prior: AudioLrcAlignmentRun) -> int:
+            try:
+                return Path(prior.manifest_path).stat().st_mtime_ns
+            except OSError:
+                return 0
+
+        for prior in sorted(prior_audio_lrc_runs, key=completed_at, reverse=True):
             if prior.source_sha256 != current_source_sha:
                 continue
             try:
@@ -330,12 +341,50 @@ def _select_audio_lrc(
                     asr_anchor_cues=resolved_asr_anchor_cues,
                 )
             except Exception as prior_exc:
+                bound_failure = False
+                # A completed same-input observation remains consumed even
+                # when its content/timing cannot earn delivery. Distinguish
+                # that from a stale or broken artifact before considering a
+                # fresh provider request.
+                try:
+                    from src.autoslice.song_performance import _independent_timing_input
+                    # A stricter metadata parser may now omit old credit
+                    # rows. That does not authorize another full-audio call
+                    # or reindex the old observation into a fresh PASS.
+                    historical = LrcResult(provider=lrc.provider, song_title=lrc.song_title,
+                        artist=lrc.artist, source_ref=lrc.source_ref,
+                        lines=tuple(parse_lrc_text(Path(prior.lrc_path).read_text(encoding='utf-8'), exclude_metadata=False)))
+                    projected, _ = _singable_lrc_result(historical)
+                    if projected.lines != lrc.lines:
+                        raise ValueError('prior canonical lyric input differs from the current reference')
+                    _validate_audio_lrc_artifact_bindings(
+                        run=prior, lrc=historical, candidate_id=candidate_id,
+                        source_media_path=Path(source_media_path),
+                        source_duration_ms=source_duration_ms,
+                    )
+                    if not _independent_timing_input(prior, historical):
+                        raise ValueError('prior observation did not prove independent input consumption')
+                except (ValueError, OSError):
+                    pass
+                else:
+                    if completed_observation_failure is None:
+                        completed_observation_failure = prior_exc
+                    bound_failure = True
+                    if prior.provider == GEMINI_API_AUDIO_LRC_PROVIDER:
+                        completed_direct_observation = True
+                    elif prior.provider == AGY_AUDIO_LRC_PROVIDER:
+                        from src.autoslice.agy_lrc_alignment import invalid_alignment_clock_output
+                        if invalid_alignment_clock_output(prior_exc):
+                            prior_clock_run = prior
+                    attempts.append(SongRepairAttempt('agy_audio_lrc_prior_observation', 'REPLAYED_UNRESOLVED',
+                        json.dumps({'manifest_path':prior.manifest_path,'manifest_sha256':prior.manifest_sha256,
+                            'provider_calls':0,'error':f'{type(prior_exc).__name__}: {prior_exc}'},ensure_ascii=False)))
                 audio_lrc_variant_attempts.append(
                     {
                         "ordinal": ordinal,
                         "song_title": lrc.song_title,
                         "source_ref": lrc.source_ref,
-                        "status": "PRIOR_RECEIPT_REJECTED",
+                        "status": "PRIOR_OBSERVATION_UNRESOLVED" if bound_failure else "PRIOR_RECEIPT_REJECTED",
                         "reason": f"{type(prior_exc).__name__}: {prior_exc}",
                     }
                 )
@@ -361,12 +410,31 @@ def _select_audio_lrc(
             break
         if selected is not None:
             break
+        resume_clock_run = None
+        if completed_observation_failure is not None:
+            exc = completed_observation_failure
+            attempts.append(SongRepairAttempt('agy_audio_lrc_alignment', 'FAILED',
+                f'{rank_detail}; reused completed same-input observation without dispatch: {type(exc).__name__}: {exc}'))
+            if isinstance(exc, LivePerformanceRejected):
+                return _finish(candidate_id, attempts, output_dir,
+                    reason_codes=exc.reason_codes, live_performance=exc.performance)
+            infrastructure_reason = _audio_lrc_infrastructure_reason(exc)
+            if infrastructure_reason:
+                return _finish(candidate_id, attempts, output_dir, reason_codes=(infrastructure_reason,))
+            from src.autoslice.agy_lrc_alignment import run_agy_audio_lrc_alignment
+            anchor, _, _ = match_lrc_to_fresh_asr_anchor(lrc.lines, resolved_asr_anchor_cues)
+            if (prior_clock_run is not None and not completed_direct_observation and anchor is not None
+                    and audio_lrc_aligner is run_agy_audio_lrc_alignment):
+                resume_clock_run = prior_clock_run
+            else:
+                continue
         try:
             current_run = audio_lrc_aligner(
                 Path(source_media_path),
                 lrc,
                 candidate_id,
                 output_dir / "agy_audio_lrc" / f"variant-{ordinal:02d}",
+                **({'prior_agy_run': resume_clock_run} if resume_clock_run is not None else {}),
             )
         except Exception as exc:
             infrastructure_reason = _audio_lrc_infrastructure_reason(exc)
@@ -388,7 +456,7 @@ def _select_audio_lrc(
                 candidate_id,
                 attempts,
                 output_dir,
-                reason_codes=(infrastructure_reason or "SONG_AUDIO_LRC_ALIGNMENT_INVALID",),
+                reason_codes=(infrastructure_reason or "SONG_AUDIO_LRC_PROOF_UNRESOLVED",),
             )
         try:
             current_selected = _validated_audio_lrc_selection(
@@ -422,14 +490,22 @@ def _select_audio_lrc(
                 live_performance=exc.performance,
             )
         except Exception as exc:
-            detail = f"{rank_detail}; validator rejected this variant: {type(exc).__name__}: {exc}"
+            infrastructure_reason = _audio_lrc_infrastructure_reason(exc)
+            if infrastructure_reason:
+                attempts.append(SongRepairAttempt("agy_audio_lrc_alignment", "FAILED", str(exc)))
+                audio_lrc_variant_attempts.append({
+                    "ordinal": ordinal, "song_title": lrc.song_title,
+                    "source_ref": lrc.source_ref, "status": "INFRA_FAILED", "reason": str(exc),
+                })
+                return _finish(candidate_id, attempts, output_dir, reason_codes=(infrastructure_reason,))
+            detail = f"{rank_detail}; alignment proof remains pending: {type(exc).__name__}: {exc}"
             attempts.append(SongRepairAttempt("agy_audio_lrc_alignment", "FAILED", detail))
             audio_lrc_variant_attempts.append(
                 {
                     "ordinal": ordinal,
                     "song_title": lrc.song_title,
                     "source_ref": lrc.source_ref,
-                    "status": "CONTENT_OR_ALIGNMENT_REJECTED",
+                    "status": "PROOF_UNRESOLVED",
                     "reason": f"{type(exc).__name__}: {exc}",
                 }
             )
@@ -442,7 +518,7 @@ def _select_audio_lrc(
                 "song_title": lrc.song_title,
                 "source_ref": lrc.source_ref,
                 "status": "ACCEPTED",
-                "reason": "strict audio/LRC, live-performance, and global-shift proof passed",
+                "reason": "strict audio/LRC, live-performance, and ASR-anchored section-wise shift proof passed",
             }
         )
         attempts.append(
@@ -450,7 +526,7 @@ def _select_audio_lrc(
                 "agy_audio_lrc_alignment",
                 "SUCCESS",
                 f"{rank_detail}; current audio proves {selected[0]:.0%} of performed live-arrangement lines, "
-                f"{selected[9]['classification']}, one global shift, and "
+                f"{selected[9]['classification']}, ASR-anchored section-wise shift, and "
                 "LIVE_STREAMER_SINGING performance mode",
             )
         )
@@ -467,7 +543,7 @@ def _select_audio_lrc(
             candidate_id,
             attempts,
             output_dir,
-            reason_codes=("SONG_AUDIO_LRC_ALIGNMENT_INVALID",),
+            reason_codes=("SONG_AUDIO_LRC_PROOF_UNRESOLVED",),
         )
     assert selected is not None
     assert audio_alignment_run is not None
@@ -485,7 +561,6 @@ def _select_text_lrc(
     source_duration_ms: int,
     min_matched_ratio: float,
     match_threshold: float,
-    pre_roll_ms: int,
     post_roll_ms: int,
     max_outro_ms: int,
     attempts: list[SongRepairAttempt],
@@ -608,11 +683,14 @@ def _select_text_lrc(
                 )
             )
             continue
-        # ``offset_ms`` is where LRC time zero lands in the live source.  Start
-        # from that nominal track boundary (plus a small safety lead), not from
-        # ``first lyric - pre_roll``: the latter chopped the entire 7.7-second
-        # instrumental intro from 《芽吹くとき》.
-        clip_start_ms = max(0, offset_ms - pre_roll_ms)
+        # ``offset_ms`` is where LRC time zero lands in the live source: the
+        # music start, never the first lyric (that chopped the entire
+        # 7.7-second instrumental intro from 《芽吹くとき》).
+        # song_clip_bounds is the one start rule for both proof paths.
+        clip_start_ms, clip_start_evidence = song_clip_start(
+            lrc_zero_ms=offset_ms, first_lyric_start_ms=first_lyric_start_ms, cues=cues,
+            lyrics=lyric_texts([{"text": line.text} for line in lrc.lines]),
+        )
         # Keep the instrumental outro (后奏): a complete song does not end on the
         # last sung word.  The outro has no lyrics for ASR to anchor on, so extend
         # to just before the next spoken cue after the song (the post-song talk),
@@ -653,7 +731,7 @@ def _select_text_lrc(
             clip_end_ms,
             offset_ms,
             None,
-            None,
+            {"clip_start_evidence": clip_start_evidence},
         )
         break
     return selected
@@ -854,6 +932,11 @@ def _materialize_song_repair(
                 ),
                 "lrc_time_ms": line.time_ms,
                 "text": line.text,
+                **(
+                    {"live_time_ms": alignment[index]["live_time_ms"]}
+                    if "live_time_ms" in alignment[index]
+                    else {}
+                ),
             }
             for index, line in enumerate(lrc.lines)
         ],
@@ -864,18 +947,36 @@ def _materialize_song_repair(
     if audio_alignment_run is not None:
         canonical_rows = audio_alignment_run.payload["observations"]
         provenance = dict(offset_provenance or {})
+        timing_input = None
+        if "timing_model" in provenance:
+            cue_path = output_dir / "song-asr-cues.json"
+            cue_path.write_text(json.dumps({"source_sha256": provenance["asr_source_sha256"],
+                "cues": provenance["asr_cues"]}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            timing_input = {"path": str(cue_path.resolve()), "sha256": _sha256_file(cue_path)}
         report_payload.update(
             {
                 "evidence_source": "agy_audio_lrc",
-                # Offset provenance (fix): a fresh-ASR anchor,
-                # when it earns enough matches with a tight residual spread
-                # and agrees with the AGY median within 1500ms, replaces the
-                # AGY-only offset as ``offset_ms``/``nominal_lrc_zero_ms``
-                # above.  These fields keep both readings auditable.
+                # The first section offset is retained for legacy consumers.
                 "offset_basis": provenance.get("offset_basis", "agy_median"),
                 "agy_offset_ms": provenance.get("agy_offset_ms"),
                 "asr_offset_ms": provenance.get("asr_offset_ms"),
                 "asr_matched_line_count": provenance.get("asr_matched_line_count", 0),
+                **(
+                    {
+                        # Timing is ASR-anchored and section-wise: every
+                        # ``lyric_lines``/``alignment`` row carries its own
+                        # live time; ``offset_ms`` is the first section's shift.
+                        "timing_model": provenance["timing_model"],
+                        "asr_timing_input": timing_input,
+                        "timing_sections": provenance["sections"],
+                        "anchor_line_count": provenance["anchor_line_count"],
+                        "dropped_anchor_count": provenance["dropped_anchor_count"],
+                        "asr_cues_sha256": provenance["asr_cues_sha256"],
+                        "asr_cue_count": provenance["asr_cue_count"],
+                    }
+                    if "timing_model" in provenance
+                    else {}
+                ),
                 "audio_alignment_provider": audio_alignment_run.provider,
                 "audio_alignment_model": audio_alignment_run.model,
                 "audio_alignment_agy_rc": audio_alignment_run.rc,
@@ -948,6 +1049,8 @@ def _materialize_song_repair(
     }
     if arrangement_completeness is not None:
         song_boundary["completion_basis"] = arrangement_completeness["classification"]
+    if isinstance(offset_provenance, Mapping) and "clip_start_evidence" in offset_provenance:
+        song_boundary["clip_start_evidence"] = dict(offset_provenance["clip_start_evidence"])
     lyrics_alignment = {
         "status": "READY",
         "provider": provider_label,
@@ -994,7 +1097,6 @@ def attempt_song_repair(
     min_matched_ratio: float = 0.55,
     match_threshold: float = 0.45,
     max_window_gap_ms: int = 30_000,
-    pre_roll_ms: int = 1_500,
     post_roll_ms: int = 4_000,
     max_outro_ms: int = 22_000,
     pinned_lrc_results: Sequence[LrcResult] = (),
@@ -1008,8 +1110,7 @@ def attempt_song_repair(
     """Try to repair a song candidate into a fully-proven full-song boundary.
 
     ``asr_anchor_cues`` are a fresh (non-AGY) ASR transcript of the same
-    source media, used only to anchor the AGY-audio path's global lyric shift
-    (see ``match_lrc_to_fresh_asr_anchor``); pass already-parsed cues when the
+    source media, used to fit the performed sequence and constant-shift sections; pass already-parsed cues when the
     caller has them (e.g. the shadow pipeline's ``source_srt``).  When empty,
     ``asr_anchor_srt_path`` (or a sibling-file lookup next to
     ``source_media_path``) is tried as a fallback.
@@ -1115,7 +1216,6 @@ def attempt_song_repair(
             source_duration_ms=source_duration_ms,
             min_matched_ratio=min_matched_ratio,
             match_threshold=match_threshold,
-            pre_roll_ms=pre_roll_ms,
             post_roll_ms=post_roll_ms,
             max_outro_ms=max_outro_ms,
             attempts=attempts,

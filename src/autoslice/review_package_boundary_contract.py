@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
 from src.autoslice.boundary_endpoint_binding import (
     final_delivery_review_matches_srt,
 )
-from src.autoslice.boundary_semantic_review import semantic_review_sha256
+from src.autoslice.boundary_semantic_review import (
+    STORY_ENDING_PROOF_KIND,
+    semantic_review_sha256,
+    source_ending_proof_kind,
+)
 from src.autoslice.producer_boundary import TAIL_PAD_MS
 from src.autoslice.c7b_failed_row_adoption import (
     _delivery_local_incident_repair_valid,  # noqa: F401 - existing package check seam
@@ -26,6 +30,13 @@ from src.autoslice.review_package_boundary_validators import (
 from src.autoslice.review_package_redelivery_contract import _audit_redelivery_time_domain
 
 
+def _same_boundary_observation(left: object, right: object) -> bool:
+    """Prose may vary; the complete request, decision and geometry must agree."""
+    return (isinstance(left,Mapping) and isinstance(right,Mapping)
+        and {key:value for key,value in left.items() if key!='summary'}
+            == {key:value for key,value in right.items() if key!='summary'})
+
+
 def audit_boundary_contract(
     *,
     issue_adder: Callable[..., None],
@@ -38,6 +49,7 @@ def audit_boundary_contract(
     story_contract: dict[str, Any],
     required: bool,
     is_song: bool,
+    original_source_review: object = None,
 ) -> None:
     if not required or is_song:
         return
@@ -107,7 +119,7 @@ def audit_boundary_contract(
                 stem=stem,
                 path=record_path,
             )
-    if audit_final_review != final_review:
+    if not _same_boundary_observation(audit_final_review,final_review):
         issue_adder(
             issues,
             "BOUNDARY_SEMANTIC_REVIEW_BINDING_DRIFT",
@@ -119,7 +131,7 @@ def audit_boundary_contract(
         if isinstance(exact_final_review, dict)
         else None
     )
-    if exact_final_boundary != final_review:
+    if not _same_boundary_observation(exact_final_boundary,final_review):
         issue_adder(
             issues,
             "BOUNDARY_FINAL_REVIEW_BINDING_DRIFT",
@@ -168,13 +180,24 @@ def audit_boundary_contract(
     source_witness = (
         final_review.get("source_separation_witness") if isinstance(final_review, dict) else None
     )
+    witnessed_source_review = source_review
+    if isinstance(source_witness, dict):
+        embedded = final_review.get('source_boundary_review')
+        for prior in (embedded, original_source_review):
+            if (isinstance(prior, dict) and isinstance(source_review, dict)
+                    and semantic_review_sha256(prior) == source_witness.get('source_review_sha256')
+                    and _semantic_review_is_valid(prior, expected_scope='source_full_window')
+                    and all(prior.get(key) == source_review.get(key) for key in
+                        ('request_sha256','cue_grid_sha256','recommended_end_ms','final_endpoint_binding'))):
+                witnessed_source_review = prior
+                break
     source_witness_valid = bool(
         isinstance(source_witness, dict)
         and source_witness.get("schema_version") == "talk-boundary-source-separation-witness.v1"
         and source_witness.get("status") == "PASS"
         and source_witness.get("reason_codes") == []
         and isinstance(source_review, dict)
-        and source_witness.get("source_review_sha256") == semantic_review_sha256(source_review)
+        and source_witness.get("source_review_sha256") == semantic_review_sha256(witnessed_source_review)
         and source_witness.get("source_request_sha256") == source_review.get("request_sha256")
         and source_witness.get("source_cue_grid_sha256") == source_review.get("cue_grid_sha256")
         and _is_int(source_witness.get("source_recommended_end_ms"))
@@ -183,6 +206,14 @@ def audit_boundary_contract(
         and _is_int(source_witness.get("source_final_end_ms"))
         and source_witness.get("source_final_start_ms") == final_start_ms
         and source_witness.get("source_final_end_ms") == final_end_ms
+        # The witness may only carry the ending proof its source review earned.
+        and source_witness.get("ending_proof_kind")
+        == source_ending_proof_kind(witnessed_source_review)
+        and (
+            source_witness.get("ending_proof_kind") != STORY_ENDING_PROOF_KIND
+            or source_witness.get("source_story_ending_comparison_sha256")
+            == semantic_review_sha256(witnessed_source_review["story_ending_comparison"])
+        )
     )
     if not source_witness_valid:
         issue_adder(

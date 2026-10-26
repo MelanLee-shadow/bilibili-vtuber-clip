@@ -26,7 +26,12 @@ from .fastlane_c10_parallel_subtitle import (
 )
 from .final_surface_summary import record_final_authority_summary
 from .gift_correction_supersession import reconcile_gift_correction_supersessions
-from .legacy_final_surface_supersession import _exact_final_cpa_retires_decision_row
+from .legacy_final_surface_supersession import (
+    _exact_final_cpa_retires_decision_row,
+    _normal_history_display_candidate,
+    _normal_history_display_replays,
+    _normal_history_display_retires_decision_row,
+)
 from .jingting_chunker import parse_srt_cues
 from .operator_text_owner_supersession import supersede_legacy_text_owner
 from .redelivery_subtitle_baseline import MIN_ALIGNMENT_OVERLAP_MS
@@ -188,6 +193,31 @@ def authorized_final_review_drop_windows(
     return tuple(windows)
 
 
+def _authorized_editorial_display_omission(row: dict) -> bool:
+    """Replay the original editorial receipt behind a padded-axis owner."""
+    from src.autoslice.editorial_subtitle import SCHEMA, valid_display_omission_repair
+    before, after, indexes = row.get("before"), row.get("after"), row.get("cue_indexes")
+    authority = row.get("editorial_authority")
+    request = authority.get("request") if isinstance(authority, Mapping) else None
+    mutation = row.get("mutation_authority")
+    if (row.get("mode") != "exact_final_cpa_self_heal" or row.get("decision_authority") != "CPA_JUDGE"
+            or row.get("repair_class") != "editorial_rendering" or row.get("timing_immutable") is not True
+            or not isinstance(before, list) or len(before) != 1 or not before[0]
+            or after != [""] or row.get("structured_exact_text") != ""
+            or not isinstance(indexes, list) or len(indexes) != 1
+            or not isinstance(request, Mapping) or not isinstance(mutation, Mapping)
+            or mutation != {"schema_version": "subtitle-correction-mutation-authority.v1", "status": "PASS", "basis": SCHEMA}):
+        return False
+    offset = request.get("source_media_timeline_offset_ms")
+    start, end = row.get("matched_start_ms"), row.get("matched_end_ms")
+    if any(type(value) is not int for value in (offset, start, end)):
+        return False
+    return valid_display_omission_repair({
+        **row, "before": before[0], "after": "", "cue_index": indexes[0],
+        "matched_start_ms": start - offset, "matched_end_ms": end - offset,
+    })
+
+
 def _record_entity_repair_window_survival(
     row: dict,
     *,
@@ -200,14 +230,16 @@ def _record_entity_repair_window_survival(
     speaker_check: str,
     dropped_ok: bool,
 ) -> None:
-    if _authorized_final_review_drop_cue(row):
+    display_omission = _authorized_editorial_display_omission(row)
+    if _authorized_final_review_drop_cue(row) or display_omission:
         # Empty is the owned result for a whole-cue deletion.  It is only
         # accepted with the typed CPA mutation receipt above, and the exact
         # adjudicated window must be subtitle-empty on both final surfaces.
-        row["final_drop_cue_empty_text_window"] = not bool(
+        prefix = "final_display_omission" if display_omission else "final_drop_cue"
+        row[prefix + "_empty_text_window"] = not bool(
             owner_text_window
         )
-        row["final_drop_cue_empty_speaker_window"] = not bool(
+        row[prefix + "_empty_speaker_window"] = not bool(
             owner_speaker_window
         )
         row["survived_final_text_srt"] = not bool(owner_text_window)
@@ -277,6 +309,10 @@ def _format_srt_timestamp(ms: int) -> str:
 def _render_cues_to_srt(cues) -> str:
     """Render parsed cues back to SRT text, preserving index/timestamps."""
 
+    from src.autoslice.audience_text import assert_audience_text
+    cues = list(cues)
+    for cue in cues:
+        assert_audience_text(cue.text, surface='subtitle')
     blocks = [
         f"{cue.index}\n{_format_srt_timestamp(cue.start_ms)} --> {_format_srt_timestamp(cue.end_ms)}\n{cue.text}"
         for cue in cues
@@ -899,6 +935,17 @@ def _verify_inside_source_truth_owner(
         contract_speaker_ok = (
             bool(expected) and expected in aggregate_speaker
         )
+        if row.get('local_term_alignment') is not None:
+            from .source_truth_term_alignment import aligned_term_replacement
+            if aligned_term_replacement(row['local_term_alignment'],row) is None:
+                contract_text_ok = contract_speaker_ok = False
+                failures.append({'truth_id':row.get('truth_id'),
+                    'reason_code':'SOURCE_TRUTH_FINAL_TERM_ALIGNMENT_INVALID'})
+        if not (contract_text_ok and contract_speaker_ok):
+            from .source_truth_satisfaction import valid_satisfaction
+            if (valid_satisfaction(row.get("meaning_equivalence"), row)
+                    and all(item["text_ok"] and item["speaker_ok"] for item in window_results)):
+                contract_text_ok = contract_speaker_ok = True
     else:
         contract_text_ok = contract_speaker_ok = False
     if not (contract_text_ok and contract_speaker_ok):
@@ -1652,10 +1699,14 @@ def verify_chat_authority_final_surfaces(
     superseded_by_truth = 0
     superseded_by_redelivery = 0
     superseded_by_exact_final_cpa = 0
+    superseded_by_caption_display = 0
     superseded_by_expected_value_canon = 0
     projected_by_parallel_subtitle = 0
     superseded_by_parallel_subtitle = 0
     required_rows: list[dict] = []
+    name_referent_failed = False
+    normal_history_replays: dict[str, object] | None = None
+    normal_history_replays_ready = False
     for kind, row, expected_text in decision_rows:
         if kind == "gift_name" and row.get("correction_pass_gift_supersession"):
             continue  # Recomputed above from complete receipts, never a saved PASS flag.
@@ -1682,6 +1733,34 @@ def verify_chat_authority_final_surfaces(
         if supersede_legacy_text_owner(row, operator_text_full_ownership):
             superseded_by_redelivery += 1
             continue
+        if kind == "entity_repair":
+            # This is deliberately separate from the generic reconciliation
+            # field.  _final_authority_decision_rows filters that field out,
+            # while this path must revalidate the current display history on
+            # every verification and retain the typed owner in the ledger.
+            row.pop("normal_history_display_reconciliation", None)
+            if _normal_history_display_candidate(
+                row, expected_text=expected_text,
+            ):
+                if not normal_history_replays_ready:
+                    normal_history_replays = _normal_history_display_replays(
+                        audit, final_text_srt=final_text_srt,
+                    )
+                    normal_history_replays_ready = True
+                if normal_history_replays is not None and _normal_history_display_retires_decision_row(
+                    row,
+                    expected_text=expected_text,
+                    audit=audit,
+                    final_text_srt=final_text_srt,
+                    final_speaker_srt=final_speaker_srt,
+                    delivery_start_ms=delivery_start_ms,
+                    replays=normal_history_replays,
+                ):
+                    row["final_verification_scope"] = (
+                        "SUPERSEDED_BY_NORMAL_DISPLAY_HISTORY"
+                    )
+                    superseded_by_caption_display += 1
+                    continue
         if (
             _exact_final_cpa_supersession_candidate(kind, row)
             and _exact_final_cpa_retires_decision_row(
@@ -1804,6 +1883,28 @@ def verify_chat_authority_final_surfaces(
                 if outside_fragment_reason:
                     row["final_verification_scope_reason"] = outside_fragment_reason
             continue
+        if kind == "entity_repair" and row.get("decision_authority") == "CPA_JUDGE":
+            from src.autoslice.term_authority import registered_name_change_allowed
+
+            before, after = row.get("before"), row.get("after")
+            if isinstance(before, list) and isinstance(after, list) and len(before) == len(after) == 1:
+                judge = row.get("judge")
+                if not isinstance(judge, Mapping):
+                    adjudication = row.get("context_audio_adjudication")
+                    witness_judge = adjudication.get("witness_judge") if isinstance(adjudication, Mapping) else None
+                    judge = witness_judge.get("judge") if isinstance(witness_judge, Mapping) else None
+                if not registered_name_change_allowed(
+                    str(before[0]), str(after[0]), judge=judge,
+                    context_before=str(judge.get("registered_name_context_before") or "") if isinstance(judge, Mapping) else "",
+                    context_after=str(judge.get("registered_name_context_after") or "") if isinstance(judge, Mapping) else "",
+                    structured_chat=str(judge.get("registered_name_structured_chat_context") or "") if isinstance(judge, Mapping) else "",
+                ):
+                    row["final_registered_name_change_verification"] = "UNRESOLVED"
+                    row["survived_final_text_srt"] = False
+                    row["survived_final_speaker_srt"] = False
+                    required_rows.append(row)
+                    name_referent_failed = True
+                    continue
         row["final_verification_scope"] = "DELIVERY"
         relative_start = max(0, matched_start - delivery_start_ms)
         relative_end = min(delivery_end_ms - delivery_start_ms, matched_end - delivery_start_ms)
@@ -1881,7 +1982,7 @@ def verify_chat_authority_final_surfaces(
         required_rows.append(row)
     if not finalize_parallel_legacy_owner_consumption(audit, parallel_context):
         return False
-    return record_final_authority_summary(
+    result = record_final_authority_summary(
         audit,
         required_rows=required_rows,
         decision_row_count=len(decision_rows),
@@ -1890,8 +1991,14 @@ def verify_chat_authority_final_surfaces(
         superseded_by_truth=superseded_by_truth,
         superseded_by_redelivery=superseded_by_redelivery,
         superseded_by_exact_final_cpa=superseded_by_exact_final_cpa,
+        superseded_by_caption_display=superseded_by_caption_display,
         superseded_by_correction_pass=correction_gift_count,
         superseded_by_expected_value_canon=superseded_by_expected_value_canon,
         projected_by_parallel_subtitle=projected_by_parallel_subtitle,
         superseded_by_parallel_subtitle=superseded_by_parallel_subtitle,
     )
+
+    if name_referent_failed:
+        audit["final_verification_failure"] = "REGISTERED_NAME_REFERENT_DECISION_REQUIRED"
+        return False
+    return result

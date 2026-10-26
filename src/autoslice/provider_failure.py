@@ -20,8 +20,13 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 
-from src.autoslice.llm_client import LLM_JSON_PARSE_REASON_CODES, LLM_TRANSPORT_REASON_CODES
+from src.autoslice.llm_client import (
+    LLM_JSON_PARSE_REASON_CODES,
+    LLM_TRANSPORT_REASON_CODES,
+    sanitize_provider_diagnostics,
+)
 
 PROVIDER_DETAIL_LIMIT = 2000
 
@@ -266,7 +271,8 @@ def describe_provider_exception(exc: BaseException) -> dict[str, object]:
 
 
 def auditor_unavailable_discovery(
-    detail: str, provider_detail: str = ""
+    detail: str, provider_detail: str = "", *,
+    provider_diagnostics: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """AUDITOR_UNAVAILABLE discovery block with the provider evidence kept.
 
@@ -280,6 +286,11 @@ def auditor_unavailable_discovery(
         "status": "AUDITOR_UNAVAILABLE",
         "detail": detail,
     }
+    # Command failures already carry closed diagnostics on LlmCallError. Keep
+    # those even when the stable transport code suppresses free-form text.
+    diagnostics = sanitize_provider_diagnostics(provider_diagnostics)
+    if diagnostics:
+        discovery["provider_diagnostics"] = diagnostics
     parse_code = next(
         (
             value
@@ -292,6 +303,12 @@ def auditor_unavailable_discovery(
         # A completion must never cross the review boundary. The typed parser
         # code alone distinguishes malformed output from a transport outage.
         discovery["provider_error_code"] = parse_code
+        if parse_code in LLM_TRANSPORT_REASON_CODES and provider_detail:
+            # Older command bridges emit plain stderr instead of the closed
+            # JSON marker. Retain only its class/status, never the raw text.
+            descriptor = describe_provider_failure(provider_detail)
+            if descriptor["provider_class"] != UNKNOWN or descriptor["provider_status_codes"]:
+                discovery.update(descriptor)
         return discovery
     if provider_detail:
         discovery["provider_detail"] = provider_detail
@@ -308,6 +325,7 @@ DISCOVERY_EVIDENCE_FIELDS: tuple[str, ...] = (
     "provider_detail",
     "provider_class",
     "provider_status_codes",
+    "provider_diagnostics",
 )
 
 # provider 保真证据不参与失败身份：它逐次尝试都不同（HTTP 码组合、上游
@@ -320,6 +338,7 @@ FINGERPRINT_VOLATILE_KEYS = frozenset(
         "provider_class",
         "provider_status_codes",
         "provider_error_code",
+        "provider_diagnostics",
     }
 )
 

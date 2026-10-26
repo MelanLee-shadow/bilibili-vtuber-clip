@@ -5,7 +5,7 @@ description: Build, repair, verify, or review the host's “活字乱刷” spee
 
 # 活字乱刷
 
-Use the committed runtime at `$AUTOSLICE_BASE/repo` on the deployment host plus its live cache and recordings as source authority. Treat the macOS worktree as code, test, and review staging.
+Use `src/autoslice/deployed_code_root.py` on the deployment host to locate committed runtime code; use that host’s live cache and recordings as source authority. Treat the macOS worktree as code, test, and review staging.
 
 Use `scripts/huozi_luanshua.py`; do not replace its evidence and render gates with an ad-hoc concat script.
 

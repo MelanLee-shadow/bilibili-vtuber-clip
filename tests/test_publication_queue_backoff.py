@@ -102,6 +102,24 @@ def test_ledger_failure_backoff_survives_without_sidecar(tmp_path: Path) -> None
     assert gate["retry_after_seconds"] == GENERIC_BASE_SECONDS * 2 - 30
 
 
+def test_m36_backoff_follows_manifest_bytes_across_paths(tmp_path):
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    manifest, video_sha = _manifest(runtime)
+    entries = _failed_rows(manifest, video_sha, count=1, latest_at=NOW - 10)
+    moved = runtime / "moved.json"
+    moved.write_bytes(manifest.read_bytes())
+    def gate():
+        return evaluate_upload_backoff(runtime_root=runtime, manifest_path=moved,
+                                       ledger_entries=entries, now_epoch=NOW)
+    assert gate()["status"] == "BACKOFF"
+    moved.write_bytes(moved.read_bytes() + b" ")
+    assert gate()["status"] == "CLEAR"
+    moved.write_bytes(manifest.read_bytes())
+    entries[-1]["video_sha256"] = "f" * 64
+    assert gate()["status"] == "CLEAR"
+
+
 def test_manifest_change_resets_candidate_backoff(tmp_path: Path) -> None:
     runtime = tmp_path / "runtime"
     runtime.mkdir()

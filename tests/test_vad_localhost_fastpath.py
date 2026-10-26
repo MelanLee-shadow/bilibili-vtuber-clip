@@ -73,7 +73,8 @@ def test_remote_provider_still_ships_wav_over_ssh(monkeypatch, tmp_path):
     ssh_calls = [cmd for cmd in calls if cmd[0] == "ssh"]
     assert ssh_calls
     assert "/opt/bilive/autoslice/venv-main/bin/python" in ssh_calls[0][2]
-    assert "/opt/bilive/autoslice/repo/scripts/silero_vad_spans.py" in ssh_calls[0][2]
+    assert "silero_vad_spans.py" in ssh_calls[0][2]
+    assert "deployed_code_root" in ssh_calls[0][2]
     assert not any(cmd[0] == "python3" for cmd in calls)
 
 

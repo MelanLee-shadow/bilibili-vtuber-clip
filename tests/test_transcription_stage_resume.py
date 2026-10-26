@@ -83,6 +83,32 @@ def test_retry_reuses_bcut_and_complete_cpa_but_reexecutes_guards(tmp_path, monk
     assert receipt["final_release_approved"] is False
 
 
+@pytest.mark.parametrize('damage', [None, 'audio', 'raw', 'srt', 'cache', 'missing_cache'])
+def test_original_asr_witness_requires_saved_audio_raw_and_cache_without_new_calls(tmp_path, monkeypatch, damage):
+    from src.autoslice.subtitle_draft_preparation import load_recorded_asr_boundary_origin
+    media, calls, config, run = fixture(tmp_path, monkeypatch)
+    run()
+    before = dict(calls)
+    origin = json.loads(media.with_suffix('.asr-source.json').read_text())
+    receipt = json.loads(media.with_suffix('.transcription-reuse.json').read_text())
+    cache = media.parent / '.transcription-stage-cache/bcut' / (receipt['bcut']['cache_key'] + '.json')
+    if damage == 'audio': config['audio'] = b'changed source audio'
+    elif damage == 'raw':
+        from pathlib import Path
+        Path(origin['raw_result_path']).write_bytes(b'changed raw observation')
+    elif damage == 'srt': media.with_suffix('.asr_draft.srt').write_text(DRAFT.replace(TEXT, 'changed text'))
+    elif damage == 'cache':
+        saved = json.loads(cache.read_text()); saved['payload']['utterances'][0]['transcript'] = 'changed cache'
+        cache.write_text(json.dumps(saved))
+    elif damage == 'missing_cache': cache.unlink()
+    if damage:
+        with pytest.raises((ValueError, OSError)):
+            load_recorded_asr_boundary_origin(media)
+    else:
+        assert load_recorded_asr_boundary_origin(media) == DRAFT
+    assert calls == before
+
+
 @pytest.mark.parametrize("change", ["audio", "model", "effort", "context", "milliseconds"])
 def test_changed_request_cannot_reuse_old_cpa(tmp_path, monkeypatch, change):
     media, calls, config, run = fixture(tmp_path, monkeypatch)

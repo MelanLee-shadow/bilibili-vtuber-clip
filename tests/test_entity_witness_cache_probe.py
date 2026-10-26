@@ -161,6 +161,60 @@ def test_cpa_wrapper_preserves_metadata_only_probe():
     }
 
 
+def test_recovery_reads_only_explicit_prior_witness_root(tmp_path, monkeypatch):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"same retained padded media")
+    original = tmp_path / "candidate"
+    calls = []
+
+    def initial_run(command, **kwargs):
+        if command[0] == "ffmpeg":
+            Path(command[-1]).write_bytes(b"same sealed clip")
+        else:
+            calls.append(command)
+            Path(kwargs["cwd"], "verdict.json").write_text(_observation())
+        return _Completed()
+
+    monkeypatch.setattr(verifier_module.subprocess, "run", initial_run)
+    common = dict(source_media=source, recording_date="2026-08-09",
+                  source_duration_ms=600_000, agy_bin="agy-test")
+    old = verifier_module.build_local_audio_entity_verifier(output_dir=original, **common)
+    request = _request(evidence_id="a" * 64, start_ms=180_950, offset_ms=0)
+    assert old(request)["status"] == "OBSERVED"
+    originals = {p: p.read_bytes() for p in original.rglob("*") if p.is_file()}
+    assert len(calls) == 1
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("recovery repeated crop/provider work")
+
+    monkeypatch.setattr(verifier_module.subprocess, "run", forbidden)
+    recovery = original / "current-text-recovery"
+    isolated = verifier_module.build_local_audio_entity_verifier(output_dir=recovery, **common)
+    assert isolated.probe_witness_cache(request) is None
+    verify = verifier_module.build_local_audio_entity_verifier(
+        output_dir=recovery, witness_cache_roots=(original,), **common)
+    replay = verify(request)
+    assert replay["served_from_cache"] is True
+    assert replay["provider"] == "agy"
+    assert replay["witness_cache_replay"]["provider_call_count"] == 0
+    assert all(path.read_bytes() == raw for path, raw in originals.items())
+    assert not recovery.exists()
+
+    drift = _request(evidence_id="b" * 64, start_ms=180_951, offset_ms=0)
+    assert verify.probe_witness_cache(drift) is None
+    wrong_model = verifier_module.build_local_audio_entity_verifier(
+        output_dir=recovery, witness_cache_roots=(original,), model="different", **common)
+    assert wrong_model.probe_witness_cache(request) is None
+    manifest = next((original / "entity_verdicts").glob("*/verdict.manifest.json"))
+    raw = manifest.read_bytes()
+    corrupted = json.loads(raw)
+    corrupted["source_media_sha256"] = "f" * 64
+    manifest.write_text(json.dumps(corrupted))
+    assert verify.probe_witness_cache(request) is None
+    manifest.write_bytes(raw)
+    assert len(calls) == 1
+
+
 @pytest.fixture(autouse=True)
 def _generated_media_probe_isolated_from_transport_tests(monkeypatch):
     # These transport/cache unit tests stub FFmpeg with arbitrary byte strings.

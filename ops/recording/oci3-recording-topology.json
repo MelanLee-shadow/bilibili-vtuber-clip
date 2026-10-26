@@ -1,0 +1,12 @@
+{
+  "schema_version": "oci3-recording-topology.v1",
+  "spool_root": "/path/to/recordings/local",
+  "cloud_mount": "/path/to/cloud",
+  "archive_root": "/path/to/cloud/115open/recorder-archive",
+  "n100_archive_root": "/path/to/cloud/115open/external-archive",
+  "backup_root": "/path/to/cloud/云盘/backup",
+  "rooms": ["10000000"],
+  "consumer_mounts": {"bilive": "/app/Videos", "bililive-adapter": "/adapter/Videos", "bililive-recorder": "/rec/Videos"},
+  "state_dir": "/opt/bilive/recording/oci3-local-first",
+  "legacy_state_dirs": ["/opt/bilive/recording", "/opt/bilive/recording/oci3-115open"]
+}

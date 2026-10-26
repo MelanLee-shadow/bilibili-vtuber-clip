@@ -7,6 +7,7 @@ import json
 import shlex
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -131,6 +132,34 @@ def main(argv: list[str] | None = None) -> int:
         ),
         metadata=metadata,
     )
+    current_request = replace(request,request_path=str(args.request_json))
+    if args.request_json.exists():
+        try:
+            prior_request = load_request_artifact(args.request_json)
+        except (OSError,ValueError,KeyError,TypeError):
+            sys.stderr.write('CALL_OUTCOME_UNKNOWN\n')
+            return 2
+        if prior_request.canonical_sha256() == current_request.canonical_sha256():
+            try:
+                prior_response = _load_response_payload(args.response_json)
+                errors = validate_cpa_semantic_response_payload(prior_response,
+                    request=prior_request,response_path=args.response_json)
+            except (OSError,ValueError,KeyError,TypeError):
+                errors = ['CALL_OUTCOME_UNKNOWN']
+            if errors:
+                sys.stderr.write('CALL_OUTCOME_UNKNOWN\n')
+                return 2
+            from src.autoslice.cpa_runtime import record_cpa_event
+            record_cpa_event('cache_hit',{'kind':'cpa_semantic_review'})
+            print(json.dumps({'status':'ok','reused_existing':True,'request_json':str(args.request_json),
+                'response_json':str(args.response_json)},ensure_ascii=False))
+            return 0
+        for path in (args.request_json,args.response_json):
+            if path.is_file():
+                raw = path.read_bytes()
+                frozen = path.with_name(path.name+'.previous.'+hashlib.sha256(raw).hexdigest()+'.json')
+                if not frozen.exists():
+                    with frozen.open('xb') as stream:stream.write(raw)
     request = write_cpa_semantic_request_artifact(request, args.request_json)
 
     command = args.cpa_command.format(request_json=str(args.request_json), response_json=str(args.response_json))

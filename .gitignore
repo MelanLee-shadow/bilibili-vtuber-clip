@@ -33,11 +33,6 @@ lidousha/**
 *.part
 *.ts
 *.mov
-*.wav
-*.mp3
-*.m4a
-*.flac
-*.ogg
 
 # Secrets
 .env

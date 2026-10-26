@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from src.autoslice import agy_gemini_client
+from src.autoslice.completed_review_checkpoint import CompletedReviewCheckpointError
 
 
 SCHEMA_VERSION = "agy-frame-witness.v1"
@@ -37,7 +38,7 @@ _agy_bin = agy_gemini_client.resolve_local_agy_binary
 
 
 def _agy_model() -> str:
-    return os.environ.get("AGY_VISION_MODEL", "Gemini 3.6 Flash (High)")
+    return os.environ.get("AGY_VISION_MODEL", agy_gemini_client.DEFAULT_AGY_FLASH_HIGH)
 
 
 def _vision_prompt(question: str) -> str:
@@ -64,15 +65,19 @@ def _gemini_vision_fallback(
     answer_box: dict[str, str] = {}
 
     def observe(key: str) -> str:
-        raw = agy_gemini_client.generate_content(
-            prompt=prompt,
-            key=key,
-            model=model,
-            inline_data=frame_jpeg,
-            mime_type="image/jpeg",
-            response_mime_type=None,
-            timeout_seconds=int(max(30, timeout_seconds)),
-        ).strip()
+        from .completed_review_checkpoint import ruling_response
+        from .llm_client import CpaCompletion
+        def send(_prompt):
+            return CpaCompletion(agy_gemini_client.generate_content(
+                prompt=prompt, key=key, model=model, inline_data=frame_jpeg,
+                mime_type='image/jpeg',
+                response_mime_type='application/json' if 'json' in question.lower() else None,
+                timeout_seconds=int(max(30, timeout_seconds))).strip(), model)
+        send.cpa_cache_identity = {'transport': 'gemini_vision', 'models': [model], 'effort': 'native'}
+        raw, hit = ruling_response(stage='vision-ruling', prompt=prompt, llm_call=send,
+            inputs={'image_sha256s': [_sha256_bytes(frame_jpeg)]}, parser_path=Path(__file__))
+        if hit:
+            receipt['served_from_cache'] = True
         if not raw:
             raise ValueError("empty Gemini visual response")
         answer_box["answer"] = raw
@@ -215,6 +220,7 @@ def _vision_qa(
         ).encode("utf-8")
     )
     provider_failures: list[dict[str, object]] = []
+    runs = []
     try:
         with tempfile.TemporaryDirectory(prefix="autoslice-agy-frame-") as raw_dir:
             job_dir = Path(raw_dir)
@@ -228,8 +234,7 @@ def _vision_qa(
                 f"Question:\n{question}\n",
                 encoding="utf-8",
             )
-            run = agy_gemini_client.run_local_agy(
-                agy_gemini_client.agy_argv(
+            argv = agy_gemini_client.agy_argv(
                     _agy_bin(),
                     job_dir=job_dir,
                     model=model,
@@ -239,19 +244,66 @@ def _vision_qa(
                         "other file or directory. Do not use shell or terminal."
                     ),
                     print_timeout=os.environ.get("AGY_VISION_PRINT_TIMEOUT", "5m"),
-                ),
-                cwd=job_dir,
-                timeout=timeout_seconds,
-            )
-            completed = run.completed
+                    json_mode='json' in question.lower(),
+                )
+            from .completed_review_checkpoint import ruling_response
+            from .llm_client import CpaCompletion
+            def send(_prompt):
+                current = agy_gemini_client.run_local_agy(argv, cwd=job_dir, timeout=timeout_seconds,
+                    **({'cpa_prompt': prompt_path.read_text(encoding='utf-8'), 'cpa_files': [image_path],
+                        'cpa_response_mime_type': 'application/json' if 'json' in question.lower() else None}
+                       if agy_gemini_client.cpa_gemini_client.enabled() else {}))
+                if getattr(current, 'transport_receipt', None) is not None:
+                    receipt['transport_receipt'] = dict(current.transport_receipt)
+                runs.append(current)
+                if (current.completed is None or current.completed.returncode != 0
+                        or not current.completed.stdout.strip()):
+                    raise RuntimeError('AGY_VISION_TRANSPORT_UNAVAILABLE')
+                if getattr(current, 'transport_receipt', None) is not None:
+                    return CpaCompletion(json.dumps({'_autoslice_transport': 'cpa_gemini_native',
+                        'text': current.completed.stdout, 'receipt': dict(current.transport_receipt)}), model)
+                return CpaCompletion(current.completed.stdout, model)
+            send.cpa_cache_identity = {'transport': 'agy_vision', 'models': [model], 'effort': 'native'}
+            raw, hit = ruling_response(stage='vision-ruling', prompt=question, llm_call=send,
+                inputs={'image_sha256s': [_sha256_bytes(frame_jpeg)]}, parser_path=Path(__file__))
+            try:
+                envelope = json.loads(raw)
+            except ValueError:
+                envelope = None
+            if isinstance(envelope, dict) and envelope.get('_autoslice_transport') == 'cpa_gemini_native':
+                config: agy_gemini_client.cpa_gemini_client.JsonObject = {'maxOutputTokens': 65536}
+                if 'json' in question.lower():
+                    config['responseMimeType'] = 'application/json'
+                if '--json-schema' in argv:
+                    config['responseJsonSchema'] = json.loads(Path(argv[argv.index('--json-schema') + 1]).read_text(encoding='utf-8'))
+                agy_gemini_client.cpa_gemini_client.validate_file_receipt(
+                    receipt=envelope['receipt'], prompt=prompt_path.read_text(encoding='utf-8'),
+                    model=model, files=[image_path], text=envelope['text'], generation_config=config)
+                receipt['transport_receipt'] = envelope['receipt']
+                raw = envelope['text']
+            # The current native decoder consumes the saved stdout too. A
+            # replay is explicitly disclosed; no new process is claimed.
+            completed = subprocess.CompletedProcess(argv, 0, raw, '')
+            run = agy_gemini_client.AgyRun(completed=completed, failure_category=None)
+            if hit:
+                receipt['served_from_cache'] = True
+    except CompletedReviewCheckpointError:
+        receipt.update(status='UNAVAILABLE', reason_code='VISION_WITNESS_UNAVAILABLE',
+                       failure_layer='CONTRACT_ERROR')
+        return receipt
     except Exception as exc:
-        completed = None
-        run = agy_gemini_client.AgyRun(
-            completed=None,
-            failure_category="AGY_VISION_CALL_FAILED",
-            launch_error_type=type(exc).__name__,
-            launch_error=exc,
-        )
+        if agy_gemini_client.cpa_gemini_client.enabled():
+            receipt.update(status='UNAVAILABLE', reason_code='VISION_WITNESS_UNAVAILABLE',
+                           error_type=type(exc).__name__)
+            return receipt
+        if runs:
+            run = runs[-1]
+            completed = run.completed
+        else:
+            completed = None
+            run = agy_gemini_client.AgyRun(
+                completed=None, failure_category='AGY_VISION_CALL_FAILED',
+                launch_error_type=type(exc).__name__, launch_error=exc)
     if completed is None:
         provider_failures.append(
             {
@@ -268,6 +320,16 @@ def _vision_qa(
             timeout_seconds=timeout_seconds,
         )
     answer = completed.stdout.strip()
+    if (completed.returncode == 0 and completed.stdout.strip() and 'json' in question.lower()
+            and 'transport_receipt' not in receipt):
+        from .structured_output import parse_agy_stream
+        try:
+            answer = parse_agy_stream(answer)
+        except (ValueError, TypeError):
+            receipt.update(status='UNAVAILABLE', reason_code='VISION_WITNESS_UNAVAILABLE',
+                           failure_layer='CONTRACT_ERROR',
+                           response_sha256=_sha256_bytes(completed.stdout.encode('utf-8')))
+            return receipt  # A complete bad contract is not another model opportunity.
     if completed.returncode != 0 or not answer:
         provider_failures.append(
             {

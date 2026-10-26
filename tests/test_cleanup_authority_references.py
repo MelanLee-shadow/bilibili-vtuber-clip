@@ -171,10 +171,7 @@ def test_new_namespace_entry_during_scan_is_detected(tmp_path, monkeypatch):
 
     def read(name, info):
         text = real_read(name, info)
-        before = path.parent.stat()
         path.with_name("new-authority.json").write_text("{}")
-        # Make the namespace drift observable even within one filesystem tick.
-        os.utime(path.parent, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
         return text
 
     monkeypatch.setattr(planner, "_authority_text", read)
@@ -207,6 +204,18 @@ def test_valid_document_at_exact_limit_is_not_rejected(tmp_path, monkeypatch):
     base, _ = document(tmp_path, b"12345678")
     monkeypatch.setattr(planner, "MAX_AUTHORITY_BYTES", 8)
     assert planner.authority_references(str(base)) == (set(), set())
+
+
+def test_large_authority_keeps_trailing_reference(tmp_path):
+    base, path = document(tmp_path)
+    target = base / "out" / "2026-08-22" / "auto_100000_1_2" / "working.wav"
+    prefix = b"x" * (20 * 2**20)
+    path.write_bytes(prefix + b"\n" + str(target).encode("utf-8"))
+
+    refs, dirs = planner.authority_references(str(base))
+
+    assert str(target) in refs
+    assert dirs == set()
 
 
 @pytest.mark.parametrize("existing_plan", [True, False])

@@ -9,7 +9,6 @@ import json
 import os
 from pathlib import Path
 import stat
-import tempfile
 import threading
 from typing import Any, Mapping
 
@@ -154,6 +153,47 @@ def _providers(snapshot: Mapping[str, object]) -> list[str]:
     return sorted(values)
 
 
+def _effective_enforce_limits(snapshot: Mapping[str, object]) -> bool:
+    """Read the v2 mode, treating a legacy missing flag as soft pressure."""
+
+    value = snapshot.get("enforce_limits", False)
+    if not isinstance(value, bool):
+        _history_error("enforcement mode is invalid")
+    return value
+
+
+def _budget_snapshots_equal_compat(
+    left: Mapping[str, object], right: Mapping[str, object]
+) -> bool:
+    """Compare snapshots while accepting a legacy missing soft-mode flag."""
+
+    old = dict(left)
+    new = dict(right)
+    old.setdefault("enforce_limits", False)
+    new.setdefault("enforce_limits", False)
+    return old == new
+
+
+def _receipt_payloads_equal_compat(
+    left: Mapping[str, object], right: Mapping[str, object]
+) -> bool:
+    """Compare receipts while ignoring only the legacy soft-mode metadata gap."""
+
+    old = dict(left)
+    new = dict(right)
+    old.pop("receipt_sha256", None)
+    new.pop("receipt_sha256", None)
+    old_budget = old.get("budget")
+    new_budget = new.get("budget")
+    if not isinstance(old_budget, Mapping) or not isinstance(new_budget, Mapping):
+        return old == new
+    old["budget"] = dict(old_budget)
+    new["budget"] = dict(new_budget)
+    old["budget"].setdefault("enforce_limits", False)
+    new["budget"].setdefault("enforce_limits", False)
+    return old == new
+
+
 def _load_existing(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
@@ -174,6 +214,191 @@ def _load_existing(path: Path) -> dict[str, Any] | None:
     return value
 
 
+def _source_locator(path: Path, *, label: str) -> Path:
+    """Return a strict, non-link source locator for a relocation check."""
+
+    try:
+        candidate = Path(path).expanduser().absolute()
+        _no_links(candidate)
+        resolved = candidate.resolve(strict=True)
+        _no_links(resolved)
+        info = resolved.lstat()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise BudgetReceiptPersistenceError(
+            f"native audio budget {label} source locator is unavailable"
+        ) from exc
+    if not stat.S_ISREG(info.st_mode):
+        raise BudgetReceiptPersistenceError(
+            f"native audio budget {label} source is not a regular file"
+        )
+    return resolved
+
+
+def _source_sha256_stable(path: Path, *, label: str) -> str:
+    """Hash one ordinary source file and reject a stat identity change."""
+
+    identity = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+
+    try:
+        _no_links(path)
+        before = path.stat()
+        if not stat.S_ISREG(before.st_mode):
+            raise BudgetReceiptPersistenceError(
+                f"native audio budget {label} source is not a regular file"
+            )
+        with path.open("rb") as handle:
+            opened_before = os.fstat(handle.fileno())
+            if tuple(getattr(opened_before, key) for key in identity) != tuple(
+                getattr(before, key) for key in identity
+            ):
+                raise BudgetReceiptPersistenceError(
+                    f"native audio budget {label} source changed while hashing"
+                )
+            if not stat.S_ISREG(opened_before.st_mode):
+                raise BudgetReceiptPersistenceError(
+                    f"native audio budget {label} source is not a regular file"
+                )
+            from .evidence_identity import EvidenceFileChangedError, file_sha256
+            try:
+                digest = file_sha256(path)
+            except EvidenceFileChangedError as exc:
+                raise BudgetReceiptPersistenceError(
+                    f"native audio budget {label} source changed while hashing") from exc
+            opened_after = os.fstat(handle.fileno())
+            if tuple(getattr(opened_after, key) for key in identity) != tuple(
+                getattr(before, key) for key in identity
+            ):
+                raise BudgetReceiptPersistenceError(
+                    f"native audio budget {label} source changed while hashing"
+                )
+        _no_links(path)
+        after = path.stat()
+    except BudgetReceiptPersistenceError:
+        raise
+    except (OSError, ValueError) as exc:
+        raise BudgetReceiptPersistenceError(
+            f"native audio budget {label} source could not be hashed"
+        ) from exc
+    if tuple(getattr(before, key) for key in identity) != tuple(
+        getattr(after, key) for key in identity
+    ):
+        raise BudgetReceiptPersistenceError(
+            f"native audio budget {label} source changed while hashing"
+        )
+    return digest
+
+
+def _relocation_archive_path(receipt_path: Path, original_receipt_sha256: str) -> Path:
+    digest = original_receipt_sha256.removeprefix("sha256:")
+    return receipt_path.with_name(f"{receipt_path.name}.original-{digest}.json")
+
+
+def _archive_original_receipt(
+    *, receipt_path: Path, raw_receipt: bytes, original_receipt_sha256: str,
+) -> Path:
+    """Create or verify the immutable raw receipt sibling for relocation."""
+
+    archive = _relocation_archive_path(receipt_path, original_receipt_sha256)
+    try:
+        _no_links(archive)
+        archive.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        _no_links(archive.parent)
+    except (OSError, ValueError) as exc:
+        raise BudgetReceiptPersistenceError(
+            "native audio budget relocation archive path is unsafe"
+        ) from exc
+
+    if archive.exists() or archive.is_symlink():
+        try:
+            info = archive.lstat()
+            if (
+                archive.is_symlink()
+                or not stat.S_ISREG(info.st_mode)
+                or info.st_nlink != 1
+                or stat.S_IMODE(info.st_mode) != 0o600
+                or archive.read_bytes() != raw_receipt
+            ):
+                raise BudgetReceiptPersistenceError(
+                    "native audio budget relocation archive conflicts"
+                )
+        except BudgetReceiptPersistenceError:
+            raise
+        except (OSError, ValueError) as exc:
+            raise BudgetReceiptPersistenceError(
+                "native audio budget relocation archive is unreadable"
+            ) from exc
+        return archive
+
+    from src.autoslice.audio_cache_io import atomic_write
+    try:
+        published = atomic_write(archive, raw_receipt, create_only=True)
+    except (OSError, ValueError) as exc:
+        raise BudgetReceiptPersistenceError(
+            "native audio budget relocation archive could not be written"
+        ) from exc
+    if not published:
+        return _archive_original_receipt(
+            receipt_path=receipt_path, raw_receipt=raw_receipt,
+            original_receipt_sha256=original_receipt_sha256,
+        )
+
+    return archive
+
+
+def _prepare_source_relocation(
+    *,
+    existing: Mapping[str, object],
+    receipt_path: Path,
+    source_media: Path,
+    source_media_sha256: str,
+    target_locator: str,
+) -> tuple[dict[str, Any], bytes, str]:
+    """Validate a byte-identical path move without mutating the receipt."""
+
+    budget = existing.get("budget")
+    old_locator = budget.get("source_media") if isinstance(budget, Mapping) else None
+    if not isinstance(old_locator, str) or not old_locator.strip():
+        raise BudgetReceiptPersistenceError(
+            "native audio budget source locator is invalid"
+        )
+    old_path = _source_locator(Path(old_locator), label="original")
+    new_path = _source_locator(source_media, label="replacement")
+    if str(new_path) != target_locator:
+        raise BudgetReceiptPersistenceError(
+            "native audio budget replacement source locator changed"
+        )
+    old_digest = _source_sha256_stable(old_path, label="original")
+    new_digest = _source_sha256_stable(new_path, label="replacement")
+    if old_digest != source_media_sha256 or new_digest != source_media_sha256:
+        raise BudgetReceiptPersistenceError(
+            "native audio budget source bytes do not match frozen SHA"
+        )
+
+    try:
+        raw_receipt = receipt_path.read_bytes()
+        if json.loads(raw_receipt.decode("utf-8")) != dict(existing):
+            raise BudgetReceiptPersistenceError(
+                "native audio budget receipt changed during relocation"
+            )
+    except BudgetReceiptPersistenceError:
+        raise
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise BudgetReceiptPersistenceError(
+            "native audio budget receipt could not be archived"
+        ) from exc
+
+    relocated_budget = dict(budget) if isinstance(budget, Mapping) else {}
+    relocated_budget["source_media"] = target_locator
+    relocated = dict(existing)
+    relocated["budget"] = relocated_budget
+    relocated["receipt_sha256"] = receipt_sha256(relocated)
+    return relocated, raw_receipt, str(existing["receipt_sha256"])
+
+
+def _snapshot_schema(snapshot) -> str:
+    return "native-audio-budget.v3" if isinstance(snapshot, Mapping) and "account_history" in snapshot else SCHEMA_VERSION
+
+
 def _validate_existing(
     existing: Mapping[str, object],
     *,
@@ -182,7 +407,7 @@ def _validate_existing(
     budget = existing.get("budget")
     revision = budget.get("revision") if isinstance(budget, Mapping) else None
     if (
-        existing.get("schema_version") != SCHEMA_VERSION
+        existing.get("schema_version") != _snapshot_schema(budget)
         or existing.get("source_media_sha256") != source_media_sha256
         or isinstance(revision, bool)
         or not isinstance(revision, int)
@@ -235,14 +460,17 @@ def require_native_audio_budget_continuity(
         snapshot = budget.snapshot()
         _validate_budget_history(snapshot)
         expected = {
-            "schema_version": SCHEMA_VERSION,
+            "schema_version": _snapshot_schema(snapshot),
             "source_media_sha256": source_media_sha256,
             "revision": snapshot.get("revision"),
             "providers": _providers(snapshot),
             "budget": snapshot,
         }
         expected["receipt_sha256"] = receipt_sha256(expected)
-        if snapshot.get("source_media") != str(source_media.resolve()) or existing != expected:
+        if (
+            snapshot.get("source_media") != str(source_media.resolve())
+            or not _receipt_payloads_equal_compat(existing, expected)
+        ):
             raise BudgetReceiptPersistenceError(
                 "native audio budget receipt does not match the active process ledger"
             )
@@ -274,16 +502,75 @@ def resume_native_audio_budget(
             return
         _validate_existing(existing, source_media_sha256=source_media_sha256)
         _validate_budget_history(existing["budget"])
+        target_locator = str(_source_locator(source_media, label="replacement"))
         snapshot = budget.snapshot()
         _validate_budget_history(snapshot)
-        if snapshot["source_media"] != str(source_media.resolve()):
+        if snapshot["source_media"] != target_locator:
             raise BudgetReceiptPersistenceError("native audio budget source binding is invalid")
         active = {"budget": snapshot, "providers": _providers(snapshot)}
+        relocation: tuple[dict[str, Any], bytes, str] | None = None
+        existing_budget = existing.get("budget")
+        existing_locator = (
+            existing_budget.get("source_media")
+            if isinstance(existing_budget, Mapping)
+            else None
+        )
+        if existing_locator != target_locator:
+            relocation = _prepare_source_relocation(
+                existing=existing,
+                receipt_path=path,
+                source_media=source_media,
+                source_media_sha256=source_media_sha256,
+                target_locator=target_locator,
+            )
+            relocated, _raw_receipt, _original_receipt_sha256 = relocation
+            # Check the target ledger against the relocated receipt before any
+            # archive or canonical receipt write. A conflicting target history
+            # must remain entirely untouched.
+            if relocated["revision"] >= snapshot["revision"]:
+                _require_budget_history_extension(active, relocated)
+                if (
+                    relocated["revision"] == snapshot["revision"]
+                    and not _budget_snapshots_equal_compat(
+                        relocated["budget"], snapshot
+                    )
+                ):
+                    raise BudgetReceiptPersistenceError(
+                        "native audio history conflicts at one revision"
+                    )
+            else:
+                _require_budget_history_extension(relocated, active)
+            _archive_original_receipt(
+                receipt_path=path,
+                raw_receipt=relocation[1],
+                original_receipt_sha256=relocation[2],
+            )
+            if snapshot["revision"] > relocated["revision"]:
+                # The target process already has a validated append.  Write
+                # that complete target snapshot directly, rather than
+                # briefly replacing it with the older relocated receipt.
+                current_payload: dict[str, Any] = {
+                    "schema_version": _snapshot_schema(snapshot),
+                    "source_media_sha256": source_media_sha256,
+                    "revision": snapshot["revision"],
+                    "providers": _providers(snapshot),
+                    "budget": snapshot,
+                }
+                current_payload["receipt_sha256"] = receipt_sha256(current_payload)
+                _write_atomic(path, current_payload)
+                existing = current_payload
+            else:
+                _write_atomic(path, relocated)
+                existing = relocated
+
         if existing["revision"] >= snapshot["revision"]:
             # Includes a freshly restarted process with an empty ledger. Only a
             # valid extension of its history may be restored; no branch merging.
             _require_budget_history_extension(active, existing)
-            if existing["revision"] == snapshot["revision"] and existing["budget"] != snapshot:
+            if (
+                existing["revision"] == snapshot["revision"]
+                and not _budget_snapshots_equal_compat(existing["budget"], snapshot)
+            ):
                 raise BudgetReceiptPersistenceError("native audio history conflicts at one revision")
             try:
                 budget.restore_validated_snapshot(existing["budget"])
@@ -298,7 +585,8 @@ def resume_native_audio_budget(
                 receipt_path=path,
             )
         # No pending==0 requirement: the existing exact cache is checked next;
-        # a miss reserves another attempt under the unchanged cumulative caps.
+        # a miss reserves another attempt under the unchanged soft targets or
+        # an explicitly enforced source budget.
 
 
 def _history_error(detail: str) -> None:
@@ -313,7 +601,12 @@ def _validate_budget_history(snapshot: Mapping[str, object]) -> None:
     """
     if not isinstance(snapshot, Mapping):
         _history_error("snapshot is not an object")
+    if "account_history" in snapshot:
+        from src.autoslice.native_audio_history_reconciliation import validate_snapshot
+        validate_snapshot(snapshot)
+        return
     limits = ("max_windows", "max_window_ms", "max_audio_ms")
+    enforce_limits = _effective_enforce_limits(snapshot)
     for key in limits:
         if type(snapshot.get(key)) is not int or snapshot[key] <= 0:
             _history_error("limits are invalid")
@@ -338,7 +631,7 @@ def _validate_budget_history(snapshot: Mapping[str, object]) -> None:
                 _history_error("event geometry is invalid")
             if not 0 <= row["start_ms"] < row["end_ms"]:
                 _history_error("event geometry is invalid")
-            if row["duration_ms"] != row["end_ms"] - row["start_ms"] or row["duration_ms"] > MAX_WINDOW_MS:
+            if row["duration_ms"] != row["end_ms"] - row["start_ms"]:
                 _history_error("event duration is invalid")
         return values
 
@@ -394,12 +687,27 @@ def _validate_budget_history(snapshot: Mapping[str, object]) -> None:
         "remaining_windows": max(0, snapshot["max_windows"] - len(windows)),
         "remaining_audio_ms": max(0, snapshot["max_audio_ms"] - total),
     }
-    if len(windows) > snapshot["max_windows"] or total > snapshot["max_audio_ms"]:
+    if enforce_limits and (
+        len(windows) > snapshot["max_windows"]
+        or total > snapshot["max_audio_ms"]
+        or any(row["duration_ms"] > MAX_WINDOW_MS for row in attempts)
+    ):
         _history_error("attempts exceed configured limits")
     for key, value in counters.items():
         if type(snapshot.get(key)) is not int or snapshot[key] != value:
             _history_error("derived counters do not match events")
-    if set(snapshot) != set(counters) | set(limits) | {"source_media", "windows", "attempts", "cache_hits", "refusals"}:
+    base_fields = (
+        set(counters)
+        | set(limits)
+        | {
+            "source_media",
+            "windows",
+            "attempts",
+            "cache_hits",
+            "refusals",
+        }
+    )
+    if set(snapshot) not in (base_fields, base_fields | {"enforce_limits"}):
         _history_error("snapshot fields are invalid")
 
 
@@ -407,11 +715,18 @@ def _require_budget_history_extension(existing: Mapping[str, object], payload: M
     """Allow append and pending-to-terminal sealing, never erase old events."""
     old = existing.get("budget")
     new = payload.get("budget")
+    if (isinstance(old, Mapping) and "account_history" in old
+            or isinstance(new, Mapping) and "account_history" in new):
+        from src.autoslice.native_audio_history_reconciliation import require_extension
+        require_extension(existing, payload)
+        return
     _validate_budget_history(old)
     _validate_budget_history(new)
     for key in ("source_media", "max_windows", "max_window_ms", "max_audio_ms"):
         if old[key] != new[key]:
             _history_error("source or limits changed across receipts")
+    if _effective_enforce_limits(old) != _effective_enforce_limits(new):
+        _history_error("enforcement mode changed across receipts")
     if existing.get("providers") != _providers(old) or payload.get("providers") != _providers(new):
         _history_error("provider summary does not match events")
     if len(new["attempts"]) < len(old["attempts"]):
@@ -432,40 +747,16 @@ def _require_budget_history_extension(existing: Mapping[str, object], payload: M
 
 
 def _write_atomic(path: Path, payload: Mapping[str, object]) -> None:
-    temp: Path | None = None
+    from src.autoslice.audio_cache_io import atomic_write
+
     try:
         _no_links(path)
-        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        _no_links(path.parent)
-        descriptor, name = tempfile.mkstemp(
-            prefix=".native-audio-budget-",
-            suffix=".json",
-            dir=path.parent,
-        )
-        temp = Path(name)
-        # Atomic rename alone is not a durable pre-dispatch reservation. Flush
-        # the complete payload first, then commit and sync the directory entry.
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fchmod(handle.fileno(), 0o600)
-            os.fsync(handle.fileno())
-        _no_links(path)
-        os.replace(temp, path)
-        temp = None
-        directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        atomic_write(path, (json.dumps(payload, ensure_ascii=False, indent=2,
+                                      sort_keys=True) + "\n").encode("utf-8"))
     except (OSError, TypeError, ValueError) as exc:
         raise BudgetReceiptPersistenceError(
             "native audio budget receipt could not be persisted"
         ) from exc
-    finally:
-        if temp is not None:
-            temp.unlink(missing_ok=True)
 
 
 def persist_native_audio_budget_receipt(
@@ -496,7 +787,7 @@ def persist_native_audio_budget_receipt(
             )
         _validate_budget_history(snapshot)
         payload: dict[str, Any] = {
-            "schema_version": SCHEMA_VERSION,
+            "schema_version": _snapshot_schema(snapshot),
             "source_media_sha256": source_media_sha256,
             "revision": revision,
             "providers": _providers(snapshot),
@@ -514,7 +805,7 @@ def persist_native_audio_budget_receipt(
                     "native audio budget receipt revision would regress"
                 )
             if existing_revision == revision:
-                if existing != payload:
+                if not _budget_snapshots_equal_compat(existing["budget"], payload["budget"]):
                     raise BudgetReceiptPersistenceError(
                         "native audio budget receipt conflicts at one revision"
                     )
@@ -522,7 +813,13 @@ def persist_native_audio_budget_receipt(
             # another process can have a larger revision and unrelated history.
             _require_budget_history_extension(existing, payload)
             if existing_revision == revision:
-                return dict(existing)
+                if existing == payload:
+                    return dict(existing)
+                # Upgrade only legacy receipt metadata. Historical attempts and
+                # refusals remain unchanged; their source/hash identity is not
+                # reset or refunded.
+                _write_atomic(resolved_receipt, payload)
+                return payload
         _write_atomic(resolved_receipt, payload)
         return payload
 

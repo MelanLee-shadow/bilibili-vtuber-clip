@@ -17,6 +17,7 @@ from typing import Callable, Mapping, Protocol
 
 from scripts.apply_speaker_turn_overrides import Cue, sha256_file, write_ass, write_srt
 from scripts.apply_subtitle_text_overrides import parse_srt
+from src.autoslice.channel_profile import LABEL_RE
 from src.autoslice.redelivery_full_window_replay import (
     _DELIVERY_PROJECTION_COORDINATE_SCHEMA,
     _DELIVERY_PROJECTION_SCHEMA,
@@ -35,7 +36,6 @@ class _RegularBinding(Protocol):
 
 
 _SHA = re.compile(r"(?:sha256:)?([0-9a-f]{64})\Z")
-_LABEL = re.compile(r"^\[([^\]]+)\]\s*(.+)\Z")
 _SUCCESSOR_SCHEMA = "reviewed-baseline-text-only-speaker-successor.v1"
 
 
@@ -603,11 +603,13 @@ def _validate_old_speaker_against_diagnostic(
             or (old.start, old.end) != (labelled.start, labelled.end)
         ):
             _fail("CUE_INDEX_OR_TIMING_DRIFT")
-        label = _LABEL.fullmatch(labelled.text)
-        if label is None or label.group(2) != old.text or (
+        label = LABEL_RE.fullmatch(labelled.text)
+        # Binding compares the raw label, not an identity with its score removed.
+        speaker = labelled.text[1:labelled.text.index("]")] if label is not None else None
+        if label is None or not label.group(2) or "\n" in label.group(2) or label.group(2) != old.text or (
             raw.get("source_index"), raw.get("start"), raw.get("end"),
             raw.get("speaker"), raw.get("text"), raw.get("layer"), raw.get("placement"),
-        ) != (index, old.start, old.end, label.group(1), old.text, 0, "main"):
+        ) != (index, old.start, old.end, speaker, old.text, 0, "main"):
             _fail("SPEAKER_LABEL_OR_DECISION_DRIFT")
         if (
             not isinstance(raw.get("decision_source"), str)
@@ -732,7 +734,7 @@ def materialize_text_only_speaker_successor(
             _fail("CUE_INDEX_DRIFT")
         if grid_mode == "FULL_RELEASE" and (old.start, old.end) != (new.start, new.end):
             _fail("CUE_TIMING_DRIFT")
-        label = _LABEL.fullmatch(labelled.text)
+        label = LABEL_RE.fullmatch(labelled.text)
         assert label is not None  # already proved for every old row
         expected = deltas.get(old_index, old.text)
         if release.text != expected or (release.text != old.text) != (old_index in deltas) or new.text != release.text:
@@ -742,10 +744,10 @@ def materialize_text_only_speaker_successor(
         copied["start"], copied["end"] = new.start, new.end
         copied["text"] = new.text
         successor_decisions.append(copied)
-        successor_cues.append(Cue(delivery_index, new.start, new.end, label.group(1), new.text, str(raw.get("decision_source") or ""), raw.get("authority"), raw.get("note"), raw.get("speaker_detail"), int(raw.get("layer") or 0), str(raw.get("placement") or "main")))
+        successor_cues.append(Cue(delivery_index, new.start, new.end, labelled.text[1:labelled.text.index("]")], new.text, str(raw.get("decision_source") or ""), raw.get("authority"), raw.get("note"), raw.get("speaker_detail"), int(raw.get("layer") or 0), str(raw.get("placement") or "main")))
 
     write_srt(successor_cues, output_srt)
-    write_ass(successor_cues, output_ass, show_speaker_labels=False)
+    write_ass(successor_cues, output_ass)
     result = deepcopy(old_manifest)
     result.update({
         "status": "READY", "production_ready": True, "source_media": str(new_media),

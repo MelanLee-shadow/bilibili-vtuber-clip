@@ -38,7 +38,7 @@ SCREENSHOT_ROUTE_TREATMENTS = ("screenshot_direct", "screenshot_polish")
 SCREENSHOT_REPAIR_TOOL = "scripts/repair_screenshot_cover.py"
 DISPLACEMENT_SCHEMA = "cover-repair-route-displacement.v1"
 SCREENSHOT_REPAIR_REQUIRED = "COVER_SCREENSHOT_ROUTE_REPAIR_REQUIRED"
-_SCREENSHOT_IMAGE_MODELS = {"gpt-image-2", "gpt-image-1.5"}
+_SCREENSHOT_IMAGE_MODELS = {"gpt-image-2.5", "gpt-image-2", "gpt-image-1.5"}
 _SHA256_RX = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _SCREENSHOT_FROZEN_GENERATION_KEYS = (
     "workflow",
@@ -260,7 +260,10 @@ def validate_screenshot_generation_document(
         and model_fallback_used == (len(attempted_models) > 1)
         and (
             not model_fallback_used
-            or attempted_models == ["gpt-image-2", "gpt-image-1.5"]
+            or attempted_models in (
+                ["gpt-image-2.5", "gpt-image-2"],
+                ["gpt-image-2", "gpt-image-1.5"],  # Historical receipts remain valid.
+            )
         )
     )
     if method == "screenshot_direct":
@@ -368,6 +371,21 @@ def validate_cover_generation_for_binding(
         method = json.loads(manifest_path.read_text(encoding="utf-8")).get("method")
     except (OSError, AttributeError, TypeError, ValueError) as exc:
         raise ValueError(f"cover generation manifest is missing or invalid: {exc}") from exc
+    from src.autoslice.builtin_imagegen_cover import (
+        METHOD as BUILTIN_METHOD, validate_builtin_imagegen_provenance,
+    )
+    if method == BUILTIN_METHOD:
+        document = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if (
+            document.get("status") != "AI_COVER_READY"
+            or document.get("candidate_id") != candidate_id
+            or document.get("title") != title
+            or Path(str(document.get("final_cover") or "")).resolve(strict=True) != cover.resolve(strict=True)
+            or not validate_builtin_imagegen_provenance(document)
+            or not validate_cover_route_decision(document, allow_legacy_v1=False)
+        ):
+            raise ValueError("BUILTIN_COVER_BINDING_INVALID")
+        return document, manifest_path
     if method in SCREENSHOT_ROUTE_TREATMENTS:
         validated = _validate_screenshot_generation(
             cover=cover, title=title, candidate_id=candidate_id, method=method

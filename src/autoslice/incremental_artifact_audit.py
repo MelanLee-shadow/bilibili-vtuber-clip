@@ -18,6 +18,7 @@ verdict.  All writes are create-only and hash-bound.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import difflib
 import hashlib
 import json
@@ -225,11 +226,8 @@ def _sha256_bytes(value: bytes) -> str:
 
 
 def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return "sha256:" + digest
 
 
 

@@ -23,6 +23,13 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.autoslice.review_evidence_store import expand
 
 MEDIA_EXT = {
     ".mp4", ".m4s", ".mp3", ".wav", ".flac", ".m4a", ".mkv", ".ts", ".aac",
@@ -59,7 +66,7 @@ def surviving_stem_index(base: str) -> dict[tuple[str, str], set[str]]:
     for record in glob.glob(f"{base}/repo/lidousha/*/*.record.json"):
         try:
             with open(record, encoding="utf-8") as fh:
-                doc = json.load(fh)
+                doc = expand(json.load(fh))
         except (OSError, ValueError):
             continue
         day_dir = os.path.dirname(record)
@@ -149,7 +156,7 @@ def main() -> int:
             continue
         try:
             with open(state_file, encoding="utf-8") as fh:
-                doc = json.load(fh)
+                doc = expand(json.load(fh))
         except (OSError, ValueError) as exc:
             print(f"PARSE-FAIL {name}: {exc}", file=sys.stderr)
             continue

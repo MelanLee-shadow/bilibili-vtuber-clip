@@ -1,3 +1,4 @@
+import pytest
 
 from src.autoslice.review_package_boundary_validators import (
     expected_boundary_authority,
@@ -184,3 +185,13 @@ def test_exact_pin_crossing_rejects_delivery_past_frozen_pin():
 
 
 # Public synthetic boundary tests end here.
+@pytest.mark.parametrize('change',[None,'summary','request_sha256','cue_grid_sha256','final_endpoint_binding','source_separation_witness','status'])
+def test_portable_boundary_comparison_ignores_only_explanatory_prose(change):
+    from copy import deepcopy
+    from src.autoslice.review_package_boundary_contract import _same_boundary_observation
+    original={'request_sha256':'sha256:'+'a'*64,'cue_grid_sha256':'sha256:'+'b'*64,
+        'final_endpoint_binding':{'final_end_ms':100},'source_separation_witness':{'source_request_sha256':'sha256:'+'c'*64},
+        'status':'PASS','summary':'Original completed observation'}
+    current=deepcopy(original)
+    if change:current[change]='changed'
+    assert _same_boundary_observation(original,current)==(change in {None,'summary'})

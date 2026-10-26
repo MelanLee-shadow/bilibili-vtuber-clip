@@ -7,7 +7,7 @@
 四组金丝雀，每组都写明「摘掉什么会让它变红」：
 ① AGY 缺席 + mock Gemini：各入口拿到结果、回执标 AGY_BINARY_ABSENT。
 ② AGY 在场：仍优先 AGY，不碰 Gemini。
-③ key 顺序：免费 3 key 轮换 → 全 429 才动付费，且记一笔账。
+③ key 顺序：免费 3 key 轮换 → policy 门控付费，且每次调用记账。
 ④ 路径解析：不得出现写死的 /root/...（本机腿）。
 """
 
@@ -118,7 +118,7 @@ def test_remote_rc_127_means_absent_not_generic_failure():
 
 
 # --------------------------------------------------------------------------
-# ③ key 顺序：免费 3 key → 全 429 才动付费，且记账
+# ③ key 顺序：免费 3 key → policy 门控付费，且每次调用记账
 # --------------------------------------------------------------------------
 
 
@@ -336,6 +336,8 @@ def test_generate_content_sends_key_only_in_header_and_supports_both_modalities(
     # 密钥只在 header，绝不进 URL / query。
     assert "secret-key" not in audio_call["url"]
     assert audio_call["headers"]["X-goog-api-key"] == "secret-key"
+    assert "temperature" not in audio_call["body"]["generationConfig"]
+    assert "thinkingConfig" not in audio_call["body"]["generationConfig"]
     assert (
         audio_call["body"]["contents"][0]["parts"][1]["inline_data"]["mime_type"]
         == "audio/mpeg"
@@ -345,6 +347,134 @@ def test_generate_content_sends_key_only_in_header_and_supports_both_modalities(
         "image/jpeg",
         "image/jpeg",
     ]
+
+
+@pytest.mark.parametrize("model", ["gemini-3.7-flash", "gemini-3.8-flash"])
+def test_generate_content_rejects_unsupported_level_before_network(monkeypatch, model):
+    calls = 0
+
+    def explode(*_args, **_kwargs):  # pragma: no cover - must never run
+        nonlocal calls
+        calls += 1
+        raise AssertionError("invalid thinking level reached the network")
+
+    monkeypatch.setattr(agy_gemini_client.urllib.request, "urlopen", explode)
+    with pytest.raises(agy_gemini_client.GeminiRequestConfigError, match="thinkingLevel"):
+        agy_gemini_client.generate_content(
+            prompt="x",
+            key="k",
+            model=model,
+            thinking={"thinkingLevel": "minimal"},
+        )
+    assert calls == 0
+
+
+def test_generate_content_rejects_mixed_thinking_fields_before_network(monkeypatch):
+    monkeypatch.setattr(
+        agy_gemini_client.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("mixed thinking config reached the network")
+        ),
+    )
+    with pytest.raises(agy_gemini_client.GeminiRequestConfigError, match="mutually exclusive"):
+        agy_gemini_client.generate_content(
+            prompt="x",
+            key="k",
+            model="gemini-3.6-flash",
+            thinking={"thinkingBudget": 512, "thinkingLevel": "high"},
+        )
+
+
+def test_generate_content_preserves_legacy_budget_and_sampling(monkeypatch):
+    seen: list[dict] = []
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout=None):
+        seen.append(json.loads(request.data.decode("utf-8")))
+        return _Resp()
+
+    monkeypatch.setattr(agy_gemini_client.urllib.request, "urlopen", fake_urlopen)
+    assert (
+        agy_gemini_client.generate_content(
+            prompt="x",
+            key="k",
+            model="gemini-2.5-flash",
+            temperature=0.2,
+            thinking={"thinkingBudget": 512},
+        )
+        == "ok"
+    )
+    config = seen[0]["generationConfig"]
+    assert config["temperature"] == 0.2
+    assert config["thinkingConfig"] == {"thinkingBudget": 512}
+
+
+@pytest.mark.parametrize(
+    ("model", "kwargs"),
+    [
+        ("unknown-model", {"temperature": 0.2}),
+        ("unknown-model", {"thinking": {"thinkingLevel": "high"}}),
+        ("gemini-3.6-flash", {"temperature": 0.2}),
+    ],
+)
+def test_generate_content_rejects_unknown_or_gemini3_optional_sampling_before_network(
+    monkeypatch, model, kwargs
+):
+    calls = 0
+
+    def explode(*_args, **_kwargs):  # pragma: no cover - must never run
+        nonlocal calls
+        calls += 1
+        raise AssertionError("incompatible generation config reached the network")
+
+    monkeypatch.setattr(agy_gemini_client.urllib.request, "urlopen", explode)
+    with pytest.raises(agy_gemini_client.GeminiRequestConfigError):
+        agy_gemini_client.generate_content(prompt="x", key="k", model=model, **kwargs)
+    assert calls == 0
+
+
+def test_generate_content_does_not_retry_http_400_when_degrade_flag_is_true(monkeypatch):
+    calls: list[bytes] = []
+
+    def reject(request, timeout=None):
+        calls.append(request.data)
+        raise urllib.error.HTTPError(request.full_url, 400, "bad request", {}, None)
+
+    monkeypatch.setattr(agy_gemini_client.urllib.request, "urlopen", reject)
+    with pytest.raises(urllib.error.HTTPError):
+        agy_gemini_client.generate_content(
+            prompt="x",
+            key="k",
+            model="gemini-3.6-flash",
+            thinking={"thinkingLevel": "high"},
+            degrade_on_400=True,
+        )
+    assert len(calls) == 1
+    body = json.loads(calls[0].decode("utf-8"))
+    assert body["generationConfig"] == {
+            "maxOutputTokens": 65_536,
+            "responseMimeType": "application/json",
+            "thinkingConfig": {"thinkingLevel": "HIGH"},
+        }
+
+
+def test_request_config_error_has_distinct_failure_category():
+    error = agy_gemini_client.GeminiRequestConfigError("invalid request config")
+    assert agy_gemini_client.classify_gemini_failure(error) == (
+        "GEMINI_API_REQUEST_CONFIG_ERROR"
+    )
 
 
 def test_oversized_request_is_refused_before_any_network_call(monkeypatch):
@@ -590,3 +720,139 @@ def test_ssh_transcription_keeps_old_semantics_for_non_absent_failures(
     with pytest.raises(Exception) as excinfo:
         transcribe(media)
     assert getattr(excinfo.value, "reason_code", "") == "AGY_FAILED_RC"
+
+
+class _Unavailable(urllib.error.HTTPError):
+    def __init__(self, status: int = 503) -> None:
+        super().__init__("https://example.invalid", status, "unavailable", {}, None)
+
+
+@pytest.mark.parametrize("status", [500, 502, 503, 504])
+def test_5xx_on_first_free_key_still_tries_remaining_free_keys(monkeypatch, paid_ledger, status):
+    """a 5xx is a failed attempt, not a reason to skip keys 2 and 3."""
+
+    _configure_free_keys(monkeypatch, "free-1", "free-2", "free-3")
+    monkeypatch.setenv(gemini_backup_policy.PAID_KEY_ENV, "paid-key")
+    monkeypatch.delenv(gemini_backup_policy.DEV_EXCEPTION_ENV, raising=False)
+    tried: list[str] = []
+
+    def observe(key: str) -> str:
+        tried.append(key)
+        if key != "free-3":
+            raise _Unavailable(status)
+        return "accepted"
+
+    outcome = agy_gemini_client.run_gemini_key_ladder(
+        item_key="item-5xx-a", observe=observe, purpose="canary"
+    )
+
+    assert tried == ["free-1", "free-2", "free-3"]
+    assert outcome.observed == "accepted"
+    assert outcome.accepted_key_tier == gemini_backup_policy.FREE_KEY_TIER
+    assert outcome.accepted_key_ordinal == 3
+    assert outcome.last_attempt_round == 1
+    assert gemini_backup_policy.free_chain_strikes("item-5xx-a") == 0
+    assert not list(paid_ledger.glob("usage-*.jsonl"))
+
+
+@pytest.mark.parametrize("prior_strikes", [0, 1])
+def test_all_free_keys_5xx_records_one_strike_and_withholds_paid(monkeypatch, paid_ledger, prior_strikes):
+    _configure_free_keys(monkeypatch, "free-1", "free-2", "free-3")
+    monkeypatch.setenv(gemini_backup_policy.PAID_KEY_ENV, "paid-key")
+    monkeypatch.delenv(gemini_backup_policy.DEV_EXCEPTION_ENV, raising=False)
+    for _ in range(prior_strikes):
+        gemini_backup_policy.record_free_chain_failure("item-5xx-b")
+    tried: list[str] = []
+    failures, skipped = [], []
+
+    def observe(key: str) -> str:
+        tried.append(key)
+        raise _Unavailable()
+
+    outcome = agy_gemini_client.run_gemini_key_ladder(
+        item_key="item-5xx-b",
+        observe=observe,
+        purpose="canary",
+        record_failure=failures.append,
+        record_paid_skipped=lambda _o, _r, reason: skipped.append(reason),
+    )
+
+    assert tried == ["free-1", "free-2", "free-3"]
+    assert [f.http_status for f in failures] == [503, 503, 503]
+    assert [f.attempt_round for f in failures] == [1, 1, 1]
+    assert gemini_backup_policy.free_chain_strikes("item-5xx-b") == prior_strikes + 1
+    assert outcome.last_attempt_round == 1
+    assert not outcome.accepted
+    assert skipped == [f"FREE_CHAIN_STRIKES_{prior_strikes + 1}_BELOW_3"]
+    assert not list(paid_ledger.glob("usage-*.jsonl"))
+
+
+@pytest.mark.parametrize("paid_succeeds", [True, False])
+def test_third_all_5xx_round_unlocks_paid_once_and_ledgers_it(monkeypatch, paid_ledger, paid_succeeds):
+    _configure_free_keys(monkeypatch, "free-1", "free-2", "free-3")
+    monkeypatch.setenv(gemini_backup_policy.PAID_KEY_ENV, "paid-key")
+    monkeypatch.delenv(gemini_backup_policy.DEV_EXCEPTION_ENV, raising=False)
+    gemini_backup_policy.record_free_chain_failure("item-5xx-c")
+    gemini_backup_policy.record_free_chain_failure("item-5xx-c")
+    tried: list[str] = []
+
+    def observe(key: str) -> str:
+        tried.append(key)
+        if key == "paid-key" and paid_succeeds:
+            return "accepted"
+        raise _Unavailable()
+
+    outcome = agy_gemini_client.run_gemini_key_ladder(
+        item_key="item-5xx-c", observe=observe, purpose="canary"
+    )
+
+    assert tried == ["free-1", "free-2", "free-3", "paid-key"]
+    assert tried.count("paid-key") == 1
+    assert outcome.accepted is paid_succeeds
+    assert outcome.accepted_key_tier == (gemini_backup_policy.PAID_KEY_TIER if paid_succeeds else None)
+    assert outcome.last_attempt_round == 1
+    assert outcome.paid_gate_reason == "FREE_CHAIN_STRIKES_3"
+    assert gemini_backup_policy.free_chain_strikes("item-5xx-c") == 3
+    ledgered = list(paid_ledger.glob("usage-*.jsonl"))
+    assert len(ledgered) == 1
+    entries = [json.loads(line) for line in ledgered[0].read_text(encoding="utf-8").splitlines()]
+    assert len(entries) == 1
+    stamp = entries[0]
+    assert gemini_backup_policy.valid_paid_policy_stamp(
+        stamp, expected_purpose="canary", expected_item_key="item-5xx-c"
+    )
+    assert stamp["mode"] == "strict"
+    assert stamp["free_chain_strikes"] == 3
+    assert outcome.paid_policy_stamp == (stamp if paid_succeeds else None)
+
+
+def test_dev_exception_allows_paid_in_same_round_after_all_5xx(monkeypatch, paid_ledger):
+    _configure_free_keys(monkeypatch, "free-1", "free-2", "free-3")
+    monkeypatch.setenv(gemini_backup_policy.PAID_KEY_ENV, "paid-key")
+    monkeypatch.setenv(gemini_backup_policy.DEV_EXCEPTION_ENV, "1")
+    tried: list[str] = []
+
+    def observe(key: str) -> str:
+        tried.append(key)
+        if key == "paid-key":
+            return "accepted"
+        raise _Unavailable()
+
+    outcome = agy_gemini_client.run_gemini_key_ladder(
+        item_key="item-5xx-d", observe=observe, purpose="canary"
+    )
+
+    assert tried == ["free-1", "free-2", "free-3", "paid-key"]
+    assert outcome.accepted_key_tier == gemini_backup_policy.PAID_KEY_TIER
+    assert outcome.paid_gate_reason == "DEV_EXCEPTION"
+    assert outcome.last_attempt_round == 1
+    assert gemini_backup_policy.free_chain_strikes("item-5xx-d") == 1
+    ledgered = list(paid_ledger.glob("usage-*.jsonl"))
+    assert len(ledgered) == 1
+    entries = [json.loads(line) for line in ledgered[0].read_text(encoding="utf-8").splitlines()]
+    assert len(entries) == 1
+    assert entries[0] == outcome.paid_policy_stamp
+    assert entries[0]["mode"] == "dev_exception"
+    assert gemini_backup_policy.valid_paid_policy_stamp(
+        entries[0], expected_purpose="canary", expected_item_key="item-5xx-d"
+    )

@@ -9,7 +9,7 @@ pixels outside the existing deterministic blur/contain compositor.
 
 from __future__ import annotations
 
-import hashlib
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import json
 import math
 from collections.abc import Mapping, Sequence
@@ -36,11 +36,8 @@ class HostOnlySourceExclusionError(ValueError):
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return "sha256:" + digest
 
 
 def _box(value: object, *, label: str) -> tuple[float, float, float, float]:

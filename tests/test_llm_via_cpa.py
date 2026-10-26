@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from src.autoslice import llm_client
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "llm_via_cpa.sh"
@@ -90,6 +92,11 @@ if sequence:
 
 if os.environ.get("FAKE_CURL_FAIL") == "1" and not status:
     raise SystemExit(22)
+
+if status == "timeout":
+    if write_out:
+        sys.stdout.write("000")
+    raise SystemExit(28)
 
 if status == "empty":
     if out_path:
@@ -210,14 +217,17 @@ def _run_bridge(
     extra_args: tuple[str, ...] = (),
     status_sequence: tuple[str, ...] = (),
     env_overrides: dict[str, str] | None = None,
+    prompt_text: str = "return a safe completion",
+    cwd: Path | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], dict, Path, Path]:
     tool_dir, fake_tmp_root = _write_fake_tools(tmp_path)
     prompt = tmp_path / "prompt.txt"
     completion = tmp_path / "completion.txt"
     capture_path = tmp_path / "curl-capture.json"
-    prompt.write_text("return a safe completion", encoding="utf-8")
+    prompt.write_text(prompt_text, encoding="utf-8")
 
     env = os.environ.copy()
+    env.pop('PYTHONPATH', None)
     env.pop("CPA_CHAT_MODELS", None)
     env.pop("CPA_CHAT_MODEL", None)
     env.pop("CPA_REASONING_EFFORT", None)
@@ -261,7 +271,7 @@ def _run_bridge(
             str(completion),
             *extra_args,
         ],
-        cwd=REPO_ROOT,
+        cwd=cwd or REPO_ROOT,
         env=env,
         capture_output=True,
         text=True,
@@ -276,6 +286,64 @@ def _assert_secret_is_not_observable(completed: subprocess.CompletedProcess[str]
     assert SENTINEL_SECRET not in completed.stderr
     assert capture["secret_in_argv"] is False
     assert capture["secret_in_environment"] is False
+
+
+def test_usage_observer_bootstraps_fixed_repo_from_foreign_cwd(tmp_path):
+    usage = tmp_path / 'usage.jsonl'
+    completed, capture, completion, _ = _run_bridge(tmp_path, cwd=tmp_path,
+        env_overrides={'AUTOSLICE_CPA_USAGE_FILE': str(usage)})
+    assert completed.returncode == 0, completed.stderr
+    assert completion.read_text() == 'safe completion'
+    assert capture['invocation_count'] == 1
+    rows = [json.loads(line) for line in usage.read_text().splitlines()]
+    assert sum(row['event_type'] == 'http_attempt' for row in rows) == 1
+    assert rows[-1]['event_type'] == 'completion'
+
+
+def test_foreign_cwd_cannot_shadow_the_fixed_repo(tmp_path):
+    shadow = tmp_path / 'src'
+    shadow.mkdir()
+    (shadow / '__init__.py').write_text('raise RuntimeError("foreign cwd must not own imports")')
+    completed, capture, completion, _ = _run_bridge(tmp_path, cwd=tmp_path,
+        env_overrides={'AUTOSLICE_CPA_USAGE_FILE': str(tmp_path / 'usage.jsonl')})
+    assert completed.returncode == 0, completed.stderr
+    assert capture['invocation_count'] == 1
+    assert completion.read_text() == 'safe completion'
+
+
+def test_observer_failure_preserves_answer_status_and_response(tmp_path):
+    completed, capture, completion, _ = _run_bridge(tmp_path, cwd=tmp_path,
+        env_overrides={'AUTOSLICE_CPA_USAGE_FILE': str(tmp_path / 'missing' / 'usage.jsonl')})
+    assert completed.returncode == 70, completed.stderr
+    assert capture['invocation_count'] == 1
+    assert completion.read_text() == 'safe completion'
+    assert json.loads(Path(str(completion) + '.response.json').read_text())['output_text'] == 'safe completion'
+    assert json.loads(Path(str(completion) + '.transport.json').read_text()) == {'http_status': 200, 'curl_exit': 0}
+    diagnostic = llm_client._command_provider_diagnostics(completed.stderr, None)
+    assert diagnostic['provider_http_status'] == 200
+    assert diagnostic['provider_error_code'] == 'CPA_RESPONSE_LOCAL_FAILURE'
+
+
+@pytest.mark.parametrize('sequence,count,status', [
+    (('429', '200'), 2, '200'), (('timeout',), 3, '000'), (('403',), 1, '403')])
+def test_foreign_cwd_usage_http_outcomes(tmp_path, sequence, count, status):
+    usage = tmp_path / 'usage.jsonl'
+    completed, capture, _, _ = _run_bridge(tmp_path, cwd=tmp_path, status_sequence=sequence,
+        env_overrides={'AUTOSLICE_CPA_USAGE_FILE': str(usage)})
+    assert completed.returncode == (0 if status == '200' else 1), completed.stderr
+    assert capture['invocation_count'] == count
+    rows = [json.loads(line) for line in usage.read_text().splitlines()]
+    attempts = [row for row in rows if row['event_type'] == 'http_attempt']
+    assert len(attempts) == count
+    assert attempts[-1]['status'] == status
+
+
+def test_standalone_bridge_total_budget_caps_models_and_transient_floor(tmp_path):
+    completed, capture, _, _ = _run_bridge(tmp_path, cwd=tmp_path,
+        extra_args=('model-a model-b model-c', 'medium', '9'), status_sequence=('503',),
+        env_overrides={'CPA_TRANSIENT_ATTEMPTS_PER_MODEL': '20'})
+    assert completed.returncode == 1
+    assert capture['invocation_count'] == 10
 
 
 def test_cpa_bearer_uses_private_header_file_not_curl_argv(tmp_path):
@@ -307,14 +375,14 @@ def test_cpa_failure_does_not_print_secret_and_cleans_temp_files(tmp_path):
 
 
 def test_default_chain_is_sol_without_gpt5_downgrade(tmp_path):
-    """No env/argv override: GPT-6 Sol, three bounded attempts, no old-model downgrade."""
+    """No env/argv override: GPT-6.1 Sol, three bounded attempts, no old-model downgrade."""
     completed, capture, _completion, _tmp = _run_bridge(
         tmp_path, curl_fails=True, chat_models_env=None
     )
 
     assert completed.returncode == 1
     models = [body["model"] for body in capture["bodies"]]
-    assert models == ["gpt-6-sol"] * 3
+    assert models == ["gpt-6.1-sol"] * 3 + ["gpt-6-sol"] * 3
     assert {body["reasoning"]["effort"] for body in capture["bodies"]} == {"medium"}
 
 
@@ -330,6 +398,37 @@ def test_argv_chain_and_effort_override_env(tmp_path):
     assert completion.read_text(encoding="utf-8") == "safe completion"
     assert [body["model"] for body in capture["bodies"]] == ["stage-model-a"]
     assert capture["bodies"][0]["reasoning"]["effort"] == "high"
+
+
+@pytest.mark.parametrize('failure', ['503', '429', 'timeout', 'empty'])
+def test_ranked_model_pin_exhausts_retries_then_falls_back_with_provenance(tmp_path, failure):
+    completed, capture, completion, _ = _run_bridge(tmp_path,
+        extra_args=('gpt-6.1-sol', 'medium', '1'),
+        status_sequence=(failure, failure, failure, '200'),
+        env_overrides={'CPA_BACKOFF_MAX_TOTAL_SECONDS': '0'})
+    assert completed.returncode == 0, completed.stderr
+    assert [body['model'] for body in capture['bodies']] == ['gpt-6.1-sol'] * 3 + ['gpt-6-sol']
+    assert {body['reasoning']['effort'] for body in capture['bodies']} == {'medium'}
+    assert json.loads(Path(str(completion) + '.provenance.json').read_text())['answering_model'] == 'gpt-6-sol'
+
+
+@pytest.mark.parametrize('seconds', [None, '173'])
+def test_bridge_attempt_timeout_parameter(tmp_path, seconds):
+    overrides = {} if seconds is None else {'CPA_ATTEMPT_TIMEOUT_SECONDS': seconds}
+    completed, capture, _, _ = _run_bridge(tmp_path, env_overrides=overrides)
+    assert completed.returncode == 0, completed.stderr
+    assert capture['argv'][capture['argv'].index('--max-time') + 1] == (seconds or '150')
+
+
+def test_bridge_usage_records_answering_model(tmp_path):
+    usage = tmp_path / 'usage.jsonl'
+    completed, _, _, _ = _run_bridge(tmp_path, extra_args=('gpt-6.1-sol', 'medium'),
+        status_sequence=('503', '503', '503', '200'),
+        env_overrides={'AUTOSLICE_CPA_USAGE_FILE': str(usage)})
+    assert completed.returncode == 0, completed.stderr
+    rows = [json.loads(line) for line in usage.read_text().splitlines()]
+    assert sum(row['event_type'] == 'http_attempt' for row in rows) == 4
+    assert rows[-1]['event_type'] == 'completion' and rows[-1]['answering_model'] == 'gpt-6-sol'
 
 
 def test_stage_can_bound_one_attempt_per_model_to_fit_outer_deadline(tmp_path):
@@ -431,8 +530,8 @@ def test_backoff_total_budget_is_bounded(tmp_path):
     assert sum(_sleeps(tmp_path)) <= 10
 
 
-def test_deterministic_rejection_fails_over_without_same_model_retry(tmp_path):
-    """金丝雀②：注入 400 → 立即换模型，不在同一模型上空转重试。
+def test_deterministic_rejection_stops_without_retry_or_fallback(tmp_path):
+    """金丝雀②：注入请求类 400 → 终止整条调用，不重试或降级。
 
     的 400 是次级 leg 的 ``group_capability_unavailable``：同一请求
     再发一次仍然被拒，重试只是浪费时间与配额。
@@ -446,12 +545,8 @@ def test_deterministic_rejection_fails_over_without_same_model_retry(tmp_path):
 
     assert completed.returncode == 1
     assert not completion.exists()
-    assert [body["model"] for body in capture["bodies"]] == [
-        "gpt-a",
-        "gpt-b",
-        "gpt-c",
-    ]
-    assert "no same-model retry" in completed.stderr
+    assert [body["model"] for body in capture["bodies"]] == ["gpt-a"]
+    assert "no retry or fallback" in completed.stderr
     assert _sleeps(tmp_path) == []
 
 
@@ -566,8 +661,8 @@ def test_plain_400_carries_no_group_capability_token_and_never_retries(tmp_path)
 
     assert completed.returncode == 1
     assert not completion.exists()
-    assert [body["model"] for body in capture["bodies"]] == ["gpt-a", "gpt-b", "gpt-c"]
-    assert "no same-model retry" in completed.stderr
+    assert [body["model"] for body in capture["bodies"]] == ["gpt-a"]
+    assert "no retry or fallback" in completed.stderr
     assert _sleeps(tmp_path) == []
     assert not any("upstream_code=" in line for line in _cpa_lines(completed))
 
@@ -584,9 +679,9 @@ def test_other_4xx_rejections_are_still_not_retried(tmp_path, status):
 
     assert completed.returncode == 1
     assert not completion.exists()
-    # 每个模型恰好一枪，没有同模型重试。
-    assert [body["model"] for body in capture["bodies"]] == ["gpt-a", "gpt-b", "gpt-c"]
-    assert "no same-model retry" in completed.stderr
+    # 请求错误在首个模型终止，没有同模型重试或模型降级。
+    assert [body["model"] for body in capture["bodies"]] == ["gpt-a"]
+    assert "no retry or fallback" in completed.stderr
     assert _sleeps(tmp_path) == []
 
 
@@ -605,8 +700,8 @@ def test_group_capability_body_on_a_non_400_status_is_still_a_rejection(tmp_path
 
     assert completed.returncode == 1
     assert not completion.exists()
-    assert [body["model"] for body in capture["bodies"]] == ["gpt-a", "gpt-b", "gpt-c"]
-    assert "no same-model retry" in completed.stderr
+    assert [body["model"] for body in capture["bodies"]] == ["gpt-a"]
+    assert "no retry or fallback" in completed.stderr
     assert _sleeps(tmp_path) == []
     assert not any("upstream_code=" in line for line in _cpa_lines(completed))
 
@@ -761,3 +856,58 @@ def test_empty_completion_floor_can_still_be_switched_off(tmp_path):
         "gpt-first",
         "gpt-second",
     ]
+
+
+@pytest.mark.parametrize(
+    ("status", "http_status", "code"),
+    [("401", 401, "HTTP_STATUS_401"), ("429", 429, "HTTP_STATUS_429"),
+     ("503", 503, "HTTP_STATUS_503"),
+     ("empty", 200, "CPA_EMPTY_OR_INVALID_COMPLETION"),
+     ("400gc", 400, "group_capability_unavailable")],
+)
+def test_actual_cpa_bridge_failure_survives_command_diagnostic_reader(
+    tmp_path, monkeypatch, status, http_status, code,
+):
+    completed, capture, _completion, _tmp = _run_bridge(
+        tmp_path, status_sequence=(status,),
+    )
+    assert completed.returncode == 1
+    _assert_secret_is_not_observable(completed, capture)
+    monkeypatch.setattr(llm_client.subprocess, "run", lambda *_args, **_kwargs: completed)
+    call = llm_client.build_llm_call(llm_client.LlmConfig(
+        transport="command", command_template="bridge {prompt_file} {completion_file}",
+        command_diagnostic_context={"provider_transport": "runtime_cpa"},
+    ))
+    with pytest.raises(llm_client.LlmCallError) as raised:
+        call("fixture")
+    assert raised.value.safe_reason == "LLM_COMMAND_FAILED"
+    assert raised.value.provider_diagnostics["provider_http_status"] == http_status
+    assert raised.value.provider_diagnostics["provider_error_code"] == code
+    assert SENTINEL_SECRET not in json.dumps(raised.value.provider_diagnostics)
+
+
+def test_successful_cpa_retry_does_not_retain_previous_failure(tmp_path):
+    completed, _capture, _completion, _tmp = _run_bridge(
+        tmp_path, status_sequence=("429", "200"),
+    )
+    assert completed.returncode == 0
+    assert llm_client._command_provider_diagnostics(
+        completed.stderr, {"provider_transport": "runtime_cpa"},
+    ) == {"provider_transport": "runtime_cpa", "provider_http_status": 200}
+
+
+def test_usage_counts_http_retries_and_keeps_secrets_out(tmp_path):
+    trace = tmp_path / "usage.jsonl"
+    completed, capture, _, _ = _run_bridge(
+        tmp_path, status_sequence=("429", "empty", "200"),
+        env_overrides={"AUTOSLICE_CPA_USAGE_FILE": str(trace)},
+    )
+    assert completed.returncode == 0
+    rows = [json.loads(line) for line in trace.read_text().splitlines()]
+    attempts = [row for row in rows if row['event_type'] == 'http_attempt']
+    assert len(attempts) == capture["invocation_count"] == 3
+    assert [row["status"] for row in attempts] == ["429", "200", "200"]
+    assert rows[-1]['event_type'] == 'completion'
+    assert rows[-1]['answering_model'] == 'gpt-test'
+    assert SENTINEL_SECRET not in trace.read_text()
+    assert "return a safe completion" not in trace.read_text()

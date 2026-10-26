@@ -1,0 +1,7 @@
+{
+  "schema_version": "channel-census-config.v1",
+  "profile_id": "REPLACE_ME",
+  "metric_dimension_section_heading": "## 七维量化表（层内细排用）",
+  "metric_audience_paragraph_marker": "3. **受众兴趣对齐",
+  "audience_interests": []
+}

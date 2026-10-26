@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from . import fastlane_c2_release_bridge as bridge
+from .publication_identity import publication_identity
 
 
 _RECORD_SCHEMA = "lidousha-c2-release-record.v1"
@@ -94,9 +95,5 @@ def candidate_id_from_record(root: Path, record: Mapping[str, object]) -> str:
     """Keep generic candidate resolution unchanged, then try exact C2 only."""
     if not isinstance(record, Mapping):
         return ""
-    story_contract = record.get("story_contract")
-    story_contract = story_contract if isinstance(story_contract, Mapping) else {}
-    candidate_id = str(
-        story_contract.get("candidate_id") or record.get("delivery_candidate_id") or ""
-    )
+    candidate_id = publication_identity(record).candidate_id
     return candidate_id or verified_c2_release_candidate_id(root, record) or ""

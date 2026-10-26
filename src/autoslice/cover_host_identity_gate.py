@@ -11,6 +11,7 @@ fallback witness only when CPA vision is unavailable.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import copy
 import hashlib
 import json
@@ -26,14 +27,20 @@ SCHEMA_VERSION = "lidousha-cover-final-host-identity-verification.v3"
 AUTHORITY = (
     "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_AND_PROMINENCE_COMPARISON"
 )
-HOST_ONLY_SCHEMA_VERSION = "lidousha-cover-final-host-identity-verification.v4"
+HOST_ONLY_SCHEMA_VERSION = "lidousha-cover-final-host-identity-verification.v6"
+LEGACY_HOST_ONLY_SCHEMA_VERSION = "lidousha-cover-final-host-identity-verification.v5"
 HOST_ONLY_AUTHORITY = (
-    "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_PROMINENCE_AND_HOST_ONLY_COMPARISON"
+    "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_PROMINENCE_AND_HOST_ONLY_FEATURE_COMPARISON"
 )
 HOST_ONLY_FALLBACK_MODES = frozenset(
     {"HOST_ONLY_GENERIC", "HOST_ONLY_RELATION_EXPLICIT"}
 )
 HOST_ONLY_REASON_CODE = "FINAL_COVER_HOST_ONLY_POLICY_FAILED"
+_HOST_ONLY_FEATURE_CATEGORIES = (
+    "clothing",
+    "head_appearance",
+    "accessories",
+)
 # 冻结出版结转条款：字节等同复用一张**已发布**
 # 封面时，其发布时点的身份见证是该字节的既成证据；对同一字节按今日更严的
 # v3 门重考属于对冻结资产做 live 政策重算（7/27 裁定禁止），且视觉裁判对
@@ -181,7 +188,7 @@ def host_identity_verdict_contradictions(
 
 
 def _sha256(path: Path) -> str:
-    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    return "sha256:" + _evidence_file_sha256(path)
 
 
 def _extract_json_object(answer: str) -> Mapping[str, object]:
@@ -225,6 +232,16 @@ _GAME_BOOLEAN_VERDICT_FIELDS = (
 _SCENE_VERDICT_FIELDS = {
     "talk": _BOOLEAN_VERDICT_FIELDS,
     "game": _GAME_BOOLEAN_VERDICT_FIELDS,
+    "song": tuple(
+        field for field in _BOOLEAN_VERDICT_FIELDS
+        if field not in {
+            "primary_subject_face_is_large_and_clear",
+            "primary_subject_carries_story_reaction",
+        }
+    ) + (
+        "primary_subject_visible_head_is_large_and_clear",
+        "primary_subject_carries_song_performance",
+    ),
 }
 
 
@@ -233,11 +250,95 @@ def _normalize_scene_kind(value: object) -> str:
     return text if text in _SCENE_VERDICT_FIELDS else "talk"
 
 
+def _host_only_feature_evidence_shape_valid(
+    verdict: Mapping[str, object],
+    *, feature_scope_required: bool = True,
+) -> bool:
+    """Validate the v5 source-visible feature evidence without judging it.
+
+    An empty category is explicit evidence that the source did not expose that
+    feature.  It is therefore different from an omitted field (which is an
+    incomplete answer), and it never gives the model permission to invent a
+    hidden detail.  The pass predicate below separately requires every
+    visible feature to match and every final conflict list to be empty.
+    """
+
+    visible = verdict.get("source_visible_feature_observations")
+    matches = verdict.get("final_feature_matches")
+    conflicts = verdict.get("final_feature_conflicts")
+    if not isinstance(visible, Mapping) or not isinstance(matches, Mapping):
+        return False
+    categories = set(_HOST_ONLY_FEATURE_CATEGORIES)
+    if set(visible) != categories or set(matches) != categories:
+        return False
+    if any(
+        not isinstance(values, list)
+        or any(not isinstance(value, str) or not value.strip() for value in values)
+        for values in visible.values()
+    ):
+        return False
+    # A valid answer may explicitly mark a category as source-invisible, but
+    # an answer with no visible feature evidence at all cannot establish a
+    # source-to-final comparison.  It must remain unresolved instead of
+    # passing three empty lists with three ``true`` matches.
+    if not any(visible[category] for category in _HOST_ONLY_FEATURE_CATEGORIES):
+        return False
+    if any(not isinstance(value, bool) for value in matches.values()):
+        return False
+    if feature_scope_required:
+        comparisons = verdict.get("final_feature_comparisons")
+        if not isinstance(comparisons, Mapping) or set(comparisons) != categories:
+            return False
+        for category in categories:
+            rows = comparisons[category]
+            if (not isinstance(rows, list) or len(rows) != len(visible[category])
+                    or any(not isinstance(row, Mapping) for row in rows)):
+                return False
+            if (len(set(visible[category])) != len(visible[category])
+                    or sorted(str(row.get("source_feature")) for row in rows) != sorted(visible[category])):
+                return False
+            if any(row.get("status") not in {"MATCH", "CONFLICT", "OUT_OF_FRAME", "OCCLUDED", "UNRESOLVED"}
+                   or not isinstance(row.get("final_observation"), str) or not row["final_observation"].strip()
+                   for row in rows):
+                return False
+    return bool(
+        isinstance(conflicts, list)
+        and all(isinstance(value, str) and value.strip() for value in conflicts)
+    )
+
+
+def _host_only_feature_evidence_passes(verdict: Mapping[str, object], *, feature_scope_required: bool = True) -> bool:
+    """Return the shared v5 feature acceptance predicate.
+
+    This intentionally does not depend on the identity booleans or on the
+    other-participant exclusion predicate.  A host can have the right face
+    while wearing another participant's visible clothing; that remains a
+    feature failure even when the older identity axis is internally green.
+    """
+
+    if not _host_only_feature_evidence_shape_valid(verdict, feature_scope_required=feature_scope_required):
+        return False
+    if feature_scope_required:
+        rows = [row for values in verdict["final_feature_comparisons"].values() for row in values]
+        if (not any(row["status"] == "MATCH" for row in rows)
+                or any(row["status"] in {"CONFLICT", "UNRESOLVED"} for row in rows)):
+            return False
+    matches = verdict["final_feature_matches"]
+    conflicts = verdict["final_feature_conflicts"]
+    return bool(
+        isinstance(matches, Mapping)
+        and all(matches.get(category) is True for category in _HOST_ONLY_FEATURE_CATEGORIES)
+        and isinstance(conflicts, list)
+        and not conflicts
+    )
+
+
 def _identity_answer_valid(
     answer: str,
     *,
     scene_kind: str = "talk",
     host_only_required: bool = False,
+    feature_scope_required: bool = True,
 ) -> bool:
     try:
         verdict = _extract_json_object(answer)
@@ -267,6 +368,7 @@ def _identity_answer_valid(
         and isinstance(others, list)
         and all(isinstance(value, str) and value.strip() for value in others)
         and visible == bool(others)
+        and _host_only_feature_evidence_shape_valid(verdict, feature_scope_required=feature_scope_required)
     )
 
 
@@ -433,10 +535,31 @@ _HOST_ONLY_QUESTION_SUFFIX = (
     "\n本条 StoryContract 明确要求 HOST_ONLY：只检查右侧 FINAL COVER。除李豆沙外，"
     "任何可辨识的人形或虚拟角色都不得出现，包括旧视频面板、小窗、头像、截图中的人物、"
     "局部脸、被裁掉一部分的角色或作为次要装饰的人物。普通物件、文字和无人形游戏画面不计。"
+    "HOST_ONLY 限制的是参与者身份，不是同一人的绘制次数。明确表示先后状态的同一李豆沙"
+    "可以出现两次；每处都须延续源图实际可见的同一外观和穿戴，不能把另一个角色认作她。"
+    "同一主播的时间对照不列为其他人物；若身份或先后关系无法确认，须列出具体冲突。"
     "额外输出字段："
     '"other_recognizable_people_or_avatars_visible":true|false,'
     '"other_recognizable_people_or_avatars":["位置+简短描述"]。'
     "两字段必须一致：没有其他人物时布尔为 false 且列表为空；看见任意一个时布尔为 true 且列出。"
+    "还必须逐项比较左图 SOURCE 中**实际可见**的服装、头部造型和配饰；"
+    "允许姿势变化、Q版化和绘画风格变化，但不得丢失或借用另一参与者的可见领子、"
+    "蝴蝶结、围巾、服装层次、头戴配饰等。源图看不见的类别用空列表表示，不能凭人设、"
+    "角色名或常识补造细节。额外输出："
+    '"source_visible_feature_observations":{"clothing":["可见服装特征"],'
+    '"head_appearance":["可见头部造型"],"accessories":["可见配饰"]},'
+    '"final_feature_matches":{"clothing":true,"head_appearance":true,"accessories":true},'
+    '"final_feature_conflicts":[]。'
+    "三个类别都必须出现。还须输出final_feature_comparisons，键同上三类，值为逐特征数组，"
+    "每个source_visible_feature_observations的字符串必须恰好对应一行："
+    '{"source_feature":"原特征字符串","status":"MATCH|CONFLICT|OUT_OF_FRAME|OCCLUDED|UNRESOLVED",'
+    '"final_observation":"逐处说明成品可见的相同部位，或具体裁切边缘/遮挡范围"}。'
+    "所有同一主播的绘制实例都要比较。最终仍可见同一身体部位而服装/配饰缺失、替换或借用时，"
+    "必须CONFLICT、对应match=false并列具体conflicts；脸像不能抵消穿戴冲突。"
+    "只有所在部位被构图裁出画面或真实遮挡、确实不在可比较范围，才记OUT_OF_FRAME或OCCLUDED；"
+    "这不证明隐藏特征被保留，也不要求近景露全身。仍在画面内但看不清则UNRESOLVED，不能冒充裁切。"
+    "每类所有可比较项均MATCH且其余项范围明确时match=true；任一CONFLICT或UNRESOLVED则false。"
+    "不得因裁切清空实际可见冲突，也不得补造源中不可见细节；至少须有一项真实可比较的MATCH。"
 )
 
 
@@ -450,7 +573,36 @@ def _identity_question(*, scene_kind: str, host_only_required: bool) -> str:
     return question + (_HOST_ONLY_QUESTION_SUFFIX if host_only_required else "")
 
 
-_SCENE_QUESTION = {"talk": _QUESTION, "game": _GAME_QUESTION}
+_SONG_QUESTION = (
+    "左侧是同一歌切的 SOURCE REFERENCE，右侧是待发布 FINAL COVER。"
+    "这是歌切 song-clean：规定文字仅为《歌名》，点击动机是这位主播演唱这首歌，"
+    "不要求杂谈事件、反转、悬念、额外口号或歌曲剧情。请根据左图可见形象定位主播，"
+    "再逐项核对右图是否忠实延续当场人物、服装、头部造型与配饰；不能凭角色名或"
+    "历史人设推测被遮住的脸、发型或眼睛。源图头套/面具/显示器头属于当场形象，"
+    "必须保留其可见形态与遮挡关系，不能摘下后补造人脸或把它改成手持道具。"
+    "primary_subject_visible_head_is_large_and_clear 判断源图实际可见的头部/头套"
+    "是否完整、清晰、足够大；源图本就遮脸不算缺脸，新裁切、字层遮挡或模糊仍失败。"
+    "primary_subject_carries_song_performance 判断人物状态与演唱封面相容，"
+    "允许安静、温柔、正面表演，不要求嘴可见或新增麦克风。"
+    "thumbnail_has_clear_click_hook 根据演唱主体与可读《歌名》共同判断，"
+    "只有名字并不足以豁免主体、身份、清晰度或图文一致性。不得出现身份冲突、"
+    "其他人物冒名、大片死留白或压过主体的无意义装饰。不确定就 FAIL。只输出 JSON："
+    '{"source_lidousha_located":true|false,'
+    '"primary_subject_is_lidousha":true|false,'
+    '"primary_subject_matches_other_source_participant":true|false,'
+    '"primary_subject_is_visually_dominant":true|false,'
+    '"primary_subject_visible_head_is_large_and_clear":true|false,'
+    '"primary_subject_carries_song_performance":true|false,'
+    '"excessive_dead_space":true|false,'
+    '"meaningless_dominant_decoration":true|false,'
+    '"thumbnail_has_clear_click_hook":true|false,'
+    '"primary_subject_identity":"简短身份",'
+    '"identity_conflicts":["冲突特征"],'
+    '"composition_conflicts":["构图缺陷"],'
+    '"reason":"简短中文说明"}'
+)
+
+_SCENE_QUESTION = {"talk": _QUESTION, "game": _GAME_QUESTION, "song": _SONG_QUESTION}
 
 
 def _pending_self_inconsistency_disclosure(
@@ -569,7 +721,8 @@ def _joint_qc_corroboration_problems(
 
 
 def _verdict_pass_axes(
-    verdict: Mapping[str, object], *, scene: str, host_only_required: bool
+    verdict: Mapping[str, object], *, scene: str, host_only_required: bool,
+    feature_scope_required: bool = True,
 ) -> tuple[bool, bool, bool]:
     """Share the existing producer acceptance predicates with receipt replay."""
 
@@ -602,8 +755,14 @@ def _verdict_pass_axes(
         )
         composition_passed = bool(
             verdict.get("primary_subject_is_visually_dominant") is True
-            and verdict.get("primary_subject_face_is_large_and_clear") is True
-            and verdict.get("primary_subject_carries_story_reaction") is True
+            and verdict.get(
+                "primary_subject_visible_head_is_large_and_clear"
+                if scene == "song" else "primary_subject_face_is_large_and_clear"
+            ) is True
+            and verdict.get(
+                "primary_subject_carries_song_performance"
+                if scene == "song" else "primary_subject_carries_story_reaction"
+            ) is True
             and verdict.get("excessive_dead_space") is False
             and verdict.get("meaningless_dominant_decoration") is False
             and verdict.get("thumbnail_has_clear_click_hook") is True
@@ -615,6 +774,7 @@ def _verdict_pass_axes(
         or (
             verdict.get("other_recognizable_people_or_avatars_visible") is False
             and verdict.get("other_recognizable_people_or_avatars") == []
+            and _host_only_feature_evidence_passes(verdict, feature_scope_required=feature_scope_required)
         )
     )
     return identity_passed, composition_passed, host_only_passed
@@ -629,6 +789,8 @@ def verify_final_host_identity(
     api_key: str = "",
     scene_kind: str = "talk",
     host_only_required: bool = False,
+    comparison_output_path: Path | None = None,
+    prepare_only: bool = False,
 ) -> dict[str, object]:
     """Return a fail-closed CPA-primary verdict bound to source/final bytes."""
 
@@ -672,7 +834,7 @@ def verify_final_host_identity(
         )
         return verification
 
-    comparison_path = _comparison_path(final_cover_path)
+    comparison_path = Path(comparison_output_path) if comparison_output_path is not None else _comparison_path(final_cover_path)
     try:
         _build_comparison(
             reference_path=reference_path,
@@ -690,6 +852,13 @@ def verify_final_host_identity(
     from src.autoslice.visual_witness import image_vision_probe
 
     comparison_sha = _sha256(comparison_path)
+    if prepare_only:
+        verification.update(
+            status="PENDING", reason_code="CURRENT_IDENTITY_PROVIDER_REQUIRED",
+            comparison_path=str(comparison_path), comparison_sha256=comparison_sha,
+            detail="Current source/final comparison prepared; no provider called and no verdict issued",
+        )
+        return verification
     witness = image_vision_probe(
         comparison_path,
         _identity_question(
@@ -998,6 +1167,10 @@ def validate_final_host_identity_verification(
 ) -> bool:
     """Validate receipt shape and exact final-cover hash binding."""
 
+    if cover_generation.get("method") == "skill.candidates":
+        from .title_cover_candidates import validate_candidate_route
+        return validate_candidate_route(cover_generation)
+
     verification = cover_generation.get("final_host_identity_verification")
     if not isinstance(verification, Mapping):
         return False
@@ -1030,7 +1203,7 @@ def validate_final_host_identity_verification(
     )
     if host_only_required:
         generation_pin_valid = bool(
-            verification.get("schema_version") == HOST_ONLY_SCHEMA_VERSION
+            verification.get("schema_version") in {HOST_ONLY_SCHEMA_VERSION, LEGACY_HOST_ONLY_SCHEMA_VERSION}
             and verification.get("authority") == HOST_ONLY_AUTHORITY
             and verification.get("host_only_required") is True
         )
@@ -1058,6 +1231,35 @@ def validate_final_host_identity_verification(
                 cover_generation.get("final_cover_sha256") or ""
             ),
         )
+    scene = _normalize_scene_kind(verification.get("scene_kind"))
+    direction = cover_generation.get("art_direction")
+    if (
+        isinstance(direction, Mapping)
+        and direction.get("is_song") is True
+        and scene != "song"
+        and cover_generation.get("carried_forward_from_published_record") is not True
+    ):
+        return False
+    if scene == "song":
+        # Replay the actual Song answer; a label cannot erase a mismatch.
+        verdict = verification.get("verdict")
+        answer = witness.get("answer") if isinstance(witness, Mapping) else None
+        try:
+            parsed_answer = (
+                dict(_extract_json_object(answer)) if isinstance(answer, str) else None
+            )
+        except (ValueError, json.JSONDecodeError):
+            parsed_answer = None
+        verdict_lane_valid = bool(
+            verdict_lane_valid
+            and isinstance(verdict, Mapping)
+            and isinstance(witness, Mapping)
+            and witness.get("status") == "OBSERVED"
+            and isinstance(answer, str)
+            and _identity_answer_valid(answer, scene_kind="song")
+            and parsed_answer == dict(verdict)
+            and all(_verdict_pass_axes(verdict, scene="song", host_only_required=False))
+        )
     if host_only_required:
         verdict = verification.get("verdict")
         answer = witness.get("answer") if isinstance(witness, Mapping) else None
@@ -1075,11 +1277,13 @@ def validate_final_host_identity_verification(
             and isinstance(witness, Mapping)
             and witness.get("status") == "OBSERVED"
             and isinstance(answer, str)
-            and _identity_answer_valid(answer, scene_kind="talk", host_only_required=True)
+            and _identity_answer_valid(answer, scene_kind="talk", host_only_required=True,
+                feature_scope_required=verification.get("schema_version") == HOST_ONLY_SCHEMA_VERSION)
             and parsed_answer == dict(verdict)
             # Recompute all original identity/composition/host-only predicates.
             # A PASS label cannot override a negative or incomplete answer.
-            and all(_verdict_pass_axes(verdict, scene="talk", host_only_required=True))
+            and all(_verdict_pass_axes(verdict, scene="talk", host_only_required=True,
+                feature_scope_required=verification.get("schema_version") == HOST_ONLY_SCHEMA_VERSION))
         )
     return bool(
         generation_pin_valid

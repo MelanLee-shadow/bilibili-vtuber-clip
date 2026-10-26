@@ -8,14 +8,20 @@ SRT and compares every expected event with the packaged ASS.
 
 from __future__ import annotations
 
-import hashlib
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
+import json
 import re
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from src.autoslice.channel_profile import load_channel_profile
-from src.autoslice.subtitle_rendering import _layout_cue_sequence_for_display
+from src.autoslice.channel_profile import LABEL_RE, load_channel_profile
+from src.autoslice.speaker_label_display import speaker_display
+from src.autoslice.subtitle_rendering import (
+    _layout_cue_sequence_for_display,
+    _write_sapphire_ass_from_srt,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -29,12 +35,6 @@ _SRT_TIME_RE = re.compile(
 )
 _SRT_TIMING_RE = re.compile(r"(.+?)\s+-->\s+(.+?)\Z")
 _ASS_TIME_RE = re.compile(r"(\d+):(\d{2}):(\d{2})\.(\d{2})\Z")
-_SPEAKER_RE = re.compile(
-    r"^\[("
-    + "|".join(re.escape(value) for value in (HOST_SPEAKER, GUEST_SPEAKER))
-    + r")\]\s+(.*)\Z",
-    re.S,
-)
 
 
 @dataclass(frozen=True)
@@ -68,7 +68,7 @@ class _AssEvent:
 
 
 def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return _evidence_file_sha256(path)
 
 
 def _hash_matches(path: Path | None, expected: object) -> bool:
@@ -240,8 +240,14 @@ def _speaker_cues(
             continue
         previous_start_ms = start_ms
         body = "\n".join(lines[2:]).strip()
-        speaker_match = _SPEAKER_RE.fullmatch(body)
-        if speaker_match is not None and speaker_match.group(2).strip():
+        speaker_match = LABEL_RE.fullmatch(body)
+        # This audit requires canonical finalized labels, not confidence-bearing
+        # source labels. Sharing syntax must not widen release authority.
+        if (speaker_match is not None
+                and speaker_match.group(1) in (HOST_SPEAKER, GUEST_SPEAKER)
+                and body.startswith(f"[{speaker_match.group(1)}]")
+                and body[len(speaker_match.group(1)) + 2:][:1].isspace()
+                and speaker_match.group(2).strip()):
             cues.append(
                 _SpeakerCue(
                     start_ms=start_ms,
@@ -311,6 +317,15 @@ def _ass_events(
                 )
             )
             continue
+        # Check the artifact itself, before parity/hash checks. Override tags and
+        # ASS whitespace escapes do not make a visible speaker prefix acceptable.
+        visible = re.sub(r"(?<!\\)\{[^{}]*\}", "", fields[9])
+        visible = visible.replace(r"\N", "\n").replace(r"\n", "\n").replace(r"\h", " ")
+        if any(LABEL_RE.match(row.lstrip()) for row in visible.splitlines()):
+            issues.append(ReviewPackageAssIssue(
+                "SUBTITLE_ASS_SPEAKER_LABEL_VISIBLE", path,
+                f"line {line_number} contains a visible speaker prefix",
+            ))
         start_ms = _parse_ass_time(fields[1])
         end_ms = _parse_ass_time(fields[2])
         if start_ms is None or end_ms is None or end_ms <= start_ms:
@@ -357,7 +372,9 @@ def _expected_events(
     host_style: str = "LDS",
 ) -> list[_AssEvent]:
     events: list[_AssEvent] = []
-    rows = [(cue.start_ms, cue.end_ms, cue.text) for cue in cues]
+    rows = [(cue.start_ms, cue.end_ms,
+             speaker_display(cue.text, host_speaker=HOST_SPEAKER, speaker=cue.speaker).text)
+            for cue in cues]
     keys = [cue.speaker for cue in cues]
     for source_index, start_ms, end_ms, display_text in _layout_cue_sequence_for_display(
         rows, continuity_keys=keys
@@ -667,3 +684,55 @@ def audit_review_package_ass(
         speaker_srt_path=speaker_srt_path,
         issues=tuple(issues),
     )
+
+
+def audit_song_burn_ass(
+    *, root: Path, item: Mapping[str, Any], subtitle_path: Path,
+    max_visual_lines: int, max_visual_line_chars: int,
+) -> tuple[bool, tuple[ReviewPackageAssIssue, ...]]:
+    """Use actual bound Song burn events for display QC, retaining lyric SRT.
+
+    Legacy packages without ASS keep their existing SRT display checks. A
+    declared ASS must be portable, bound to the current SRT/video by the recut
+    receipt, and byte-identical to the canonical Sapphire projection. This is
+    display authority only; it grants neither singing nor publication proof.
+    """
+    if item.get("ass_path") is None or item.get("recut_manifest") is None:
+        return False, ()
+    result = audit_review_package_ass(
+        root=root, item=item, portable_required=False,
+        max_visual_lines=max_visual_lines,
+        max_visual_line_chars=max_visual_line_chars,
+    )
+    issues = list(result.issues)
+    ass = _portable_regular_file(root, item.get("ass_path"), portable_required=True)
+    recut = _portable_regular_file(root, item.get("recut_manifest"), portable_required=True)
+    video = _portable_regular_file(root, item.get("video"), portable_required=True)
+    hashes = item.get("sha256")
+    try:
+        if ass is None or recut is None or video is None or not isinstance(hashes, Mapping):
+            raise ValueError("portable burn ASS/recut/hash authority is missing")
+        if not _hash_matches(recut, hashes.get("recut_manifest")):
+            raise ValueError("recut manifest hash differs from package")
+        output = json.loads(recut.read_text())["verified_output_binding"]
+        if not isinstance(output, Mapping) or not isinstance(output.get("artifacts"), Mapping):
+            raise ValueError("verified Song burn artifact authority is invalid")
+        bound = output["artifacts"]
+        burn = output.get("burn_transform")
+        if (output.get("schema_version") != "verified-song-output-binding.v1"
+                or not isinstance(burn, Mapping)
+                or burn.get("subtitle_style") != "lidousha-final-sapphire72"
+                or not _hash_matches(ass, bound.get("ass_sha256"))
+                or not _hash_matches(subtitle_path, bound.get("subtitle_sha256"))
+                or not _hash_matches(video, bound.get("burned_media_sha256"))):
+            raise ValueError("ASS/SRT/burned video differ from verified Song burn")
+        with tempfile.TemporaryDirectory(prefix="song-ass-audit-") as directory:
+            expected = Path(directory) / "expected.ass"
+            _write_sapphire_ass_from_srt(subtitle_path, expected)
+            if ass.read_bytes() != expected.read_bytes():
+                raise ValueError("burn ASS differs from current canonical SRT display projection")
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError) as exc:
+        issues.append(ReviewPackageAssIssue(
+            "SONG_BURN_ASS_BINDING_INVALID", ass or root / "review_manifest.json", str(exc),
+        ))
+    return not issues, tuple(issues)

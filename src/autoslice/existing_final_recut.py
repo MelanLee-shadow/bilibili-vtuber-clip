@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import json
 import os
 import re
@@ -18,11 +18,8 @@ _SHA256 = re.compile(r"(?:sha256:)?([0-9a-f]{64})\Z")
 
 
 def _digest(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return "sha256:" + digest
 
 
 def _expected_sha(value: object, *, label: str) -> str:

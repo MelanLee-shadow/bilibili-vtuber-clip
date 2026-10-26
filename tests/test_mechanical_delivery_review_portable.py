@@ -340,6 +340,117 @@ def mechanical_package(receipt_package, monkeypatch):
     return receipt_package, mechanical
 
 
+def _prepared_mechanical_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> tuple[dict[str, object], object]:
+    """Reuse the producer-shaped prepared fixture with portable burn pointers."""
+
+    from scripts.build_manual_review_manifest import build_manual
+    from src.autoslice import mechanical_delivery_review as mechanical
+    from tests.manual_review_support import _prepared_successor_fixture
+
+    package, prepared_path, authority, runtime = _prepared_successor_fixture(
+        tmp_path, monkeypatch
+    )
+    import src.autoslice.recovery_title_authority as recovery_authority
+
+    monkeypatch.setattr(
+        recovery_authority,
+        "validate_recovery_publication_authority",
+        lambda value, **_: authority,
+    )
+    stem = next(package.glob("*.publish.json")).name[: -len(".publish.json")]
+    record_path = package / f"{stem}.record.json"
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    source_video = tmp_path / "producer-burned-video.mp4"
+    source_ass = tmp_path / "producer-burned.ass"
+    source_video.write_bytes((package / f"{stem}.mp4").read_bytes())
+    source_ass.write_bytes((package / f"{stem}.final-sapphire72.ass").read_bytes())
+    record["burned_preview"] = {
+        "status": "BURNED",
+        "path": str(source_video.resolve()),
+        "ass_path": str(source_ass.resolve()),
+        "burned_sha256": _sha256(source_video),
+        "verification": {"duration_ms": 2_100},
+        "branding_intro": {"verification": {"duration_ms": 100}},
+    }
+    record["story_contract"]["candidate_id"] = "manual_cand_9"
+    record["story_contract"]["cover_reference_authority"] = {
+        "source_visible_claims": ["最终源帧可见主播", "最终源帧可见乙乙"],
+        "narrative_presentation": "封面文字表达测试故事",
+    }
+    record["artifact_hashes"].update(
+        burned_video_sha256=_sha256(source_video),
+        ass_sha256=_sha256(source_ass),
+    )
+    _write_json(record_path, record)
+
+    # The producer handle seals every role, including the record we just
+    # extended with the real burn identity. Rebuild only this synthetic handle
+    # from the changed package bytes so the consumer test remains hash-bound.
+    from src.autoslice.normal_first_publication_media_successor import ROLE_SUFFIXES
+    from src.autoslice.producer_delivery_transaction import (
+        DeliveryArtifact,
+        deployment_authority_binding,
+        prepare_delivery,
+    )
+
+    old_document = json.loads(prepared_path.read_text(encoding="utf-8"))
+    artifacts = [
+        DeliveryArtifact(
+            entry["role"],
+            package / f"{stem}{ROLE_SUFFIXES[entry['role']]}",
+            runtime / "delivery-v2" / f"{stem}{ROLE_SUFFIXES[entry['role']]}",
+            _sha256(package / f"{stem}{ROLE_SUFFIXES[entry['role']]}"),
+        )
+        for entry in old_document["artifacts"]
+    ]
+    prepared_path = prepare_delivery(
+        runtime_root=runtime,
+        lane="talk",
+        candidate_id="manual_cand_9",
+        artifacts=artifacts,
+        deployed_authority=deployment_authority_binding(runtime),
+    ).manifest_path
+
+    manifest = build_manual(
+        package,
+        operator="op",
+        note="prepared full-media successor mechanical consumer",
+        prepared_delivery_path=prepared_path,
+    )
+    review_path = package / "review_manifest.json"
+    _write_json(review_path, manifest)
+    audit = {
+        "schema_version": builder.AUDIT_SCHEMA_VERSION,
+        "policy_epoch": builder.AUDIT_POLICY_EPOCH,
+        "policy_fingerprint": "sha256:" + "b" * 64,
+        "auditor_source_sha256": "sha256:" + "c" * 64,
+        "passed": True,
+        "root": str(package.resolve()),
+        "audited_inputs": [],
+        "issues": [],
+        "issue_count": 0,
+        "blocking_issue_count": 0,
+    }
+    audit_path = package / "verification" / "package-audit.json"
+    _write_json(audit_path, audit)
+    monkeypatch.setattr(mechanical, "audit_package", lambda _root: copy.deepcopy(audit))
+    return (
+        {
+            "root": package,
+            "audit_path": audit_path,
+            "review_path": review_path,
+            "prepared_path": prepared_path,
+            "authority": authority,
+            "stem": stem,
+            "source_video": source_video,
+            "source_ass": source_ass,
+        },
+        mechanical,
+    )
+
+
 def test_mechanical_receipt_does_not_require_or_claim_human_viewing(mechanical_package):
     fixture, mechanical = mechanical_package
     fixture["evidence_path"].unlink()
@@ -352,6 +463,116 @@ def test_mechanical_receipt_does_not_require_or_claim_human_viewing(mechanical_p
         value, fixture["root"], fixture["audit_path"],
         publication_authority=fixture["authority"],
     ) == value
+
+
+def test_mechanical_successor_projects_prepared_video_srt_and_ass_roles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture, mechanical = _prepared_mechanical_package(tmp_path, monkeypatch)
+
+    receipt = mechanical.build_mechanical_receipt(
+        fixture["root"], fixture["audit_path"]
+    )
+
+    item = receipt["bindings"]["items"][0]
+    reference = item["normal_first_publication_media_successor"]
+    assert reference["handle_path"] == str(fixture["prepared_path"])
+    assert item["artifacts"]["video"]["path"] == f'{fixture["stem"]}.mp4'
+    assert item["artifacts"]["subtitle"]["path"] == f'{fixture["stem"]}.srt'
+    assert item["burned_ass"]["path"] == f'{fixture["stem"]}.final-sapphire72.ass'
+    assert item["artifacts"]["video"]["sha256"] == _sha256(
+        fixture["root"] / f'{fixture["stem"]}.mp4'
+    )
+    assert item["artifacts"]["subtitle"]["sha256"] == _sha256(
+        fixture["root"] / f'{fixture["stem"]}.srt'
+    )
+    assert item["burned_ass"]["sha256"] == _sha256(
+        fixture["root"] / f'{fixture["stem"]}.final-sapphire72.ass'
+    )
+    assert mechanical.validate_saved_mechanical_receipt(
+        receipt, fixture["root"]
+    ) == receipt
+
+
+def test_mechanical_successor_rejects_reference_surface_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture, mechanical = _prepared_mechanical_package(tmp_path, monkeypatch)
+    manifest = json.loads(fixture["review_path"].read_text(encoding="utf-8"))
+    manifest.pop("normal_first_publication_media_successor_by_candidate")
+    _write_json(fixture["review_path"], manifest)
+
+    with pytest.raises(ValueError, match="reference map"):
+        mechanical.build_mechanical_receipt(
+            fixture["root"], fixture["audit_path"]
+        )
+
+
+@pytest.mark.parametrize("defect", ["package_video", "ass_role", "noncontained_role"])
+def test_mechanical_successor_rejects_current_role_drift_or_escape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, defect: str,
+) -> None:
+    fixture, mechanical = _prepared_mechanical_package(tmp_path, monkeypatch)
+    if defect == "package_video":
+        (fixture["root"] / f'{fixture["stem"]}.mp4').write_bytes(b"drifted-video")
+    elif defect == "ass_role":
+        record_path = fixture["root"] / f'{fixture["stem"]}.record.json'
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        record["artifact_hashes"]["ass_sha256"] = "sha256:" + "d" * 64
+        _write_json(record_path, record)
+    else:
+        ass_path = fixture["root"] / f'{fixture["stem"]}.final-sapphire72.ass'
+        outside = fixture["root"].parent / "outside-ass"
+        outside.write_bytes(ass_path.read_bytes())
+        ass_path.unlink()
+        ass_path.symlink_to(outside)
+
+    with pytest.raises(ValueError, match="successor|prepared|package|ASS"):
+        mechanical.build_mechanical_receipt(
+            fixture["root"], fixture["audit_path"]
+        )
+
+
+def test_mechanical_successor_without_typed_reference_keeps_legacy_containment_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture, mechanical = _prepared_mechanical_package(tmp_path, monkeypatch)
+    manifest = json.loads(fixture["review_path"].read_text(encoding="utf-8"))
+    manifest["items"][0].pop("normal_first_publication_media_successor")
+    manifest.pop("normal_first_publication_media_successor_by_candidate")
+    _write_json(fixture["review_path"], manifest)
+
+    with pytest.raises(ValueError, match="contained"):
+        mechanical.build_mechanical_receipt(
+            fixture["root"], fixture["audit_path"]
+        )
+
+
+def test_mechanical_legacy_contained_video_must_match_manifest_video(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture, mechanical = _prepared_mechanical_package(tmp_path, monkeypatch)
+    manifest = json.loads(fixture["review_path"].read_text(encoding="utf-8"))
+    manifest["items"][0].pop("normal_first_publication_media_successor")
+    manifest.pop("normal_first_publication_media_successor_by_candidate")
+    _write_json(fixture["review_path"], manifest)
+
+    wrong_video = fixture["root"] / "contained-but-wrong.mp4"
+    wrong_video.write_bytes(b"contained-but-wrong-video")
+    record_path = fixture["root"] / f'{fixture["stem"]}.record.json'
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    record["burned_preview"]["path"] = str(wrong_video.resolve())
+    package_ass = fixture["root"] / f'{fixture["stem"]}.final-sapphire72.ass'
+    record["burned_preview"]["ass_path"] = str(package_ass.resolve())
+    record["burned_preview"]["burned_sha256"] = _sha256(wrong_video)
+    record["artifact_hashes"]["burned_video_sha256"] = _sha256(wrong_video)
+    record["artifact_hashes"]["ass_sha256"] = _sha256(package_ass)
+    _write_json(record_path, record)
+
+    with pytest.raises(ValueError, match="manifest video"):
+        mechanical.build_mechanical_receipt(
+            fixture["root"], fixture["audit_path"]
+        )
 
 
 def test_mechanical_cli_create_only_and_existing_uploader_replay(mechanical_package):
@@ -398,6 +619,38 @@ def test_mechanical_receipt_never_overrides_a_fresh_audit_failure(mechanical_pac
     fixture["audit"]["passed"] = False
     fixture["audit"]["blocking_issue_count"] = 1
     with pytest.raises(ValueError, match="current canonical audit rejected"):
+        mechanical.validate_mechanical_receipt(value, fixture["root"], fixture["audit_path"])
+
+
+def test_mechanical_receipt_replays_unchanged_content_after_auditor_identity_churn(
+    mechanical_package,
+):
+    fixture, mechanical = mechanical_package
+    value = mechanical.build_mechanical_receipt(fixture["root"], fixture["audit_path"])
+    saved_bytes = fixture["audit_path"].read_bytes()
+    saved_identity = copy.deepcopy(value["bindings"]["canonical_audit"])
+    fixture["audit"]["policy_fingerprint"] = "sha256:" + "a" * 64
+    fixture["audit"]["auditor_source_sha256"] = "sha256:" + "b" * 64
+
+    assert mechanical.validate_mechanical_receipt(
+        value, fixture["root"], fixture["audit_path"]
+    ) == value
+    assert mechanical.build_mechanical_receipt(
+        fixture["root"], fixture["audit_path"]
+    )["bindings"]["canonical_audit"] == saved_identity
+    assert fixture["audit_path"].read_bytes() == saved_bytes
+    assert mechanical.validate_saved_mechanical_receipt(value, fixture["root"]) == value
+
+
+@pytest.mark.parametrize("key", ["audited_inputs", "issues", "root", "policy_epoch"])
+def test_mechanical_receipt_identity_churn_does_not_hide_content_drift(
+    mechanical_package, key,
+):
+    fixture, mechanical = mechanical_package
+    value = mechanical.build_mechanical_receipt(fixture["root"], fixture["audit_path"])
+    fixture["audit"]["policy_fingerprint"] = "sha256:" + "a" * 64
+    fixture["audit"][key] = "changed-current-content"
+    with pytest.raises(ValueError, match="canonical audit"):
         mechanical.validate_mechanical_receipt(value, fixture["root"], fixture["audit_path"])
 
 

@@ -34,7 +34,17 @@ def orthography_pronunciation_key(text: str) -> tuple[str, ...]:
             tokens.extend(str(value).casefold() for value in _lazy_pinyin("".join(han)))
             han.clear()
 
-    for char in text:
+    # Reuse T's single-digit pronunciation owner. Identifier/decimal/multi-digit
+    # tokens retain their previous representation instead of guessing a reading.
+    singleton_digits = {m.start() for m in re.finditer(
+        r"[A-Za-z0-9]+(?:[._:/-][A-Za-z0-9]+)*", text
+    ) if len(m.group()) == 1 and m.group() in "0123456789"}
+    for index, char in enumerate(text):
+        if index in singleton_digits:
+            from src.autoslice.closed_set_proposal_rebuild import _pinyin
+            flush()
+            tokens.extend(_pinyin(char).split())
+            continue
         if char.isascii() and char.isalpha():
             flush()
             tokens.extend(_LATIN_PRONUNCIATION[char.casefold()].split())

@@ -1,0 +1,15 @@
+[Unit]
+Description=Archive sealed OCI3 local recordings through CloudDrive2
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+UMask=0077
+ExecStart=/usr/bin/python3 -B /opt/bilive/ops/recording_spool_mover.py
+Restart=on-failure
+RestartSec=30
+SyslogIdentifier=oci3-recording-spool
+
+[Install]
+WantedBy=multi-user.target

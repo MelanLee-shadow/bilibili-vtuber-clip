@@ -10,8 +10,14 @@ import argparse
 import hashlib
 import json
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[4]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 TIME_RE = re.compile(r"\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?\]")
@@ -88,10 +94,6 @@ def parse_lrc(path: Path, *, keep_credits: bool) -> list[Lyric]:
     return lyrics
 
 
-def escape_ass(text: str) -> str:
-    return text.replace("\\", "\\\\").replace("{", "(").replace("}", ")").replace("\n", r"\N")
-
-
 def write_srt(cues: list[tuple[float, float, str]], out: Path) -> None:
     blocks = []
     for index, (start, end, text) in enumerate(cues, 1):
@@ -106,24 +108,23 @@ def write_ass(cues: list[tuple[float, float, str]], out: Path, *, play_res: str)
     font_size = 72 if height >= 1080 else 48
     margin_h = 60 if width >= 1920 else 40
     margin_v = 40 if height >= 1080 else 30
-    header = f"""[Script Info]
-ScriptType: v4.00+
-PlayResX: {width}
-PlayResY: {height}
-WrapStyle: 0
-ScaledBorderAndShadow: yes
+    from scripts.apply_speaker_turn_overrides import GUEST_WHITE_STYLE, HOST_SPEAKER
+    from src.autoslice.subtitle_rendering import AssLaneStyle, BurnedAssCue, render_burned_ass
 
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Microsoft YaHei,{font_size},&H00FFFFFF,&H000000FF,&H00BA520F,&H70000000,0,0,0,0,100,100,0,0,1,3,2,2,{margin_h},{margin_h},{margin_v},1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-"""
-    lines = [header]
-    for start, end, text in cues:
-        lines.append(f"Dialogue: 0,{ass_time(start)},{ass_time(end)},Default,,0,0,0,,{escape_ass(text)}\n")
-    out.write_text("".join(lines), encoding="utf-8")
+    style = (
+        f"Microsoft YaHei,{font_size},&H00FFFFFF,&H000000FF,&H00BA520F,&H70000000,"
+        f"0,0,0,0,100,100,0,0,1,3,2,2,{margin_h},{margin_h},{margin_v},1"
+    )
+    guest = GUEST_WHITE_STYLE.split(",")
+    guest[1], guest[-4], guest[-3], guest[-2] = map(str, (font_size, margin_h, margin_h, margin_v))
+    out.write_text(render_burned_ass(
+        [BurnedAssCue(max(0, round(a * 100)) * 10, max(0, round(b * 100)) * 10, text)
+         for a, b, text in cues],
+        host_speaker=HOST_SPEAKER,
+        lane=AssLaneStyle(styles=(("Default", style), ("LDS", style), ("GUEST", ",".join(guest))),
+                          play_res=(width, height), wrap_style=0,
+                          escaping="timed_lyrics", preserve_cue_layout=True),
+    ), encoding="utf-8")
 
 
 def build_cues(

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -17,11 +18,16 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping
 
+from .profile_manifest_history import ProfileBindingExtension, manifest_extension
+
 
 CHANNEL_PROFILE_SCHEMA_VERSION = "vtuber-slice.channel-profile.v1"
 DEFAULT_CHANNEL_PROFILE_ID = "lidousha"
 PROFILE_ENV = "AUTOSLICE_PROFILE"
 PROFILE_MANIFEST_ENV = "AUTOSLICE_PROFILE_MANIFEST"
+PROFILE_BINDING_ENV = "AUTOSLICE_PROFILE_BINDING"
+PROFILE_SNAPSHOT_ENV = "AUTOSLICE_PROFILE_MANIFEST_SNAPSHOT"
+PROFILE_BINDING_SCHEMA = "autoslice-profile-binding.v1"
 
 _SAFE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _ROOM_ID_RE = re.compile(r"^[0-9]{1,32}$")
@@ -86,6 +92,170 @@ class ChannelProfileError(ValueError):
     """A profile is missing, malformed, unsafe, or internally inconsistent."""
 
 
+def normalize_profile_binding(value: object) -> dict[str, str]:
+    """Validate a task selection without consulting ambient selectors."""
+    fields = {"schema_version", "profile_id", "manifest_path", "manifest_sha256"}
+    if not isinstance(value, Mapping) or set(value) != fields:
+        raise ChannelProfileError("profile_binding is missing or has invalid fields; explicit task binding required")
+    if value["schema_version"] != PROFILE_BINDING_SCHEMA:
+        raise ChannelProfileError("unsupported profile_binding schema")
+    profile_id = _safe_component(value["profile_id"], label="profile_binding.profile_id")
+    digest = value["manifest_sha256"]
+    if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+        raise ChannelProfileError("profile_binding.manifest_sha256 must be a raw sha256")
+    locator = value["manifest_path"]
+    if not isinstance(locator, str) or not locator or "\x00" in locator or "\\" in locator:
+        raise ChannelProfileError("profile_binding.manifest_path is invalid")
+    path = Path(locator)
+    if ".." in path.parts or path.as_posix() != locator:
+        raise ChannelProfileError("profile_binding.manifest_path must be canonical")
+    if not path.is_absolute():
+        _safe_relative_path(locator, label="profile_binding.manifest_path")
+    return {"schema_version": PROFILE_BINDING_SCHEMA, "profile_id": profile_id,
+            "manifest_path": locator, "manifest_sha256": digest}
+
+
+def profile_binding_from_environment(environ: Mapping[str, str] | None = None) -> dict[str, str] | None:
+    env = os.environ if environ is None else environ
+    if PROFILE_BINDING_ENV not in env:
+        return None
+    try:
+        return normalize_profile_binding(json.loads(env[PROFILE_BINDING_ENV]))
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ChannelProfileError("invalid AUTOSLICE_PROFILE_BINDING JSON") from exc
+
+
+def require_profile_binding(
+    *, task_binding: object, current_binding: object, repo_root: Path | None = None,
+) -> dict[str, str]:
+    """Keep the frozen task selection if the current selection extends it.
+
+    The roles are keyword-only because compatibility is directional. A parent
+    or deployment supplies ``current_binding``; it must never replace the
+    task's original binding, including when it contains additional asset keys.
+    """
+    binding = normalize_profile_binding(task_binding)
+    current = normalize_profile_binding(current_binding)
+    if current == binding:
+        return binding
+    if any(current[key] != binding[key] for key in ("schema_version", "profile_id", "manifest_path")):
+        raise ChannelProfileError("profile_binding differs from the selected task profile")
+    repo = (repo_root or Path(__file__).resolve().parents[2]).resolve()
+    manifest = Path(current["manifest_path"])
+    if not manifest.is_absolute():
+        manifest = repo / manifest
+    try:
+        raw = manifest.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != current["manifest_sha256"]:
+            raise ValueError("selected profile manifest bytes drifted since selection")
+        selected = load_channel_profile(repo, manifest_path=manifest,
+                                        profile_id=current["profile_id"], environ={})
+        if binding_for_profile(selected)["manifest_sha256"] != current["manifest_sha256"]:
+            raise ValueError("selected profile manifest bytes drifted since selection")
+        extension = manifest_extension(repo, old_sha256=binding["manifest_sha256"],
+                                       current_bytes=raw, profile_id=binding["profile_id"])
+    except (OSError, ValueError) as exc:
+        raise ChannelProfileError(f"profile_binding differs from the selected task profile: {exc}") from exc
+    _log_binding_extension(extension, binding)
+    return binding
+
+
+def require_record_profile_binding(
+    *, record_binding: object, task_binding: object, repo_root: Path | None = None,
+) -> dict[str, str]:
+    """Check recorded provenance against its task, preserving its direction.
+
+    A record may declare the task selection or its verified extension. An old
+    record cannot be relabeled as a newer task. It is never the authority that
+    chooses the task binding, unlike the task input at a parent boundary.
+    """
+    return require_profile_binding(task_binding=task_binding,
+                                   current_binding=record_binding, repo_root=repo_root)
+
+
+def _log_binding_extension(extension: ProfileBindingExtension | None, binding: Mapping[str, str]) -> None:
+    if extension is not None:
+        logging.getLogger(__name__).warning("PROFILE_BINDING_MONOTONIC_EXTENSION %s", json.dumps(
+            {"profile_id": binding["profile_id"], "manifest_path": binding["manifest_path"],
+             **extension.as_dict()}, sort_keys=True))
+
+
+def _require_selected_manifest_snapshot(
+    env: Mapping[str, str], binding: Mapping[str, str], manifest: Path, digest: str,
+) -> None:
+    """Keep the effective selection frozen across imports and subprocesses."""
+    if PROFILE_SNAPSHOT_ENV not in env:
+        return
+    try:
+        snapshot = json.loads(env[PROFILE_SNAPSHOT_ENV])
+        if (not isinstance(snapshot, dict)
+                or set(snapshot) != {"profile_binding", "manifest_path", "manifest_sha256"}):
+            raise ChannelProfileError("invalid selected profile manifest snapshot")
+        selected_binding = normalize_profile_binding(snapshot["profile_binding"])
+        if selected_binding != binding:
+            return  # An explicit different task ignores unrelated ambient selectors.
+        path = snapshot["manifest_path"]
+        if not isinstance(path, str) or not Path(path).is_absolute():
+            raise ChannelProfileError("invalid selected profile manifest snapshot path")
+        if Path(path).resolve() != manifest:
+            return  # A different immutable deployment starts its own selection.
+        selected_digest = normalize_profile_binding({
+            **binding, "manifest_sha256": snapshot["manifest_sha256"],
+        })["manifest_sha256"]
+        if digest != selected_digest:
+            raise ChannelProfileError("selected profile manifest bytes drifted since selection")
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ChannelProfileError("invalid selected profile manifest snapshot JSON") from exc
+
+
+def binding_for_profile(profile: ChannelProfile) -> dict[str, str]:
+    """Capture the loaded identity, rejecting a file changed since selection."""
+    from .evidence_identity import file_sha256
+    try:
+        current = file_sha256(profile.manifest_path)
+    except OSError as exc:
+        raise ChannelProfileError("selected profile manifest is unavailable") from exc
+    if current != profile.manifest_sha256:
+        raise ChannelProfileError("selected profile manifest bytes drifted since selection")
+    if profile.task_binding is not None:
+        return normalize_profile_binding(profile.task_binding)
+    try:
+        locator = profile.manifest_path.relative_to(profile.repo_root).as_posix()
+    except ValueError:
+        locator = str(profile.manifest_path)
+    return normalize_profile_binding({"schema_version": PROFILE_BINDING_SCHEMA,
+        "profile_id": profile.profile_id, "manifest_path": locator,
+        "manifest_sha256": profile.manifest_sha256})
+
+
+def profile_environment(profile: ChannelProfile, environ: Mapping[str, str] | None = None) -> dict[str, str]:
+    binding = binding_for_profile(profile)
+    env = dict(os.environ if environ is None else environ)
+    env[PROFILE_BINDING_ENV] = json.dumps(binding, sort_keys=True, separators=(",", ":"))
+    env[PROFILE_ENV] = profile.profile_id
+    env[PROFILE_MANIFEST_ENV] = str(profile.manifest_path)
+    env[PROFILE_SNAPSHOT_ENV] = json.dumps({"profile_binding": binding,
+        "manifest_path": str(profile.manifest_path), "manifest_sha256": profile.manifest_sha256},
+        sort_keys=True, separators=(",", ":"))
+    return env
+
+
+def bind_profile_result(result: dict, profile: ChannelProfile) -> dict:
+    """Project a verified caller selection without accepting conflicting provenance."""
+    binding = binding_for_profile(profile)
+    if "profile_binding" in result:
+        require_record_profile_binding(record_binding=result["profile_binding"], task_binding=binding,
+                                       repo_root=profile.repo_root)
+    summary = result.get("summary")
+    if isinstance(summary, Mapping) and "profile_binding" in summary:
+        require_record_profile_binding(record_binding=summary["profile_binding"], task_binding=binding,
+                                       repo_root=profile.repo_root)
+    projected = {**result, "profile_binding": binding}
+    if profile.binding_extension is not None:
+        projected["profile_binding_extensions"] = [profile.binding_extension.as_dict()]
+    return projected
+
+
 @dataclass(frozen=True)
 class CanonicalSurfaceRule:
     surface: str
@@ -113,6 +283,12 @@ class CoverIdentityProfile:
     feature_en: str
     scene_prop_meme_note_zh: str
     emote_companion_lore_zh: str
+
+
+# Syntax is independent of the configured host_speaker_label/guest_speaker_label.
+# Consumers must separately enforce their own allowed-speaker authority.
+# Groups: speaker identity (without an optional confidence score), body text.
+LABEL_RE = re.compile(r"^\[([^\]\r\n]+?)(?:\s+[+-]?\d+(?:\.\d+)?)?\]\s*(.*)\Z", re.S)
 
 
 @dataclass(frozen=True)
@@ -143,14 +319,19 @@ class ChannelProfile:
     manifest_path: Path
     manifest_sha256: str
     repo_root: Path
+    task_binding: Mapping[str, str] | None = None
+    binding_extension: ProfileBindingExtension | None = None
 
     @property
     def delivery_root(self) -> Path:
-        return self.repo_root / self.output_directory
+        return self.delivery_root_for(self.repo_root)
 
     def delivery_root_for(self, repo_root: Path) -> Path:
         """Rebase delivery under a test/eval repo while keeping profile policy."""
 
+        root = repo_root.resolve()
+        if root.name == 'repo' and root.parent.parent.name == 'versions' and (root / 'DEPLOYED_COMMIT').is_file():
+            return root.parent.parent.parent / self.output_directory
         return repo_root / self.output_directory
 
     def _rebase_repo_path(self, path: Path, repo_root: Path | None) -> Path:
@@ -213,7 +394,9 @@ class ChannelProfile:
         return tuple(paths)
 
     def missing_runtime_paths(self) -> tuple[Path, ...]:
-        required = [*self.asset_files.values(), *self.tools.values()]
+        optional = {"channel_census_config", "selection_census_clues"}
+        required = [*(path for key, path in self.asset_files.items() if key not in optional),
+                    *self.tools.values()]
         required.extend(self.asset_directories.values())
         return tuple(path for path in required if not path.exists())
 
@@ -382,9 +565,24 @@ def load_channel_profile(
     profile_id: str | None = None,
     manifest_path: Path | None = None,
     environ: Mapping[str, str] | None = None,
+    profile_binding: Mapping[str, object] | None = None,
 ) -> ChannelProfile:
     repo_root = repo_root.resolve()
     env = os.environ if environ is None else environ
+    selection_env = env
+    expected = (normalize_profile_binding(profile_binding) if profile_binding is not None
+                else profile_binding_from_environment(env))
+    if expected is not None:
+        bound_path = Path(expected["manifest_path"])
+        if not bound_path.is_absolute():
+            bound_path = repo_root / bound_path
+        if profile_id is not None and profile_id != expected["profile_id"]:
+            raise ChannelProfileError("explicit profile id conflicts with task profile_binding")
+        if manifest_path is not None:
+            explicit = manifest_path if manifest_path.is_absolute() else repo_root / manifest_path
+            if explicit.resolve() != bound_path.resolve():
+                raise ChannelProfileError("explicit manifest conflicts with task profile_binding")
+        profile_id, manifest_path, env = expected["profile_id"], bound_path, {}
     resolved_manifest = resolve_channel_profile_manifest(
         repo_root,
         profile_id=profile_id,
@@ -395,6 +593,18 @@ def load_channel_profile(
         manifest_bytes = resolved_manifest.read_bytes()
     except OSError as exc:
         raise ChannelProfileError(f"cannot read channel profile {resolved_manifest}: {exc}") from exc
+    if expected is not None:
+        _require_selected_manifest_snapshot(
+            selection_env, expected,
+            resolved_manifest, hashlib.sha256(manifest_bytes).hexdigest(),
+        )
+    extension = None
+    if expected is not None:
+        try:
+            extension = manifest_extension(repo_root, old_sha256=expected["manifest_sha256"],
+                                           current_bytes=manifest_bytes, profile_id=expected["profile_id"])
+        except (OSError, ValueError) as exc:
+            raise ChannelProfileError(f"selected profile manifest bytes differ from task profile_binding: {exc}") from exc
     try:
         document = json.loads(manifest_bytes)
     except json.JSONDecodeError as exc:
@@ -497,6 +707,8 @@ def load_channel_profile(
         assets.get("pipeline_fingerprint_files"),
         label="assets.pipeline_fingerprint_files",
     )
+    if {"selection_census_clues", "persona_facts"} & set(fingerprint_asset_keys):
+        raise ChannelProfileError("CHANNEL_KNOWLEDGE_ASSET_MUST_NOT_BE_FINGERPRINTED")
     fingerprint_directory_keys = _string_list(
         assets.get("pipeline_fingerprint_directories"),
         label="assets.pipeline_fingerprint_directories",
@@ -621,7 +833,7 @@ def load_channel_profile(
         for key, value in tool_names.items()
     }
 
-    return ChannelProfile(
+    profile = ChannelProfile(
         profile_id=loaded_profile_id,
         display_name=_string(identity.get("display_name"), label="identity.display_name"),
         prompt_name=_string(identity.get("prompt_name"), label="identity.prompt_name"),
@@ -660,4 +872,9 @@ def load_channel_profile(
         manifest_path=resolved_manifest,
         manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
         repo_root=repo_root,
+        task_binding=MappingProxyType(expected) if expected is not None else None,
+        binding_extension=extension,
     )
+    if expected is not None:
+        _log_binding_extension(extension, expected)
+    return profile

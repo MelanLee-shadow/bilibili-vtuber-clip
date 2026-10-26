@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 from datetime import datetime
 import hashlib
 import json
@@ -169,6 +170,10 @@ _CONNECTION_STUB_FIRST_TIMESTAMP_REBIND_POLICY = (
 )
 _CONNECTION_STUB_TIMESTAMP_REBIND_SCHEMA = "recording-source-fuse-timestamp-rebind.v1"
 _CONNECTION_STUB_TIMESTAMP_REBIND_POLICY = "FUSE_SUCCESSOR_MTIME_CTIME_REATTESTATION"
+# Evidence identity (src/autoslice/evidence_identity.py): placement-only drift
+# is re-attested by the adapter's hash-bound child under this receipt.
+_CONNECTION_STUB_PLACEMENT_REBIND_SCHEMA = "recording-source-evidence-identity-placement-rebind.v1"
+_CONNECTION_STUB_PLACEMENT_REBIND_POLICY = "EVIDENCE_IDENTITY_PLACEMENT_ONLY_REATTESTATION"
 _FILE_FINGERPRINT_KEYS = (
     "size_bytes",
     "mtime_ns",
@@ -193,11 +198,8 @@ _LEGACY_SUCCESSOR_SOURCE_BASIS = "LEGACY_NO_PRIOR_SHA256_WEBHOOK_FINALIZED_LEDGE
 
 
 def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return digest
 
 
 def _regular_file_fingerprint(path: Path) -> dict[str, int]:
@@ -375,6 +377,33 @@ def _changed_fingerprint_fields(
     }
 
 
+def _placement_rebind_legacy_contract() -> dict[str, object]:
+    return {
+        "successor_source": {
+            "verification_basis": _LEGACY_SUCCESSOR_SOURCE_BASIS,
+            "historical_sha256_available": False,
+            "strict_bindings": [
+                "path",
+                "size_bytes",
+                "mtime_ns",
+                "mode",
+                "webhook_file_size",
+                "finalized_ledger_source_size",
+                "successor_mp4_historical_sha256",
+            ],
+        }
+    }
+
+
+def _placement_only_changes(changes: dict[str, list[str]]) -> bool:
+    from src.autoslice.evidence_identity import PLACEMENT_KEYS
+
+    return bool(changes) and all(
+        fields and set(fields) <= {"device", "inode", "ctime_ns"} <= PLACEMENT_KEYS
+        for fields in changes.values()
+    )
+
+
 def _identity_rebind_legacy_contract() -> dict[str, object]:
     return {
         "successor_source": {
@@ -489,12 +518,17 @@ def _connection_stub_identity_matches(
             receipt.get("schema_version") == _MIXED_REBIND_SCHEMA
             and receipt.get("policy") == _MIXED_REBIND_POLICY
         )
+        is_placement_rebind = (
+            receipt.get("schema_version") == _CONNECTION_STUB_PLACEMENT_REBIND_SCHEMA
+            and receipt.get("policy") == _CONNECTION_STUB_PLACEMENT_REBIND_POLICY
+        )
         expected_fields = base_receipt_fields | (
             {"changed_fields"}
             if is_timestamp_rebind
             or is_reused_portable_timestamp_rebind
             or is_first_timestamp_rebind
             or is_mixed_rebind
+            or is_placement_rebind
             else set()
         )
         if (
@@ -504,6 +538,7 @@ def _connection_stub_identity_matches(
             and not is_first_timestamp_rebind
             and not is_timestamp_rebind
             and not is_mixed_rebind
+            and not is_placement_rebind
         ) or set(receipt) != expected_fields:
             return False, "source disposition identity rebind receipt is malformed"
         integrity = receipt.get("canonical_integrity")
@@ -542,7 +577,14 @@ def _connection_stub_identity_matches(
             ):
                 return False, "source disposition identity rebind binding drifted"
         changes = _changed_fingerprint_fields(previous, current)
-        if is_identity_rebind:
+        if is_placement_rebind:
+            if (
+                receipt.get("legacy_promotion") != _placement_rebind_legacy_contract()
+                or receipt.get("changed_fields") != changes
+                or not _placement_only_changes(changes)
+            ):
+                return False, "source disposition placement rebind binding drifted"
+        elif is_identity_rebind:
             if (
                 receipt.get("legacy_promotion") != _identity_rebind_legacy_contract()
                 or not changes
@@ -637,6 +679,30 @@ def _connection_stub_identity_matches(
             or _portable_mount_identity(identities[0]) != _portable_mount_identity(previous_mount)
         ):
             return False, "source disposition FUSE rebind mount identity drifted"
+    # A restored mtime (or coarse/stale FUSE ctime) can leave every stat field
+    # unchanged after an in-place rewrite. Revalidate the recorded content,
+    # including after a placement rebind; metadata is never a SHA substitute.
+    # Legacy successor FLVs have no historical SHA and retain the strict
+    # fingerprint/webhook/finalized-ledger checks above and below.
+    from ops.recording.recording_archive import sha256_file as recording_sha256_file
+
+    try:
+        for role in _DISPOSITION_FILE_ROLES:
+            expected_sha = previous[role].get("sha256")
+            if expected_sha is None and role == "successor_source":
+                continue
+            if (
+                re.fullmatch(r"[0-9a-f]{64}", str(expected_sha or "")) is None
+                or recording_sha256_file(paths[role]) != expected_sha
+            ):
+                return False, f"source disposition {role} SHA-256 drifted"
+        if any(
+            _regular_file_fingerprint(paths[role]) != current_fingerprints[role]
+            for role in _DISPOSITION_FILE_ROLES
+        ):
+            return False, "source disposition evidence drifted while hashing"
+    except OSError as exc:
+        return False, f"source disposition evidence cannot be hashed: {type(exc).__name__}"
     return True, "source disposition effective identity revalidated"
 
 
@@ -696,7 +762,11 @@ def _verify_connection_stub_disposition(
     if adapter_state_path is None:
         return False, "adapter_state_path was not provided"
     try:
-        state = json.loads(adapter_state_path.read_text(encoding="utf-8"))
+        if adapter_state_path.parent.name == "oci3-local-first":
+            from ops.recording.recording_archive import read_consumer_state
+            state = read_consumer_state(adapter_state_path)
+        else:
+            state = json.loads(adapter_state_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         return False, f"adapter state is unreadable: {type(exc).__name__}"
     if state.get("schema_version") != "bililive-recorder-adapter-state.v1":
@@ -948,7 +1018,11 @@ def _verify_truncated_source_disposition(
     if adapter_state_path is None:
         return None
     try:
-        state = json.loads(adapter_state_path.read_text(encoding="utf-8"))
+        if adapter_state_path.parent.name == "oci3-local-first":
+            from ops.recording.recording_archive import read_consumer_state
+            state = read_consumer_state(adapter_state_path)
+        else:
+            state = json.loads(adapter_state_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         return False, f"adapter state is unreadable: {type(exc).__name__}", None
     if not isinstance(state, dict):
@@ -973,7 +1047,9 @@ def _verify_truncated_source_disposition(
         from ops.recording.bililive_recorder_adapter import (
             validate_truncated_source_disposition,
         )
+        from ops.recording.recording_archive import sha256_file as recording_sha256_file
 
+        source_before = _regular_file_fingerprint(source_flv)
         validate_truncated_source_disposition(
             source_flv,
             row,
@@ -981,6 +1057,13 @@ def _verify_truncated_source_disposition(
             webhook_files=webhook_files,
             finalized=finalized,
         )
+        # The adapter's recurring validator checks the large source FLV by
+        # fingerprint. Selection also verifies its recorded SHA, just as the
+        # connection-stub and local-first artifact readers do.
+        if recording_sha256_file(source_flv) != row["source"]["sha256"]:
+            return False, "typed truncated-source source SHA-256 drifted", action
+        if _regular_file_fingerprint(source_flv) != source_before:
+            return False, "typed truncated-source source drifted while hashing", action
     except (OSError, ValueError, RuntimeError) as exc:
         return False, str(exc)[:500], action
     return True, "typed truncated-source disposition revalidated", action
@@ -991,6 +1074,7 @@ def audit_finalized_recording_inventory(
     *,
     room_id: str,
     adapter_state_path: Path | None = None,
+    archive_state_path: Path | None = None,
 ) -> dict[str, object]:
     """Fail closed when recorder output never reached the runner's MP4 lane.
 
@@ -1002,10 +1086,71 @@ def audit_finalized_recording_inventory(
     never became MP4, so the first 30 minutes were falsely reported as the
     whole session.
 
-    This audit is intentionally cheap (directory names plus at most 1 MiB of
-    playlist text) and contains no wall-clock assumptions.  It can run before
-    the runner's early "nothing new" return on every tick.
+    Ordinary inventory scans use directory names and at most 1 MiB of playlist
+    text. Typed dispositions and local-first archive receipts additionally
+    rehash their bound files; stat equality alone cannot prove byte identity.
+    There are no wall-clock assumptions. Run before the runner's early
+    "nothing new" return on every tick.
     """
+
+    # The cloud consumer must not select a half-copied local-first segment.
+    # Free and ordinary offline/shadow inventories retain their old behavior.
+    from ops.recording import recording_archive as archive_identity
+    cloud_date = date_dir.parent == archive_identity.ARCHIVE_ROOT / str(room_id)
+    local_date = date_dir.parent == archive_identity.SPOOL_ROOT / str(room_id)
+    archive_bindings: dict[str, object] = {}
+    disposition_sources: dict[str, Path] = {}
+    if cloud_date or local_date or archive_state_path is not None:
+        try:
+            state = archive_identity.read_json(adapter_state_path or
+                                               archive_identity.STATE_DIR / "adapter-state.json")
+            archive_path = archive_state_path or archive_identity.ARCHIVE_STATE
+            archive = archive_identity.read_json(archive_path) if archive_path.exists() else {}
+            if not local_date:
+                pending = archive_identity.archive_date_issues(state, archive, date_dir.name)
+                if pending:
+                    raise archive_identity.ArchiveError("archive pending: " + ", ".join(pending))
+            archive_bindings = {
+                relative: row["files"] for relative, row in archive.get("segments", {}).items()
+                if relative.startswith(date_dir.name + "/")
+                and archive_identity.verified_segment(state, archive, relative)
+            }
+            for relative, files in archive_bindings.items():
+                for name, item in files.items():
+                    artifact = date_dir.parent / name
+                    if local_date and item.get("deleted"):
+                        if artifact.exists() or artifact.is_symlink():
+                            raise archive_identity.ArchiveError("deleted recording path reappeared")
+                        continue
+                    archive_identity.validate_artifact(
+                        artifact, item,
+                        fingerprint_key="local_fingerprint" if local_date else "archive_fingerprint",
+                    )
+                # Truncated/recovered pieces keep their original physical
+                # evidence; the cloud copy is independently checked above.
+                retained = archive_identity.retained_validation_source(relative, archive)
+                if retained is not None:
+                    disposition_sources[Path(relative).stem] = retained
+            # Ignored stubs are deliberately never finalized/moved. They must
+            # still validate their same-session successor before selection from
+            # 115, even though directory enumeration cannot see the local stub.
+            for relative, disposition in state.get("source_dispositions", {}).items():
+                if relative.split("/", 1)[0] == date_dir.name:
+                    archive_identity.relative_flv(relative)
+                    if (disposition.get("schema_version") == _CONNECTION_STUB_SCHEMA
+                            and (date_dir.parent / relative).with_suffix(".mp4").exists()):
+                        raise archive_identity.ArchiveError(
+                            "ignored connection stub unexpectedly entered the MP4 lane"
+                        )
+                    disposition_sources[Path(relative).stem] = (
+                        archive_identity.SPOOL_ROOT / str(room_id) / relative
+                    )
+        except (ValueError, OSError, TypeError, KeyError) as exc:
+            return {"schema_version": "recording-inventory-audit.v1", "status": "BLOCKED",
+                    "can_select": False, "room_id": room_id, "date_dir": str(date_dir),
+                    "consumer_segments": [], "observed_stems": [], "issues": [{
+                        "code": "RECORDING_ARCHIVE_PENDING", "severity": "BLOCK",
+                        "message": str(exc), "path": str(date_dir)}]}
 
     stems: dict[str, dict[str, Path]] = {}
     prefix = f"{room_id}_"
@@ -1040,15 +1185,19 @@ def audit_finalized_recording_inventory(
 
     issues: list[dict[str, object]] = []
     consumer_segments: list[str] = []
+    for stem, source in disposition_sources.items():
+        stems.setdefault(stem, {}).setdefault(".flv", source)
     for stem, siblings in sorted(stems.items()):
         mp4 = siblings.get(".mp4")
         if mp4 is not None:
             truncated_check = None
             raw_flv = siblings.get(".flv")
             if raw_flv is not None:
+                validation_source = disposition_sources.get(stem, raw_flv)
+                validation_date = validation_source.parent
                 truncated_check = _verify_truncated_source_disposition(
-                    raw_flv,
-                    date_dir=date_dir,
+                    validation_source,
+                    date_dir=validation_date,
                     adapter_state_path=adapter_state_path,
                 )
             if truncated_check is not None:
@@ -1101,9 +1250,11 @@ def audit_finalized_recording_inventory(
             )
         elif raw_media is not None:
             if raw_media.suffix.lower() == ".flv":
+                validation_source = disposition_sources.get(stem, raw_media)
+                validation_date = validation_source.parent
                 truncated_check = _verify_truncated_source_disposition(
-                    raw_media,
-                    date_dir=date_dir,
+                    validation_source,
+                    date_dir=validation_date,
                     adapter_state_path=adapter_state_path,
                 )
                 if truncated_check is not None:
@@ -1133,8 +1284,8 @@ def audit_finalized_recording_inventory(
                     )
                     continue
                 disposition_ok, disposition_detail = _verify_connection_stub_disposition(
-                    raw_media,
-                    date_dir=date_dir,
+                    validation_source,
+                    date_dir=validation_date,
                     adapter_state_path=adapter_state_path,
                 )
                 if disposition_ok:
@@ -1190,6 +1341,7 @@ def audit_finalized_recording_inventory(
         "consumer_segments": consumer_segments,
         "observed_stems": sorted(stems),
         "issues": issues,
+        **({"archive_bindings": archive_bindings} if archive_bindings else {}),
     }
 
 

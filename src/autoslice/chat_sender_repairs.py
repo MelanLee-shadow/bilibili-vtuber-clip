@@ -98,6 +98,8 @@ def _cpa_resolve_ambiguous_sender(
             "adjacent_structured_event_chain": event_chain,
             "current_cue": texts[cue_index],
             "heard_sender": heard_sender,
+            "referent_policy": "Compare all events and context; a single candidate may still be rejected. Time proximity alone does not establish the sender.",
+            "timeline_basis": "clip_local_event_and_subtitle_offsets; display_latency_unobserved",
         },
         "candidate_entities": [
             {
@@ -129,6 +131,15 @@ def _cpa_resolve_ambiguous_sender(
             "reason_code": reason_code,
         },
     }
+    if len(aliases) == 1 and heard_sender not in aliases:
+        # The real CPA adapter requires a closed set of at least two choices.
+        # Keeping the current heard name is a refusal to bind this event, not
+        # a new platform identity or permission to invent another sender.
+        request["candidate_entities"].append({
+            "candidate_id": "CURRENT", "canonical": heard_sender,
+            "surfaces": [heard_sender], "readings": [], "source_event_ids": [],
+            "action": "KEEP_CURRENT_UNBOUND",
+        })
     request["request_sha256"] = hashlib.sha256(
         json.dumps(
             request,
@@ -144,7 +155,7 @@ def _cpa_resolve_ambiguous_sender(
         "witness_authority": "EVIDENCE_ONLY",
         "request": request,
     }
-    if entity_verifier is None or len(aliases) < 2:
+    if entity_verifier is None or not aliases:
         audit["reason_code"] = "SENDER_CPA_VERIFIER_UNAVAILABLE"
         return None, audit
     try:
@@ -163,9 +174,12 @@ def _cpa_resolve_ambiguous_sender(
         and verdict.get("request_sha256") == request["request_sha256"]
         and verdict.get("status") == "RESOLVED"
         and verdict.get("decision_authority") == "CPA_JUDGE"
-        and chosen in aliases
+        and (chosen in aliases or chosen == heard_sender)
     ):
         audit["reason_code"] = "SENDER_CPA_VERDICT_INVALID"
+        return None, audit
+    if chosen not in aliases:
+        audit["reason_code"] = "SENDER_CPA_KEEPS_CURRENT_UNBOUND"
         return None, audit
     audit.update(
         status="RESOLVED",
@@ -238,13 +252,14 @@ def audit_named_thanks_record_coverage(
 ) -> list[dict[str, Any]]:
     """Disclose every remaining named thanks line's record-channel status.
 
- 自审计面（公开规则复盘令：「有记录没用上」不许静默）。三态：
- - RECORD_CHANNEL_ABSENT：窗口内无任何带名事件（录播/备份双缺时才会
- 出现——听是唯一通道，诚实说明）；
- - RECORD_PRESENT_NAME_INCOMPATIBLE：有事件但读音/字符两门都不认
- （她谢的可能不是这单，或名字听错得离谱——需要耳裁的真实残余）；
- - 已修的 cue 不出行（修复行自身就是披露）。
- """
+    自审计面：「有记录没用上」不许静默。
+    - RECORD_CHANNEL_ABSENT：输入确实没有带名记录；
+    - RECORD_PRESENT_OUTSIDE_WINDOW：有记录，但不在当前字幕候选窗内；
+    - RECORD_PRESENT_REFERENT_UNRESOLVED：有兼容候选，尚未确认指代；
+    - RECORD_PRESENT_NAME_INCOMPATIBLE：有事件但读音/字符两门都不认
+      （她谢的可能不是这单，或名字听错得离谱——需要耳裁的真实残余）；
+    - 已修的 cue 不出行（修复行自身就是披露）。
+    """
 
     rows: list[dict[str, Any]] = []
     window_events = [
@@ -256,22 +271,25 @@ def audit_named_thanks_record_coverage(
         if index in repaired_cue_indexes:
             continue
         slot = thanks_name_slot(texts[index])
-        if slot is None:
+        guard = _GUARD_THANK.search(texts[index]) if slot is None else None
+        if slot is None and (guard is None or normalize_chat_text(guard['name']) in _GENERIC_GUARD_NAMES):
             continue
-        heard = slot[0]
+        heard = slot[0] if slot is not None else guard['name']
         nearby = [
             item
             for item in window_events
-            if _TIME_ANCHORED_CAUSAL_FLOOR_MS
-            <= cue.start_ms - item.offset_ms
-            <= _TIME_ANCHORED_THANKS_WINDOW_MS
+            if item.offset_ms <= cue.end_ms
+            and cue.start_ms - item.offset_ms <= (
+                GUARD_THANK_WINDOW_AFTER_MS if item.kind == 'guard' else _TIME_ANCHORED_THANKS_WINDOW_MS
+            )
         ]
         if not nearby:
             rows.append(
                 {
                     "cue_index": index + 1,
                     "heard_name": heard,
-                    "status": "RECORD_CHANNEL_ABSENT",
+                    "status": ("RECORD_PRESENT_OUTSIDE_WINDOW" if window_events else "RECORD_CHANNEL_ABSENT"),
+                    "candidate_event_ids": [str(item.source_event_id or item.evidence_id) for item in window_events],
                 }
             )
             continue
@@ -300,6 +318,12 @@ def audit_named_thanks_record_coverage(
                     )[:6],
                 }
             )
+        else:
+            rows.append({
+                "cue_index": index + 1, "heard_name": heard,
+                "status": "RECORD_PRESENT_REFERENT_UNRESOLVED",
+                "candidate_event_ids": [str(item.source_event_id or item.evidence_id) for item in compatible],
+            })
     return rows
 
 
@@ -309,6 +333,7 @@ def _apply_guard_sender_repairs(
     texts: list[str],
     *,
     entity_verifier: EntityVerifier | None = None,
+    excluded_cue_indexes: frozenset[int] = frozenset(),
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Match GUARD_BUY thanks in a causal 300s window; ambiguity changes nothing."""
     events = [item for item in evidence if item.kind == "guard" and item.sender and item.text]
@@ -316,13 +341,15 @@ def _apply_guard_sender_repairs(
     blocked: list[dict[str, Any]] = []
     used: set[str] = set()
     for index, cue in enumerate(cues):
+        if index in excluded_cue_indexes:
+            continue
         match = _GUARD_THANK.search(texts[index])
         if match is None or normalize_chat_text(match["name"]) in _GENERIC_GUARD_NAMES:
             continue
         choices = []
         for item in events:
             delay = cue.start_ms - item.offset_ms
-            if item.evidence_id in used or not 2_000 <= delay <= GUARD_THANK_WINDOW_AFTER_MS:
+            if item.evidence_id in used or item.offset_ms > cue.end_ms or delay > GUARD_THANK_WINDOW_AFTER_MS:
                 continue
             if normalize_chat_text(match["guard"]) not in normalize_chat_text(item.text):
                 continue
@@ -337,9 +364,12 @@ def _apply_guard_sender_repairs(
         pool = strong or choices
         senders = {row[1].lower() for row in pool if row[1]}
         cpa_sender_adjudication: dict[str, Any] | None = None
-        if len(senders) > 1:
+        referent_review_required = any(row[3] < _TIME_ANCHORED_REVIEW_DELAY_MS for row in pool)
+        if len(senders) > 1 or referent_review_required:
+            reason_code = ("GUARD_BUY_SENDER_AMBIGUOUS" if len(senders) > 1
+                           else "GUARD_BUY_SENDER_REFERENT_REVIEW_REQUIRED")
             chosen, cpa_sender_adjudication = _cpa_resolve_ambiguous_sender(
-                reason_code="GUARD_BUY_SENDER_AMBIGUOUS",
+                reason_code=reason_code,
                 heard_sender=match["name"],
                 candidate_events=[row[0] for row in pool],
                 cue_index=index,
@@ -357,7 +387,7 @@ def _apply_guard_sender_repairs(
                         "before": texts[index],
                         "heard_sender": match["name"],
                         "guard_name": match["guard"],
-                        "reason_code": "GUARD_BUY_SENDER_AMBIGUOUS",
+                        "reason_code": reason_code,
                         "candidate_event_ids": sorted(
                             str(row[0].source_event_id or row[0].evidence_id)
                             for row in pool
@@ -569,10 +599,9 @@ def _apply_sc_sender_repairs(
 
 _TIME_ANCHORED_THANKS_WINDOW_MS = 90_000
 _TIME_ANCHORED_EVENT_LOOKBACK_MS = 60_000
-
-
-
-_TIME_ANCHORED_CAUSAL_FLOOR_MS = 2_000
+# A conservative review hint, not a physical minimum reaction time. Events
+# within this interval remain candidates and require explicit referent review.
+_TIME_ANCHORED_REVIEW_DELAY_MS = 2_000
 
 
 def _apply_time_anchored_thanks_sender_repairs(
@@ -581,8 +610,9 @@ def _apply_time_anchored_thanks_sender_repairs(
     cues: Sequence[Any],
     texts: list[str],
     repaired_cue_indexes: set[int],
+    entity_verifier: EntityVerifier | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Copy platform sender names into thanks lines by TIME anchor alone.
+    """Bind compatible platform senders, reviewing uncertain timing/referents.
 
  1209 唐琳韵案（公开规则复制人名令：「这种东西应该来自弹幕
  记录…直接复制人名，根本不用听」）：她只答谢不念正文时，既有的
@@ -605,7 +635,7 @@ def _apply_time_anchored_thanks_sender_repairs(
                 continue
             delta = cue.start_ms - item.offset_ms
             if (
-                delta < _TIME_ANCHORED_CAUSAL_FLOOR_MS
+                item.offset_ms > cue.end_ms
                 or delta > _TIME_ANCHORED_THANKS_WINDOW_MS
             ):
                 continue
@@ -623,22 +653,29 @@ def _apply_time_anchored_thanks_sender_repairs(
         senders = {
             _spoken_sender_alias(item.sender).lower() for item in items
         }
-        if len(senders) > 1:
-            verdict_required.append(
-                {
-                    "thank_cue_index": index + 1,
-                    "cue_indexes": [index + 1],
-                    "matched_start_ms": cues[index].start_ms,
-                    "matched_end_ms": cues[index].end_ms,
-                    "reason_code": "TIME_ANCHORED_SENDER_AMBIGUOUS",
-                    "candidate_event_ids": sorted(
-                        str(item.source_event_id or item.evidence_id)
-                        for item in items
-                    ),
-                    "candidate_spoken_senders": sorted(senders),
-                }
+        cpa_sender_adjudication = None
+        referent_review_required = any(
+            cues[index].start_ms - item.offset_ms < _TIME_ANCHORED_REVIEW_DELAY_MS for item in items
+        )
+        if len(senders) > 1 or referent_review_required:
+            reason_code = ("TIME_ANCHORED_SENDER_AMBIGUOUS" if len(senders) > 1
+                           else "TIME_ANCHORED_SENDER_REFERENT_REVIEW_REQUIRED")
+            chosen, cpa_sender_adjudication = _cpa_resolve_ambiguous_sender(
+                reason_code=reason_code, heard_sender=thanks_name_slot(texts[index])[0],
+                candidate_events=items, cue_index=index, cues=cues, texts=texts,
+                entity_verifier=entity_verifier,
             )
-            continue
+            if chosen is None:
+                verdict_required.append({
+                    "thank_cue_index": index + 1, "cue_indexes": [index + 1],
+                    "matched_start_ms": cues[index].start_ms, "matched_end_ms": cues[index].end_ms,
+                    "reason_code": reason_code,
+                    "candidate_event_ids": sorted(str(item.source_event_id or item.evidence_id) for item in items),
+                    "candidate_spoken_senders": sorted(senders),
+                    "cpa_sender_adjudication": cpa_sender_adjudication,
+                })
+                continue
+            items = [item for item in items if _spoken_sender_alias(item.sender).casefold() == chosen.casefold()]
         item = items[0]
         repaired = _repair_sc_sender(texts[index], item.sender)
         if repaired is None:
@@ -658,6 +695,8 @@ def _apply_time_anchored_thanks_sender_repairs(
                 "before": before_text,
                 "after": repaired,
                 "alignment_basis": "time-anchored-platform-sender.v1",
+                **({"cpa_sender_adjudication": cpa_sender_adjudication}
+                   if cpa_sender_adjudication is not None else {}),
             }
         )
     return repairs, verdict_required

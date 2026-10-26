@@ -9,6 +9,7 @@ from src.autoslice.final_review_auditor import (
     adjudicate_context_finding, audit_correction_mutation_authority, route_findings,
 )
 from src.autoslice.final_review_contract import validate_final_review_release
+from src.autoslice.final_review_meaning_policy import POLICY_VERSION
 from src.autoslice.producer_text_checkpoint import retain_post_transcript_text
 from src.autoslice.producer_text_finalization import verify_chat_authority_final_surfaces
 
@@ -26,7 +27,7 @@ def srt(text, start=2500, end=4500):
 def clean_review(final, correction):
     grid = "sha256:" + "d" * 64
     return {
-        "schema_version": "final-review-audit.v2", "status": "CLEAN",
+        "schema_version": "final-review-audit.v2", "meaning_policy": POLICY_VERSION, "status": "CLEAN",
         "release_gate": "PASS", "reviewed_srt_sha256": "sha256:" + sha(final),
         "discovery": {"status": "COMPLETE"}, "findings": [],
         "validated_finding_count": 0, "correction_pass": correction,

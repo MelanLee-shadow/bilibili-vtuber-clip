@@ -389,17 +389,18 @@ def test_pronoun_pass_gets_its_own_low_effort_config_not_the_reconcile_one(
     assert len(command_configs) == 2
 
     reconcile_cfg, pronoun_cfg = command_configs
-    assert "gpt-6-sol" in reconcile_cfg.command_template
+    assert "gpt-6.1-sol" in reconcile_cfg.command_template
     assert reconcile_cfg.command_template.strip().endswith("medium")
 
-    assert "gpt-6-sol" in pronoun_cfg.command_template
+    assert "gpt-6.1-sol" in pronoun_cfg.command_template
     assert pronoun_cfg.command_template.strip().endswith("low")
     # Model chain must be byte-identical between the two configs; only the
     # trailing effort token differs.
     assert reconcile_cfg.command_template.replace("medium", "low") == (
         pronoun_cfg.command_template
     )
-    assert pronoun_cfg.timeout_seconds == 600.0
+    from src.autoslice.cpa_model_ladder import cpa_call_timeout_seconds
+    assert pronoun_cfg.timeout_seconds == cpa_call_timeout_seconds()
 
 
 def test_legacy_cpa_scripts_are_repo_absolute_outside_repo_cwd(

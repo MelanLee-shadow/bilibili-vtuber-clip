@@ -14,6 +14,9 @@ keeps provider/source failures from accidentally producing with a stale card.
 
 from __future__ import annotations
 
+from src.autoslice.cpa_model_ladder import TOP_CPA_MODEL, cpa_call_timeout_seconds, attempt_timeout_seconds
+from src.autoslice.structured_output import call_json
+
 import hashlib
 import json
 import stat
@@ -74,8 +77,11 @@ _PROVIDER_CONTRACT = {
     "schema_version": "semantic-evidence-scorecard-refresh-provider.v1",
     "transport": "command",
     "command": "scripts/llm_via_cpa.sh",
-    "model_chain": ["gpt-6-sol"],
+    "model_chain": [TOP_CPA_MODEL],
     "reasoning_effort": "medium",
+    # v1 is a persisted semantic/replay binding. Preserve its historical field;
+    # current execution budgets are recorded separately and used by LlmConfig.
+    # Changing retry/timeout policy must not invalidate existing top-model replies.
     "timeout_seconds": 600,
     "prompt_schema": REFRESH_PROMPT_SCHEMA,
 }
@@ -571,9 +577,9 @@ def build_refresh_llm_call() -> Callable[[str], str]:
             transport="command",
             command_template=(
                 "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} "
-                "'gpt-6-sol' medium"
+                f"'{TOP_CPA_MODEL}' medium"
             ),
-            timeout_seconds=600.0,
+            timeout_seconds=cpa_call_timeout_seconds(),
         )
     )
 
@@ -604,7 +610,11 @@ candidate_id: {prepared.candidate_id}
 "dimensions":{{"lidousha_centrality":0到4整数,"stance_intensity":0到4整数,
 "audience_salience":0到4整数,"relationship_interaction":0到4整数,
 "persona_reversal":0到4整数,"comedic_payoff":0到4整数,"self_contained":0到4整数}},
-"uncertainty_penalty":0到15,"fatigue_penalty":0到10}}}}
+"uncertainty_penalty":0到15,"fatigue_penalty":0到10,
+"candidate_quality":{{"watchability":"STRONG"或"ORDINARY"或"THIN",
+"differentiation":"DISTINCTIVE"或"ORDINARY"或"THIN",
+"production_disposition":"PRODUCTION"或"RESERVE"或"HOLD",
+"reason":"片内具体看点和不足","evidence_cues":[整数]}}}}}}
 """
 
 
@@ -700,6 +710,8 @@ def _write_receipt(
         "old_scorecard_sha256": _canonical_sha256(row.get("selection_scorecard")),
         "provider_contract": dict(_PROVIDER_CONTRACT),
         "provider_contract_sha256": PROVIDER_CONTRACT_SHA256,
+        "execution_policy": {"outer_timeout_seconds": cpa_call_timeout_seconds(),
+                             "attempt_timeout_seconds": attempt_timeout_seconds()},
         "input_provenance": dict(evidence),
     }
     if new_scorecard_sha256:
@@ -756,7 +768,7 @@ def _refresh_one(
     prompt = _prompt(prepared)
     prompt_sha256 = _bytes_sha256(prompt.encode("utf-8"))
     try:
-        raw = llm_call(prompt)
+        raw = call_json(llm_call, prompt)
     except (LlmCallError, Exception):  # noqa: BLE001
         _record_failure(
             row,

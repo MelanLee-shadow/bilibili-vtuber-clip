@@ -87,6 +87,46 @@ def select_context_chat(
     )
 
 
+def _source_human_evidence(spec: Mapping[str, object], ledger_path: Path | None) -> dict[str, object] | None:
+    # Withheld mode wins even if a caller accidentally supplies the ledger path.
+    if ledger_path is None or spec.get("human_truth_mode") == "withheld":
+        return None
+    from src.autoslice.source_subtitle_truth import (
+        SCHEMA_VERSION as LEDGER_SCHEMA, _entry_local_windows, _load_source_aliases,
+    )
+    from src.autoslice.source_truth_governance import validate_ledger_governance
+    if not ledger_path.is_file() or ledger_path.is_symlink():
+        raise ClipContextError("CLIP_CONTEXT_SOURCE_LEDGER_INVALID")
+    raw = ledger_path.read_bytes()
+    document = json.loads(raw)
+    if (not isinstance(document, Mapping) or document.get("schema_version") != LEDGER_SCHEMA
+            or not isinstance(document.get("entries"), list)):
+        raise ClipContextError("CLIP_CONTEXT_SOURCE_LEDGER_INVALID")
+    validate_ledger_governance(document, document["entries"])
+    aliases = _load_source_aliases(document)
+    pieces = list(spec.get("pieces") or [])
+    durations = [int(p["end_ms"]) - int(p["start_ms"]) for p in pieces]
+    entries = []
+    for entry in document["entries"]:
+        if (not isinstance(entry, Mapping) or not entry.get("source_evidence")
+                or entry.get("knowledge_type") not in {"SOURCE_INTERVAL_TRUTH", "SOURCE_INTERVAL_OBSERVATION"}
+                or entry.get("assertion_state") != "VERIFIED_ACTIVE"):
+            continue
+        windows = _entry_local_windows(entry, pieces=pieces, durations=durations, source_aliases=aliases)
+        if not windows:
+            continue
+        # New human input requires media identity as well as the existing clock projection.
+        expected = entry.get("source_media_sha256")
+        if not isinstance(expected, str) or _SHA256_RX.fullmatch(expected) is None:
+            raise ClipContextError("CLIP_CONTEXT_HUMAN_SOURCE_BINDING_INVALID")
+        entries.append({**entry, "local_windows": windows, "mutation_authorized": False})
+    if not entries:
+        return None
+    return {"ledger_sha256": "sha256:" + hashlib.sha256(raw).hexdigest(),
+            "entries": entries, "mutation_authorized": False,
+            "policy": "Human source evidence, not a new model observation. SOURCE_INTERVAL_TRUTH is replayed only by the existing truth consumer; observations supply context only. Approximate observation windows are not word or speech-unit boundaries. Never assign an unaligned sequence to old cue boundaries or invent lyrics from a song title."}
+
+
 def build_clip_context(
     *,
     candidate_id: str,
@@ -96,6 +136,7 @@ def build_clip_context(
     topic_resolution: Mapping[str, object],
     session_topic_authorities: Sequence[Mapping[str, object]],
     speech_memory_ledger_path: Path,
+    source_truth_ledger_path: Path | None = None,
 ) -> dict[str, object]:
     recording_date = str(spec.get("date") or "")
     if len(draft_srt) > MAX_TRANSCRIPT_CHARS:
@@ -164,6 +205,28 @@ def build_clip_context(
         },
         "mutation_authorized": False,
     }
+    # Optional already-recorded full-session inputs travel through the ordinary
+    # context constructor. They are context, never a new transcription call or
+    # a cue-level spelling/mutation authority.
+    sessions = spec.get('whole_session_transcripts')
+    if sessions is not None:
+        if not isinstance(sessions, list):
+            raise ClipContextError('CLIP_CONTEXT_SESSION_TRANSCRIPTS_INVALID')
+        sources = {str(p['source_media_sha256']).removeprefix('sha256:') for p in pieces}
+        bound = []
+        for row in sessions:
+            if not isinstance(row, Mapping):
+                raise ClipContextError('CLIP_CONTEXT_SESSION_TRANSCRIPTS_INVALID')
+            text = row.get('srt_text')
+            if (not isinstance(text, str) or not text.strip()
+                    or str(row.get('recording_sha256', '')).removeprefix('sha256:') not in sources
+                    or str(row.get('srt_sha256', '')).removeprefix('sha256:') != hashlib.sha256(text.encode()).hexdigest()):
+                raise ClipContextError('CLIP_CONTEXT_SESSION_TRANSCRIPT_BINDING_INVALID')
+            bound.append(dict(row))
+        payload['whole_session_transcripts'] = bound
+    human_evidence = _source_human_evidence(spec, source_truth_ledger_path)
+    if human_evidence is not None:
+        payload["source_human_evidence"] = human_evidence
     payload["context_sha256"] = _canonical_json_sha256(payload)
     return payload
 
@@ -307,6 +370,8 @@ def render_clip_context_prompt(
             ),
         ]
     )
+    if context.get("source_human_evidence"):
+        mandatory += "\n" + _json_line("source_human_evidence", context["source_human_evidence"])
     if len(mandatory) + 96 >= max_chars:
         raise ClipContextError("CLIP_CONTEXT_PROMPT_MANDATORY_TOO_LARGE")
     available = max_chars - len(mandatory) - 32
@@ -334,18 +399,38 @@ def render_clip_context_prompt(
         for row in (context.get("structured_chat") or [])
         if isinstance(row, Mapping)
     ]
-    chat_blocks = ["结构化弹幕/SC（保留 source binding）："]
-    chat_blocks.extend(
-        (
-            f"- {row.get('kind')} @{row.get('offset_ms')}ms"
-            f" event={row.get('source_event_id')}: {row.get('text')}"
+    def chat_block(row: Mapping[str, object]) -> str:
+        sender = row.get("sender")
+        sender_label = (
+            " sender=" + json.dumps(sender, ensure_ascii=False)
+            if isinstance(sender, str) and sender else ""
         )
-        for row in chat_rows
-    )
+        return (
+            f"- {row.get('kind')} @{row.get('offset_ms')}ms"
+            f" event={row.get('source_event_id')}{sender_label}: {row.get('text')}"
+        )
+
+    # Preserve the same SC/gift/guard priority used when building the context;
+    # a second temporal sample must not bury those events among ordinary chat.
+    chat_limit = chat_budget + unused_transcript // 2
+    strong_rows = [row for row in chat_rows if row.get("kind") != "danmaku"]
+    ordinary_rows = [row for row in chat_rows if row.get("kind") == "danmaku"]
     chat_section = _render_selected_blocks(
-        chat_blocks,
-        chat_budget + unused_transcript // 2,
+        ["结构化弹幕/SC（保留 source binding；发送时刻不是念读时刻）：",
+         *(chat_block(row) for row in strong_rows)],
+        chat_limit,
     )
+    ordinary_blocks = [chat_block(row) for row in ordinary_rows]
+    remaining = chat_limit - len(chat_section) - 1
+    if ordinary_blocks and remaining > 0:
+        try:
+            ordinary_section = _render_selected_blocks(ordinary_blocks, remaining)
+        except ClipContextError as exc:
+            if str(exc) != "CLIP_CONTEXT_PROMPT_SECTION_TOO_LARGE":
+                raise
+            ordinary_section = "…[ordinary danmaku omitted for prompt budget]…"
+        if len(ordinary_section) <= remaining:
+            chat_section += "\n" + ordinary_section
     unused_chat = max(
         0, chat_budget + unused_transcript // 2 - len(chat_section)
     )

@@ -1,5 +1,5 @@
 #!/bin/bash
-# CloudDrive FUSE mount and recorder-consumer bootstrap watchdog (Free/runtime host).
+# CloudDrive FUSE mount and recorder-consumer bootstrap watchdog (Free/OCI3).
 #
 # Two distinct incidents are covered:
 #   1. A dead CloudDrive FUSE endpoint can remain bound into recorder containers.
@@ -17,7 +17,7 @@
 # quarantine; they are never deleted or hidden below a subsequent FUSE mount.
 set -u
 
-# runtime host's existing root crontab and the boot unit invoke this script directly.
+# OCI3's existing root crontab and the boot unit invoke this script directly.
 # Load the optional root-owned authority here so both callers use the same
 # paths; with no file, Free keeps its historical defaults below.
 WATCHDOG_ENV_FILE=/opt/bilive/autoslice/recording-health.env
@@ -47,11 +47,11 @@ RECORDER_RETRIES="${AUTOSLICE_WATCHDOG_RECORDER_RETRIES:-4}"
 RETRY_SLEEP_S="${AUTOSLICE_WATCHDOG_RETRY_SLEEP_S:-5}"
 RECORDER_SETTLE_S="${AUTOSLICE_WATCHDOG_RECORDER_SETTLE_S:-8}"
 EXPECTED_SOURCE="${AUTOSLICE_WATCHDOG_EXPECTED_SOURCE:-CloudFS}"
-# The mount probe may be a room below the bind root (runtime host uses the room path
+# The mount probe may be a room below the bind root (OCI3 uses the room path
 # while Docker binds its parent).  Keep Free's historical default intact.
 EXPECTED_RECORDING_BIND_ROOT="${AUTOSLICE_WATCHDOG_EXPECTED_RECORDING_BIND_ROOT:-$PROBE_DIR}"
 COMPOSE_FILE="${AUTOSLICE_WATCHDOG_COMPOSE_FILE:-/opt/bilive/compose.yml}"
-CLOUDDRIVE_COMPOSE_FILE="${AUTOSLICE_WATCHDOG_CLOUDDRIVE_COMPOSE_FILE:-/root/clouddrive2/docker-compose.yml}"
+CLOUDDRIVE_COMPOSE_FILE="${AUTOSLICE_WATCHDOG_CLOUDDRIVE_COMPOSE_FILE:-/path/to/clouddrive2/docker-compose.yml}"
 QUARANTINE_ROOT="${AUTOSLICE_WATCHDOG_QUARANTINE_ROOT:-/opt/bilive/mount-fallback-quarantine}"
 
 HEARTBEAT="${AUTOSLICE_WATCHDOG_HEARTBEAT:-$BASE/reports/heartbeat.txt}"
@@ -81,6 +81,9 @@ UMOUNT_BIN="${AUTOSLICE_WATCHDOG_UMOUNT_BIN:-umount}"
 PYTHON_BIN="${AUTOSLICE_WATCHDOG_PYTHON_BIN:-python3}"
 LS_BIN="${AUTOSLICE_WATCHDOG_LS_BIN:-ls}"
 PROBE_TIMEOUT_S="${AUTOSLICE_WATCHDOG_PROBE_TIMEOUT_S:-25}"
+# The release transaction passes the CLI its authority binds.  Without it, a
+# versioned host (current -> versions/<commit>) uses the published version; only
+# a host that never had a versioned deployment keeps the legacy mutable repo.
 PROBE_ONLY=0
 
 ts() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }

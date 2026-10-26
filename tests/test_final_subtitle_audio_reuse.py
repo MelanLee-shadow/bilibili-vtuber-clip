@@ -184,6 +184,23 @@ def test_reuse_copies_parent_witness_and_rebinds_current_receipt(tmp_path: Path)
         actual_media=fixture["current_media"],  # type: ignore[arg-type]
         package_root=output_dir,  # type: ignore[arg-type]
     )["status"] == "PASS"
+    # The postburn consumer checks receipt identity as well as timing.
+    witness = gate.load_validated_subtitle_audio_witness(
+        result.record,
+        fixture["current_srt"],  # type: ignore[arg-type]
+        fixture["current_media"],  # type: ignore[arg-type]
+        candidate_id=CID,
+    )
+    assert witness["witness_text"] == parent_witness.read_text(encoding="utf-8")
+    drifted = copy.deepcopy(result.record)
+    drifted["subtitle_audio_correspondence"]["receipt_sha256"] = "sha256:" + "0" * 64
+    with pytest.raises(gate.FinalSubtitleAudioGateError, match="RECEIPT_HASH_DRIFT"):
+        gate.load_validated_subtitle_audio_witness(
+            drifted,
+            fixture["current_srt"],  # type: ignore[arg-type]
+            fixture["current_media"],  # type: ignore[arg-type]
+            candidate_id=CID,
+        )
 
 
 def test_explicit_package_root_uses_candidate_stem_for_suffixed_final_srt(tmp_path: Path) -> None:

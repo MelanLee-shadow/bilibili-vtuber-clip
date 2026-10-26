@@ -2,20 +2,45 @@
 
 from __future__ import annotations
 
+from src.autoslice.discovery_channels import batch_from_rows
+
+
 import hashlib
 import json
 
 from src.autoslice.final_review_carryover import (
+    adjudicated_proposed_full_cue,
     carryover_path,
     final_review_carryover_retry_readiness,
     load_final_review_carryover,
     persist_final_review_carryover,
 )
 from src.autoslice.final_review_auditor import audit_final_subtitles
+from tests.test_final_review_auditor import _literal_review_llm
 
 
 def _audit(findings):
     return {"schema_version": "final-review-audit.v2", "findings": findings}
+
+
+def test_forbidden_hard_meme_direct_carryover_is_not_replayable():
+    finding = {
+        "proposed_full_cue": "这就是经典的直女",
+        "exact_release_adjudication": {"repaired": True},
+    }
+
+    assert adjudicated_proposed_full_cue(finding) is None
+
+
+def test_forbidden_hard_meme_typed_carryover_is_not_replayable():
+    finding = {
+        "proposed_full_cue": None,
+        "exact_release_adjudication": {
+            "request": {"proposed_cue": "这就是经典的直女"},
+        },
+    }
+
+    assert adjudicated_proposed_full_cue(finding) is None
 
 
 def test_persist_keeps_only_acoustically_confirmed_repairs(tmp_path):
@@ -109,6 +134,7 @@ def test_duplicate_repairs_replay_and_overlay_as_distinct_occurrences(tmp_path):
                         "suspect": "他",
                         "proposed_full_cue": proposed,
                         "exact_release_adjudication": {
+                            "status": "OBSERVED",  # receipts always carry a status
                             "repaired": True,
                             "request": {
                                 "base_text_sha256": base,
@@ -358,10 +384,10 @@ def test_glossary_insertion_carryover_preserves_raw_provenance(tmp_path):
         "1\n00:00:00,000 --> 00:00:01,000\n谢谢\n\n"
         "2\n00:00:01,000 --> 00:00:03,000\n"
         "如果世上没有早起的粉丝灯牌\n",
-        llm_call=lambda _prompt: '{"findings":[]}',
+        llm_call=_literal_review_llm(lambda _prompt: '{"findings":[]}'),
         extract_json=lambda value: json.loads(value),
         glossary_text="- 粉丝团灯牌",
-        extra_raw_findings=rows,
+        discovery_batch=batch_from_rows(rows),
     )
     assert len(findings) == 1
     assert findings[0]["suspect"] == ""
@@ -495,7 +521,7 @@ def test_carryover_not_shadowed_by_different_empty_span_proposal(tmp_path):
     )
     findings = audit_final_subtitles(
         "1\n00:00:00,000 --> 00:00:01,000\n粉丝灯牌\n",
-        llm_call=lambda _prompt: json.dumps(
+        llm_call=_literal_review_llm(lambda _prompt: json.dumps(
             {
                 "findings": [
                     {
@@ -510,10 +536,10 @@ def test_carryover_not_shadowed_by_different_empty_span_proposal(tmp_path):
                 ]
             },
             ensure_ascii=False,
-        ),
+        )),
         extract_json=lambda value: json.loads(value),
         glossary_text="- 粉丝团灯牌\n- 粉丝牌灯牌",
-        extra_raw_findings=load_final_review_carryover(path),
+        discovery_batch=batch_from_rows(load_final_review_carryover(path)),
     )
     assert {
         row["proposed_full_cue"] for row in findings
@@ -527,9 +553,9 @@ def test_carryover_replays_by_text_hash_when_padded_cue_index_shifted():
         "2\n00:00:01,000 --> 00:00:02,000\n前置二\n\n"
         f"3\n00:00:02,000 --> 00:00:03,000\n{base_text}\n\n"
         "4\n00:00:03,000 --> 00:00:04,000\n后文\n",
-        llm_call=lambda _prompt: '{"findings":[]}',
+        llm_call=_literal_review_llm(lambda _prompt: '{"findings":[]}'),
         extract_json=json.loads,
-        extra_raw_findings=[
+        discovery_batch=batch_from_rows([
             {
                 "cue": 1,
                 "base_text_sha256": hashlib.sha256(
@@ -542,7 +568,7 @@ def test_carryover_replays_by_text_hash_when_padded_cue_index_shifted():
                 "repair_class": "phonetic",
                 "evidence_cue_ids": [2],
             }
-        ],
+        ]),
     )
 
     assert findings[0]["cue_index"] == 3
@@ -572,9 +598,9 @@ def test_legacy_carryover_replays_only_when_suspect_owner_is_unique():
     }
     findings = audit_final_subtitles(
         source,
-        llm_call=lambda _prompt: '{"findings":[]}',
+        llm_call=_literal_review_llm(lambda _prompt: '{"findings":[]}'),
         extract_json=json.loads,
-        extra_raw_findings=[row],
+        discovery_batch=batch_from_rows([row]),
     )
     assert findings[0]["cue_index"] == 2
     assert (
@@ -587,9 +613,9 @@ def test_legacy_carryover_replays_only_when_suspect_owner_is_unique():
     )
     assert audit_final_subtitles(
         ambiguous,
-        llm_call=lambda _prompt: '{"findings":[]}',
+        llm_call=_literal_review_llm(lambda _prompt: '{"findings":[]}'),
         extract_json=json.loads,
-        extra_raw_findings=[row],
+        discovery_batch=batch_from_rows([row]),
     ) == []
 
 

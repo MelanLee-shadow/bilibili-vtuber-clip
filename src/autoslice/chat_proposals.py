@@ -17,9 +17,8 @@ from src.autoslice.chat_evidence import (
     _render_srt,
     _request_sha256,
     _validated_entity_verdict,
-    canonicalize_hard_surfaces,
+    prepare_chat_evidence,
     normalize_chat_text,
-    sanitize_chat_display_text,
 )
 from src.autoslice.chat_read_aloud_candidates import (
     find_best_read_aloud_candidate as _find_best_read_aloud_candidate,
@@ -364,6 +363,7 @@ def _discover_chat_proposals(
     max_cues: int,
     support_srt_texts: Sequence[str],
     entity_verifier: EntityVerifier | None,
+    excluded_cue_indexes: frozenset[int] = frozenset(),
 ) -> _ChatProposalDiscovery:
     """Discover candidate spans while keeping every uncertain case fail-closed."""
 
@@ -384,6 +384,7 @@ def _discover_chat_proposals(
             cues=cues,
             texts=texts,
             max_cues=max_cues,
+            excluded_cue_indexes=excluded_cue_indexes,
         )
         support_receipts = _read_aloud_support_receipts(
             item,
@@ -933,6 +934,7 @@ def apply_authoritative_chat_evidence(
     support_srt_texts: Sequence[str] = (),
     referent_groups: Sequence[ReferentGroup | Sequence[str]] = (),
     entity_verifier: EntityVerifier | None = None,
+    protected_cue_indexes: Sequence[int] = (),
 ) -> tuple[str, dict]:
     """Apply only high-confidence exact read-aloud spans to an SRT.
 
@@ -942,26 +944,11 @@ def apply_authoritative_chat_evidence(
     read question missing only its final particle with the reply in one cue.
     """
 
-
-
-
-
-
-
-    evidence = [
-        ChatEvidence(
-            item.kind,
-            item.offset_ms,
-            canonicalize_hard_surfaces(sanitize_chat_display_text(item.text)),
-            sanitize_chat_display_text(item.sender, max_chars=100),
-            item.source,
-            item.source_sha256,
-            item.source_event_id,
-        )
-        for item in evidence
-        if sanitize_chat_display_text(item.text)
-    ]
+    evidence = prepare_chat_evidence(evidence)
     cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
+    if any(type(index) is not int or not 1 <= index <= len(cues) for index in protected_cue_indexes):
+        raise ValueError('CHAT_PROTECTED_CUE_INDEX_INVALID')
+    protected = frozenset(index - 1 for index in protected_cue_indexes)
     texts = [cue.text for cue in cues]
     # 位置门控组只属于全文本审计；chat 证据里这些高频普通词不构成实体槽位。
     entity_groups = [
@@ -975,6 +962,7 @@ def apply_authoritative_chat_evidence(
         max_cues=max_cues,
         support_srt_texts=support_srt_texts,
         entity_verifier=entity_verifier,
+        excluded_cue_indexes=protected,
     )
     proposals = discovery.proposals
     entity_verdicts = discovery.entity_verdicts
@@ -989,6 +977,7 @@ def apply_authoritative_chat_evidence(
         discovery=discovery,
     )
     occupied = applied_result.occupied
+    occupied.update(protected)
     applied = applied_result.applied
     applied_proposals = applied_result.applied_proposals
     entity_repairs = applied_result.entity_repairs
@@ -1006,6 +995,7 @@ def apply_authoritative_chat_evidence(
         cues,
         texts,
         entity_verifier=entity_verifier,
+        excluded_cue_indexes=protected,
     )
     sender_repairs.extend(guard_sender_repairs)
     sender_verdict_required.extend(guard_sender_verdict_required)
@@ -1016,7 +1006,8 @@ def apply_authoritative_chat_evidence(
             texts=texts,
             repaired_cue_indexes={
                 int(row["cue_index"]) - 1 for row in sender_repairs
-            },
+            } | {int(row["thank_cue_index"]) - 1 for row in guard_sender_verdict_required} | set(protected),
+            entity_verifier=entity_verifier,
         )
     )
     sender_repairs.extend(time_anchor_repairs)

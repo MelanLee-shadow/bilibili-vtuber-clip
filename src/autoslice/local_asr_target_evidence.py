@@ -7,6 +7,8 @@ transcript is not converted into an invented independent pinyin witness.
 
 from __future__ import annotations
 
+from .review_errors import ContractRejection
+
 import hashlib
 import json
 from collections.abc import Mapping
@@ -39,25 +41,25 @@ def exact_target_evidence(
     The sole tolerance is the existing clients' 500-ms encoder-tail allowance.
     """
     if type(start_ms) is not int or type(end_ms) is not int or not 0 <= start_ms < end_ms:
-        raise ValueError("EXACT_TARGET_GEOMETRY_INVALID")
-    if end_ms - start_ms > 20_000 or not audio or not valid_sha(source_sha256):
-        raise ValueError("EXACT_TARGET_INPUT_INVALID")
+        raise ContractRejection("EXACT_TARGET_GEOMETRY_INVALID")
+    if not audio or not valid_sha(source_sha256):
+        raise ContractRejection("EXACT_TARGET_INPUT_INVALID")
     provider = metadata.get("provider")
     if provider not in MODELS or metadata.get("model") != MODELS[provider]:
-        raise ValueError("EXACT_TARGET_PROVIDER_INVALID")
+        raise ContractRejection("EXACT_TARGET_PROVIDER_INVALID")
     audio_sha = hashlib.sha256(audio).hexdigest()
     if metadata.get("input_audio_sha256") != audio_sha or not valid_sha(
         metadata.get("response_sha256")
     ):
-        raise ValueError("EXACT_TARGET_SOURCE_BINDING_INVALID")
+        raise ContractRejection("EXACT_TARGET_SOURCE_BINDING_INVALID")
     native = metadata.get("native_segments")
     if not isinstance(native, list):
-        raise ValueError("EXACT_TARGET_NATIVE_ROWS_INVALID")
+        raise ContractRejection("EXACT_TARGET_NATIVE_ROWS_INVALID")
     texts = []
     spans = []
     for row in native:
         if not isinstance(row, Mapping):
-            raise ValueError("EXACT_TARGET_NATIVE_ROWS_INVALID")
+            raise ContractRejection("EXACT_TARGET_NATIVE_ROWS_INVALID")
         a, b, text = row.get("start_ms"), row.get("end_ms"), row.get("text")
         if (
             type(a) is not int
@@ -66,7 +68,7 @@ def exact_target_evidence(
             or not isinstance(text, str)
             or not text.strip()
         ):
-            raise ValueError("EXACT_TARGET_NATIVE_ROWS_INVALID")
+            raise ContractRejection("EXACT_TARGET_NATIVE_ROWS_INVALID")
         texts.append(text)
         spans.append(
             {

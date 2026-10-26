@@ -1,3 +1,7 @@
+# 当前版本说明
+
+下文保留已公开的完整说明；执行命令前同时阅读文末的接口兼容说明。
+
 # 90 授权上传、同 BV 修复与公开验收
 
 本文件是发布步骤的**分步权威**。唯一程序入口是
@@ -6,7 +10,7 @@
 
 ## 机械验收与真实人工复核的分流（2026-09-14）
 
-维护者 最新要求：已验证的机械烧录流程及本次输入/输出检查正确时，不必每片再完整读/看一遍。
+公开规则最新要求：已验证的机械烧录流程及本次输入/输出检查正确时，不必每片再完整读/看一遍。
 正常交付不额外增加全片人工或模型观看；流程/字体/布局变化与具体异常只做影响范围复核。
 本段替代下文历史“每片完整观看”的普遍前置，不抹掉既有内容失败、原件缺口或真实发布权限。
 
@@ -36,7 +40,7 @@ schema 走机械重验，并继续拒绝新建 BV、越权、错目标及未知�
 ## 快车道授权与串行发布边界
 
 对 Claude line 947 穷举批次，候选点名错误修复完成即使用本页既有 package、manifest、
-audit、授权和公开验收门进入上传；不新增 维护者 二次看片/复审。按 维护者 2026-09-08
+audit、授权和公开验收门进入上传；不新增 公开规则二次看片/复审。按 公开规则
 最新就绪优先指令（`../reviews/2026-09-08-ready-first-publication.md`；历史引用，未随公开仓分发），已通过全部发布门的候选
 先进入串行上传队列；较早候选未就绪不能卡住后面的合格片。就绪集合内优先时效性，其余
 按原批次顺序选取；问题候选留在独立修复队列。candidate-private prepare/package/QC 可并行；transcription/AGY 之后仅 bounded per-cue
@@ -91,7 +95,7 @@ snapshot/manifest，CLI 参数只是显式声明，不是独立信任来源。`R
 `HISTORICAL_EVIDENCE` 只能保留为不可变 parent，不能成为 current 发布产物。时间优先级只适用于
 同一角色、同一 lineage。诊断样本默认保留，待无引用扫描、独立封存和清理授权完成后才可删除。
 
-因此，旧修复即使内容上符合 维护者 要求，也必须先被重新绑定为同一 canonical package 的
+因此，旧修复即使内容上符合 公开规则要求，也必须先被重新绑定为同一 canonical package 的
 `RELEASE_CANDIDATE`，通过本页所有现有门禁；较晚的流水线诊断输出不得取代它，也不得被误传。
 
 部署树中的 `assets/lidousha/publication_registry.v1.json` 由
@@ -128,9 +132,9 @@ outer receipt path/hash 冻结进 package attestation，`verify`、`repair-plan`
   缺失、整体错位、锚点不足和哈希漂移均拒绝。已冻结、正在平台审核中的旧修复事务继续按
   既有 resume 合同校验原字节；仅换封面且已有 scope 证明视频未变的事务不重新调用 ASR。
 
-- 每条都需要 维护者 明确授权；manifest 保存授权原话，工具不能替用户创造授权。
+- 每条都需要 公开规则明确授权；manifest 保存授权原话，工具不能替用户创造授权。
 - publication registry 的人工搁置不得靠删除历史来解除：
-  维护者 明确放行后改为 `released_for_upload`，保留放行日期/原话与剩余准入门；
+ 公开规则明确放行后改为 `released_for_upload`，保留放行日期/原话与剩余准入门；
   该状态只解除 `hold_pending_review` 阻断，不等于机器 audit 通过，也不产生上传副作用。
 - 新投稿只接受 `authorized-upload-manifest.v3`。它必须绑定同 stem 的最终视频、封面、
   record、SRT、review manifest、冻结标题、最终 tags、StoryContract 与当前 package audit。
@@ -159,7 +163,7 @@ outer receipt path/hash 冻结进 package attestation，`verify`、`repair-plan`
 
 ## 已受审原稿的同源定点纠正
 
-维护者 2026-09-08明确快车道是“在原本听写稿件上，就地修改我指出的错误然后发布”。对已经发布、
+公开规则明确快车道是“在原本听写稿件上，就地修改我指出的错误然后发布”。对已经发布、
 已有hash固定的受审原稿且不改变源镜头范围的修复，允许独立的
 `original-reviewed-fastlane-package.v1`与`original-fastlane-delta-technical-review.v1`。
 它不是新一次人工全片观看，必须明示`fresh_human_full_playback_claimed=false`；不能把reviewer伪写维护者。
@@ -186,7 +190,7 @@ target源于fresh登录canary/public/Creator/section、精确绑定原BVID/AID/C
   `human_owner`、`human_delegate` 或 `delegated_root_agent`，但必须与真实观看者一致：
   owner 固定 `reviewed_by=<owner 标识>`，root agent 固定
   `reviewed_by="<root-agent 标识>"`，human delegate 写实际姓名；带时区 `reviewed_at` 记录实际完成时间，
-  `approval_quote` 保存授权/委托原话。委托 agent 自审不等于 维护者 亲自观看，严禁把
+ `approval_quote` 保存授权/委托原话。委托 agent 自审不等于 公开规则亲自观看，严禁把
   `reviewed_by` 伪写成 维护者。
 - receipt 以 committed `assets/lidousha/final_media_review_contracts.v1.json` 的 SHA-256
   为 review contract authority。每个 candidate 必须逐点复核 exact final-video window 与
@@ -206,7 +210,7 @@ target源于fresh登录canary/public/Creator/section、精确绑定原BVID/AID/C
   reviewer 也不能自行换成宽泛故事摘要。字段上线前已冻结的历史 receipt
   仅做只读兼容，新修复包缺当前 rendered-text 像素绑定必须拒发。
 - receipt **仅准入 exact same-BV repair**。它不会把 `upload_allowed` 改成 true，不是
-  `AUTO_UPLOAD`，不授权新建 BV，也不替代 authorized manifest 中 维护者 针对修复动作的授权原话。
+ `AUTO_UPLOAD`，不授权新建 BV，也不替代 authorized manifest 中 公开规则针对修复动作的授权原话。
   普通新投稿不得传 `--final-human-review` 借用这份权限。
 - authorized manifest 以
   `package_attestation.final_human_review={path,sha256,bytes}` 冻结 receipt；repair plan 再冻结同一
@@ -250,7 +254,7 @@ target源于fresh登录canary/public/Creator/section、精确绑定原BVID/AID/C
    `unrelated_or_misleading_elements=[]`、`pass=true`。任一不确定、AGY 代答、无关/误导元素、
    主体不突出、破碎钩子或三行以上叠字都必须 BLOCK 并先重做封面/标题。
 2. 在上述 receipt 和审片字节冻结后运行 `make-manifest --title-cover-qc ...`，只引用 package 内
-   最终文件与 维护者 授权原话。普通新 BV 缺 receipt 直接拒绝；exact same-BV repair 继续走下文
+ 最终文件与 公开规则授权原话。普通新 BV 缺 receipt 直接拒绝；exact same-BV repair 继续走下文
    `--final-human-review` carrier，按前述机械/真实人工 schema 分流。
 3. 先运行 `verify`；它必须重算全部 hashes、current audit、联合质检语义与政策绑定。
 4. `upload` 只从 manifest 取路径/标题/元数据，禁止再手输一套参数。ledger 对同 artifact
@@ -347,7 +351,7 @@ dry plan；本地存在代码/测试不等于 production 已可用，也不等�
    只冻结已交付合规的单案；manifest 以 `partial_release_scope` 披露范围、批状态与
    裁定出处，范围必须是 exact 合同子集且每案自身 delivered/CURRENT/COMPLIANT。
 4. `make-manifest --final-human-review ...` 同时冻结 package/audit/receipt、publication
-   authority 和 维护者 的修复授权原话；缺 receipt 的 recovery manifest 直接拒绝；
+ authority 和 公开规则的修复授权原话；缺 receipt 的 recovery manifest 直接拒绝；
    `make-manifest` 是新投稿与同 BV 修复共用的无副作用冻结入口，已登记 BVID 的 publication
    authority 在这里必须保留并允许生成 manifest；“已发布不得新建 BV”的 registry gate 只在
    普通 `upload` 副作用入口硬拒。否则会在 `repair-plan` 读取 authority 之前把唯一合法修复
@@ -570,3 +574,32 @@ external-package import 的准入要求。本条只修复已发生且完整验�
 已写入的精确原队列行与接纳引用，不要求可变的 public/season 轮询文件恢复旧字节。
 该识别分支只返回 ALREADY_APPLIED，零状态写、零新发布；首次接纳仍必须完整验证
 原 public/Creator/section/uploaded 证据，缺证或漂移不能通过此分支首次接纳。
+
+## 本版接口兼容说明
+
+本页保留此前公开的完整设计、判例与操作细节。代码已经继续演进：
+CLI 参数、模块是否存在和机器强制层以本版源码及 `--help` 为准；历史回执或
+旧入口名不授予当前执行权。当前补充规则如下；冲突时按当前规则和代码处理。
+
+# 90 授权上传与公开验收
+
+上传只能从通过 80 步骤的 immutable manifest 读取路径、标题和元数据。发布入口
+应在实际上传前重新计算包哈希、当前审计和授权绑定；命令行临时参数不能绕过
+manifest、标题/封面联合质检或人工发布授权。
+
+自动审查可以准备候选、报告错误和阻断不合格包，但不能自己产生 `AUTO_UPLOAD`
+或公开发布权。缺少明确授权、候选身份漂移、包文件变化、重复目标或 provider
+回执不完整时 fail closed。
+
+上传操作必须幂等并记录 provider 请求、返回的公开标识和最终 URL。只有公开页面
+或官方接口重新读回相同候选、标题、封面和媒体绑定后，才能把状态标为已公开；
+本地队列、HTTP 成功或单个 BVID 字段都不足以证明公开完成。
+
+同 BV 修复只能使用显式、最小的授权变更并保留原始媒体和可恢复记录。新候选发布、
+同 BV 修复、合集归档和公开验证分别记账，不能把其中一步的成功冒充为全部完成。
+
+终稿 review CLI 提供两条明确路线。`--mechanical` 校验当前 canonical package 与 package audit，生成 create-only 机械回执；它不能同时使用人工 evidence，不能声称人工完整播放。机械通过只证明对应检查，完整内容审查与发布授权仍由当前 manifest 的门负责。
+
+若选择真实人工审查，则须提交已完成、绑定当前包字节的外部证据；本段只约束所选的真实人工路线，不把机械回执说成人工观片。缺少必要输入、证据不完整或当前包漂移均拒绝。
+
+保留的旧人工审阅接口只是 compatibility boundary：私有身份适配器不进入公版，在缺少可核验的外部身份根时固定 fail closed；不能用重复的内部声明代替身份或发布授权。

@@ -9,6 +9,11 @@ set -euo pipefail
 LOCAL_MEDIA="$1"
 OUT_SRT="$2"
 OUT_NOTES="$3"
+if [ "${AUTOSLICE_CPA_GEMINI_ENABLED:-0}" = 1 ]; then
+  AGY_MODEL="${AGY_MODEL:-Gemini 3.8 Flash (High)}"
+  export AGY_MODEL
+  exec python3 "$(dirname "$0")/cpa_gemini_transcribe.py" talk "$LOCAL_MEDIA" "$OUT_SRT" "$OUT_NOTES"
+fi
 AGY_MODEL="${AGY_MODEL:-Gemini 3.6 Flash (High)}"
 
 STAMP="$(date +%Y%m%d-%H%M%S)"

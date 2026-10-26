@@ -20,6 +20,7 @@ from src.autoslice.screen_read_witness import (
     danmaku_text_pool,
     locate_read_span,
     match_screen_read,
+    screen_read_token_alignment,
     witness_is_weak,
 )
 
@@ -71,6 +72,9 @@ def _escalation_finding_upgrade(
             upgraded_finding,
             clip_context=clip_context,
             source_media_timeline_offset_ms=source_media_timeline_offset_ms,
+            require_complete_utterance_support=(
+                request.get("require_complete_utterance_support") is True
+            ),
         )
     except (TypeError, ValueError):
         return None
@@ -86,6 +90,7 @@ def _screen_read_evidence_only_upgrade(
     probe_result: Mapping[str, Any],
     screen_match: Mapping[str, Any] | None,
     reason_code: str,
+    require_complete_utterance_support: bool = False,
 ) -> tuple[Mapping[str, Any], Mapping[str, Any]] | None:
     """Bind an actual screen probe as evidence without granting text authority.
 
@@ -140,6 +145,7 @@ def _screen_read_evidence_only_upgrade(
             upgraded_finding,
             clip_context=clip_context,
             source_media_timeline_offset_ms=source_media_timeline_offset_ms,
+            require_complete_utterance_support=require_complete_utterance_support,
         )
     except (TypeError, ValueError):
         return None
@@ -222,6 +228,9 @@ def evidence_escalation_upgrade(
                 probe_result=probe_result,
                 screen_match=None,
                 reason_code="SCREEN_POOL_NO_PINYIN_MATCH",
+                require_complete_utterance_support=(
+                    request.get("require_complete_utterance_support") is True
+                ),
             )
             if evidence_only is not None:
                 evidence = evidence_only[0]["candidate_provenance"][
@@ -230,6 +239,33 @@ def evidence_escalation_upgrade(
                 audit["evidence_only"] = evidence
                 audit["mutation_authorized"] = False
                 return evidence_only[0], evidence_only[1], audit
+        return None
+    token_alignment = screen_read_token_alignment(
+        heard_pinyin=heard,
+        candidate=str(screen_match["text"]),
+    )
+    screen_match = {**screen_match, "token_alignment": token_alignment}
+    audit["screen_token_alignment"] = token_alignment
+    if not token_alignment["passes"]:
+        evidence_only = _screen_read_evidence_only_upgrade(
+            srt_text,
+            finding,
+            clip_context=clip_context,
+            source_media_timeline_offset_ms=source_media_timeline_offset_ms,
+            probe_result=probe_result,
+            screen_match=screen_match,
+            reason_code="SCREEN_MATCH_TOKEN_ALIGNMENT_WEAK",
+            require_complete_utterance_support=(
+                request.get("require_complete_utterance_support") is True
+            ),
+        )
+        if evidence_only is not None:
+            evidence = evidence_only[0]["candidate_provenance"][
+                "screen_read_evidence"
+            ]
+            audit["evidence_only"] = evidence
+            audit["mutation_authorized"] = False
+            return evidence_only[0], evidence_only[1], audit
         return None
     upgraded = _escalation_finding_upgrade(
         srt_text,
@@ -244,10 +280,12 @@ def evidence_escalation_upgrade(
                 for key in ("media_path", "frame_ms")
             },
             "pinyin_ratio": screen_match["pinyin_ratio"],
+            "token_alignment": token_alignment,
         },
         why=(
             f"[证据升级·读屏] 听写拼音相似 {screen_match['pinyin_ratio']} "
-            "对齐帧内文本；verified_ocr 出处进入裁决"
+            f"且有序音节覆盖 {token_alignment['token_coverage']} "
+            f"≥ {token_alignment['threshold']}；verified_ocr 出处进入裁决"
         ),
         clip_context=clip_context,
         source_media_timeline_offset_ms=source_media_timeline_offset_ms,
@@ -262,6 +300,9 @@ def evidence_escalation_upgrade(
                 probe_result=probe_result,
                 screen_match=screen_match,
                 reason_code="SCREEN_MATCH_NOT_SPLICEABLE",
+                require_complete_utterance_support=(
+                    request.get("require_complete_utterance_support") is True
+                ),
             )
             if evidence_only is not None:
                 evidence = evidence_only[0]["candidate_provenance"][

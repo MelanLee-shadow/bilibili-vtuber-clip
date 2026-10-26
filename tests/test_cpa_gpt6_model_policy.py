@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 
 from src.autoslice import llm_client
+from src.autoslice.cpa_model_ladder import cpa_call_timeout_seconds
 from src.autoslice.acoustic_witness_adjudication import judge_word_choice
 from src.autoslice.cpa_runtime import build_cpa_qa_command
 from src.autoslice.final_media_review_model_capability import (
@@ -19,7 +20,7 @@ def test_qa_factory_uses_sol_without_gpt5_or_astra_fallback():
         load_env_file=lambda _: {"CPA_BASE_URL": "https://example.invalid/v1"},
         environment={},
     )
-    assert "--model gpt-6-sol" in cmd
+    assert "--model gpt-6.1-sol" in cmd
     assert "--fallback-model" not in cmd
     assert "gpt-5" not in cmd
     assert "gpt-6-astra" not in cmd
@@ -36,15 +37,20 @@ def test_ordinary_first_pass_is_sol_low(monkeypatch):
 
     monkeypatch.setattr(llm_client, "build_llm_call", builder)
     full_session_transcription._build_aggregate_asr_transcriber("localhost", correct="cpa")
-    assert "'gpt-6-sol' low" in configs[0].command_template
-    assert configs[0].timeout_seconds == 600.0
+    assert "'gpt-6.1-sol' low" in configs[0].command_template
+    assert configs[0].timeout_seconds == cpa_call_timeout_seconds()
 
 
 def test_stale_gpt5_and_unsupported_none_fail_before_credentials(tmp_path):
     script = Path(__file__).resolve().parents[1] / "scripts/llm_via_cpa.sh"
     env = dict(os.environ)
     env.pop("CPA_API_KEY", None)
-    for model, effort in [("gpt-5.6-sol", "low"), ("gpt-5.5", "medium"), ("gpt-6-sol", "none")]:
+    for model, effort in [
+        ("gpt-5.6-sol", "low"),
+        ("gpt-5.5", "medium"),
+        ("gpt-6-sol", "none"),
+        ("gpt-6.1-sol", "none"),
+    ]:
         result = subprocess.run(
             [
                 "bash",
@@ -77,6 +83,21 @@ def test_factory_cache_identity_contains_model_effort_but_not_secret():
     assert "never-print" not in json.dumps(identity)
 
 
+def test_default_cache_identity_matches_wrapper_default():
+    call = llm_client.build_llm_call(
+        llm_client.LlmConfig(
+            transport="command",
+            command_template="bash scripts/llm_via_cpa.sh {prompt_file} {completion_file}",
+            command_child_env={},
+        )
+    )
+    assert call.cpa_cache_identity == {
+        "transport": "cpa_command",
+        "models": ["gpt-6.1-sol"],
+        "effort": "medium",
+    }
+
+
 def test_judge_cache_is_separate_per_model_and_effort(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path))
     calls = []
@@ -97,10 +118,18 @@ def test_judge_cache_is_separate_per_model_and_effort(tmp_path, monkeypatch):
     med = judge_word_choice(
         llm_call=build("gpt-6-sol", "medium", "PROPOSED"), check_request=request, witness=witness
     )
+    migrated = judge_word_choice(
+        llm_call=build("gpt-6.1-sol", "low", "PROPOSED"), check_request=request, witness=witness
+    )
     assert one["choice"] == two["choice"] == "CURRENT"
     assert two.get("served_from_cache") is True
     assert med["choice"] == "PROPOSED"
-    assert calls == [("gpt-6-sol", "low"), ("gpt-6-sol", "medium")]
+    assert migrated["choice"] == "PROPOSED"
+    assert calls == [
+        ("gpt-6-sol", "low"),
+        ("gpt-6-sol", "medium"),
+        ("gpt-6.1-sol", "low"),
+    ]
 
 
 def test_unconfigured_direct_model_has_no_cache_identity():
@@ -115,7 +144,7 @@ def test_unknown_model_identity_never_reuses_a_global_judge_cache(tmp_path, monk
     def unlabelled(_):
         return json.dumps({"choice": next(choices)})
 
-    req = {"current_cue": "甲", "proposed_cue": "乙"}
+    req = {"current_cue": "甲", "proposed_cue": "乙", "request_sha256": "a" * 64}
     witness = {"status": "UNCERTAIN"}
     assert (
         judge_word_choice(llm_call=unlabelled, check_request=req, witness=witness)["choice"]
@@ -136,10 +165,14 @@ def test_production_source_has_no_implicit_astra_route():
         KNOWN_UNSUPPORTED_DUAL_RAW_AV_MODELS
     )
     allowed_historical_tools = {
+        root / "src/autoslice/cpa_model_ladder.py",
         root / "scripts/astra_eval_transport.py",
         root / "scripts/evaluate_astra_native_audio.py",
         root / "scripts/evaluate_native_target_replay.py",
         root / "scripts/run_astra_transport_canary.py",
+        # The exporter removes a literal historical authorization fixture;
+        # that recorded model name is not a provider route.
+        root / "scripts/_export_oss_policy.py",
         negative_capability_policy,
     }
     offenders = []
@@ -158,6 +191,6 @@ def test_wrapper_and_probe_use_separate_cost_aware_defaults():
     root = Path(__file__).resolve().parents[1]
     wrapper = (root / "scripts/llm_via_cpa.sh").read_text(encoding="utf-8")
     runtime = (root / "src/autoslice/cpa_runtime.py").read_text(encoding="utf-8")
-    assert "CPA_CHAT_MODEL:-gpt-6-sol" in wrapper
-    assert 'for model in ("gpt-6-luna",):' in runtime
+    assert 'cpa_model_ladder.py' in wrapper
+    assert 'for model in (CPA_HEALTH_MODEL,):' in runtime
     assert "automatic Astra escalation" in wrapper

@@ -40,6 +40,11 @@ def fixture(tmp_path, monkeypatch):
     target = base / "out" / "2026-08-22" / "auto_100000_1_2" / "working.wav"
     target.parent.mkdir(parents=True)
     target.write_bytes(b"original")
+    (base / "state").mkdir()
+    (base / "state" / "2026-08-22.json").write_text(json.dumps({
+        "picks": [{"candidate_id": "auto_100000_1_2", "status": "published"}],
+        "pending_talk": [], "pending_song": [],
+    }))
     row = {
         "path": str(target),
         "bytes": 8,
@@ -47,6 +52,8 @@ def fixture(tmp_path, monkeypatch):
         "cls": "working.wav",
         "owner": "auto_100000_1_2",
         "owner_status": "published",
+        "owner_identity": {"runtime_root": str(base), "date": "2026-08-22",
+                           "candidate_id": "auto_100000_1_2"},
         "preimage": snapshot(target),
     }
     monkeypatch.setattr(apply, "quiet_window", lambda base: [])
@@ -203,9 +210,6 @@ def test_producer_emits_consumer_compatible_preimage(fixture, monkeypatch):
     base, target, row, plan = fixture
     monkeypatch.setattr(planner, "quiet_window", lambda base: [])
     monkeypatch.setattr(planner, "authority_references", lambda base: (set(), set()))
-    monkeypatch.setattr(
-        planner, "candidate_states", lambda base: ({row["owner"]: "published"}, set())
-    )
     monkeypatch.setattr(planner, "in_flight_candidates", lambda base: set())
     monkeypatch.setattr(
         sys, "argv", ["cleanup_preflight_scan.py", "--base", str(base), "--json", str(plan)]
@@ -230,8 +234,7 @@ def test_preimage_reader_detects_mutation_during_hash(fixture, monkeypatch):
         data = original(fd, size)
         if data and not changed:
             changed = True
-            # A size change remains observable within one filesystem clock tick.
-            target.write_bytes(b"modified-during-read")
+            target.write_bytes(b"modified")
         return data
 
     monkeypatch.setattr(helper.os, "read", read)
@@ -251,9 +254,6 @@ def test_planner_omits_shared_inodes(fixture, monkeypatch):
     os.link(target, target.with_name("shared.wav"))
     monkeypatch.setattr(planner, "quiet_window", lambda base: [])
     monkeypatch.setattr(planner, "authority_references", lambda base: (set(), set()))
-    monkeypatch.setattr(
-        planner, "candidate_states", lambda base: ({row["owner"]: "published"}, set())
-    )
     monkeypatch.setattr(planner, "in_flight_candidates", lambda base: set())
     monkeypatch.setattr(
         sys, "argv", ["cleanup_preflight_scan.py", "--base", str(base), "--json", str(plan)]

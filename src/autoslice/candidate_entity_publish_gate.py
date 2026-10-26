@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
+from .channel_envelope import story_contract_partners, talk_envelope_violations
 from .story_contract import audit_story_artifact
 from .publication_title_exception import candidate_title_policy_violations
 from .title_policy import (
@@ -54,6 +55,11 @@ def evaluate_candidate_title_gates(
         source_fact_review=source_fact_review,
         enforce_automatic_style=enforce_automatic_style,
     )
+    if lane == "talk" and enforce_automatic_style:
+        # Envelope checker of the same definition: an automatic title's prefix
+        # must equal render(structured StoryContract partners).
+        common.extend(code for code in talk_envelope_violations(
+            title, expected_partners=story_contract_partners(story_contract)) if code not in common)
     violations.extend(code for code in common if code not in violations)
     source_fact_blocked = authority_status == "BLOCKED_SOURCE_FACT_REVIEW"
     if common and not source_fact_blocked:

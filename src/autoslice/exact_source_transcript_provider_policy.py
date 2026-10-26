@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .review_errors import ContractRejection
+
 import hashlib
 import json
 from typing import Any, Mapping
@@ -65,11 +67,11 @@ def normalize_provider_history(
     normalized: list[dict[str, Any]] = []
     for raw in rows:
         if not isinstance(raw, Mapping):
-            raise ValueError("EXACT_SOURCE_TRANSCRIPT_PROVIDER_HISTORY_INVALID")
+            raise ContractRejection("EXACT_SOURCE_TRANSCRIPT_PROVIDER_HISTORY_INVALID")
         provider = raw.get("provider")
         category = str(raw.get("category") or "")
         if provider not in {"agy", "gemini_api"} or not category:
-            raise ValueError("EXACT_SOURCE_TRANSCRIPT_PROVIDER_HISTORY_INVALID")
+            raise ContractRejection("EXACT_SOURCE_TRANSCRIPT_PROVIDER_HISTORY_INVALID")
         skipped = (
             raw.get("attempted") is False
             or category in _NON_ATTEMPT_CATEGORIES
@@ -81,7 +83,7 @@ def normalize_provider_history(
         row["category"] = category
         row["attempted"] = not skipped
         if not all(_valid_failure_value(key, value) for key, value in row.items()):
-            raise ValueError("EXACT_SOURCE_TRANSCRIPT_PROVIDER_HISTORY_INVALID")
+            raise ContractRejection("EXACT_SOURCE_TRANSCRIPT_PROVIDER_HISTORY_INVALID")
         normalized.append(row)
     return normalized
 
@@ -110,10 +112,10 @@ def build_provider_route(
     """Seal the exact lane's AGY-first/free-chain/paid-gate provenance."""
 
     if provider_failures is not None and not isinstance(provider_failures, list):
-        raise ValueError("EXACT_SOURCE_TRANSCRIPT_PROVIDER_ROUTE_INVALID")
+        raise ContractRejection("EXACT_SOURCE_TRANSCRIPT_PROVIDER_ROUTE_INVALID")
     history = normalize_provider_history(list(provider_failures or []))
     if not model or not _valid_sha256(audio_clip_sha256) or not _history_order_valid(history):
-        raise ValueError("EXACT_SOURCE_TRANSCRIPT_PROVIDER_ROUTE_INVALID")
+        raise ContractRejection("EXACT_SOURCE_TRANSCRIPT_PROVIDER_ROUTE_INVALID")
     if provider == "agy":
         if (
             accepted_key_tier is not None
@@ -124,15 +126,15 @@ def build_provider_route(
             or paid_backup_policy is not None
             or history
         ):
-            raise ValueError("EXACT_SOURCE_TRANSCRIPT_PROVIDER_ROUTE_INVALID")
+            raise ContractRejection("EXACT_SOURCE_TRANSCRIPT_PROVIDER_ROUTE_INVALID")
     elif provider == "gemini_api":
         if not history or not any(row["provider"] == "agy" for row in history):
-            raise ValueError("EXACT_SOURCE_TRANSCRIPT_PROVIDER_ROUTE_INVALID")
+            raise ContractRejection("EXACT_SOURCE_TRANSCRIPT_PROVIDER_ROUTE_INVALID")
         if accepted_key_tier not in {
             gemini_backup_policy.FREE_KEY_TIER,
             gemini_backup_policy.PAID_KEY_TIER,
         }:
-            raise ValueError("EXACT_SOURCE_TRANSCRIPT_PROVIDER_ROUTE_INVALID")
+            raise ContractRejection("EXACT_SOURCE_TRANSCRIPT_PROVIDER_ROUTE_INVALID")
         error = gemini_backup_policy.validate_key_acceptance_metadata(
             configured_key_count=configured_key_count,
             accepted_key_ordinal=accepted_key_ordinal,
@@ -140,16 +142,16 @@ def build_provider_route(
             paid_backup_policy=paid_backup_policy,
         )
         if error is not None:
-            raise ValueError("EXACT_SOURCE_TRANSCRIPT_PROVIDER_ROUTE_INVALID")
+            raise ContractRejection("EXACT_SOURCE_TRANSCRIPT_PROVIDER_ROUTE_INVALID")
         if accepted_key_tier == gemini_backup_policy.PAID_KEY_TIER:
             if not gemini_backup_policy.valid_paid_policy_stamp(
                 paid_backup_policy,
                 expected_purpose=EXACT_TRANSCRIPT_PURPOSE,
                 expected_item_key=audio_clip_sha256.removeprefix("sha256:"),
             ):
-                raise ValueError("EXACT_SOURCE_TRANSCRIPT_PROVIDER_ROUTE_INVALID")
+                raise ContractRejection("EXACT_SOURCE_TRANSCRIPT_PROVIDER_ROUTE_INVALID")
     else:
-        raise ValueError("EXACT_SOURCE_TRANSCRIPT_PROVIDER_ROUTE_INVALID")
+        raise ContractRejection("EXACT_SOURCE_TRANSCRIPT_PROVIDER_ROUTE_INVALID")
     route: dict[str, Any] = {
         "schema_version": ROUTE_SCHEMA,
         "provider": provider,
@@ -203,7 +205,7 @@ def rebind_cached_gemini_route(
         model=str(route.get("model") or ""),
         audio_clip_sha256=audio_clip_sha256,
     ):
-        raise ValueError("EXACT_SOURCE_TRANSCRIPT_PROVIDER_ROUTE_INVALID")
+        raise ContractRejection("EXACT_SOURCE_TRANSCRIPT_PROVIDER_ROUTE_INVALID")
     cached_gemini_failures = [
         row for row in route["provider_failures"] if row.get("provider") == "gemini_api"
     ]

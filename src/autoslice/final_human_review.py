@@ -11,6 +11,7 @@ declared reviewer has actually completed the bound checks.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import hashlib
 import json
 import re
@@ -28,6 +29,12 @@ from .final_human_review_evidence import validate_bound_review_evidence
 from .cover_route_evidence import validate_cover_route_decision
 from .review_package_cover_diagnostics import validate_package_cover_route
 from .channel_profile import load_channel_profile as _load_channel_profile
+from .clip_profile import (
+    ClipProfileError,
+    clip_profile_from_document_holder,
+    season_for,
+    season_ids as _clip_season_ids,
+)
 from .final_media_duration_binding import (
     FinalMediaDurationBindingError,
     final_burn_duration_binding,
@@ -297,16 +304,13 @@ def _regular_package_file(root: Path, relative_path: str) -> Path:
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
     try:
-        with path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1 << 20), b""):
-                digest.update(chunk)
+        digest = _evidence_file_sha256(path)
     except OSError as exc:
         raise FinalHumanReviewError(
             "FINAL_HUMAN_REVIEW_ARTIFACT_FILE_INVALID", str(path)
         ) from exc
-    return "sha256:" + digest.hexdigest()
+    return "sha256:" + digest
 
 
 def _json_object(path: Path, *, source: str) -> dict[str, object]:
@@ -787,9 +791,14 @@ def attach_final_human_review(
     manifest: dict[str, object],
     receipt_argument: object,
     *,
-    season_ids: Mapping[str, Mapping[str, int]],
+    season_ids: Mapping[str, Mapping[str, int]] | None = None,
 ) -> list[str]:
-    """Attach the receipt and exact section only for a recovery manifest."""
+    """Attach the receipt and exact section only for a recovery manifest.
+
+    The exact collection comes from ``season_for`` of the manifest's
+    transcribed clip profile (lane default when absent); ``season_ids``
+    overrides only the account ID table, never the route.
+    """
 
     argument = str(receipt_argument or "").strip()
     recovery = isinstance(
@@ -817,8 +826,16 @@ def attach_final_human_review(
         return ["same-BV recovery manifest has no package_attestation"]
     if not isinstance(season, dict):
         return ["same-BV recovery manifest requires a season binding"]
-    lane = season.get("lane")
-    exact_ids = season_ids.get(str(lane or ""))
+    lane = str(season.get("lane") or "")
+    try:
+        route = season_for(
+            clip_profile_from_document_holder(manifest, lane="song" if lane == "song" else "talk")
+        )
+    except ClipProfileError as exc:
+        return [f"same-BV recovery manifest clip profile is invalid: {exc}"]
+    if route.lane != lane:
+        return ["same-BV recovery manifest season lane contradicts its clip profile"]
+    exact_ids = (season_ids if season_ids is not None else _clip_season_ids()).get(route.lane)
     if not isinstance(exact_ids, Mapping):
         return ["same-BV recovery manifest has no exact season IDs"]
     season.update(exact_ids)
@@ -1104,7 +1121,7 @@ def _cover_story_claim_authority(
                 and generation.get("image_generation_used") is True
                 and route.get("image_generation_used") is True
                 and generation.get("method") == "images.edit"
-                and generation.get("model") == "gpt-image-2"
+                and generation.get("model") in {"gpt-image-2.5", "gpt-image-2"}
                 and generation.get("image_gen_model") == "cpa"
             )
             or (
@@ -1230,6 +1247,54 @@ def _validate_manual_corrected_same_bv_item(
         ) from exc
 
 
+def _verified_song_manifest(
+    manifest: object, *, package_root: Path,
+) -> bool:
+    """Use the original verified-Song gate; a Song label grants nothing.
+
+    Replacement packages keep the original completion as provenance and replay
+    the shared constructor to prove the precise, audio-identical projection.
+    This branch never manufactures a Talk story or fresh singing observation.
+    """
+    if not isinstance(manifest, Mapping) or manifest.get("schema_version") != "lidousha-song-review-manifest.v1":
+        return False
+
+    from scripts.authorized_upload import _strict_verified_song_package
+    from scripts.build_song_review_manifest import (
+        SongReviewManifestError, validate_same_bv_replacement_package,
+    )
+    source_root = package_root
+    source_manifest = dict(manifest)
+    try:
+        if manifest.get("generated_by") == "build_song_review_manifest.same_bv_replacement.v1":
+            validated = validate_same_bv_replacement_package(package_root)
+            source_root = _package_directory(Path(validated["items"][0]["same_bv_replacement"]["original_package_root"]))
+            source_manifest = _json_object(
+                _regular_package_file(source_root, "review_manifest.json"), source="original Song review",
+            )
+        items = source_manifest.get("items")
+        if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict):
+            raise ValueError("Song must have exactly one item")
+        item = items[0]
+        source_record = _json_object(
+            _regular_package_file(source_root, _portable_path(item.get("record"), source="Song record")),
+            source="Song record",
+        )
+        audit_relative = ("package_audit.json" if (source_root / "package_audit.json").exists()
+                          else "verification/package-audit.json")
+        source_audit = _json_object(
+            _regular_package_file(source_root, audit_relative), source="Song audit",
+        )
+        if not _strict_verified_song_package(
+            root=source_root, review=source_manifest, review_item=item,
+            record=source_record, audit=source_audit,
+        ):
+            raise ValueError("verified Song delivery/completion/proof bindings rejected")
+    except (OSError, ValueError, KeyError, TypeError, SongReviewManifestError) as exc:
+        raise FinalHumanReviewError("FINAL_HUMAN_REVIEW_SONG_CONTRACT_INVALID", str(exc)) from exc
+    return True
+
+
 def _manifest_items(
     review_manifest: object,
     *,
@@ -1255,6 +1320,7 @@ def _manifest_items(
             "items",
         )
 
+    is_song_package = _verified_song_manifest(review_manifest, package_root=package_root)
     order: list[str] = []
     closure_by_candidate: dict[str, dict[str, object]] = {}
     all_paths: set[str] = set()
@@ -1326,8 +1392,11 @@ def _manifest_items(
         story_contract = record.get("story_contract")
         publish_staging = record.get("publish_staging")
         if (
-            not isinstance(story_contract, Mapping)
-            or story_contract.get("candidate_id") != candidate_id
+            (not is_song_package and (
+                not isinstance(story_contract, Mapping)
+                or story_contract.get("candidate_id") != candidate_id
+            ))
+            or (is_song_package and record.get("delivery_candidate_id") != candidate_id)
             or not isinstance(publish_staging, Mapping)
             or publish_staging.get("title") != title
         ):
@@ -1350,7 +1419,7 @@ def _manifest_items(
             title=title,
             source=f"review_manifest.items[{index}]",
         )
-        expected_cover_claims = set(
+        expected_cover_claims = set() if is_song_package else set(
             _cover_story_claim_authority(
                 record,
                 candidate_id=candidate_id,
@@ -1360,8 +1429,16 @@ def _manifest_items(
         )
         burned_preview = record.get("burned_preview")
         try:
-            duration_binding = final_burn_duration_binding(burned_preview)
-        except FinalMediaDurationBindingError as exc:
+            if is_song_package:
+                # Song has no Talk branding-intro duration witness. Measure the
+                # final bound media instead of inventing one in its old record.
+                from src.autoslice.producer_media import ffprobe_duration_ms
+                duration = ffprobe_duration_ms(_regular_package_file(package_root, manifest_artifacts["video"]))
+                duration_binding = final_burn_duration_binding({"verification": {"duration_ms": duration}})
+                duration_binding["final_duration_source"] = "verified_song.final_video.ffprobe.duration_ms"
+            else:
+                duration_binding = final_burn_duration_binding(burned_preview)
+        except (FinalMediaDurationBindingError, OSError, ValueError) as exc:
             raise FinalHumanReviewError(
                 "FINAL_HUMAN_REVIEW_FINAL_DURATION_INVALID", candidate_id
             ) from exc
@@ -1374,6 +1451,13 @@ def _manifest_items(
             "expected_cover_claims": expected_cover_claims,
             **duration_binding,
         }
+
+    # The canonical Song builder binds a single delivery candidate; it does not
+    # issue the exact Talk selection contract. Its gate above owns that identity.
+    if is_song_package:
+        if order != [review_manifest.get("candidate_id")]:
+            raise FinalHumanReviewError("FINAL_HUMAN_REVIEW_MANIFEST_CANDIDATE_SET_INVALID")
+        return order, closure_by_candidate
 
     exact_ids = _declared_candidate_list(
         review_manifest.get("exact_candidate_ids")

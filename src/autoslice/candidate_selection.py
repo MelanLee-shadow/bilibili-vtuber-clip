@@ -17,7 +17,11 @@ from src.autoslice.operator_processing_scope import (
     release_operator_scope_held_talk,
 )
 from src.autoslice.runner_proxy import RunnerProxy
-from src.autoslice.selection_scorecard import selection_rank_key, selection_scorecard_is_valid
+from src.autoslice.selection_scorecard import (
+    selection_rank_key,
+    selection_scorecard_is_valid,
+    selection_scorecard_production_admission,
+)
 from src.autoslice.publication_reconciliation import (
     publication_row_is_verified,
 )
@@ -30,8 +34,10 @@ from src.autoslice.talk_quota_freeze import (
 )
 from src.autoslice.talk_quota_policy import (
     TalkQuotaPolicy,
+    _recording_date,
     resolve_talk_quota_policy,
 )
+from src.autoslice.talk_quota_authority import resolve_quota_grant
 
 QUOTA_DISCLOSURE_SCHEMA = "talk-quota-policy-disclosure.v1"
 QUOTA_DISCLOSURE_FIELD = "talk_quota_policy_disclosure"
@@ -44,6 +50,7 @@ _LEGACY_SESSION_ID = "legacy-date-session"
 _SESSION_ID_RX = re.compile(r"^live-(\d{8})T(\d{6})(?:[+-]\d{4})?$")
 _SEGMENT_TIME_RX = re.compile(r"_(\d{8})-(\d{2})-(\d{2})-(\d{2})$")
 _SHA256_RX = re.compile(r"^sha256:[0-9a-f]{64}$")
+_SEMANTIC_SELECTION_LANES = frozenset({"semantic_recall", "semantic_recall_sharded"})
 
 
 def _item_session_id(item: dict) -> str:
@@ -224,6 +231,34 @@ def session_sealed(date: str, state: dict) -> bool:
     return bool(snapshot) and prev == snapshot
 
 
+def _song_recording_date(state: dict) -> str | None:
+    """Use the batch's recording date; legacy row dates must be unambiguous."""
+
+    dates: set[str] = set()
+    for key in ("recording_date", "date"):
+        if state.get(key):
+            dates.add(str(state[key]))
+    inventory = state.get("source_integrity")
+    if isinstance(inventory, dict) and inventory.get("date_dir"):
+        dates.add(Path(str(inventory["date_dir"])).name)
+    if dates:
+        # process_date(date) builds this inventory from REC_ROOT / date. A
+        # recording spanning midnight can have a later segment filename date.
+        return next(iter(dates)) if len(dates) == 1 else None
+    for key in ("songs", "pending_song", "song_backlog", "song_selection_backlog"):
+        for row in state.get(key, []):
+            if isinstance(row, dict) and (date := _recording_date(row, None)):
+                dates.add(date)
+    # Discovery persists this mapping even before any song has been attempted.
+    mapping = state.get("segment_sessions", {})
+    if isinstance(mapping, dict):
+        for segment, session in mapping.items():
+            date = _recording_date({"segment": segment, "session_id": session}, None)
+            if date:
+                dates.add(date)
+    return next(iter(dates)) if len(dates) == 1 else None
+
+
 def song_delivery_budget(state: dict, session_id: str | None = None) -> int:
     """Remaining daily song slots, including verified commit reservations.
 
@@ -249,7 +284,8 @@ def song_delivery_budget(state: dict, session_id: str | None = None) -> int:
             or song.get("verified_delivery_pending_commit") is True
         )
     )
-    return max(0, _runner.MAX_SONGS_PER_DATE - consumed)
+    grant = resolve_quota_grant(_song_recording_date(state), "song")
+    return max(0, grant.cap - consumed)
 
 
 def _talk_quota_policy(item: dict) -> TalkQuotaPolicy:
@@ -295,7 +331,7 @@ def _talk_admission_for_policy(
 
 def _admit_scope(
     state: dict, policy: TalkQuotaPolicy, ranked: list[dict]
-) -> tuple[list[dict], list[dict], dict]:
+) -> tuple[list[dict], list[dict], dict, dict[str, dict[str, object]]]:
     """Seat one quota scope: frozen seats first, then today's policy.
 
     A candidate carrying a valid freeze stamp for this scope already won its
@@ -312,6 +348,7 @@ def _admit_scope(
     keep = [item for item in ranked if frozen_admission(item, policy.scope_key)]
     fresh = [item for item in ranked if frozen_admission(item, policy.scope_key) is None]
     deferred: list[dict] = []
+    quality_holds: dict[str, dict[str, object]] = {}
     per_seg: dict[str, int] = {}
     for item in keep:
         per_seg[item["segment_path"]] = per_seg.get(item["segment_path"], 0) + 1
@@ -339,6 +376,21 @@ def _admit_scope(
         per_seg[item["segment_path"]] = per_seg.get(item["segment_path"], 0) + 1
 
     for item in fresh:
+        # A current semantic scorecard is arithmetic-valid before it is
+        # production-worthy.  Historical cards without an admission policy
+        # remain compatible; newly recalled semantic rows must carry the
+        # separate candidate-scoped watchability/differentiation judgment.
+        quality_gate = None
+        if str(item.get("lane") or "") in _SEMANTIC_SELECTION_LANES:
+            quality_gate = selection_scorecard_production_admission(
+                item.get("selection_scorecard")
+            )
+        if quality_gate is not None and quality_gate.get("status") != "ADMIT":
+            deferred.append(item)
+            quality_holds[
+                str(item.get("cid") or item.get("candidate_id") or "")
+            ] = quality_gate
+            continue
         if (
             len(keep) < slots
             and per_seg.get(item["segment_path"], 0) < _runner.TALK_PER_SEGMENT_CAP
@@ -351,26 +403,25 @@ def _admit_scope(
     for item in list(deferred):
         if len(keep) >= slots:
             break
+        if str(item.get("cid") or item.get("candidate_id") or "") in quality_holds:
+            continue
         if not _admits_extra_slot(item):
             continue
         _seat(item)
         deferred.remove(item)
-    return (
-        keep,
-        deferred,
-        _quota_disclosure_row(
-            policy,
-            slots=slots,
-            produced=produced,
-            reserved_for_revival=reserved_for_revival,
-            kept=len(keep),
-            # frozen = keep − seated_fresh，而 seated_fresh = fresh − deferred。
-            # 别改成「数 keep 里带章的」——新准入在本 tick 内就盖了章，那样数会把
-            # 刚落座的也算成冻结席（首个 tick 的正确值是 0）。
-            kept_on_frozen_seat=len(keep) - len(fresh) + len(deferred),
-            deferred=len(deferred),
-        ),
+    disclosure_row = _quota_disclosure_row(
+        policy,
+        slots=slots,
+        produced=produced,
+        reserved_for_revival=reserved_for_revival,
+        kept=len(keep),
+        # frozen = keep − seated_fresh，而 seated_fresh = fresh − deferred。
+        # 别改成「数 keep 里带章的」——新准入在本 tick 内就盖了章，那样数会把
+        # 刚落座的也算成冻结席（首个 tick 的正确值是 0）。
+        kept_on_frozen_seat=len(keep) - len(fresh) + len(deferred),
+        deferred=len(deferred),
     )
+    return keep, deferred, disclosure_row, quality_holds
 
 
 def _quota_disclosure_row(
@@ -1236,6 +1287,7 @@ def _prioritize_active_queues(
     pending_talk = [item for item in pending_talk if id(item) not in below_object_ids]
     keep: list[dict] = []
     deferred: list[dict] = []
+    quality_holds: dict[str, dict[str, object]] = {}
     policies = {
         policy.scope_key: policy for item in pending_talk for policy in (_talk_quota_policy(item),)
     }
@@ -1269,10 +1321,13 @@ def _prioritize_active_queues(
                 )
             )
             continue
-        session_keep, session_deferred, row = _admit_scope(state, policy, ranked)
+        session_keep, session_deferred, row, session_quality_holds = _admit_scope(
+            state, policy, ranked
+        )
         disclosure.append(row)
         keep.extend(session_keep)
         deferred.extend(session_deferred)
+        quality_holds.update(session_quality_holds)
     _disclose_quota_policies(state, disclosure)
     # These candidates already won selection in an earlier generation and
     # failed without delivery.  Do not discard the retry merely because
@@ -1282,6 +1337,19 @@ def _prioritize_active_queues(
     release_operator_scope_held_talk(state, operator_scope_held)
     _assign_cover_diversity_slots(state)
     for item in deferred:
+        quality_gate = quality_holds.get(
+            str(item.get("cid") or item.get("candidate_id") or "")
+        )
+        if quality_gate is not None:
+            reason = str(quality_gate.get("reason") or "").strip()
+            _runner._note_not_selected(
+                state,
+                f"{Path(item['segment_path']).name} {item['start_ms'] // 1000}-{item['end_ms'] // 1000}s "
+                f"conf={item.get('confidence')} hook={item.get('hook', '')[:40]} "
+                f"(候补:候选级看点门 {quality_gate.get('reason_code')}"
+                f"{': ' + reason[:120] if reason else ''};七维分/Tier保留,待质量复核)",
+            )
+            continue
         policy = _talk_quota_policy(item)
         gate = policy.extra_slot_min_score
         _runner._note_not_selected(

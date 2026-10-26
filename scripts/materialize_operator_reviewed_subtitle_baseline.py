@@ -23,6 +23,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.apply_speaker_turn_overrides import atomic_write_text
+from src.autoslice.channel_profile import LABEL_RE
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.operator_correction_policy import require_explicit_exhaustive_review_plan
 from src.autoslice.qixi_cue21_diagnostic_evidence import (
@@ -50,7 +51,6 @@ DIAGNOSTIC_DIFF_SCHEMA = "operator-reviewed-subtitle-truth-diff.v1"
 DIAGNOSTIC_DIFF_V2_SCHEMA = "operator-reviewed-subtitle-truth-diff.v2"
 _CANDIDATE_RX = re.compile(r"[A-Za-z0-9_-]{1,96}\Z")
 _SHA256_RX = re.compile(r"[0-9a-f]{64}\Z")
-_SPEAKER_PREFIX_RX = re.compile(r"^\[(?:李豆沙|连线)(?:\s+[+-]?\d+(?:\.\d+)?)?\]\s*")
 _AB_MARKER_RX = re.compile(r"(?<!\S)[AB](?!\S)")
 
 
@@ -515,7 +515,10 @@ def compile_operator_baseline(
         text = str(reviewed.text).strip()
         if not text:
             raise OperatorBaselineCompileError(f"reviewed SRT cue {ordinal} is empty")
-        if _SPEAKER_PREFIX_RX.match(text) or _AB_MARKER_RX.search(text):
+        speaker_prefix = LABEL_RE.match(text)
+        if (
+            speaker_prefix is not None and speaker_prefix.group(1) in {"李豆沙", "连线"}
+        ) or _AB_MARKER_RX.search(text):
             raise OperatorBaselineCompileError(f"reviewed SRT cue {ordinal} carries speaker annotation")
     source_sha = _sha256(source_srt)
     is_v3 = isinstance(decision_ledger, dict) and decision_ledger.get("schema_version") == DECISION_LEDGER_V3_SCHEMA

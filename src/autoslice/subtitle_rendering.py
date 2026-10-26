@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 from functools import lru_cache
+from dataclasses import dataclass
 import re
 from typing import Sequence
 
 from src.autoslice.review_evidence import SourceCue
+from src.autoslice.speaker_label_display import speaker_display
 from src.autoslice.term_lexicon import load_discovered_term_lexicon, normalize_text
 from src.autoslice.subtitle_validation import _blocks as _srt_blocks
 
@@ -63,45 +65,100 @@ def _parse_time_ms(value: str) -> int:
     return ((hours * 60 + minutes) * 60 + seconds) * 1000 + int(millis[:3].ljust(3, "0"))
 
 
+@dataclass(frozen=True)
+class BurnedAssCue:
+    start_ms: int
+    end_ms: int
+    text: str
+    speaker: str | None = None
+    layer: int = 0
+    placement: str = "main"
+
+
+@dataclass(frozen=True)
+class AssLaneStyle:
+    styles: tuple[tuple[str, str], ...]
+    include_unused_styles: bool = False
+    play_res: tuple[int, int] = (1920, 1080)
+    wrap_style: int = 2
+    escaping: str = "song"
+    # The external timed-lyrics tool historically delegates wrapping to libass.
+    # Keep its cue grid/bytes; this affects layout, never speaker-label policy.
+    preserve_cue_layout: bool = False
+
+
+def _escape_burned_ass_text(text: str, mode: str) -> str:
+    if mode == "song":
+        return _ass_escape_text(text)
+    if mode == "timed_lyrics":
+        return text.replace("\\", "\\\\").replace("{", "(").replace("}", ")").replace("\n", r"\N")
+    if mode != "talk":
+        raise ValueError(f"unknown ASS escaping profile: {mode}")
+    line_break = "\u0000ASS_LINE_BREAK\u0000"
+    return (text.replace(r"\N", line_break).replace("\\", r"\\")
+            .replace("{", r"\{").replace("}", r"\}")
+            .replace("\n", line_break).replace(line_break, r"\N"))
+
+
+def render_burned_ass(
+    cues: Sequence[BurnedAssCue], *, host_speaker: str, lane: AssLaneStyle,
+) -> str:
+    """The single cue/metadata + lane typography -> burned ASS projection."""
+    displays = [speaker_display(cue.text, host_speaker=host_speaker, speaker=cue.speaker)
+                for cue in cues]
+    rows = [(cue.start_ms, cue.end_ms, display.text)
+            for cue, display in zip(cues, displays)]
+    keys = [(display.speaker, cue.layer, cue.placement)
+            for cue, display in zip(cues, displays)]
+    projected = ([(i, a, b, text) for i, (a, b, text) in enumerate(rows)]
+                 if lane.preserve_cue_layout else
+                 _layout_cue_sequence_for_display(rows, continuity_keys=keys))
+    styles = {display.style for display in displays}
+    if not styles <= dict(lane.styles).keys():
+        raise ValueError("ASS lane lacks a required speaker style")
+    events = []
+    for index, start_ms, end_ms, text in projected:
+        cue = cues[index]
+        margin_v = 142 if cue.placement == "above" else 0
+        text = _escape_burned_ass_text(text, lane.escaping)
+        events.append(
+            f"Dialogue: {cue.layer},{_format_ass_time(start_ms)},{_format_ass_time(end_ms)},"
+            f"{displays[index].style},,0,0,{margin_v},,{text}"
+        )
+    return "\n".join([
+        "[Script Info]", "ScriptType: v4.00+",
+        f"PlayResX: {lane.play_res[0]}", f"PlayResY: {lane.play_res[1]}",
+        f"WrapStyle: {lane.wrap_style}", "ScaledBorderAndShadow: yes", "",
+        "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+        *(f"Style: {name},{value}" for name, value in lane.styles
+          if lane.include_unused_styles or name == "Default" or name in styles),
+        "", "[Events]",
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+        *events, "",
+    ])
+
+
 def _write_sapphire_ass_from_srt(srt_path: Path, ass_path: Path) -> None:
     # The final SRT is the input authority for this display-only projection.
     # Discovering a new lexicon here could silently disagree with that file
     # (or a later operator correction) while leaving its recorded hash intact.
     cues = _parse_srt(srt_path, normalize_terms=False)
-    event_rows = []
-    rows = [(cue.source_start_ms, cue.source_end_ms, cue.text) for cue in cues]
-    for _, sub_start_ms, sub_end_ms, sub_text in _layout_cue_sequence_for_display(rows):
-        text = _ass_escape_text(sub_text)
-        event_rows.append(
-            f"Dialogue: 0,{_format_ass_time(sub_start_ms)},{_format_ass_time(sub_end_ms)},Default,,0,0,0,,{text}"
-        )
+    # SRT labels are metadata: colour/style distinguishes speech from lyrics.
+    from scripts.apply_speaker_turn_overrides import (
+        GUEST_WHITE_STYLE, HOST_SPEAKER, LDS_SAPPHIRE_STYLE,
+    )
     ass_path.parent.mkdir(parents=True, exist_ok=True)
     # Typography retains the approved sapphire72 metrics emitted by
     # .agent/skills/song-lyrics-timeline-aligner/scripts/align_timed_lyrics.py
     # write_ass at --play-res 1920x1080: Fontsize 72 belongs to the 1080p
     # PlayRes with margins 60,60,40, Shadow 2, BackColour &H70000000
-    ass_path.write_text(
-        "\n".join(
-            [
-                "[Script Info]",
-                "ScriptType: v4.00+",
-                "PlayResX: 1920",
-                "PlayResY: 1080",
-                "WrapStyle: 2",
-                "ScaledBorderAndShadow: yes",
-                "",
-                "[V4+ Styles]",
-                "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-                "Style: Default,Microsoft YaHei,72,&H00FFFFFF,&H000000FF,&H00BA520F,&H70000000,0,0,0,0,100,100,0,0,1,3,2,2,60,60,40,1",
-                "",
-                "[Events]",
-                "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
-                *event_rows,
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    ass_path.write_text(render_burned_ass(
+        [BurnedAssCue(c.source_start_ms, c.source_end_ms, c.text) for c in cues],
+        host_speaker=HOST_SPEAKER,
+        lane=AssLaneStyle(styles=(("Default", LDS_SAPPHIRE_STYLE),
+                                 ("LDS", LDS_SAPPHIRE_STYLE), ("GUEST", GUEST_WHITE_STYLE))),
+    ), encoding="utf-8")
 
 
 def _format_ass_time(ms: int) -> str:

@@ -26,6 +26,8 @@
 
 from __future__ import annotations
 
+import os
+
 import hashlib
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -597,9 +599,27 @@ def discover_priority_findings(
             timeline_offset_ms=timeline_offset_ms,
             entity_verifier=entity_verifier,
         )
-        return merge_restatement_priority_findings(
+        findings, audit = merge_restatement_priority_findings(
             final_srt_text, findings, audit, out_root=out_root, cid=cid
         )
+        if os.environ.get("AUTOSLICE_FINAL_REVIEW_MODE") == "per_finding":
+            import json
+            restatement_receipt = out_root / f"{cid}.restatement-candidates.json"
+            if restatement_receipt.is_file():
+                audit["restatement_discovery_status"] = json.loads(restatement_receipt.read_text()).get("status")
+            from src.autoslice.discovery_channels import SourceIdentity, prefetch_fullclip
+            identity_reader = getattr(entity_verifier, "span_termination_source_identity", None)
+            source_sha = identity_reader() if callable(identity_reader) else None
+            if isinstance(source_sha, str):
+                source = SourceIdentity(cid, (source_sha.removeprefix("sha256:"),))
+                observations = prefetch_fullclip(final_srt_text, verifier=entity_verifier,
+                    source=source, source_offset_ms=timeline_offset_ms)
+                audit["fullclip_discovery_observations"] = list(observations)
+                audit["fullclip_discovery_status"] = "OBSERVED" if observations and all(
+                    row.get("status") == "OBSERVED" for row in observations) else "INCOMPLETE"
+            else:
+                audit["fullclip_discovery_status"] = "SOURCE_OR_NATIVE_ADAPTER_UNAVAILABLE"
+        return findings, audit
     return [], {
         "schema_version": MICROCUE_SCHEMA_VERSION,
         "status": "PASS",

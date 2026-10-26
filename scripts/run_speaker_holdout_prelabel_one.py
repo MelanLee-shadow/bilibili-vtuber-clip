@@ -24,6 +24,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from src.autoslice.deployed_code_root import DEFAULT_RUNTIME_BASE, deployed_code_root_reference
+
 from src.autoslice import speaker_holdout_prelabel as prelabel
 
 
@@ -48,7 +50,9 @@ EXECUTION_SCRATCH_ROOT = Path("/tmp/hostocc-v2-20260811/speaker-prelabel-plan-v1
 PRODUCTION_ROOTS = {
     "/opt/bilive/autoslice/state",
     "/opt/bilive/autoslice/out",
-    "/opt/bilive/autoslice/repo",
+    str(DEFAULT_RUNTIME_BASE / "repo"),  # retained legacy data deny boundary
+    str(deployed_code_root_reference()),
+    str(DEFAULT_RUNTIME_BASE / "versions"),
     "/opt/bilive/recording",
 }
 PROXY_ENV_NAMES = {

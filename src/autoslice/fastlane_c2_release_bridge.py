@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from scripts.suggest_upload_tags import generate_upload_tags
+from .upload_tag_policy import load_selected_upload_tag_policy
 
 from .fastlane_c2_formal_adapter import (
     CID,
@@ -287,7 +288,8 @@ def _receipt_bound_proposal(formal: Path, supplied: Path, receipt: Path) -> Path
     _regular(bound, "C2 receipt-bound proposal")
     if bound.stat().st_size != byte_count or digest != "sha256:" + sha256(bound):
         raise C2ReleaseBridgeError("C2 receipt proposal binding drift")
-    if supplied.resolve() != bound.resolve():
+    _regular(supplied, "C2 supplied proposal")
+    if supplied.stat().st_size != byte_count or digest != "sha256:" + sha256(supplied):
         raise C2ReleaseBridgeError("C2 supplied proposal is not receipt-bound proposal")
     return bound
 
@@ -296,10 +298,11 @@ def _valid_tags(result: Mapping[str, object]) -> list[str]:
     if result.get("status") not in {"OK", "OK_NO_LLM"}:
         raise C2ReleaseBridgeError("C2 tag generation failed")
     tags = result.get("final_tags")
-    if not isinstance(tags, list) or not tags or len(tags) > 10:
+    policy = load_selected_upload_tag_policy()
+    if not isinstance(tags, list) or not tags or len(tags) > policy.max_tags_default:
         raise C2ReleaseBridgeError("C2 tag generation produced no valid tag line")
     clean = [str(tag).strip() for tag in tags]
-    if any(not tag or len(tag) > 20 or any(c in tag for c in ",，\n\t") for tag in clean):
+    if any(not tag or len(tag) > policy.max_tag_chars or any(c in tag for c in ",，\n\t") for tag in clean):
         raise C2ReleaseBridgeError("C2 tag generation produced invalid tag")
     if len({tag.casefold() for tag in clean}) != len(clean):
         raise C2ReleaseBridgeError("C2 tag generation produced duplicate tags")

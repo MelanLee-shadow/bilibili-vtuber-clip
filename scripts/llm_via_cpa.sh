@@ -7,7 +7,7 @@
 # Optional argv 3/4 (维护者): pin a per-stage model chain + reasoning
 # effort at the call site (callers shlex-split the template, so a quoted chain
 # stays one argument).  Precedence: explicit arg > CPA_CHAT_MODELS env > default.
-# Current model policy: GPT-6 Sol is the quality default; probes use GPT-6 Luna.
+# Current model policy: GPT-6.1 Sol is the quality default; probes use GPT-6 Luna.
 # Explicit stage effort remains separate and must be tested before lowering it.
 # Older dated incident comments below are historical evidence, not current routing.
 #
@@ -23,9 +23,21 @@ umask 077
 
 PROMPT_FILE="$1"
 COMPLETION_FILE="$2"
+# Bind all repo-importing children to the script's fixed version in one place.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+repo_python() {
+  python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); sys.argv = sys.argv[2:]; exec(compile(sys.stdin.read(), "<stdin>", "exec"))' "$REPO_ROOT" "$@"
+}
 # No implicit downgrade to GPT-5.6/5.5/5.4 and no automatic Astra escalation.
-# The default is one GPT-6 Sol lane; explicit model chains remain caller-owned.
-MODELS="${3:-${CPA_CHAT_MODELS:-${CPA_CHAT_MODEL:-gpt-6-sol}}}"
+# A top-model pin still uses the shared ladder; explicit experimental routes stay pinned.
+POLICY="$(dirname "$0")/../src/autoslice/cpa_model_ladder.py"
+if [ "${6:-}" = --exact-model ]; then
+  MODELS="$(python3 "$POLICY" exact-model "${3:-}")"
+elif [ -n "${6:-}" ]; then
+  echo "unknown CPA model routing option" >&2; exit 2
+else
+  MODELS="$(python3 "$POLICY" models "${3:-${CPA_CHAT_MODELS:-${CPA_CHAT_MODEL:-}}}")"
+fi
 EFFORT="${4:-${CPA_REASONING_EFFORT:-medium}}"
 ATTEMPTS_PER_MODEL="${5:-3}"
 
@@ -35,7 +47,7 @@ for requested_model in $MODELS; do
     gpt-5|gpt-5.*|gpt-5-*) echo "CPA model policy requires GPT-6; stale GPT-5 route rejected" >&2; exit 2 ;;
   esac
 done
-if [[ "$MODELS" == *gpt-6-* ]]; then
+if [[ "$MODELS" == *gpt-6-* || "$MODELS" == *gpt-6.* ]]; then
   case "$EFFORT" in low|medium|high|xhigh|max) ;; *) echo "GPT-6 effort must be low/medium/high/xhigh/max" >&2; exit 2 ;; esac
 fi
 
@@ -54,21 +66,22 @@ fi
 #    三枪打空判死。空补全本来就在 transient_failure() 的服务类里，那条特例分支
 #    只是把 floor 抹掉了——已删除。
 #  - 其它 4xx 是确定性拒绝（凭据无权、请求非法），同模型重试只会浪费时间，
-#    立即换下一个模型。**例外**见下面 group_capability_body()：
+#    立即终止整条调用，不降级。**例外**见下面 group_capability_body()：
 #    http=400 + group_capability_unavailable 是分组路由抽签，不是请求错误。
-# 退避是指数 + 抖动，总睡眠有上限，保证三个模型跑完仍远小于调用方的 600s 超时。
+# 退避是指数 + 抖动，总睡眠有上限；睡眠耗尽不跳过本模型剩余重试。
 TRANSIENT_ATTEMPTS_PER_MODEL="${CPA_TRANSIENT_ATTEMPTS_PER_MODEL:-3}"
 BACKOFF_BASE_SECONDS="${CPA_BACKOFF_BASE_SECONDS:-2}"
 BACKOFF_MAX_TOTAL_SECONDS="${CPA_BACKOFF_MAX_TOTAL_SECONDS:-30}"
-# Hard wall-clock stop for the whole chain.  attempts_per_model=1 used to be the
-# only thing keeping the final-review stage inside its 600s caller timeout; the
-# transient floor above would break that guarantee on its own, so the deadline
-# now carries it explicitly.  It gates **every** dispatch after the first (not
-# just same-model retries), so no request can start past the deadline and the
-# worst case is 400s + one in-flight curl (--max-time 180) = 580s < 600s.
+# Three attempts x two models x 150s + 30s backoff = 930s by default.
+# The shared outer budget includes the dispatch deadline, a last in-flight
+# attempt, and 60s process overhead (1140s by default). Both models can exhaust
+# their retries. Overrides are included in the callers' shared budget too.
 # The first attempt always runs, so a deadline can never make this a no-op.
 # Set to 0 to disable.
-DEADLINE_SECONDS="${CPA_DEADLINE_SECONDS:-400}"
+ATTEMPT_TIMEOUT_SECONDS="$(python3 "$POLICY" timeout)"
+MODEL_COUNT=0
+for MODEL in $MODELS; do MODEL_COUNT=$((MODEL_COUNT + 1)); done
+DEADLINE_SECONDS="$(python3 "$POLICY" deadline "$MODEL_COUNT" "$ATTEMPTS_PER_MODEL")"
 
 if ! [[ "$ATTEMPTS_PER_MODEL" =~ ^[1-9][0-9]*$ ]]; then
   echo "attempts_per_model must be a positive integer" >&2
@@ -97,6 +110,12 @@ fi
 
 SLEPT_TOTAL=0
 TOTAL_ATTEMPTS=0
+MAX_TOTAL_ATTEMPTS=10
+OUTER_ATTEMPT="${AUTOSLICE_CPA_TEXT_ATTEMPT:-0}"
+if ! [[ "$OUTER_ATTEMPT" =~ ^[0-9]+$ ]] || [[ "$OUTER_ATTEMPT" -gt 10 ]]; then
+  echo "invalid CPA text attempt budget" >&2
+  exit 2
+fi
 DEADLINE_HIT=0
 SECONDS=0
 
@@ -171,7 +190,7 @@ backoff_sleep() {
   fi
   local remaining=$((BACKOFF_MAX_TOTAL_SECONDS - SLEPT_TOTAL))
   if [[ "$remaining" -le 0 ]]; then
-    return 1
+    return 0
   fi
   if [[ "$delay" -gt "$remaining" ]]; then
     delay="$remaining"
@@ -225,28 +244,37 @@ body_bytes() {
 }
 
 build_body() {
-python3 - "$PROMPT_FILE" "$1" "$EFFORT" > "$BODY_FILE" <<'PY'
-import json, sys
-prompt = open(sys.argv[1], encoding="utf-8").read()
-print(json.dumps({
-    "model": sys.argv[2],
-    "input": prompt,
-    "reasoning": {"effort": sys.argv[3]},
-    "max_output_tokens": 16000,
-}, ensure_ascii=False))
-PY
+python3 "$(dirname "$0")/cpa_request_body.py" "$PROMPT_FILE" "$1" "$EFFORT" > "$BODY_FILE"
 }
 
 # The Responses endpoint intermittently returns a completed response with an
 # empty output_text (reasoning model quirk); retry a few times per model, then
 # fail over to the next model in MODELS.
+local_failure() {
+  # Closed metadata survives even when the response/usage filesystem is broken.
+  builtin printf '[autoslice-provider-diagnostic] {"provider_http_status":%s,"provider_error_code":"CPA_RESPONSE_LOCAL_FAILURE"}\n' "$((10#${HTTP_CODE:-000}))" >&2
+  exit 70
+}
+
+# The Python owner supplies the physical attempt number and owns all waiting.
+MODEL_INDEX=0
+MODEL_LIMIT="$ATTEMPTS_PER_MODEL"
+[[ "$TRANSIENT_ATTEMPTS_PER_MODEL" -le "$MODEL_LIMIT" ]] || MODEL_LIMIT="$TRANSIENT_ATTEMPTS_PER_MODEL"
 for MODEL in $MODELS; do
+MODEL_INDEX=$((MODEL_INDEX + 1))
+if [[ "$OUTER_ATTEMPT" -gt 0 && "$MODEL_INDEX" -lt "$MODEL_COUNT" && "$OUTER_ATTEMPT" -gt $((MODEL_INDEX * MODEL_LIMIT)) ]]; then
+  continue
+fi
 if [[ "$DEADLINE_HIT" == "1" ]]; then
   break
 fi
 build_body "$MODEL"
 attempt=0
 while :; do
+  if [[ "$TOTAL_ATTEMPTS" -ge "$MAX_TOTAL_ATTEMPTS" ]]; then
+    echo "[cpa] total HTTP attempt budget exhausted (${MAX_TOTAL_ATTEMPTS})" >&2
+    exit 1
+  fi
   if [[ "$TOTAL_ATTEMPTS" -gt 0 ]] && deadline_reached; then
     echo "[cpa] deadline ${DEADLINE_SECONDS}s reached before model=${MODEL}; giving up" >&2
     DEADLINE_HIT=1
@@ -264,35 +292,46 @@ while :; do
   # 次的 group_capability_unavailable 正文去给这一次的失败定性。
   : > "$RESP_FILE"
   # CPA sits behind Cloudflare, which 403s (error 1010) non-browser user agents.
-  HTTP_CODE="$(curl -sS --fail-with-body --max-time 180 \
+  ATTEMPT_STARTED=$SECONDS
+  HTTP_CODE="$(curl -sS --fail-with-body --max-time "$ATTEMPT_TIMEOUT_SECONDS" \
       -o "$RESP_FILE" -w '%{http_code}' \
       -H @"$HEADER_FILE" \
       -d @"$BODY_FILE" \
       "${CPA_BASE_URL%/}/responses")" && CURL_EXIT=0 || CURL_EXIT=$?
+  # Publish transport state and save raw bytes before any fallible observer.
+  [[ "$HTTP_CODE" =~ ^[0-9]{3}$ ]] || HTTP_CODE=000
+  echo "[cpa-transport] model=${MODEL} attempt=${attempt} http=${HTTP_CODE} curl_exit=${CURL_EXIT} body_bytes=$(body_bytes) result=failed" >&2
+  builtin printf '{"http_status":%s,"curl_exit":%s}\n' "$((10#$HTTP_CODE))" "$CURL_EXIT" > "${COMPLETION_FILE}.transport.json" || local_failure
+  cp -- "$RESP_FILE" "${COMPLETION_FILE}.response.json" || local_failure
+  EXTRACT_EXIT=0
   if [[ "$CURL_EXIT" -eq 0 ]]; then
-    if python3 - "$RESP_FILE" "$COMPLETION_FILE" <<'PY'
-import json, sys
-payload = json.load(open(sys.argv[1], encoding="utf-8"))
-# Responses API: prefer the convenience output_text, else walk output[] for the
-# assistant message's output_text parts (skipping reasoning items).
-text = payload.get("output_text")
-if not text:
-    parts = []
-    for item in payload.get("output", []) or []:
-        if item.get("type") == "message":
-            for c in item.get("content", []) or []:
-                if c.get("type") in ("output_text", "text") and c.get("text"):
-                    parts.append(c["text"])
-    text = "".join(parts)
-if not isinstance(text, str) or not text.strip():
-    raise SystemExit(f"empty completion content (status={payload.get('status')})")
-open(sys.argv[2], "w", encoding="utf-8").write(text)
+    repo_python - "$RESP_FILE" "$COMPLETION_FILE" "$MODEL" <<'PY' || EXTRACT_EXIT=$?
+import sys
+from pathlib import Path
+from src.autoslice.cpa_runtime import save_cpa_completion
+try:
+    save_cpa_completion(Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3])
+except (ValueError, TypeError, KeyError, AttributeError):
+    raise SystemExit(3)
+except OSError:
+    raise SystemExit(70)
 PY
-    then
-      echo "[cpa] model=${MODEL} attempt=${attempt} http=${HTTP_CODE} curl_exit=0 body_bytes=$(body_bytes) result=ok" >&2
-      exit 0
-    fi
-    EMPTY_COMPLETION=1
+    if [[ "$EXTRACT_EXIT" -ne 0 && "$EXTRACT_EXIT" -ne 3 ]]; then local_failure; fi
+    [[ "$EXTRACT_EXIT" -eq 0 ]] || EMPTY_COMPLETION=1
+  fi
+  # Valid completion/provenance already exist if observation fails.
+  repo_python - "$MODEL" "$HTTP_CODE" "$((SECONDS - ATTEMPT_STARTED))" "$CURL_EXIT" "$EXTRACT_EXIT" "$COMPLETION_FILE" <<'PY' || local_failure
+import json, sys
+from pathlib import Path
+from src.autoslice.cpa_runtime import record_cpa_attempt, record_cpa_event
+record_cpa_attempt(model=sys.argv[1], kind="text", status=sys.argv[2], elapsed_seconds=float(sys.argv[3]))
+if sys.argv[4:6] == ['0', '0']:
+    model = json.loads(Path(sys.argv[6] + '.provenance.json').read_text())['answering_model']
+    record_cpa_event('completion', {'kind': 'text', 'model': model, 'answering_model': model})
+PY
+  if [[ "$CURL_EXIT" -eq 0 && "$EXTRACT_EXIT" -eq 0 ]]; then
+    echo "[cpa] model=${MODEL} attempt=${attempt} http=${HTTP_CODE} curl_exit=0 body_bytes=$(body_bytes) result=ok" >&2
+    exit 0
   fi
   # 判定一次就够，而且必须在下面这行 stderr **之前**：上层
   # (src/autoslice/provider_failure.py) 只看得见桥接脚本的 stderr，永远看不到
@@ -303,28 +342,23 @@ PY
   fi
   echo "[cpa] model=${MODEL} attempt=${attempt} http=${HTTP_CODE} curl_exit=${CURL_EXIT} empty_completion=${EMPTY_COMPLETION} body_bytes=$(body_bytes) result=failed${UPSTREAM_NOTE}" >&2
   if transient_failure "$HTTP_CODE" "$CURL_EXIT" "$EMPTY_COMPLETION" "$GROUP_CAP"; then
+    if [[ "$OUTER_ATTEMPT" -gt 0 ]]; then
+      echo "[cpa-retry] transient=1" >&2
+      exit 1
+    fi
     max_attempts="$ATTEMPTS_PER_MODEL"
     if [[ "$TRANSIENT_ATTEMPTS_PER_MODEL" -gt "$max_attempts" ]]; then
       max_attempts="$TRANSIENT_ATTEMPTS_PER_MODEL"
     fi
   else
-    # Deterministic rejection (malformed request, unauthorized, unknown model):
-    # the same request will be refused again.  Fail over immediately instead of
-    # burning the model's attempt budget.  Note the 400
-    # ``group_capability_unavailable`` case is NOT here — see
-    # group_capability_body(): that one is a routing lottery, not a verdict.
-    echo "[cpa] model=${MODEL} deterministic http=${HTTP_CODE}, no same-model retry" >&2
-    max_attempts=1
+    echo "[cpa] model=${MODEL} deterministic http=${HTTP_CODE}, no retry or fallback" >&2
+    exit 1
   fi
   if [[ "$attempt" -ge "$max_attempts" ]]; then
     echo "CPA /responses failed ${attempt}x on ${MODEL}, trying next model" >&2
     break
   fi
-  if ! backoff_sleep "$attempt"; then
-    echo "[cpa] model=${MODEL} backoff budget exhausted, trying next model" >&2
-    echo "CPA /responses failed ${attempt}x on ${MODEL}, trying next model" >&2
-    break
-  fi
+  backoff_sleep "$attempt"
 done
 done
 echo "CPA /responses failed on all models: $MODELS" >&2

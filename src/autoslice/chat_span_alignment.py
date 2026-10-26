@@ -2,12 +2,66 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 from src.autoslice.chat_evidence import normalize_chat_text
 
 
 MAX_INTERJECTION_ALIGNMENT_STATES = 512
+
+
+def remove_orphaned_splice_marks(
+    *,
+    source: str,
+    start: int,
+    end: int,
+    head: str,
+    replacement: str,
+    tail: str,
+    mark_pairs: Mapping[str, str],
+) -> tuple[str, tuple[str, ...]]:
+    """Keep a normalized splice from retaining half of a source mark pair.
+
+    Only an unchanged source prefix/suffix can lose a mark here, and only
+    when its mate was inside the replaced interval. Words and authority
+    punctuation are never edited. Already malformed inputs or a result that
+    cannot be repaired using those exact source marks stay with the caller's
+    existing structural guard.
+    """
+    combined = head + replacement + tail
+    closers = frozenset(mark_pairs.values())
+
+    def paired_positions(text: str) -> list[tuple[int, int]] | None:
+        stack: list[int] = []
+        pairs: list[tuple[int, int]] = []
+        for index, char in enumerate(text):
+            if char in mark_pairs:
+                stack.append(index)
+            elif char in closers:
+                if not stack or mark_pairs[text[stack[-1]]] != char:
+                    return None
+                pairs.append((stack.pop(), index))
+        return None if stack else pairs
+
+    if paired_positions(combined) is not None:
+        return combined, ()
+    source_pairs = paired_positions(source)
+    if source_pairs is None or not 0 <= start <= end <= len(source):
+        return combined, ()
+    # These comparisons validate the explicitly supplied cut, rather than
+    # treating authority-generated text as an original source prefix/suffix.
+    head_is_source = head == source[:start]
+    tail_is_source = tail == source[end:]
+    removals: set[int] = set()
+    for left, right in source_pairs:
+        if left < start <= right < end and head_is_source:
+            removals.add(left)
+        elif start <= left < end <= right and tail_is_source:
+            removals.add(len(head) + len(replacement) + right - end)
+    repaired = "".join(c for i, c in enumerate(combined) if i not in removals)
+    if not removals or paired_positions(repaired) is None:
+        return combined, ()
+    return repaired, tuple(combined[i] for i in sorted(removals))
 
 
 def _delete_once_candidates(text: str, fragment: str) -> list[str]:

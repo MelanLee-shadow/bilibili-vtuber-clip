@@ -16,9 +16,16 @@ except Exception:  # pragma: no cover - environment dependent
 def text_pinyin_tokens(text: str) -> list[str] | None:
     if _lazy_pinyin is None:
         return None
+    # pypinyin returns punctuation as non-Han tokens too. Those are pause
+    # boundaries, not speech syllables; counting them manufactures omissions
+    # in an otherwise matching acoustic witness (e.g. 要啊，不要。).
+    speech_text = "".join(
+        " " if unicodedata.category(character)[0] in {"P", "Z"} else character
+        for character in text
+    )
     return [
         re.sub(r"\s+", "", token.strip().lower())
-        for token in _lazy_pinyin(text)
+        for token in _lazy_pinyin(speech_text)
         if token and token.strip()
     ]
 

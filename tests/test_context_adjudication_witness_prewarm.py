@@ -16,6 +16,7 @@ import json
 import threading
 import time
 
+import pytest
 
 from src.autoslice import producer_text_pipeline as pipeline
 from src.autoslice.context_adjudication_witness_prewarm import (

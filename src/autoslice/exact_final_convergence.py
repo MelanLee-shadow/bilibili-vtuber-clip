@@ -5,11 +5,15 @@ review pass is intentionally independent.  Without same-run memory, two valid
 CPA receipts can therefore reverse one another until the bounded self-heal
 budget is exhausted.  This module does not let code or the acoustic witness
 choose text.  When an exact cue/time window is reconsidered, it gives CPA the
-prior receipt chain and the new adjudication, records CPA's final binary choice,
+prior receipt chain and the new adjudication, records CPA's supported choice,
 and reuses that choice only while the exact local cue context remains unchanged.
 """
 
 from __future__ import annotations
+
+from src.autoslice.structured_output import call_json
+
+from src.autoslice.final_review_agenda import reviewer_reason
 
 import hashlib
 import json
@@ -19,14 +23,22 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from src.autoslice.acoustic_witness_adjudication import (
+    AUDIO_EVIDENCE_PRIORITY,
+    build_witness_request,
     valid_inaudible_drop_authority,
+    valid_witness_evidence,
 )
 from src.autoslice.exact_final_witness_authority import (
+    _valid_native_witness,
+    binding_from_adjudication,
     convergence_witness_gate,
     downgrade_convergence_finding,
+    GATE_SCHEMA,
+    valid_convergence_witness_gate,
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.llm_client import extract_json_object
+from src.autoslice.exact_final_cpa_history import repair_history
 
 
 MEMO_SCHEMA = "exact-final-cpa-convergence-memo.v1"
@@ -35,15 +47,19 @@ CYCLE_RECEIPT_SCHEMA = "exact-final-cpa-cycle-adjudication.v1"
 CACHE_SCHEMA = "exact-final-cpa-convergence-cache.v1"
 _SHA256 = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$")
 
-_PROMPT = """# Exact-final 字幕反复改写收敛（CPA 最终文字裁决）
+_PROMPT = AUDIO_EVIDENCE_PRIORITY + """# Exact-final 字幕反复改写收敛（CPA 最终文字裁决）
 
 同一个精确字幕时间窗已经有一条或多条 CPA 授权的修改收据，本轮独立审片又
 提出了新的 CURRENT / PROPOSED 二元选择。AGY/Gemini 仅提供声学观察，不能
-决定文字。你是最终文字裁决者，必须在本轮 CURRENT 与 PROPOSED 中二选一。
+决定文字。你是最终文字裁决者；证据足够时在 CURRENT 与 PROPOSED 中选择，
+证据冲突或不足时保留 UNRESOLVED，不得为了结束反复审查而强行选边。
 
 这次决定会绑定当前 cue、局部语境、精确时间窗、历史收据链和本轮证据哈希；
 在这些绑定不变时，后续独立扫描不得再次反转。不要因为“上一轮改过”就机械
 保留，也不要为了追求变化选择 PROPOSED；结合全部历史和本轮证据选最终文本。
+短窗拼音与已绑定的完整语义块听写冲突时，明确比较覆盖范围与不确定性，不能只因
+短窗拼音吻合就忽略完整句证据。宽窗听写也不自动证明当前单 cue 的每个字，不能
+多数投票。确需新的原音证据时返回 needs_audio=true；不得把历史次数当作必须选边的理由。
 
 ## 绑定
 - FINAL_SRT_SHA256: {srt_sha256}
@@ -74,16 +90,19 @@ _PROMPT = """# Exact-final 字幕反复改写收敛（CPA 最终文字裁决）
 {evidence_json}
 
 只回 JSON（无 markdown、无其他文字）：
-{{"choice":"CURRENT"或"PROPOSED","reason":"一句话说明最终选择依据"}}
+{{"choice":"CURRENT"或"PROPOSED"或"UNRESOLVED","needs_audio":false或true,"reason":"选择依据或具体仍缺的证据"}}
 """
 
-_CYCLE_PROMPT = """# Exact-final 字幕振荡闭集裁决（CPA 最终文字裁决）
+_CYCLE_PROMPT = AUDIO_EVIDENCE_PRIORITY + """# Exact-final 字幕振荡闭集裁决（CPA 最终文字裁决）
 
 同一个精确字幕时间窗在有界 self-heal 中出现了候选回流：本轮候选包含此前
 已经被另一条 CPA 修改收据替换掉的文本，或者同轮出现多个互斥提案。普通的
 CURRENT / PROPOSED 二选一已不足以收敛。你是最终文字裁决者。
 
-你必须只从下面列出的完整候选闭集中选一个 candidate_id。AGY/Gemini 及语义
+证据足够时只能从下面列出的完整候选闭集中选一个 candidate_id；证据冲突或不足时
+返回 UNRESOLVED，确需新原音证据时返回 needs_audio=true，不得为结束振荡强行选边。
+比较已绑定短窗与完整语义块的覆盖范围和不确定性，不能丢弃宽窗或按多数投票。
+AGY/Gemini 及语义
 审片只有 evidence authority，不能替你选字。历史收据、当前文字、本轮全部
 合法 finding 与已有声学/语义证据均已给出。不要多数表决，也不要因某文本
 较新就偏好它。DROP 只有在候选列表明确包含 LEGAL_DROP 时才合法。
@@ -116,10 +135,10 @@ CURRENT / PROPOSED 二选一已不足以收敛。你是最终文字裁决者。
 {history_json}
 
 ## 本轮全部 CPA/AGY/语义 finding
-{evidence_json}
+{evidence_json}{shared_receipts_section}
 
 只回 JSON（无 markdown、无其他文字）：
-{{"choice_id":"候选列表中的 candidate_id","reason":"一句话说明最终选择依据"}}
+{{"choice_id":"候选列表中的 candidate_id 或 UNRESOLVED","needs_audio":false或true,"reason":"选择依据或具体仍缺的证据"}}
 """
 
 
@@ -136,6 +155,83 @@ def _json_sha256(value: object) -> str:
             separators=(",", ":"),
         ).encode("utf-8")
     ).hexdigest()
+
+
+def _cycle_prompt_receipts(history: object, evidence: object) -> tuple[str, str, str]:
+    """Represent repeated receipts once, without dropping any historical fact."""
+    counts: dict[str, int] = {}
+    values: dict[str, object] = {}
+    sizes: dict[str, int] = {}
+    keys: set[str] = set()
+
+    def collect(value: object) -> None:
+        if isinstance(value, dict):
+            keys.update(value)
+            for child in value.values():
+                collect(child)
+        elif isinstance(value, list):
+            for child in value:
+                collect(child)
+        elif not isinstance(value, str):
+            return
+        encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        digest = _text_sha256(encoded)
+        counts[digest] = counts.get(digest, 0) + 1
+        values[digest] = value
+        sizes[digest] = len(encoded.encode("utf-8"))
+
+    collect(history)
+    collect(evidence)
+    shared = {digest for digest, count in counts.items() if count > 1 and sizes[digest] >= 256}
+    reference_key = "$receipt_ref"
+    while reference_key in keys:
+        reference_key += "_"
+    table: dict[str, object] = {}
+    ids = {digest: "R" + str(index) for index, digest in enumerate(sorted(shared), 1)}
+
+    def render(value: object, *, expand: bool = False) -> object:
+        if isinstance(value, (dict, list, str)):
+            digest = _json_sha256(value)
+            if not expand and digest in shared:
+                reference = ids[digest]
+                if reference not in table:
+                    table[reference] = render(values[digest], expand=True)
+                return {reference_key: reference}
+            if isinstance(value, dict):
+                return {key: render(child) for key, child in value.items()}
+            if isinstance(value, list):
+                return [render(child) for child in value]
+            return value
+        return value
+
+    def dump(value: object) -> str:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    original_history, original_evidence = dump(history), dump(evidence)
+    if not shared:
+        return original_history, original_evidence, ""
+    rendered_history, rendered_evidence = dump(render(history)), dump(render(evidence))
+    section = (
+        "\n## 共享收据（无损去重）\n"
+        f"仅含 {reference_key} 的对象引用下表同名完整收据；按引用递归展开。"
+        "引用没有裁决权，不代表新证据；候选、旧拒绝理由、原观察和哈希均保留。"
+        "HISTORY_SHA256/CURRENT_EVIDENCE_SHA256 绑定展开后的原始对象，未改动。\n"
+        + dump(table)
+    )
+    if len(rendered_history) + len(rendered_evidence) + len(section) >= len(original_history) + len(original_evidence):
+        return original_history, original_evidence, ""
+    return rendered_history, rendered_evidence, section
+
+
+class _ConvergenceJudgeFailure(RuntimeError):
+    def __init__(self, stage: str, exc: Exception, completion_sha256: str | None = None):
+        super().__init__(stage)
+        self.detail = {
+            "stage": stage,
+            "exception_type": type(exc).__name__,
+            "exception_sha256": _text_sha256(str(exc)),
+        }
+        if completion_sha256 is not None:
+            self.detail["completion_sha256"] = completion_sha256
 
 
 def _valid_sha256(value: object) -> bool:
@@ -201,13 +297,17 @@ def _repair_histories(
     authority_audit: Mapping[str, object],
 ) -> dict[tuple[int, int], list[dict[str, Any]]]:
     self_heal = authority_audit.get("exact_final_cpa_self_heal")
-    passes = (
-        self_heal.get("passes")
-        if isinstance(self_heal, Mapping)
-        and self_heal.get("schema_version") == "exact-final-cpa-self-heal-audit.v1"
-        and self_heal.get("status") in {"REVIEW_PENDING", "PASS"}
-        else None
-    )
+    if (not isinstance(self_heal, Mapping)
+            or self_heal.get("schema_version") != "exact-final-cpa-self-heal-audit.v1"
+            or self_heal.get("status") not in {"REVIEW_PENDING", "PASS"}):
+        return {}
+    # A later normal review retains completed runs before starting its own
+    # passes. Those original, hash-validated receipts still describe prior
+    # reversals; omitting them makes a postburn successor forget the cycle.
+    repair_history(self_heal)
+    runs = [*(entry["audit"] for entry in self_heal.get("retained_previous_runs", [])),
+            self_heal]
+    passes = [row for run in runs for row in run["passes"]]
     histories: dict[tuple[int, int], list[dict[str, Any]]] = {}
     for pass_receipt in passes if isinstance(passes, list) else []:
         repairs = (
@@ -251,6 +351,159 @@ def _compact_history(
     ]
 
 
+def _compact_candidate_blind_transcript_observations(
+    adjudication: Mapping[str, Any],
+    request: Mapping[str, Any],
+) -> list[dict[str, object]]:
+    """Carry validated native observations into the convergence prompt.
+
+    ``independent_asr`` keeps one accepted row per provider, while ``verdict``
+    is only the observation used by the ordinary judge.  Convergence used to
+    project the latter's blind-pinyin-shaped fields and therefore discarded a
+    second provider's exact transcript and its crop provenance.  Revalidate the
+    ordinary adjudication first, then each retained native row against the
+    candidate-free witness request.  The compact projection deliberately omits
+    provider response bodies and unrelated context, while keeping enough of
+    the native/source timeline and hashes for CPA to compare the evidence.
+    """
+
+    primary_binding = binding_from_adjudication(adjudication)
+    if primary_binding is None:
+        return []
+    primary = primary_binding.get("witness")
+    witness_request = primary_binding.get("witness_request")
+    if not (
+        isinstance(primary, Mapping)
+        and primary.get("witness_protocol") == "candidate_blind_transcript"
+        and isinstance(witness_request, Mapping)
+    ):
+        return []
+    try:
+        rebuilt_witness_request = build_witness_request(request)
+    except (KeyError, TypeError, ValueError):
+        return []
+    if dict(witness_request) != rebuilt_witness_request:
+        return []
+
+    independent_asr = adjudication.get("independent_asr")
+    accepted = (
+        independent_asr.get("accepted_observations")
+        if isinstance(independent_asr, Mapping)
+        else None
+    )
+    # Older candidate-blind adjudications carried only the ordinary verdict.
+    # Keep that already validated observation usable, but never fall back from
+    # an explicitly present, malformed accepted-observation list.
+    if accepted is None:
+        accepted = [primary]
+    if not isinstance(accepted, list):
+        return []
+
+    anchor_keys = (
+        "source_media_sha256",
+        "audio_clip_sha256",
+        "audio_start_ms",
+        "audio_end_ms",
+        "request_sha256",
+    )
+    if any(primary.get(key) is None for key in anchor_keys):
+        return []
+    observations: list[dict[str, object]] = []
+    for row in accepted:
+        if not isinstance(row, Mapping):
+            continue
+        if not _valid_native_witness(
+            row,
+            witness_request=rebuilt_witness_request,
+        ):
+            continue
+        if not valid_witness_evidence(
+            row,
+            request_sha256=str(rebuilt_witness_request["request_sha256"]),
+        ):
+            continue
+        transcript = row.get("exact_transcript")
+        if (
+            not isinstance(transcript, str)
+            or not transcript.strip()
+            or "\n" in transcript
+            or "\r" in transcript
+        ):
+            continue
+        # Every provider must remain tied to the same already validated source
+        # crop and candidate-free request.  This prevents a valid-looking row
+        # from another source/window from becoming convergence authority.
+        if any(row.get(key) != primary.get(key) for key in anchor_keys):
+            continue
+        native = row.get("native_observation")
+        if not isinstance(native, Mapping):
+            continue
+        native_keys = (
+            "schema_version",
+            "provider",
+            "model",
+            "status",
+            "candidate_exposure",
+            "authority",
+            "mutation_authorized",
+            "source_media_sha256",
+            "input_audio_sha256",
+            "response_sha256",
+            "receipt_sha256",
+            "target_start_ms",
+            "target_end_ms",
+            "crop_is_exact_target",
+            "observation_scope",
+            "transcript",
+            "native_segments",
+            "raw_native_segments",
+            "source_segments",
+            "native_timeline",
+            "transcript_basis",
+            "transcript_timeline_available",
+            "speaker_identity_observed",
+        )
+        compact_native = {
+            key: native[key] for key in native_keys if key in native
+        }
+        observations.append(
+            {
+                "schema_version": row.get("schema_version"),
+                "witness_protocol": row.get("witness_protocol"),
+                "status": row.get("status"),
+                "target_audible": row.get("target_audible"),
+                "candidate_exposure": row.get("candidate_exposure"),
+                "authority": row.get("authority"),
+                "mutation_authorized": row.get("mutation_authorized"),
+                "provider": row.get("provider"),
+                "model": row.get("model"),
+                "exact_transcript": row.get("exact_transcript"),
+                "source_media_sha256": row.get("source_media_sha256"),
+                "audio_clip_sha256": row.get("audio_clip_sha256"),
+                "audio_start_ms": row.get("audio_start_ms"),
+                "audio_end_ms": row.get("audio_end_ms"),
+                "crop_is_exact_target": native.get("crop_is_exact_target"),
+                "observation_scope": native.get("observation_scope"),
+                "source_media_timeline_offset_ms": rebuilt_witness_request.get(
+                    "source_media_timeline_offset_ms"
+                ),
+                "require_complete_utterance_support": request.get(
+                    "require_complete_utterance_support"
+                ),
+                "matched_start_ms": rebuilt_witness_request.get("matched_start_ms"),
+                "matched_end_ms": rebuilt_witness_request.get("matched_end_ms"),
+                "context_start_ms": rebuilt_witness_request.get("context_start_ms"),
+                "context_end_ms": rebuilt_witness_request.get("context_end_ms"),
+                "check_request_sha256": request.get("request_sha256"),
+                "request_sha256": row.get("request_sha256"),
+                "response_sha256": row.get("response_sha256"),
+                "receipt_sha256": native.get("receipt_sha256"),
+                "native_observation": compact_native,
+            }
+        )
+    return observations
+
+
 def _compact_current_evidence(
     finding: Mapping[str, Any],
     adjudication: Mapping[str, Any],
@@ -266,15 +519,33 @@ def _compact_current_evidence(
     )
     if not isinstance(similarities, Mapping) and isinstance(judge, Mapping):
         similarities = judge.get("candidate_pinyin_similarity")
-    return {
+    compact: dict[str, object] = {
         "finding_base_text_sha256": finding.get("base_text_sha256"),
         "finding_proposed_full_cue": finding.get("proposed_full_cue"),
-        "finding_reason": str(finding.get("why") or "")[:240],
+        "finding_reason": reviewer_reason(finding, limit=240),
         "request_sha256": (request.get("request_sha256") if isinstance(request, Mapping) else None),
         "candidate_provenance": (
             request.get("candidate_provenance")
             if isinstance(request, Mapping)
             else finding.get("candidate_provenance")
+        ),
+        # These observations have already passed the ordinary acoustic request
+        # builder. Preserve its scoped evidence through the history judge;
+        # raw finding-side observations are deliberately not imported here.
+        "bound_context_observations": (
+            {
+                key: request[key]
+                for key in (
+                    "require_complete_utterance_support",
+                    "source_media_timeline_offset_ms",
+                    "prior_acoustic_observations",
+                    "context_only_range_acoustic_observations",
+                    "context_only_screen_observations",
+                )
+                if key in request
+            }
+            if isinstance(request, Mapping)
+            else {}
         ),
         "witness": (
             {
@@ -312,6 +583,16 @@ def _compact_current_evidence(
             else None
         ),
     }
+    if isinstance(request, Mapping):
+        native_observations = _compact_candidate_blind_transcript_observations(
+            adjudication,
+            request,
+        )
+        # Do not add an empty field to blind-pinyin evidence: its historical
+        # prompt/cache identity remains byte-for-byte unchanged.
+        if native_observations:
+            compact["candidate_blind_transcript_observations"] = native_observations
+    return compact
 
 
 def _canonical_json(value: object) -> str:
@@ -620,7 +901,10 @@ def _load_or_call_judge(
 ) -> tuple[Mapping[str, Any], str, bool]:
     prompt_sha256 = _text_sha256(prompt)
     path = _cache_path(prompt_sha256)
-    if path is not None:
+    # Legacy parsed-only entries have no answering-model binding. Preserve
+    # their bytes; model-bound calls use the shared raw-answer lane instead.
+    model_bound = bool(getattr(judge_llm_call, 'cpa_cache_identity', None))
+    if path is not None and not model_bound:
         try:
             cached = json.loads(path.read_text(encoding="utf-8"))
             if (
@@ -637,10 +921,16 @@ def _load_or_call_judge(
                 )
         except (OSError, ValueError):
             pass
-    completion = judge_llm_call(prompt)
+    try:
+        completion = call_json(judge_llm_call, prompt)
+    except Exception as exc:
+        raise _ConvergenceJudgeFailure("judge_call", exc) from exc
     completion_sha256 = _text_sha256(completion)
-    payload = extract_json_object(completion)
-    if path is not None:
+    try:
+        payload = extract_json_object(completion)
+    except Exception as exc:
+        raise _ConvergenceJudgeFailure("completion_json_parse", exc, completion_sha256) from exc
+    if path is not None and not model_bound:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(
@@ -752,7 +1042,27 @@ def _converge_one(
         return None
     choice = str(payload.get("choice") or "").strip().upper()
     reason = str(payload.get("reason") or "")[:240]
-    if choice not in {"CURRENT", "PROPOSED"} or not reason:
+    if not reason:
+        return None
+    needs_audio = payload.get("needs_audio") is True
+    if needs_audio or choice == "UNRESOLVED":
+        return downgrade_convergence_finding(
+            finding,
+            gate={
+                "schema_version": GATE_SCHEMA,
+                "status": "BLOCK",
+                "reason_code": (
+                    "CPA_REQUESTS_MORE_AUDIO" if needs_audio
+                    else "CPA_HISTORY_CONVERGENCE_UNRESOLVED"
+                ),
+                "judge_prompt_sha256": "sha256:" + prompt_sha256,
+                "judge_completion_sha256": "sha256:" + completion_sha256,
+                "judge_served_from_cache": served_from_cache,
+                "needs_audio": needs_audio,
+                "reason": reason,
+            },
+        ), False
+    if choice not in {"CURRENT", "PROPOSED"}:
         return None
     acoustic_gate = None
     if choice == "PROPOSED":
@@ -849,6 +1159,7 @@ def _converge_one(
             },
         )
     row["exact_release_adjudication"] = final_adjudication
+    _retain_superseded_cycle_blocks(row, memo=memo, srt_text=srt_text)
     return row, choice == "CURRENT"
 
 
@@ -921,6 +1232,7 @@ def _attach_cycle_block(
             copied["pre_cycle_adjudication"] = dict(adjudication)
             copied.update(
                 repaired=False,
+                decision_authority=receipt["decision_authority"],
                 policy_branch=str(
                     receipt.get("reason_code")
                     or "CPA_CYCLE_ADJUDICATION_BLOCKED"
@@ -1053,6 +1365,7 @@ def _cycle_memo(
 
 def _apply_cycle_choice(
     *,
+    srt_text: str,
     findings: list[dict[str, Any]],
     current: str,
     cue_index: int,
@@ -1097,6 +1410,7 @@ def _apply_cycle_choice(
             )
             row["resolution"] = "CPA_EXACT_FINAL_CYCLE_KEEP_CURRENT"
             row["exact_release_adjudication"] = final_adjudication
+            _retain_superseded_cycle_blocks(row, memo=memo, srt_text=srt_text)
             resolved.append(row)
         return [], resolved
 
@@ -1237,6 +1551,9 @@ def _apply_cycle_choice(
         )
         row["exact_release_adjudication"] = final_adjudication
         resolved.append(row)
+    _retain_superseded_cycle_blocks(selected, memo=memo, srt_text=srt_text)
+    for row in resolved:
+        _retain_superseded_cycle_blocks(row, memo=memo, srt_text=srt_text)
     return [selected], resolved
 
 
@@ -1316,6 +1633,9 @@ def _converge_cycle_group(
     candidate_set_sha256 = _json_sha256(candidates)
     history_sha256 = _json_sha256(complete_history)
     evidence_sha256 = _json_sha256(complete_evidence)
+    history_json, evidence_json, shared_receipts_section = _cycle_prompt_receipts(
+        complete_history, complete_evidence
+    )
     prompt = _CYCLE_PROMPT.format(
         srt_sha256=srt_sha256,
         cue_index=cue_index,
@@ -1334,16 +1654,9 @@ def _converge_cycle_group(
         before="\n".join(before) or "（无）",
         current=current,
         after="\n".join(after) or "（无）",
-        history_json=json.dumps(
-            complete_history,
-            ensure_ascii=False,
-            sort_keys=True,
-        ),
-        evidence_json=json.dumps(
-            complete_evidence,
-            ensure_ascii=False,
-            sort_keys=True,
-        ),
+        history_json=history_json,
+        evidence_json=evidence_json,
+        shared_receipts_section=shared_receipts_section,
     )
     prompt_sha256 = _text_sha256(prompt)
     if judge_llm_call is None:
@@ -1356,6 +1669,7 @@ def _converge_cycle_group(
             evidence_sha256=evidence_sha256,
             prompt_sha256=prompt_sha256,
         )
+        receipt["failure"] = {"stage": "judge_callback_missing"}
         return _attach_cycle_block(findings, receipt), []
     try:
         payload, completion_sha256, served_from_cache = (
@@ -1364,7 +1678,7 @@ def _converge_cycle_group(
                 judge_llm_call=judge_llm_call,
             )
         )
-    except Exception:
+    except Exception as exc:
         receipt = _cycle_block_receipt(
             reason_code="CPA_CYCLE_ADJUDICATION_UNAVAILABLE",
             window=window,
@@ -1374,8 +1688,38 @@ def _converge_cycle_group(
             evidence_sha256=evidence_sha256,
             prompt_sha256=prompt_sha256,
         )
+        receipt["failure"] = {
+            **(exc.detail if isinstance(exc, _ConvergenceJudgeFailure) else {
+                "stage": "judge_path",
+                "exception_type": type(exc).__name__,
+                "exception_sha256": _text_sha256(str(exc)),
+            }),
+            "prompt_char_count": len(prompt),
+            "prompt_utf8_byte_count": len(prompt.encode("utf-8")),
+        }
         return _attach_cycle_block(findings, receipt), []
+    needs_audio = payload.get("needs_audio") is True
     choice_id = str(payload.get("choice_id") or "").strip()
+    if needs_audio or choice_id.upper() == "UNRESOLVED":
+        receipt = _cycle_block_receipt(
+            reason_code=(
+                "CPA_REQUESTS_MORE_AUDIO" if needs_audio
+                else "CPA_CYCLE_ADJUDICATION_UNRESOLVED"
+            ),
+            window=window,
+            current_sha256=current_sha256,
+            candidate_set_sha256=candidate_set_sha256,
+            history_sha256=history_sha256,
+            evidence_sha256=evidence_sha256,
+            prompt_sha256=prompt_sha256,
+        )
+        receipt.update(
+            judge_completion_sha256="sha256:" + completion_sha256,
+            judge_served_from_cache=served_from_cache,
+            needs_audio=needs_audio,
+            reason=str(payload.get("reason") or "")[:240],
+        )
+        return _attach_cycle_block(findings, receipt), []
     # Preserve the pre-v2 binary convergence contract only when the complete
     # closed set really contains exactly CURRENT and one PROPOSED candidate.
     # Multi-candidate cycles (the 814 failure mode) must name a candidate_id.
@@ -1463,6 +1807,7 @@ def _converge_cycle_group(
                 downgraded.append(row)
             return downgraded, []
     return _apply_cycle_choice(
+        srt_text=srt_text,
         findings=findings,
         current=current,
         cue_index=cue_index,
@@ -1692,6 +2037,157 @@ def _valid_any_memo(memo: object) -> bool:
     return _valid_memo(memo) or _valid_cycle_memo(memo)
 
 
+def exact_final_convergence_memo_identity(
+    memo: Mapping[str, Any],
+) -> str | None:
+    """Return the stable identity of one valid CPA convergence memo.
+
+    Context rebinding changes the memo's bound output/context fields while the
+    same CPA response remains the same authority.  The prompt/completion pair
+    and exact selected text/window therefore form the replay identity.
+    """
+
+    if not _valid_any_memo(memo):
+        return None
+    identity = {
+        "schema_version": memo["schema_version"],
+        "matched_start_ms": memo["matched_start_ms"],
+        "matched_end_ms": memo["matched_end_ms"],
+        "final_text_sha256": memo["final_text_sha256"],
+        "prompt_sha256": memo["prompt_sha256"],
+        "completion_sha256": memo["completion_sha256"],
+    }
+    return "sha256:" + _json_sha256(identity)
+
+
+def valid_exact_final_convergence_memo_binding(
+    memo: object,
+    *,
+    input_srt_sha256: str,
+    before_text: str,
+    after_text: str,
+    before_sha256: str,
+    after_sha256: str,
+    matched_start_ms: int,
+    matched_end_ms: int,
+) -> bool:
+    """Validate a memo against the exact self-heal repair it authorizes.
+
+    The structural memo check deliberately reuses ``collect`` so this seam
+    cannot grow a second, weaker convergence validator.  The additional
+    fields bind that already-valid memo to the current SRT, cue text and
+    immutable local window before a cycle-return repair can be recorded.
+    """
+
+    if (
+        isinstance(memo, bool)
+        or not isinstance(memo, Mapping)
+        or not isinstance(before_text, str)
+        or not isinstance(after_text, str)
+        or not isinstance(input_srt_sha256, str)
+        or not isinstance(before_sha256, str)
+        or not isinstance(after_sha256, str)
+        or isinstance(matched_start_ms, bool)
+        or not isinstance(matched_start_ms, int)
+        or isinstance(matched_end_ms, bool)
+        or not isinstance(matched_end_ms, int)
+        or matched_start_ms >= matched_end_ms
+    ):
+        return False
+    schema = memo.get("schema_version")
+    memo_key = (
+        "exact_final_cpa_cycle_memo"
+        if schema == CYCLE_MEMO_SCHEMA
+        else "exact_final_cpa_convergence_memo"
+        if schema == MEMO_SCHEMA
+        else None
+    )
+    if memo_key is None:
+        return False
+    if len(
+        collect_exact_final_convergence_memos(
+            {
+                "findings": [
+                    {
+                        "exact_release_adjudication": {
+                            memo_key: dict(memo),
+                        }
+                    }
+                ]
+            }
+        )
+    ) != 1:
+        return False
+    identity = exact_final_convergence_memo_identity(memo)
+    if identity is None:
+        return False
+    return bool(
+        memo.get("matched_start_ms") == matched_start_ms
+        and memo.get("matched_end_ms") == matched_end_ms
+        and memo.get("final_text") == after_text
+        and memo.get("final_text_sha256") == after_sha256
+        and memo.get("origin_current_cue_sha256")
+        == before_sha256
+        and memo.get("origin_srt_sha256") == input_srt_sha256
+        and before_sha256 == "sha256:" + _text_sha256(before_text)
+        and after_sha256 == "sha256:" + _text_sha256(after_text)
+    )
+
+
+def _retain_superseded_cycle_blocks(
+    row: dict[str, Any], *, memo: Mapping[str, Any], srt_text: str,
+) -> None:
+    """Keep an old same-cue BLOCK as history after a bound new CPA decision.
+
+    Carryover rows include the earlier needs-audio control receipt. Leaving it
+    current after successful convergence makes the normal self-heal consumer
+    reject the new typed decision. A failed or drifted memo cannot retire it.
+    """
+    cue_index = row.get("cue_index")
+    cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
+    if (type(cue_index) is not int or not 1 <= cue_index <= len(cues)
+            or memo.get("cue_index") != cue_index):
+        return
+    cue = cues[cue_index - 1]
+    after = memo.get("final_text")
+    if not isinstance(after, str) or not valid_exact_final_convergence_memo_binding(
+        memo, input_srt_sha256="sha256:" + _text_sha256(srt_text),
+        before_text=cue.text, after_text=after,
+        before_sha256="sha256:" + _text_sha256(cue.text),
+        after_sha256="sha256:" + _text_sha256(after),
+        matched_start_ms=cue.start_ms, matched_end_ms=cue.end_ms,
+    ):
+        return
+    gate = memo.get("acoustic_witness_gate")
+    if gate is not None and not valid_convergence_witness_gate(
+        gate, proposed=after, window=(cue.start_ms, cue.end_ms),
+    ):
+        return
+    adjudication = row.get("exact_release_adjudication")
+    owners = [row]
+    if isinstance(adjudication, Mapping):
+        copied = dict(adjudication)
+        row["exact_release_adjudication"] = copied
+        owners.append(copied)
+    for owner in owners:
+        previous = owner.get("exact_final_cpa_cycle_adjudication")
+        history = owner.get("prior_exact_final_cpa_cycle_adjudications", [])
+        if not (isinstance(previous, Mapping)
+                and previous.get("schema_version") == CYCLE_RECEIPT_SCHEMA
+                and previous.get("status") == "BLOCK"
+                and previous.get("matched_start_ms") == cue.start_ms
+                and previous.get("matched_end_ms") == cue.end_ms
+                and previous.get("current_cue_sha256")
+                == "sha256:" + _text_sha256(cue.text)
+                and isinstance(history, list)):
+            continue
+        retained = list(history)
+        if previous not in retained:
+            retained.append(dict(previous))
+        owner["prior_exact_final_cpa_cycle_adjudications"] = retained
+        owner.pop("exact_final_cpa_cycle_adjudication")
+
+
 def collect_exact_final_convergence_memos(
     audit: Mapping[str, object],
 ) -> list[dict[str, Any]]:
@@ -1799,6 +2295,19 @@ def resolve_findings_from_exact_final_convergence_memos(
         dict(memo)
         for memo in (memos if isinstance(memos, list) else [])
         if _valid_any_memo(memo)
+        # Historical structural validity preserves the original typed repair
+        # chain.  Reusing it to close today's review additionally requires its
+        # claimed acoustic authority to satisfy the current normal contract.
+        # In particular, a legacy judge still asking for audio cannot become
+        # KEEP merely because the memo's text and context hashes match.
+        and (
+            memo.get("acoustic_witness_gate") is None
+            or valid_convergence_witness_gate(
+                memo["acoustic_witness_gate"],
+                proposed=memo["final_text"],
+                window=(memo["matched_start_ms"], memo["matched_end_ms"]),
+            )
+        )
     ]
     if not valid_memos:
         return [dict(row) for row in findings], []

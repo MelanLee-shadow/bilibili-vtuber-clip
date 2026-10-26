@@ -1,6 +1,8 @@
-"""Text-only CPA authority for semantically complete short cover hooks."""
+"""Text-only CPA authority for source-backed short cover hooks."""
 
 from __future__ import annotations
+
+from src.autoslice.structured_output import call_json
 
 import hashlib
 import re
@@ -25,9 +27,18 @@ FULL_TEXT_COVER_CONTRACT_SCHEMA = "lidousha-full-text-cover-contract.v1"
 FULL_TEXT_COVER_AUTHORITY = "REVIEWER_EXPLICIT"
 PUNCH_LINE_MAX_EM = 9.0
 COVER_THUMBNAIL_MAX_LINES = 2
-# 判官必须逐项为真的语义门。前三项自 「生豆角 / 熊猫头下播」案起生效；
-# `no_fabricated_fact` 是 v2 新增的反编造门（fail-closed：缺字段=不通过）。
+LEGACY_PUNCH_SHAPE = "lidousha-cover-punch-shape.legacy-v2"
+SKILL_PUNCH_SHAPE = "lidousha-title-cover-punch-shape.v1"
+# 陌生观众可理解具体钩子、具体主体且无编造是放行门；四个 v2 回执布尔字段都必须
+# 据实给出布尔值。`contains_action_or_conflict` 是描述项，不要求每条有效原话、反应
+# 或立场反差都硬填 true。`no_fabricated_fact` 是 v2 新增的反编造门（fail-closed：
+# 缺字段或非布尔值=不通过）。
 REQUIRED_REVIEW_BOOLEANS = (
+    "stranger_can_infer_event",
+    "contains_concrete_subject",
+    "no_fabricated_fact",
+)
+_REVIEW_BOOLEAN_FIELDS = (
     "stranger_can_infer_event",
     "contains_concrete_subject",
     "contains_action_or_conflict",
@@ -35,6 +46,7 @@ REQUIRED_REVIEW_BOOLEANS = (
 )
 _CLOSING_PUNCT = tuple("，,、；;！!？?。）》】”’")
 _OPENING_PUNCT = tuple("“‘《〈「『（(【[｛{")
+_COVER_PUNCH_COLONS = frozenset(":：")
 
 
 def extractive_punch_fragment_is_source_safe(
@@ -47,18 +59,25 @@ def extractive_punch_fragment_is_source_safe(
     ``让新3D永久保留“白色奶龙”表情``.  The text was source-bound but
     had dropped the verb's concrete object.  A left bracket/quote immediately
     after an extracted occurrence is a deterministic proof that the fragment
-    stopped before one source atom.  Accept repeated text when at least one
-    occurrence has a safe right boundary.
+    stopped before one source atom. Accept repeated text when at least one
+    occurrence has a safe right boundary. A quote on the next physical source
+    line is not adjacent; semantic completeness still belongs to CPA.
     """
 
     needle = _canon(fragment)
     haystack = _canon(cover_text)
     if not needle:
         return False
+    source_positions = [
+        index for index, char in enumerate(cover_text) if not char.isspace()
+    ]
     start = haystack.find(needle)
     while start >= 0:
         end = start + len(needle)
         if end >= len(haystack) or haystack[end] not in _OPENING_PUNCT:
+            return True
+        gap = cover_text[source_positions[end - 1] + 1:source_positions[end]]
+        if any(separator in gap for separator in ("\r", "\n", "\u2028", "\u2029")):
             return True
         start = haystack.find(needle, start + 1)
     return False
@@ -212,19 +231,24 @@ def talk_cover_thumbnail_gate_violations(
 def _validated_punch_lines(
     value: object,
     cover_text: str,
+    *,
+    shape_contract: str = SKILL_PUNCH_SHAPE,
 ) -> tuple[str, ...]:
-    """Mechanically validate the punch **shape** only (v2).
+    """Validate the selected shape contract; new candidate callers stay strict.
 
     梗字不必是 ``cover_text`` 的连续子串（维护者）。这一层只管可渲染性
-    与断字安全：2-12 字、单物理行、行首禁闭标点/行末禁开标点。语义真实性由判官
-    的 ``REQUIRED_REVIEW_BOOLEANS``（含 ``no_fabricated_fact``）承担。
+    与断字安全：每行 1–9 字、单物理行、允许冒号、行首禁闭标点/行末禁开标点。
+    语义真实性由判官的 ``REQUIRED_REVIEW_BOOLEANS``（含 ``no_fabricated_fact``）承担。
 
     白色奶龙护栏保留但**收窄到它原本的射程**：只有当片段确实是原文的连续子串时，
     「正好停在左引号/书名号/括号前」才是"截掉了一个语义原子"的确定性证据。对
     自由改写的梗字，原文里的括号位置说明不了任何事，套用只会误杀。
     """
 
-    if not isinstance(value, Mapping):
+    if (
+        not isinstance(value, Mapping)
+        or shape_contract not in (LEGACY_PUNCH_SHAPE, SKILL_PUNCH_SHAPE)
+    ):
         return ()
     haystack = _canon(cover_text)
     lines: list[str] = []
@@ -240,9 +264,17 @@ def _validated_punch_lines(
         canonical = _canon(fragment)
         is_extractive = canonical in haystack
         if (
-            not (2 <= len(canonical) <= 12)
+            not (
+                2 <= len(canonical) <= 12
+                if shape_contract == LEGACY_PUNCH_SHAPE
+                else 1 <= len(fragment) <= 9
+            )
             or punch_line_em_width(fragment) > PUNCH_LINE_MAX_EM
             or "\n" in fragment
+            or any(
+                char in (_COVER_PUNCH_COLONS if shape_contract == LEGACY_PUNCH_SHAPE else "，,")
+                for char in fragment
+            )
 
 
 
@@ -359,19 +391,32 @@ def _retry_lineage_is_valid(
     )
 
 
+def _cover_punch_lines_have_skill_shape(value: object) -> bool:
+    """The skill allows colons; each locked physical line has at most 9 chars."""
+    return bool(
+        isinstance(value, (list, tuple)) and 1 <= len(value) <= 2
+        and all(isinstance(line, str) and 1 <= len(line) <= 9
+                and not any(c in line for c in "\n\r，,") for line in value)
+    )
+
+
 def _review_prompt(
     *,
     title: str,
     cover_text: str,
     story_hook: str,
     punch: Sequence[str],
+    final_srt_text: str = "",
 ) -> str:
     return (
         f"你是{CHANNEL_PROFILE.display_name}切片封面的最终文字语义裁决者。你没有音频或图像输入，"
  "只裁决封面梗字；不要声称听见或看见任何内容。\n"
  "陌生观众在信息流里只会先看到通用主播主体和下面 1-2 行梗字。"
- "梗字必须让他理解一件具体发生了什么的事、冲突/反差/荒诞因果，以及"
- "为什么值得点开；不能只是两个各自来自标题、合起来却不成事件的关键词。"
+ "梗字必须让他理解一个具体、可点击的钩子或情境，以及为什么值得点开；"
+ "这个钩子可以是完整事件、动作、冲突、荒诞因果，也可以是有来源的主播"
+ "原话、具体反应、persona 口吻或同一话题的立场反差，不要求缩略图复述完整"
+ "前因后果。不能只是两个各自来自标题、合起来却不成钩子的关键词；例如"
+ "一个具体反应和与之相对的明确立场可以成立，两个断开的名词仍必须 REVISE。"
  "例如“生豆角 / 熊猫头下播”含具象名词但没有说明她要拉谁一起中招，"
  "必须 REVISE。不要把背景可能会画出的道具当作文字语义缺口的补丁。\n"
  "条件和宾语也不能被截掉后生成新因果。例如完整故事是“转发这条生日消息"
@@ -379,16 +424,17 @@ def _review_prompt(
  "必须 REVISE 为同时保留“转发”和“消息/信息”的文字原子。\n"
  f"完整投稿标题: {title}\n"
  f"完整封面文案: {cover_text}\n"
- f"StoryContract selection_hook: {story_hook or '(未提供，按标题裁决)'}\n"
+ f"完整最终SRT（唯一事实来源；缺失时不可证明新事实）: {final_srt_text}\n"
+ "标题与封面文案都是待检查的编辑产物，不能用它们或旧selection_hook补充事实。\n"
  f"初选梗字: {' / '.join(punch)}\n"
  "输出一个 JSON 对象。status 只能是 PASS、REVISE、REJECT。PASS 时"
  " final_punch 必须与初选逐字相同；REVISE 时给更自足的 1-2 行；"
  "REJECT 表示这条片子配不出任何合格的短梗字。final_punch.main 必填、"
- "sub 可为 null；每行 2-12 字，"
- "并且必须能作为一条物理行直接渲染（最多 9 个全角字宽；ASCII 字符约半个"
- "全角字），也不能依赖渲染器在词中间二次断行。例如不要返回"
+ "sub 可为 null；每行 1–9 个字符，第二行梗字更大，"
+ "并且必须能作为一条物理行直接渲染，不能依赖渲染器在词中间二次断行。例如不要返回"
  "“被粉色小姐姐布下迷魂阵”，应缩短为仍然自足的"
  "“小姐姐布下迷魂阵 / 我是侄女啊”。\n"
+ "允许名字：原话的冒号结构，引用必须逐字来自最终字幕；不要写逗号长句。\n"
  "梗字**不要求**是标题或封面文案的逐字连续片段，也不必与标题一致重复"
  "（公开规则逐字裁定：「梗字从来没有要求过必须是标题的连续子串吧，"
  "我不记得我要求过，事实上很多高播放量的切片，封面字块里的梗字和标题不一致，"
@@ -396,18 +442,24 @@ def _review_prompt(
  "你可以改写、缩写、换更口语的说法，第二行也可以承接解释原因或补充说明，"
  "而不是把第一行的词再抄一遍。\n"
  "但梗字**只能说片里真有的事**：其中每一个具体指涉（人、物、动作、数字、"
- "结论）都必须能由上面的完整标题或 StoryContract selection_hook 支撑。"
+ "结论）都必须能由完整最终SRT支撑。标题或旧选片摘要不是事实来源。"
  "不得新增没出现过的人物/物件/情节，不得把推测写成已发生的事实，不得升级"
  "程度或结果（把「有点无语」写成「当场翻脸」），也不得用背景图也许会画出的"
  "道具去补文字语义缺口。做不到就 REVISE 成有支撑的写法，仍做不到才 REJECT。\n"
  "如果你选择直接抽取原文片段，那就不要停在紧随其后的引号、书名号或括号成分"
  "之前——那个成分是未完的语义原子；例如抽“让新3D永久保留”必须改为带有"
  "“白色奶龙”对象的片段。\n"
- "stranger_can_infer_event、"
- "contains_concrete_subject、"
- "contains_action_or_conflict、"
- "no_fabricated_fact 四项只有确实成立才给 true。"
- "story_summary 用一句话说明梗字表达的具体事件，click_motivation 说明"
+ "stranger_can_infer_event、contains_concrete_subject、"
+ "no_fabricated_fact 三项是放行门，只有确实成立才给 true。"
+ "其中 stranger_can_infer_event 表示陌生观众能理解一个具体钩子或情境，"
+ "不要求他从缩略图复述完整事件；contains_concrete_subject 仍要求主体或"
+ "对象足够具体、可指认。"
+ "contains_action_or_conflict 仍必须返回布尔值，但它是据实记录是否存在"
+ "传统动作或冲突的描述项；原话、反应、persona 口吻或立场反差即使没有"
+ "传统动作，也可以凭具体主体、来源和陌生观众可理解的钩子通过，不要为了"
+ "过门虚构动作或冲突。说话人、受话人以及游戏/现实边界仍按来源判断；未知"
+ "归属保持未知，不要把游戏角色对白归给主播，也不要把游戏内容写成现实事件。"
+ "story_summary 用一句话说明梗字表达的具体钩子或事件，click_motivation 说明"
  "陌生观众为何会想点开；不要复述规则。\n"
  '{"schema_version":"lidousha-cover-punch-semantic-review.v2",'
  '"status":"PASS|REVISE|REJECT",'
@@ -420,6 +472,27 @@ def _review_prompt(
     )
 
 
+def cover_punch_shape_contract(generation: Mapping[str, object]) -> str | None:
+    """Bind current candidates to the strict gate, including partial route drift.
+
+    Historical receipts without an explicit contract keep their frozen v2 shape.
+    Route/pixel/source validity is still checked by the existing public auditors.
+    """
+    from .title_cover_candidates import ROUTE_SCHEMA, SCHEMA
+
+    route = generation.get("route_decision")
+    route = route if isinstance(route, Mapping) else {}
+    if (
+        generation.get("method") == "skill.candidates"
+        or generation.get("cover_origin") == "SKILL_CANDIDATE"
+        or "candidate_selection" in generation
+        or route.get("schema_version") == ROUTE_SCHEMA
+        or route.get("selection_policy") == SCHEMA
+    ):
+        return SKILL_PUNCH_SHAPE
+    return None
+
+
 def validate_cover_punch_semantic_review(
     review: object,
     *,
@@ -427,17 +500,35 @@ def validate_cover_punch_semantic_review(
     cover_text: str,
     story_hook: str,
     allow_legacy_retryless: bool = False,
+    shape_contract: str | None = None,
 ) -> bool:
-    """Recheck the CPA receipt without trusting producer-selected fields."""
+    """Recheck a frozen receipt under its version or the stricter current route."""
 
     if not isinstance(review, Mapping):
         return False
+    declared = review.get("shape_contract")
+    if "shape_contract" in review and declared not in (LEGACY_PUNCH_SHAPE, SKILL_PUNCH_SHAPE):
+        return False
+    if shape_contract not in (None, LEGACY_PUNCH_SHAPE, SKILL_PUNCH_SHAPE):
+        return False
+    if shape_contract == SKILL_PUNCH_SHAPE and declared == LEGACY_PUNCH_SHAPE:
+        return False
+    # A caller cannot use the historical contract to relax a newly issued receipt.
+    contract = (
+        SKILL_PUNCH_SHAPE
+        if SKILL_PUNCH_SHAPE in (shape_contract, declared)
+        else LEGACY_PUNCH_SHAPE
+    )
     if review.get("schema_version") != SCHEMA_VERSION or review.get("status") not in {
         "PASS",
         "REVISED",
     }:
         return False
-    # fail-closed：缺字段（例如 v1 老回执被塞进 v2 校验）一律不通过。
+    # fail-closed：缺字段或非布尔值（例如 v1 老回执被塞进 v2 校验）一律不通过。
+    if not all(
+        isinstance(review.get(field), bool) for field in _REVIEW_BOOLEAN_FIELDS
+    ):
+        return False
     if any(review.get(field) is not True for field in REQUIRED_REVIEW_BOOLEANS):
         return False
     if not all(
@@ -471,6 +562,7 @@ def validate_cover_punch_semantic_review(
             "sub": final_punch[1] if len(final_punch) > 1 else None,
         },
         cover_text,
+        shape_contract=contract,
     ) != tuple(final_punch):
         return False
     expected_hashes = {
@@ -496,6 +588,8 @@ def review_cover_punch_semantics(
     punch_validator: Callable[
         [object, str], tuple[str, ...]
     ] = _validated_punch_lines,
+    render_constraint: str = "",
+    final_srt_text: str = "",
 ) -> tuple[tuple[str, ...], dict[str, object]]:
     """Ask CPA to make the final stranger-comprehension decision."""
 
@@ -517,7 +611,10 @@ def review_cover_punch_semantics(
         cover_text=cover_text,
         story_hook=story_hook,
         punch=punch,
+        final_srt_text=final_srt_text,
     )
+    if render_constraint.strip():
+        base_prompt += "\n本次实际文字区与受信字体约束：" + render_constraint.strip()
     attempts: list[dict[str, object]] = []
     payload: Mapping[str, object] = {}
     final: tuple[str, ...] = ()
@@ -532,10 +629,10 @@ def review_cover_punch_semantics(
         if attempt_index:
             prompt += (
                 "\n上一轮输出没有通过确定性梗字校验。这是唯一一次有界重试。"
-                "请忽略碎片化的初选，重新穷举完整封面文案中可逐字连续抽取的"
-                "短片段；若你已经能在 story_summary 说明一个具体事件，就应优先"
-                "REVISE 成能表达该事件的 1-2 行，而不是一边说明事件一边 REJECT。"
-                "仍须每行最多 9 个全角字宽，且不得编造或改写。"
+                "请按上述实际排版与语义约束改选短文案，可以忠实抽取、缩写或改写；"
+                "若你已经能在 story_summary 说明一个具体钩子或事件，就应优先"
+                "REVISE 成能表达该钩子或事件的 1-2 行，而不是一边说明它一边 REJECT。"
+                "仍须每行最多 9 个全角字宽并满足本次文字区，且不得编造。"
             )
         attempt_request_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
         attempt_response_sha256: str | None = None
@@ -546,7 +643,7 @@ def review_cover_punch_semantics(
         attempt_click_motivation = ""
         attempt_accepted = False
         try:
-            raw = llm_call(prompt)
+            raw = call_json(llm_call, prompt)
             attempt_response_sha256 = hashlib.sha256(
                 raw.encode("utf-8")
             ).hexdigest()
@@ -575,11 +672,19 @@ def review_cover_punch_semantics(
         attempt_final = punch_validator(
             attempt_payload.get("final_punch"), cover_text
         )
-        # 合并说明：ft 分支这里硬编码了三项布尔(其分支上 SCHEMA_VERSION 还是 v1),
-        # 少了主线 v2 新增的 fail-closed 反编造门 no_fabricated_fact。按「同一道门取
-        # 更严那侧」,改回 REQUIRED_REVIEW_BOOLEANS,不让重试改造顺手放宽终审门。
-        booleans_ok = all(
-            attempt_payload.get(key) is True for key in REQUIRED_REVIEW_BOOLEANS
+        if not _cover_punch_lines_have_skill_shape(attempt_final):
+            attempt_final = ()
+        # 所有 v2 布尔字段仍须存在且是布尔值；只有三项语义门要求为 true。
+        # `contains_action_or_conflict` 是据实回报项，false 不等于语义失败。
+        booleans_ok = bool(
+            all(
+                isinstance(attempt_payload.get(key), bool)
+                for key in _REVIEW_BOOLEAN_FIELDS
+            )
+            and all(
+                attempt_payload.get(key) is True
+                for key in REQUIRED_REVIEW_BOOLEANS
+            )
         )
         attempt_story_summary = str(
             attempt_payload.get("story_summary") or ""
@@ -637,6 +742,7 @@ def review_cover_punch_semantics(
         return (), failed_proof
     proof: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
+        "shape_contract": SKILL_PUNCH_SHAPE,
         "status": (
             "PASS"
             if accepted and model_status == "PASS"
@@ -648,6 +754,7 @@ def review_cover_punch_semantics(
             None if accepted else "CPA_PUNCH_SEMANTIC_REVIEW_REJECTED"
         ),
         "original_punch": list(punch),
+        "final_srt_sha256": "sha256:" + hashlib.sha256(final_srt_text.encode()).hexdigest(),
         "final_punch": list(final),
         "stranger_can_infer_event": (
             payload.get("stranger_can_infer_event") is True

@@ -14,6 +14,7 @@ a CPA BLOCK.
 
 from __future__ import annotations
 
+
 import argparse
 import json
 import sys
@@ -24,6 +25,9 @@ from typing import Mapping
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+from src.autoslice.structured_output import call_json
+from src.autoslice.cpa_model_ladder import cpa_call_timeout_seconds
 
 from src.autoslice.cpa_semantic_qa import (
     CpaSemanticQaResponse,
@@ -191,10 +195,14 @@ def judge_request(request, llm_call: LlmCall, *, provider_label: str, retries: i
     last_error: Exception | None = None
     for attempt in range(retries + 1):
         try:
-            completion = llm_call(build_judge_prompt(request))
+            completion = call_json(llm_call, build_judge_prompt(request))
             judgment = normalize_judgment(extract_json_object(completion))
             break
         except LlmCallError as exc:
+            if getattr(exc, "cpa_text_retry_reason", None) == "CPA_TEXT_RETRY_EXHAUSTED":
+                # The transport already used the text retry budget for this model.
+                # Let the caller advance its model chain without starting it again.
+                raise
             last_error = exc
             if attempt < retries:
                 # Rate limits (429) and transient 5xx need real BACKOFF — four
@@ -250,7 +258,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reasoning-effort", default="medium", help="responses mode reasoning effort.")
     parser.add_argument("--max-tokens", type=int, default=1024, help="completion budget; responses-mode reasoning models need headroom (16000 recommended).")
     parser.add_argument("--retries", type=int, default=1)
-    parser.add_argument("--timeout-seconds", type=float, default=90.0)
+    parser.add_argument("--timeout-seconds", type=float, default=cpa_call_timeout_seconds())
     parser.add_argument(
         "--fallback-model",
         help="direct transport only: an explicitly authorized second model. "

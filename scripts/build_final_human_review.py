@@ -1402,6 +1402,14 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 receipt = build_mechanical_receipt(args.package_root, args.package_audit)
                 output = args.out or root / "verification/mechanical-delivery-review.json"
+                # A fresh Song replacement has no perceptual sidecars yet.
+                # Prepare only our canonical receipt directory; the secure
+                # writer still rejects symlinks and arbitrary missing parents.
+                if output.parent == root / "verification":
+                    try:
+                        os.mkdir(output.parent, mode=0o700)
+                    except FileExistsError:
+                        pass
 
                 def revalidate_mechanical() -> None:
                     try:

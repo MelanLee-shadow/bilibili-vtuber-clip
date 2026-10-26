@@ -11,8 +11,8 @@ changes media pixels, or grants upload authority.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import copy
-import hashlib
 import json
 import os
 import shutil
@@ -59,11 +59,8 @@ def _sha_bytes(payload: bytes) -> str:
 
 
 def _sha(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return "sha256:" + digest
 
 
 def _json_bytes(value: Mapping[str, object]) -> bytes:

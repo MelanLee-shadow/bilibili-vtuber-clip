@@ -10,8 +10,17 @@ import pytest
 
 from src.autoslice import producer_package_finalization as finalization
 from src.autoslice import talk_lane
-from src.autoslice.nested_media_caption_dedup import POLICY, SCHEMA, CaptionDedupError
-from src.autoslice.producer_nested_caption import consume_nested_caption_policy
+from src.autoslice.nested_media_caption_dedup import (
+    POLICY,
+    SCHEMA,
+    CaptionDedupError,
+    apply_bound_display_policy,
+)
+from src.autoslice.producer_nested_caption import (
+    _sidecar_binding_sha256,
+    _sidecar_paths,
+    consume_nested_caption_policy,
+)
 
 TRANSCRIPT = ("1\n00:00:01,000 --> 00:00:03,000\n这视频看多了\n\n"
               "2\n00:00:04,000 --> 00:00:06,000\n这是主播自己的评论\n")
@@ -44,6 +53,30 @@ def inputs(tmp_path):
             "nested_media_caption_dedup": {"policy": POLICY, "evidence_path": "evidence.json",
                 "evidence_sha256": sha(evidence.read_bytes())}}
     return source, provenance, spec
+
+
+def current_display_spec(tmp_path, source, transcript, filename):
+    document = {
+        "schema_version": SCHEMA,
+        "candidate_id": "test-reaction",
+        "source_role": "WATCHED_MEDIA",
+        "policy": POLICY,
+        "source_media_sha256": sha(source.read_bytes()),
+        "source_interval_ms": [0, 6400],
+        "input_transcript_sha256": sha(transcript.encode()),
+        "observations": [],
+    }
+    evidence = tmp_path / filename
+    evidence.write_text(json.dumps(document, ensure_ascii=False))
+    return {
+        "pieces": [{"start_ms": 0, "end_ms": 6400}],
+        "watched_media": True,
+        "nested_media_caption_dedup": {
+            "policy": POLICY,
+            "evidence_path": filename,
+            "evidence_sha256": sha(evidence.read_bytes()),
+        },
+    }
 
 
 def adapters(tmp_path):
@@ -109,10 +142,12 @@ def test_real_materializer_observer_receives_current_srt_before_dedup(tmp_path):
         assert kwargs["source_media"] == source
         assert kwargs["source_start_ms"] == 0 and kwargs["source_end_ms"] == 6400
         return bound
-    recut = materialize(tmp_path, {"pieces": [{"start_ms": 0}]}, source, provenance, {}, observer)
+    chat = {}
+    recut = materialize(tmp_path, {"pieces": [{"start_ms": 0}]}, source, provenance, chat, observer)
     assert len(calls) == 1
     assert "这视频看多了" not in recut.subtitle_path.read_text()
-    assert recut.subtitle_path.with_suffix(".all-source-transcript.txt").read_text() == TRANSCRIPT
+    archive = Path(chat["nested_media_caption_dedup"]["all_source_transcript_path"])
+    assert archive.read_text() == TRANSCRIPT
 
 
 def test_watched_materializer_cannot_silently_skip_missing_caption_evidence(tmp_path):
@@ -138,13 +173,76 @@ def test_previous_sidecar_conflict_is_not_overwritten(tmp_path):
     source, _, spec = inputs(tmp_path)
     subtitle = tmp_path / "display.srt"
     subtitle.write_text(TRANSCRIPT)
-    archive = subtitle.with_suffix(".all-source-transcript.txt")
-    archive.write_text("unrelated predecessor evidence")
+    _, binding_audit = apply_bound_display_policy(
+        config=spec["nested_media_caption_dedup"], candidate_id="test-reaction",
+        source_media=source, transcript=TRANSCRIPT, source_start_ms=0,
+        source_end_ms=6400, evidence_root=tmp_path,
+    )
+    assert binding_audit is not None
+    archive, _ = _sidecar_paths(subtitle, _sidecar_binding_sha256(binding_audit))
+    archive.write_text("conflicting expected binding")
+    legacy_archive = subtitle.with_suffix(".all-source-transcript.txt")
+    legacy_archive.write_text("unrelated predecessor evidence")
     with pytest.raises(CaptionDedupError, match="SIDECAR_CONFLICT"):
         consume_nested_caption_policy(spec=spec, candidate_id="test-reaction", source_media=source,
             source_start_ms=0, source_end_ms=6400, subtitle_path=subtitle, evidence_root=tmp_path)
     assert subtitle.read_text() == TRANSCRIPT
-    assert archive.read_text() == "unrelated predecessor evidence"
+    assert archive.read_text() == "conflicting expected binding"
+    assert legacy_archive.read_text() == "unrelated predecessor evidence"
+
+
+def test_serial_current_display_keeps_old_sidecars_and_replays_binding(tmp_path):
+    source, _, first_spec = inputs(tmp_path)
+    subtitle = tmp_path / "display.srt"
+    subtitle.write_text(TRANSCRIPT)
+    first_chat = {}
+    first_output = consume_nested_caption_policy(
+        spec=first_spec, candidate_id="test-reaction", source_media=source,
+        source_start_ms=0, source_end_ms=6400, subtitle_path=subtitle,
+        evidence_root=tmp_path, chat_authority_audit=first_chat,
+    )
+    first_bytes = first_output.encode()
+    first_archive = Path(first_chat["nested_media_caption_dedup"]["all_source_transcript_path"])
+    first_receipt = Path(first_chat["nested_media_caption_dedup_receipt"]["path"])
+    first_receipt_bytes = first_receipt.read_bytes()
+
+    second_spec = current_display_spec(tmp_path, source, first_output, "evidence-round2.json")
+    second_chat = {}
+    second_output = consume_nested_caption_policy(
+        spec=second_spec, candidate_id="test-reaction", source_media=source,
+        source_start_ms=0, source_end_ms=6400, subtitle_path=subtitle,
+        evidence_root=tmp_path, chat_authority_audit=second_chat,
+    )
+    second_archive = Path(second_chat["nested_media_caption_dedup"]["all_source_transcript_path"])
+    second_receipt = Path(second_chat["nested_media_caption_dedup_receipt"]["path"])
+    assert second_output == first_output
+    assert subtitle.read_bytes() == first_bytes
+    assert first_archive.read_text() == TRANSCRIPT
+    assert second_archive.read_bytes() == first_bytes
+    assert second_archive != first_archive
+    assert second_receipt != first_receipt
+
+    replay_chat = {}
+    assert consume_nested_caption_policy(
+        spec=second_spec, candidate_id="test-reaction", source_media=source,
+        source_start_ms=0, source_end_ms=6400, subtitle_path=subtitle,
+        evidence_root=tmp_path, chat_authority_audit=replay_chat,
+    ) == first_output
+    assert Path(replay_chat["nested_media_caption_dedup_receipt"]["path"]) == second_receipt
+    assert second_receipt.read_bytes() == Path(
+        replay_chat["nested_media_caption_dedup_receipt"]["path"]
+    ).read_bytes()
+
+    third_spec = current_display_spec(tmp_path, source, first_output, "evidence-round3.json")
+    third_chat = {}
+    assert consume_nested_caption_policy(
+        spec=third_spec, candidate_id="test-reaction", source_media=source,
+        source_start_ms=0, source_end_ms=6400, subtitle_path=subtitle,
+        evidence_root=tmp_path, chat_authority_audit=third_chat,
+    ) == first_output
+    third_receipt = Path(third_chat["nested_media_caption_dedup_receipt"]["path"])
+    assert third_receipt != second_receipt
+    assert first_receipt.read_bytes() == first_receipt_bytes
 
 
 def test_normal_talk_spec_handoff_reaches_materializer(tmp_path, monkeypatch):

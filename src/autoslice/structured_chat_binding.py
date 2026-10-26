@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import json
 import re
 from pathlib import Path
@@ -25,13 +25,10 @@ def _sha256_bound_file(path: Path, *, reason_code: str) -> str:
     try:
         if path.stat().st_size <= 0:
             raise StructuredChatBindingError(f"{reason_code}_EMPTY")
-        hasher = hashlib.sha256()
-        with path.open("rb") as source:
-            for chunk in iter(lambda: source.read(1024 * 1024), b""):
-                hasher.update(chunk)
+        hasher = _evidence_file_sha256(path)
     except OSError as exc:
         raise StructuredChatBindingError(f"{reason_code}_UNREADABLE") from exc
-    return "sha256:" + hasher.hexdigest()
+    return "sha256:" + hasher
 
 
 def _recording_date_directory(recording_basename: str) -> str | None:

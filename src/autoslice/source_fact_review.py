@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+from src.autoslice.structured_output import call_json
+from src.autoslice import title_policy
+
 import hashlib
 import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
+
+from src.autoslice.completed_review_checkpoint import (
+    CompletedReviewCheckpoint,
+    CompletedReviewCheckpointError,
+)
 
 from src.autoslice.addressee_attribution import (
     ABSENCE_POLICY_ID,
@@ -37,6 +45,7 @@ from src.autoslice.candidate_source_fact_refresh import (
     validate_candidate_public_text_source_fact_refresh_from_source_fact,
 )
 from src.autoslice.fastlane_c3_source_fact_supersession import DECISION as C3_TERMINAL_SOURCE_FACT_SUPERSESSION_DECISION, validate_c3_source_fact_review_from_validation
+from src.autoslice.channel_envelope import leading_envelope_preserved
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.deterministic_text_surface_resolution import (
     CANDIDATE_ID as DETERMINISTIC_TEXT_NARROWING_CANDIDATE_ID,
@@ -76,6 +85,42 @@ from src.autoslice.title_policy import publish_title_policy_violations
 SCHEMA_VERSION = "lidousha-source-fact-review.v1"
 RESCORE_CANDIDATE_SCHEMA_VERSION = "source-fact-rescore-candidate.v1"
 ENTITY_CONTEXT_SCHEMA_VERSION = "source-fact-entity-context.v1"
+
+# Existing read-only editorial research is projected into normal staging/tag
+# receipts as method provenance. These references identify the already
+# consumed source material; production must not read the report tree as a
+# runtime input or treat its prose as factual authority.
+EDITORIAL_RESEARCH_METHOD_PROVENANCE: tuple[dict[str, str], ...] = (
+    {
+        "id": "research-source-manifest",
+        "schema": "research-source-consumption.v2",
+        "version": "research-source-consumption.v2",
+        "path": (
+            "reports/lidousha-performance-20261007/title-packaging-followup/"
+            "active-editorial-consumption/source-manifest.json"
+        ),
+        "sha256": "sha256:64c138eef0ff239aec284e0a8101fc0efc05312e95a09d1e4a41543c8c7c943d",
+        "role": "bounded_method_and_source_consumption_manifest",
+    },
+    {
+        "id": "candidate-editorial-applications",
+        "schema": "research-editorial-applications.v1",
+        "version": "research-editorial-applications.v1",
+        "path": (
+            "reports/lidousha-performance-20261007/title-packaging-followup/"
+            "active-editorial-consumption/candidate-applications.json"
+        ),
+        "sha256": "sha256:ce7c96aed115e7787d53b5b99e1d627a6f5ffad7fbc60e82f3f6070bc62c8561",
+        "role": "source_bound_candidate_comparison_method",
+    },
+    {
+        "id": "e04-official-work-authority",
+        "schema": "official-source-reference.v1",
+        "version": "official-source-reference.v1",
+        "url": "https://www.shinchosha.co.jp/book/105049/",
+        "role": "E04_春の雪_and_三島由纪夫_source_check",
+    },
+)
 MAX_REVIEW_PASSES = 5
 # 程度升级词面：狍哥案（§7）机器可复核部分——degree 槽只准逐字或
 # 降级，不得升级；升级词若不在 before 原文也不在任何 evidence 原文中出现，
@@ -118,6 +163,41 @@ def _sha256_json(value: object) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _editorial_research_from_scorecard(value: object) -> Mapping[str, object] | None:
+    """Return the already-bound research input carried by the scorecard.
+
+    The title/tag consumer may use completed research to choose among source
+    supported hooks.  This review only records and judges that input; it never
+    treats a research recommendation as transcript evidence.
+    """
+
+    if not isinstance(value, Mapping):
+        return None
+    research = value.get("editorial_research")
+    return research if isinstance(research, Mapping) else None
+
+
+_SOURCE_ENTITY_ROLES = frozenset({"author", "work", "person", "character", "group"})
+_SOURCE_ENTITY_MAX_ROWS = 12
+_SOURCE_ENTITY_MAX_SURFACES = 8
+_SOURCE_ENTITY_MAX_EVIDENCE = 8
+
+
+def _subtitle_text_body(value: str) -> str:
+    """Return subtitle text without SRT indexes and timestamp lines."""
+
+    rows: list[str] = []
+    for raw in str(value or "").splitlines():
+        line = raw.strip()
+        if not line or line.isdigit() or re.fullmatch(
+            r"\d{2}:\d{2}:\d{2}[,.]\d{3}\s+-->\s+\d{2}:\d{2}:\d{2}[,.]\d{3}(?:\s+.*)?",
+            line,
+        ):
+            continue
+        rows.append(line)
+    return "\n".join(rows)
 
 
 def _validated_speaker_evidence(
@@ -463,11 +543,57 @@ def _prompt(
     clip_context_prompt: str,
     selection_scorecard: object,
     review_pass: int,
+    enforce_automatic_title_style: bool,
     title_policy_violations: list[str],
     speaker_transcript: str | None,
     entity_context: _ResolvedEntityContext | None,
     story_contract: Mapping[str, object] | None = None,
 ) -> str:
+    fluency_prompt = (
+        "自动文案审查的通顺要求：事实支持不等于标题通顺；标题或钩子即使每个词都有来源，"
+        "若主语、指代、转折或引语边界仍要靠读者把并列片段自行拼接，必须 REPAIR 对应的 "
+        "title 或 selection_hook。修复只能重排、连接或删去重复的现有事实，不得新增事实，"
+        "也不一律禁用引号、问号或口语省略；不强制书面语或三拍结构。只有两份文案的事实、模态"
+        "和中文句法都成立时，status=KEEP，两个 final 字段才必须逐字等于输入。\n"
+        if enforce_automatic_title_style
+        else (
+            "当前是 baseline/manual 文案审查：继续检查事实、模态、角色、条件和因果；"
+            "只有这些内容成立时才 KEEP，不因纯句法风格偏好改写精确手定的 title 或 selection_hook。\n"
+        )
+    )
+    editorial_research = _editorial_research_from_scorecard(selection_scorecard)
+    research_block = ""
+    if editorial_research is not None:
+        if str(editorial_research.get("status") or "").upper() == "INAPPLICABLE":
+            research_intro = (
+                "编辑研究输入明确标记为 INAPPLICABLE：当前普通记录没有已部署、"
+                "适用于本片的 source-specific 研究投影。以下 source/version/hash、"
+                "applicability 与 inapplicable_reason 只用于披露缺口，不是 source-fact "
+                "authority；不要读取未部署 reports，也不要把缺口当作研究结论。\n"
+            )
+        else:
+            candidate_projection = editorial_research.get("candidate_projection")
+            if (
+                isinstance(candidate_projection, Mapping)
+                and str(candidate_projection.get("status") or "").upper()
+                == "INAPPLICABLE"
+            ):
+                research_intro = (
+                    "已部署的通用标题/tag 编辑方法适用于本条，但当前记录没有绑定本片的 "
+                    "source-specific candidate application；candidate_projection 只披露这层缺口。"
+                    "研究输入不是 source-fact authority，不能代替最终字幕/同片上下文；不要读取未部署 reports，"
+                    "也不要把缺口当作事实或研究结论。\n"
+                )
+            else:
+                research_intro = (
+                    "编辑研究输入（仅用于核对候选取舍；不是 source-fact authority，不能代替最终字幕/"
+                    "同片上下文，也不要求把研究词写入标题）：\n"
+                )
+        research_block = (
+            research_intro
+            + json.dumps(dict(editorial_research), ensure_ascii=False, sort_keys=True)
+            + "\n"
+        )
     return (
         f"你是{CHANNEL_PROFILE.display_name}切片派生文案的 source-fact 最终裁决者。你只有文字输入，"
         "不要声称听见音频或看见画面。一次联合裁决 selection_hook 与投稿标题，"
@@ -477,6 +603,19 @@ def _prompt(
         "释义，是否能由最终字幕或同片 hash-bound 结构化弹幕/SC/上下文支持。"
         "允许不逐字的自然概括，但不允许把提议写成既成事实、把猜测写成断言，"
         "也不允许凭空把同音词换成另一个含义。\n"
+        "念出的文字不等于主播本人的经历、想法或立场。游戏台词、角色内心独白、"
+        "视频对白、观众弹幕和 SC 引文，都须分别核对原话的叙事主体与主播自己的"
+        "反应；uniform_host 只说明显示样式，不证明这些句子的语义主体是主播。"
+        "第一人称‘我’或‘觉得’不能单独支持‘主播以为/脑补/想要’这样的文案。"
+        "结合邻近 cue 中的角色称呼、朗读与评论转换核对归属；缺少归属证据时"
+        "保留为游戏/视频/观众的内容，或收窄到有证据的主播反应，不得默认安到"
+        "主播本人头上。受话人标签不可验证也不免除这项叙事主体核对。\n"
+        "投稿标题必须脱离 selection_hook 和内部上下文也能辨认事件属于现实、游戏、"
+        "视频或其他作品。若关系、对白或经历属于作品角色，标题本身须保留理解必需的"
+        "游戏/作品/角色限定；钩子已写游戏、标题没直接说是主播本人、或使用‘上帝视角’"
+        "都不能补足这个限定。省略会让陌生读者误读成现实关系时，必须 REPAIR 标题，"
+        "不能因原句确实念过而 KEEP。只写主播自身有证据的反应、没有借用作品事件的"
+        "标题不机械追加场景词；现实经历同样不得凭空改成游戏剧情。\n"
         + _entity_context_prompt_block(entity_context)
         + public_text_relation_prompt(story_contract)
         + "如果你修复 selection_hook，还必须核对原 selection_scorecard 的"
@@ -500,8 +639,8 @@ def _prompt(
         "逐字或降级，不得把“非常”写成“最”“所有”“永远”这类升级词，除非升级词本身"
         "逐字出现在证据原文里）、把提案/意向写成既成事实。单个窄音频 cue 的裁决"
         "只拥有该 cue 自己的字面，不得反向抹除其他 cue 链共同蕴含的语义支持。\n"
-        "若两份文案全部受支持，status=KEEP，两个 final 字段都必须逐字等于输入。"
-        "还要检查省略是否改变了语法角色、条件或因果：来源若是“今天是某人的生日，"
+        + fluency_prompt
+        + "还要检查省略是否改变了语法角色、条件或因果：来源若是“今天是某人的生日，"
         "转发这条信息才能得奖”，不得概括为“转发某人的生日能得奖”或“生日能得奖”；"
         "必须保留“消息/信息”作为转发宾语，并保留转发这一获奖条件。"
         "若任一不受支持，status=REPAIR，并给出完整、可直接替换、只使用现有"
@@ -511,20 +650,27 @@ def _prompt(
         "支持的改动，就可以继续 REPAIR，直到明确 KEEP。最多复审 5 轮；不得为了"
         "结束复审而放弃仍然存在的事实问题，也不得在不同文案之间来回振荡。\n"
         + addressee_prompt_block(speaker_transcript)
-        + "投稿标题总长度必须为 12–49 个字符并满足下方 deterministic title policy。"
+        + f"投稿标题总长度必须为 {title_policy._TITLE_MIN_LEN}–{title_policy._TITLE_MAX_LEN} 个字符并满足下方 deterministic title policy。"
         "若 violations 非空，当前标题不能 KEEP；必须在不丢失核心事实与事实模态的"
         "前提下压缩或修正完整标题，并用 REPAIR 返回。只有 violations 为空且所有"
         "source facts 都正确时才能 KEEP。\n"
         "deterministic_title_policy_violations: "
         + json.dumps(title_policy_violations, ensure_ascii=False)
         + "\n"
-        f"review_pass: {review_pass}\n"
+        "可选 source_entity_candidates 是给后续普通标签层的候选提名，不是最终标签决定。"
+        "只有最终字幕逐字出现、且当前 source-fact 正文明确说明其语义角色的作者、作品、"
+        "人物、角色或团体才能提名；role 只能是 author、work、person、character、group。"
+        "tag、surfaces、evidence 必须逐字复制 final_transcript 中的现有文字。不要从"
+        "identity/spelling-only entity_context、长期记忆、topic graph 或研究 prose 猜名字，"
+        "不要把未在最终字幕出现的名字补进来。候选不需要决定 primary/necessary/incidental；"
+        "后续 tags CPA 会逐项 INCLUDE/EXCLUDE 并作相关性判断。没有合格候选时返回空数组。\n"
         f"selection_hook:\n{selection_hook}\n"
         f"title:\n{title}\n"
         f"最终字幕（文字 authority）:\n{final_transcript}\n"
         f"同片 hash-bound 上下文（含按时间排列的结构化弹幕/SC）:\n"
         f"{clip_context_prompt}\n"
-        "原 selection_scorecard:\n"
+        + research_block
+        + "原 selection_scorecard:\n"
         + json.dumps(
             selection_scorecard,
             ensure_ascii=False,
@@ -553,12 +699,186 @@ def _prompt(
         f'"evidence":["{SPEAKER_TRANSCRIPT_LABEL}: 1 [说话人] 原话"]}}],'
         '"selection_scorecard_review":{"status":'
         '"NOT_NEEDED|COMPATIBLE|INCOMPATIBLE","reason":"..."},'
+        '"source_entity_candidates":[{"tag":"逐字专名","role":"author|work|person|character|group",'
+        '"status":"CONFIRMED","surfaces":["逐字表面"],"evidence":["final_transcript 中的逐字证据"]}],'
         '"summary":"..."}'
     )
 
 
 def _compact(value: object) -> str:
     return "".join(str(value or "").split())
+
+
+def _source_entity_candidates_from_response(
+    value: object,
+    *,
+    final_transcript: str,
+    final_reviewed_srt_text: str | None,
+    final_reviewed_srt_sha256: str | None,
+    final_reviewed_srt_path: Path | None,
+    candidate_id: str | None,
+    request_sha256: str,
+    response_sha256: str,
+    clip_context_prompt_sha256: str,
+) -> tuple[list[dict[str, object]], list[str]]:
+    """Normalize source-fact nominations without becoming a name recognizer.
+
+    The CPA may nominate a typed literal, but only the current final transcript
+    and current reviewed SRT can establish that the literal was actually
+    delivered.  ``source`` is generated here from those current bytes and the
+    exact CPA request/response hashes; provider-supplied source metadata is
+    deliberately ignored.
+    """
+
+    if value is None:
+        return [], []
+    if not isinstance(value, list):
+        return [], ["source-entity-candidates-not-a-list"]
+    if not final_reviewed_srt_text or not final_reviewed_srt_sha256:
+        return [], ["source-entity-candidates-final-srt-unavailable"]
+    if not all(
+        _SHA256_VALUE_RX.fullmatch(str(binding or ""))
+        for binding in (final_reviewed_srt_sha256, request_sha256, response_sha256, clip_context_prompt_sha256)
+    ):
+        return [], ["source-entity-candidates-binding-hash-invalid"]
+
+    transcript_compact = _compact(final_transcript)
+    subtitle_compact = _compact(_subtitle_text_body(final_reviewed_srt_text))
+    source_path = str(final_reviewed_srt_path) if final_reviewed_srt_path is not None else ""
+    source = {
+        "path": source_path,
+        "sha256": final_reviewed_srt_sha256,
+        "source_kind": "source_fact_cpa_final_srt",
+        "candidate_id": str(candidate_id or ""),
+        "srt_sha256": final_reviewed_srt_sha256,
+        "final_transcript_sha256": _sha256_text(final_transcript),
+        "clip_context_prompt_sha256": clip_context_prompt_sha256,
+        "request_sha256": request_sha256,
+        "response_sha256": response_sha256,
+    }
+    rows: list[dict[str, object]] = []
+    rejected: list[str] = []
+    seen: set[str] = set()
+    for index, raw in enumerate(value[:_SOURCE_ENTITY_MAX_ROWS]):
+        prefix = f"source-entity-candidate-{index}"
+        if not isinstance(raw, Mapping):
+            rejected.append(f"{prefix}:row")
+            continue
+        tag = str(raw.get("tag") or "").strip()
+        role = str(raw.get("role") or "").strip().lower()
+        status = str(raw.get("status") or "CONFIRMED").strip().upper()
+        surfaces_value = raw.get("surfaces")
+        evidence_value = raw.get("evidence")
+        surfaces = (
+            [str(item).strip() for item in surfaces_value[:_SOURCE_ENTITY_MAX_SURFACES] if str(item).strip()]
+            if isinstance(surfaces_value, list)
+            else []
+        )
+        evidence = (
+            [str(item).strip() for item in evidence_value[:_SOURCE_ENTITY_MAX_EVIDENCE] if str(item).strip()]
+            if isinstance(evidence_value, list)
+            else []
+        )
+        if (
+            not tag
+            or any(ch in tag for ch in ",，\n\t")
+            or role not in _SOURCE_ENTITY_ROLES
+            or status not in {"CONFIRMED", "SOURCE_CONFIRMED"}
+            or not surfaces
+            or not evidence
+        ):
+            rejected.append(f"{prefix}:shape")
+            continue
+        key = tag.casefold()
+        if key in seen:
+            rejected.append(f"{prefix}:duplicate")
+            continue
+        if _compact(tag) not in transcript_compact or _compact(tag) not in subtitle_compact:
+            rejected.append(f"{prefix}:tag-not-in-current-final-srt-and-transcript")
+            continue
+        matched_surfaces = [
+            surface
+            for surface in surfaces
+            if _compact(surface) in transcript_compact and _compact(surface) in subtitle_compact
+        ]
+        if not matched_surfaces:
+            rejected.append(f"{prefix}:surface-not-in-current-final-srt-and-transcript")
+            continue
+        if any(
+            _compact(item) not in transcript_compact or _compact(item) not in subtitle_compact
+            for item in evidence
+        ):
+            rejected.append(f"{prefix}:evidence-not-in-current-final-srt-and-transcript")
+            continue
+        if not any(
+            any(_compact(surface) in _compact(item) for surface in matched_surfaces)
+            for item in evidence
+        ):
+            rejected.append(f"{prefix}:evidence-does-not-name-candidate")
+            continue
+        row: dict[str, object] = {
+            "tag": tag,
+            "role": role,
+            # Existing publish/tag consumers accept CONFIRMED/VERIFIED.  The
+            # source_kind below records that this confirmation came from the
+            # current source-fact response rather than an external whitelist.
+            "status": "CONFIRMED",
+            "surfaces": surfaces,
+            "matched_surfaces": matched_surfaces,
+            "evidence": evidence,
+            "source": dict(source),
+        }
+        why = str(raw.get("why") or "").strip()
+        if why:
+            row["why"] = why[:512]
+        rows.append(row)
+        seen.add(key)
+    return rows, rejected
+
+
+def _final_reviewed_srt_snapshot(
+    path: Path | None,
+) -> tuple[str | None, str | None]:
+    """Read the exact final subtitle bytes used to bind source entities.
+
+    A missing snapshot keeps the historical source-fact lane usable, but it
+    also means an entity nomination cannot enter the normal candidate pool.
+    The caller records the rejection on the receipt instead of treating a
+    provider supplied name as authority.
+    """
+
+    if path is None:
+        return None, None
+    try:
+        raw = read_regular_no_symlink(Path(path))
+        return raw.decode("utf-8"), "sha256:" + hashlib.sha256(raw).hexdigest()
+    except (ManualTitleKeepAuthorityError, UnicodeDecodeError):
+        return None, None
+
+
+def _source_entity_receipt_fields(
+    review: Mapping[str, object] | None,
+) -> dict[str, object]:
+    """Carry the final provider pass's normalized entity rows into the receipt."""
+
+    if not isinstance(review, Mapping):
+        return {}
+    fields: dict[str, object] = {}
+    if "source_entity_candidates" in review:
+        rows = review.get("source_entity_candidates")
+        fields["source_entity_candidates"] = (
+            [dict(row) for row in rows if isinstance(row, Mapping)]
+            if isinstance(rows, list)
+            else []
+        )
+    if "source_entity_candidate_rejections" in review:
+        rejections = review.get("source_entity_candidate_rejections")
+        fields["source_entity_candidate_rejections"] = (
+            [str(item) for item in rejections if str(item).strip()]
+            if isinstance(rejections, list)
+            else []
+        )
+    return fields
 
 
 def _evidence_row_is_bound(
@@ -724,6 +1044,10 @@ def _single_review(
     speaker_evidence_sha256: str | None = None,
     entity_context: _ResolvedEntityContext | None = None,
     story_contract: Mapping[str, object] | None = None,
+    candidate_id: str | None = None,
+    final_reviewed_srt_path: Path | None = None,
+    final_reviewed_srt_text: str | None = None,
+    final_reviewed_srt_sha256: str | None = None,
 ) -> dict[str, object]:
     title_policy_violations = publish_title_policy_violations(
         title,
@@ -736,6 +1060,7 @@ def _single_review(
         clip_context_prompt=clip_context_prompt,
         selection_scorecard=selection_scorecard,
         review_pass=review_pass,
+        enforce_automatic_title_style=enforce_automatic_title_style,
         title_policy_violations=title_policy_violations,
         speaker_transcript=speaker_transcript,
         entity_context=entity_context,
@@ -756,6 +1081,10 @@ def _single_review(
         "title_policy_violations": title_policy_violations,
         "request_sha256": _sha256_text(prompt),
     }
+    editorial_research = _editorial_research_from_scorecard(selection_scorecard)
+    if editorial_research is not None:
+        base["editorial_research"] = dict(editorial_research)
+        base["editorial_research_sha256"] = _sha256_json(editorial_research)
     if entity_context is not None:
         base["entity_context_sha256"] = entity_context.context_sha256
     if speaker_evidence_sha256 is not None:
@@ -767,14 +1096,37 @@ def _single_review(
             "reason_code": "CPA_TEXT_REVIEW_UNAVAILABLE",
         }
     try:
-        raw = llm_call(prompt)
+        inputs = {"candidate_id": candidate_id,
+                  "review_input": {key: value for key, value in base.items() if key != 'review_pass'},
+                  "final_reviewed_srt_sha256": final_reviewed_srt_sha256,
+                  "source_binding": {
+                      key: story_contract.get(key)
+                      for key in ("schema_version", "candidate_id", "source_media_sha256s",
+                                  "clip_context_binding", "boundary_semantic_review",
+                                  "human_boundary_authority", "session_relation_authority")
+                  } if isinstance(story_contract, Mapping) else None}
+        observation_root = (final_reviewed_srt_path.parent / ".completed-review-observations"
+                            if final_reviewed_srt_path is not None else None)
+        completed_review = CompletedReviewCheckpoint.for_call(
+            stage="source-fact-review", prompt=prompt, llm_call=llm_call,
+            inputs=inputs, parser_path=Path(__file__), root=observation_root,
+        )
+        if completed_review is None:
+            completed_review = CompletedReviewCheckpoint.for_ruling(
+                stage='source-fact-review', prompt=prompt, llm_call=llm_call,
+                inputs=inputs, parser_path=Path(__file__), root=observation_root)
+        raw = (completed_review.response(lambda prompt: call_json(llm_call, prompt)) if completed_review is not None
+               else call_json(llm_call, prompt, reuse=False))
+    except CompletedReviewCheckpointError as exc:
+        return {**base, "status": "FAILED", "reason_code": str(exc), "failure_layer": "CONTRACT_ERROR"}
     except Exception as exc:
         diagnostics = describe_provider_exception(exc)
         return {**base, "status": "FAILED", "reason_code": "CPA_TEXT_REVIEW_CALL_FAILED", **diagnostics}
     try:
         payload = extract_json_object(raw)
     except LlmJsonParseError:
-        return {**base, "status": "FAILED", "reason_code": "CPA_TEXT_REVIEW_INVALID", "response_sha256": _sha256_text(raw)}
+        return {**base, "status": "FAILED", "reason_code": "CPA_TEXT_REVIEW_INVALID",
+                "response_sha256": _sha256_text(raw), "failure_layer": "CONTRACT_ERROR"}
     status = payload.get("status")
     final_hook = payload.get("final_selection_hook")
     final_title = payload.get("final_title")
@@ -869,10 +1221,7 @@ def _single_review(
             and len(str(scorecard_review.get("reason")).strip()) >= 4
         )
     )
-    title_prefix_preserved = bool(
-        not title.startswith("【")
-        or (isinstance(final_title, str) and final_title.startswith(title.split("】", 1)[0] + "】"))
-    )
+    title_prefix_preserved = leading_envelope_preserved(title, final_title)
     shape_valid = bool(
         payload.get("schema_version") == SCHEMA_VERSION
         and status in {"KEEP", "REPAIR"}
@@ -915,7 +1264,23 @@ def _single_review(
             )
         )
     )
-    return {
+    response_sha256 = _sha256_text(raw)
+    source_entity_candidates, source_entity_candidate_rejections = (
+        _source_entity_candidates_from_response(
+            payload.get("source_entity_candidates"),
+            final_transcript=final_transcript,
+            final_reviewed_srt_text=final_reviewed_srt_text,
+            final_reviewed_srt_sha256=final_reviewed_srt_sha256,
+            final_reviewed_srt_path=final_reviewed_srt_path,
+            candidate_id=candidate_id,
+            request_sha256=str(base["request_sha256"]),
+            response_sha256=response_sha256,
+            clip_context_prompt_sha256=str(base["clip_context_prompt_sha256"]),
+        )
+        if "source_entity_candidates" in payload
+        else ([], [])
+    )
+    result: dict[str, object] = {
         **base,
         "status": status if shape_valid else "FAILED",
         "reason_code": (
@@ -937,8 +1302,28 @@ def _single_review(
             dict(scorecard_review) if isinstance(scorecard_review, Mapping) else None
         ),
         "summary": summary if isinstance(summary, str) else "",
-        "response_sha256": _sha256_text(raw),
+        "response_sha256": response_sha256,
     }
+    # Primitive protocol incompleteness is engineering failure. Do not label
+    # a complete but unsupported source/content claim as a contract error.
+    if (not shape_valid
+            and not (status in {'KEEP', 'REPAIR'} and isinstance(final_hook, str)
+                     and isinstance(final_title, str) and isinstance(supported_by, list)
+                     and isinstance(changes, list) and isinstance(summary, str))):
+        result['failure_layer'] = 'CONTRACT_ERROR'
+    if "source_entity_candidates" in payload:
+        if final_reviewed_srt_sha256 is not None:
+            result["final_reviewed_srt_sha256"] = final_reviewed_srt_sha256
+        result["source_entity_candidates"] = source_entity_candidates
+        if source_entity_candidate_rejections:
+            result["source_entity_candidate_rejections"] = source_entity_candidate_rejections
+    if shape_valid and completed_review is not None:
+        try:
+            completed_review.save()
+        except CompletedReviewCheckpointError as exc:
+            return {**base, "status": "FAILED", "reason_code": str(exc),
+                    "response_sha256": response_sha256}
+    return result
 
 
 def review_and_repair_source_facts(
@@ -1018,6 +1403,9 @@ def review_and_repair_source_facts(
                 **speaker_receipt_fields,
             }
         )
+    final_reviewed_srt_text, final_reviewed_srt_sha256 = _final_reviewed_srt_snapshot(
+        final_reviewed_srt_path
+    )
     input_surface_error = _entity_surface_error(
         entity_context,
         selection_hook=selection_hook,
@@ -1063,15 +1451,22 @@ def review_and_repair_source_facts(
                 speaker_evidence_sha256=speaker_evidence_sha256,
                 entity_context=entity_context,
                 story_contract=story_contract,
+                candidate_id=candidate_id,
+                final_reviewed_srt_path=final_reviewed_srt_path,
+                final_reviewed_srt_text=final_reviewed_srt_text,
+                final_reviewed_srt_sha256=final_reviewed_srt_sha256,
             )
             if (
                 review.get("status") != "FAILED"
+                or review.get('failure_layer') == 'CONTRACT_ERROR'
+                or bool(review.get('response_sha256'))
+                or bool(getattr(llm_call, 'cpa_cache_identity', None))
                 or review.get("reason_code")
                 not in {
                     "CPA_TEXT_REVIEW_INVALID",
                     "CPA_ENTITY_SURFACE_RESPONSE_INVALID",
-                    # 自相矛盾的归属判项（WRONG_ADDRESSEE 却判 KEEP、或该判不判）
-                    # 与形状无效同类：同一份输入重掷一次形状，不是重掷语义结论。
+                    # Legacy adapter codes remain unchanged. A complete
+                    # original response is stopped above, never re-asked.
                     ADDRESSEE_UNRESOLVED_REASON,
                 }
                 or attempt >= MAX_PROVIDER_RETRIES_PER_PASS
@@ -1101,6 +1496,7 @@ def review_and_repair_source_facts(
                     "passes": passes,
                     "provider_retries": provider_retries,
                     **_entity_receipt_fields(entity_context),
+                    **_source_entity_receipt_fields(review),
                     **speaker_receipt_fields,
                 }
             )
@@ -1111,6 +1507,7 @@ def review_and_repair_source_facts(
                     "status": "FAILED",
                     "decision": "NONE" if review_pass == 1 else "REPAIR_FAILED",
                     "reason_code": review.get("reason_code"),
+                    **({'failure_layer': review['failure_layer']} if review.get('failure_layer') else {}),
                     "original_selection_hook": selection_hook,
                     "original_title": title,
                     "final_selection_hook": selection_hook,
@@ -1772,6 +2169,102 @@ def _validate_receipt_speaker_evidence(
         )
     )
 
+
+def _validate_receipt_source_entity_candidates(
+    review: Mapping[str, object],
+    *,
+    final_transcript: str,
+    candidate_id: str | None,
+    final_reviewed_srt_path: Path | None,
+) -> bool:
+    """Rebuild source-fact entity rows against the current final SRT bytes."""
+
+    passes = review.get("passes")
+    if not isinstance(passes, list) or any(not isinstance(row, Mapping) for row in passes):
+        return False
+    candidate_fields_present = any(
+        "source_entity_candidates" in row or "final_reviewed_srt_sha256" in row
+        for row in passes
+        if isinstance(row, Mapping)
+    )
+    if "source_entity_candidates" in review:
+        candidate_fields_present = True
+        final_pass = passes[-1]
+        if (
+            not isinstance(final_pass, Mapping)
+            or "source_entity_candidates" not in final_pass
+            or not isinstance(review.get("source_entity_candidates"), list)
+            or not isinstance(final_pass.get("source_entity_candidates"), list)
+            or review.get("source_entity_candidates") != final_pass.get("source_entity_candidates")
+        ):
+            return False
+        if "source_entity_candidate_rejections" in review and (
+            review.get("source_entity_candidate_rejections")
+            != final_pass.get("source_entity_candidate_rejections", [])
+        ):
+            return False
+    if not candidate_fields_present:
+        return "source_entity_candidates" not in review
+    candidate_rows_present = any(
+        isinstance(row, Mapping)
+        and isinstance(row.get("source_entity_candidates"), list)
+        and bool(row.get("source_entity_candidates"))
+        for row in passes
+    )
+    srt_binding_present = any(
+        isinstance(row, Mapping) and "final_reviewed_srt_sha256" in row for row in passes
+    )
+    # An explicit empty array is a valid ordinary-provider answer.  If this
+    # legacy call had no reviewed SRT at all, there is no entity authority to
+    # validate and no candidate to project; preserve the old receipt lane.
+    if not candidate_rows_present and not srt_binding_present:
+        return True
+    srt_text, srt_sha256 = _final_reviewed_srt_snapshot(final_reviewed_srt_path)
+    if srt_text is None or srt_sha256 is None:
+        return False
+    for row in passes:
+        assert isinstance(row, Mapping)
+        if "final_reviewed_srt_sha256" in row and row.get("final_reviewed_srt_sha256") != srt_sha256:
+            return False
+        if "source_entity_candidates" not in row:
+            continue
+        if any(
+            not _SHA256_VALUE_RX.fullmatch(str(row.get(key) or ""))
+            for key in ("request_sha256", "response_sha256", "clip_context_prompt_sha256")
+        ):
+            return False
+        candidates = row.get("source_entity_candidates")
+        if not isinstance(candidates, list):
+            return False
+        expected, rejected = _source_entity_candidates_from_response(
+            candidates,
+            final_transcript=final_transcript,
+            final_reviewed_srt_text=srt_text,
+            final_reviewed_srt_sha256=srt_sha256,
+            final_reviewed_srt_path=final_reviewed_srt_path,
+            candidate_id=candidate_id,
+            request_sha256=str(row.get("request_sha256") or ""),
+            response_sha256=str(row.get("response_sha256") or ""),
+            clip_context_prompt_sha256=str(row.get("clip_context_prompt_sha256") or ""),
+        )
+        # The captured request/response and entity receipt stay immutable when
+        # the identical final SRT is copied into a delivery package.  Its path
+        # is a locator, while the current SRT bytes, candidate, transcript and
+        # every evidence/binding field are reconstructed above.  Keep the
+        # original locator rather than relabeling an old answer as a new call.
+        if not rejected and len(expected) == len(candidates):
+            for rebuilt, captured in zip(expected, candidates, strict=True):
+                captured_source = captured.get("source")
+                if (
+                    isinstance(captured_source, Mapping)
+                    and isinstance(captured_source.get("path"), str)
+                    and captured_source["path"]
+                ):
+                    rebuilt["source"]["path"] = captured_source["path"]
+        if rejected or expected != candidates:
+            return False
+    return True
+
 def validate_source_fact_review(
     review: object,
     *,
@@ -1853,6 +2346,13 @@ def validate_source_fact_review(
     if not _validate_receipt_speaker_evidence(
         review,
         speaker_evidence=speaker_evidence,
+    ):
+        return False
+    if not _validate_receipt_source_entity_candidates(
+        review,
+        final_transcript=final_transcript,
+        candidate_id=candidate_id,
+        final_reviewed_srt_path=final_reviewed_srt_path,
     ):
         return False
     if review.get("final_selection_hook") != selection_hook or review.get("final_title") != title:

@@ -1817,3 +1817,76 @@ def test_replay_download_command_plan_builds_redacted_yt_dlp_sections(tmp_path):
     manifest = command_plan.to_manifest()
     assert str(cookie_file) not in str(manifest)
     assert "[REDACTED_COOKIE_FILE]" in str(manifest)
+
+
+def test_recording_inventory_accepts_placement_only_reattestation_of_restored_copy(
+    tmp_path,
+    monkeypatch,
+):
+    """Byte-identical restore (new inode/ctime) + adapter placement receipt → PASS/WARN."""
+
+    import stat as stat_module
+
+    date_dir, stub, successor_mp4, state_path = _typed_connection_stub(tmp_path, monkeypatch)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    relative = f"{date_dir.name}/{stub.name}"
+    row = state["source_dispositions"][relative]
+    successor = date_dir / row["session"]["successor_relative_path"].split("/", 1)[1]
+    for path in (stub, stub.with_suffix(".xml"), successor, successor_mp4):
+        info = path.stat()
+        copy = path.with_name(path.name + ".restore")
+        copy.write_bytes(path.read_bytes())
+        os.chmod(copy, stat_module.S_IMODE(info.st_mode))
+        os.utime(copy, ns=(info.st_atime_ns, info.st_mtime_ns))
+        os.replace(copy, path)
+    fuse_mount = {
+        "mount_id": 77,
+        "major_minor": "0:67",
+        "root": "/",
+        "mount_point": str(tmp_path),
+        "filesystem_type": "fuse.cloudfs",
+        "mount_source": "CloudFS",
+    }
+    monkeypatch.setattr(adapter, "_mount_identity_for_path", lambda _path: fuse_mount)
+    receipts: list[dict] = []
+    adapter.validate_connection_stub_disposition(
+        stub,
+        row,
+        record_root=tmp_path,
+        webhook_files=state["webhook_files"],
+        finalized=state["finalized"],
+        identity_rebinds=receipts,
+        identity_rebind_attestations={
+            "source": adapter._attest_regular_file(stub),
+            "xml": adapter._attest_regular_file(stub.with_suffix(".xml")),
+            "successor_mp4": adapter._attest_regular_file(successor_mp4),
+        },
+    )
+    assert [receipt["policy"] for receipt in receipts] == [
+        adapter.SOURCE_DISPOSITION_PLACEMENT_REBIND_POLICY
+    ]
+    state["source_disposition_identity_rebinds"] = {relative: receipts}
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    monkeypatch.setattr(
+        source_integrity,
+        "_mount_identity_for_path",
+        lambda _path: {**fuse_mount, "mount_id": 991, "mount_point": "/runner/Videos"},
+    )
+
+    audit = audit_finalized_recording_inventory(
+        date_dir,
+        room_id="123456",
+        adapter_state_path=state_path,
+    )
+
+    assert audit["status"] == "PASS"
+    assert audit["issues"][0]["severity"] == "WARN"
+    # Without the receipt, the restored copy is not silently accepted.
+    state["source_disposition_identity_rebinds"] = {}
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    blocked = audit_finalized_recording_inventory(
+        date_dir,
+        room_id="123456",
+        adapter_state_path=state_path,
+    )
+    assert blocked["status"] != "PASS"

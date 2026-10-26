@@ -17,6 +17,7 @@ a missing game context must never block production).
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import hashlib
 import json
 import os
@@ -459,5 +460,5 @@ def bind_session_game_context(
         env_suffix=ENV_SUFFIX,
         runtime_path=state_path,
         committed_path=state_path,
-        digest_file=lambda path: hashlib.sha256(path.read_bytes()).hexdigest(),
+        digest_file=lambda path: _evidence_file_sha256(path),
     )

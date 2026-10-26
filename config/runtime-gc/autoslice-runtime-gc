@@ -1,14 +1,18 @@
 #!/bin/sh
 set -eu
 : "${AUTOSLICE_BASE:?set the pipeline work root}"
-: "${AUTOSLICE_GC_STATE:?set the private GC state directory}"
-gc_scripts=${AUTOSLICE_GC_SCRIPTS:-/usr/local/lib/autoslice-gc}
-gc_python=${AUTOSLICE_GC_PYTHON:-/usr/bin/python3}
-pcm_status=0
-terminal_status=0
-nice -n 19 ionice -c 3 "$gc_python" -B "$gc_scripts/runtime_gc.py" \
-  --base "$AUTOSLICE_BASE" --state-dir "$AUTOSLICE_GC_STATE" --apply || pcm_status=$?
-nice -n 19 ionice -c 3 timeout 180s "$gc_python" -B "$gc_scripts/terminal_out_gc.py" \
-  --base "$AUTOSLICE_BASE" --state-dir "$AUTOSLICE_GC_STATE" \
-  --apply --runtime --max-files 32 --max-bytes 2147483648 || terminal_status=$?
-[ "$pcm_status" -eq 0 ] && [ "$terminal_status" -eq 0 ]
+: "${AUTOSLICE_GC_SCRIPTS:?set the scripts directory in a complete code tree}"
+: "${AUTOSLICE_GC_PYTHON:?set the Python interpreter}"
+: "${AUTOSLICE_GC_HOME:?set the home whose scratch may be inspected}"
+# The two historical PCM/terminal collectors now share one lifecycle plan.
+# No removed terminal_out_gc.py or obsolete --state-dir/--runtime flags are used.
+# Keep the complete src/scripts tree together; do not deploy this wrapper alone.
+# Policy is read from $AUTOSLICE_BASE/runtime-gc.json by the current collector.
+# --scheduled remains a dry run unless policy.apply_enabled is explicitly true.
+# Source recordings, publication references and preserve entries stay protected.
+# The service/timer are installation examples; exporting never schedules a job.
+# Review a normal plan before enabling apply in a deployment's private policy.
+# Use --help on the installed scripts/runtime_gc.py to verify its actual contract.
+exec nice -n 19 ionice -c 3 "$AUTOSLICE_GC_PYTHON" -B \
+  "$AUTOSLICE_GC_SCRIPTS/runtime_gc.py" --base "$AUTOSLICE_BASE" \
+  --home "$AUTOSLICE_GC_HOME" --scheduled

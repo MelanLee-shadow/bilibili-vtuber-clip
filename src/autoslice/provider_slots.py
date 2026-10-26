@@ -1,24 +1,31 @@
-"""Runtime-local, cross-process permits for provider-bearing work.
+"""Runtime-local AIMD admission shared by processes, per provider/modality.
 
-The pool is intentionally a filesystem flock pool rather than a thread
-semaphore: runner workers, Qixi CLIs, and command-backed adapters are separate
-processes.  It controls only provider dispatch, never deterministic auditing or
-manifest replay.
+Only metadata transactions take the window mutex. Provider calls hold a unique
+lease inode, not that mutex; flock also makes crashed owners reclaimable.
 """
 
 from __future__ import annotations
 
 import fcntl
 import errno
+import hashlib
+import json
+import math
 import os
 import stat
 import threading
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable, Iterator, TypeVar
+from typing import Any, Callable, Iterator, TypeVar, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.autoslice.provider_admission import RateFeedback
+
+from src.autoslice.deployed_code_root import deployed_code_root
 
 
 class ProviderSlotError(RuntimeError):
@@ -39,24 +46,29 @@ class ProviderSlotLease:
     slot_index: int
     device: int
     inode: int
+    report: Callable[[object], None] = field(default=lambda _: None, compare=False, repr=False)
 
 
 _thread_locks_guard = threading.Lock()
-_thread_locks: dict[tuple[int, int, int], threading.Lock] = {}
+_thread_locks: dict[tuple[int, int, str, int], threading.Lock] = {}
 _MAX_PROVIDER_CANDIDATES = 5
 _MAX_PROVIDER_QUEUE_SECONDS = 10800
 _CANONICAL_PRODUCTION_ROOT = Path("/opt/bilive/autoslice")
 _ProviderResult = TypeVar("_ProviderResult")
 
 
+# The environment supplies only the initial window. Success grows it without
+# a numeric ceiling; only structured provider feedback reduces/cools it down.
+
+
 def provider_capacity() -> int:
-    value = os.environ.get("AUTOSLICE_PROVIDER_CONCURRENCY", "2")
+    value = os.environ.get("AUTOSLICE_PROVIDER_CONCURRENCY", "20")
     try:
         capacity = int(value)
     except ValueError as exc:
-        raise ProviderSlotError("provider concurrency must be an integer from 1 to 5") from exc
-    if not 1 <= capacity <= 5:
-        raise ProviderSlotError("provider concurrency must be an integer from 1 to 5")
+        raise ProviderSlotError("provider concurrency must be a positive integer") from exc
+    if capacity < 1:
+        raise ProviderSlotError("provider concurrency must be a positive integer")
     return capacity
 
 
@@ -88,8 +100,8 @@ def provider_wait_for_call(call_timeout_seconds: float, *, grace_seconds: float 
         or isinstance(call_timeout_seconds, bool)
         or not isinstance(grace_seconds, (int, float))
         or isinstance(grace_seconds, bool)
-        or call_timeout_seconds <= 0
-        or grace_seconds < 0
+        or not math.isfinite(call_timeout_seconds) or call_timeout_seconds <= 0
+        or not math.isfinite(grace_seconds) or grace_seconds < 0
     ):
         raise ProviderSlotError("provider call timeout is unsafe")
     # The tail candidate waits only for the *preceding* complete waves.  With
@@ -109,7 +121,7 @@ def configured_runtime_root() -> Path | None:
     # A live host must never silently skip permits because an older manual
     # invocation omitted the variable.  Local development remains opt-in: it
     # does not normally have this exact production runtime topology.
-    if _CANONICAL_PRODUCTION_ROOT.is_dir() and (_CANONICAL_PRODUCTION_ROOT / "repo").is_dir():
+    if _CANONICAL_PRODUCTION_ROOT.is_dir() and deployed_code_root(_CANONICAL_PRODUCTION_ROOT).is_dir():
         return _CANONICAL_PRODUCTION_ROOT
     return None
 
@@ -119,18 +131,38 @@ def runtime_provider_slot(
     *,
     runtime_root: Path | str | None = None,
     timeout_seconds: float | None = None,
+    provider: str = "cpa",
+    modality: str = "text",
 ) -> Iterator[ProviderSlotLease | None]:
     """Permit provider transport for an explicit or canonical runtime root."""
     resolved_root = Path(runtime_root) if runtime_root is not None else configured_runtime_root()
     if resolved_root is None:
         yield None
         return
-    with provider_slot(resolved_root, timeout_seconds=timeout_seconds) as lease:
-        yield lease
+    key = (os.getpid(), threading.get_ident(), str(resolved_root.absolute()), *_route_key(provider, modality))
+    # Physical transports nested inside admission wrappers share one lease;
+    # explicit provider_slot callers still acquire independent permits.
+    for held_key, held_lease in _HELD.get():
+        if held_key == key:
+            try:
+                yield held_lease
+            except BaseException as exc:
+                from src.autoslice.provider_admission import rate_feedback
+                held_lease.report(rate_feedback(exc))
+                raise
+            return
+    with provider_slot(resolved_root, timeout_seconds=timeout_seconds,
+                       provider=provider, modality=modality) as lease:
+        token = _HELD.set((*_HELD.get(), (key, lease)))
+        try:
+            yield lease
+        finally:
+            _HELD.reset(token)
 
 
 def provider_transport(
-    *, timeout_result: Callable[[], _ProviderResult] | None = None
+    *, timeout_result: Callable[[], _ProviderResult] | None = None,
+    provider: str = "cpa", modality: str = "image",
 ) -> Callable[[Callable[..., _ProviderResult]], Callable[..., _ProviderResult]]:
     """Bind one transport function to one permit for its complete call."""
 
@@ -139,13 +171,21 @@ def provider_transport(
         def dispatch(*args: Any, **kwargs: Any) -> _ProviderResult:
             timeout = kwargs.get("timeout_seconds", 180.0)
             try:
-                with runtime_provider_slot(timeout_seconds=provider_wait_for_call(timeout)):
-                    return call(*args, **kwargs)
+                with runtime_provider_slot(timeout_seconds=provider_wait_for_call(timeout),
+                                           provider=provider, modality=modality) as lease:
+                    result = call(*args, **kwargs)
+                    if lease is not None:
+                        lease.report(result)
+                    return result
             except ProviderSlotTimeout:
                 if timeout_result is None:
                     raise
                 return timeout_result()
 
+        # Keep the decorator's non-secret route explicit for checkpoint binding.
+        dispatch.provider_runtime_binding = {"adapter": "provider_slots.provider_transport",
+                                             "provider": provider, "modality": modality}
+        dispatch._provider_transport_callables = (call, timeout_result)
         return dispatch
 
     return decorate
@@ -250,73 +290,268 @@ def _slot_fd(path: Path) -> tuple[int, os.stat_result]:
     return descriptor, opened
 
 
-def _thread_lock(runtime_identity: tuple[int, int], slot_index: int) -> threading.Lock:
-    key = (*runtime_identity, slot_index)
+def _thread_lock(runtime_identity: tuple[int, int], slot_index: int, route: str = "") -> threading.Lock:
+    key = (*runtime_identity, route, slot_index)
     with _thread_locks_guard:
         return _thread_locks.setdefault(key, threading.Lock())
 
 
+_HeldKey = tuple[int, int, str, str, str]
+_HELD: ContextVar[tuple[tuple[_HeldKey, ProviderSlotLease], ...]] = ContextVar("provider_slots", default=())
+
+
+def _route_key(provider: str, modality: str) -> tuple[str, str]:
+    if provider.startswith("canonical-runtime-cpa:"):
+        provider = "cpa"
+    if provider == "gemini_api":
+        provider = "gemini"
+    if not provider or not modality:
+        raise ProviderSlotError("provider route must be nonempty")
+    return provider, modality
+
+
+def report_provider_feedback(value: object) -> None:
+    """Preserve protocol feedback even when a transport catches its exception."""
+    from src.autoslice.provider_admission import rate_feedback
+    for key, lease in reversed(_HELD.get()):
+        if key[:2] == (os.getpid(), threading.get_ident()):
+            lease.report(rate_feedback(value) if isinstance(value, BaseException) else value)
+            return
+
+
+def _route_root(runtime_root: Path, provider: str, modality: str) -> Path:
+    root = runtime_root / "provider-slots"
+    _safe_directory(root)
+    key = _route_key(provider, modality)
+    # Preserve the historical default namespace, never a second global cap.
+    if key == ("cpa", "text"):
+        return root
+    routes = root / "routes"
+    _safe_directory(routes)
+    bucket = routes / hashlib.sha256(json.dumps(key).encode()).hexdigest()
+    _safe_directory(bucket)
+    return bucket
+
+
+@dataclass
+class _WindowState:
+    limit: int
+    active: list[int] = field(default_factory=list)
+    retry_at: float = 0.0
+
+
+def _read_window(root: Path, route: tuple[str, str]) -> _WindowState:
+    path = root / "window.json"
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        return _WindowState(provider_capacity())
+    except OSError as exc:
+        raise ProviderSlotError("provider window state cannot be inspected") from exc
+    fd, opened = _slot_fd(path)
+    try:
+        with os.fdopen(os.dup(fd), encoding="utf-8") as stream:
+            value = json.load(stream)
+        _same_safe_slot(path, fd, opened)
+        if (not isinstance(value, dict) or value.get("version") != 1
+                or value.get("route") != list(route)
+                or type(value.get("limit")) is not int or value["limit"] < 1
+                or not isinstance(value.get("active"), list)
+                or any(type(index) is not int or index < 0 for index in value["active"])
+                or len(set(value["active"])) != len(value["active"])
+                or type(value.get("retry_at")) not in (int, float)
+                or not math.isfinite(value["retry_at"]) or value["retry_at"] < 0):
+            raise ProviderSlotError("provider window state is invalid")
+        return _WindowState(value["limit"], value["active"], float(value["retry_at"]))
+    except (OSError, ValueError, UnicodeError) as exc:
+        raise ProviderSlotError("provider window state is unreadable") from exc
+    finally:
+        os.close(fd)
+
+
+def _write_window(root: Path, route: tuple[str, str], state: _WindowState) -> None:
+    import tempfile
+    try:
+        fd, name = tempfile.mkstemp(prefix=".window-", dir=root)
+    except OSError as exc:
+        raise ProviderSlotError("provider window state cannot be written") from exc
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump({"version": 1, "route": route, "limit": state.limit,
+                       "active": state.active, "retry_at": state.retry_at}, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(name, root / "window.json")
+    except OSError as exc:
+        raise ProviderSlotError("provider window state cannot be written") from exc
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def _pause(deadline: float, poll_seconds: float) -> None:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise ProviderSlotTimeout("provider capacity wait timed out")
+    time.sleep(min(poll_seconds, remaining))
+
+
+@contextmanager
+def _window_lock(runtime: Path, identity: tuple[int, int], root: Path,
+                 deadline: float, poll_seconds: float) -> Iterator[None]:
+    mutex = _thread_lock(identity, -1, str(root))
+    while not mutex.acquire(blocking=False):
+        _pause(deadline, poll_seconds)
+    fd: int | None = None
+    try:
+        live = _safe_runtime_root(runtime)
+        if (live.st_dev, live.st_ino) != identity:
+            raise ProviderSlotError("provider runtime root ownership drifted")
+        _safe_directory(runtime / "provider-slots")
+        if root != runtime / "provider-slots":
+            _safe_directory(root.parent)
+        _safe_directory(root)
+        fd, opened = _slot_fd(root / "window.lock")
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                _pause(deadline, poll_seconds)
+        live = _safe_runtime_root(runtime)
+        if (live.st_dev, live.st_ino) != identity:
+            raise ProviderSlotError("provider runtime root ownership drifted")
+        _same_safe_slot(root / "window.lock", fd, opened)
+        yield
+    finally:
+        if fd is not None:
+            os.close(fd)
+        mutex.release()
+
+
+def _live_slots(root: Path, identity: tuple[int, int], active: list[int]) -> list[int]:
+    live = []
+    for index in active:
+        mutex = _thread_lock(identity, index, str(root))
+        if not mutex.acquire(blocking=False):
+            live.append(index)
+            continue
+        fd: int | None = None
+        try:
+            fd, opened = _slot_fd(root / f"slot-{index}.lock")
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                live.append(index)
+            _same_safe_slot(root / f"slot-{index}.lock", fd, opened)
+        finally:
+            if fd is not None:
+                os.close(fd)
+            mutex.release()
+    return live
+
+
 @contextmanager
 def provider_slot(
-    runtime_root: Path,
-    *,
-    timeout_seconds: float | None = None,
-    poll_seconds: float = 0.05,
+    runtime_root: Path, *, timeout_seconds: float | None = None,
+    poll_seconds: float = 0.05, provider: str = "cpa", modality: str = "text",
 ) -> Iterator[ProviderSlotLease]:
-    """Wait a bounded interval for one runtime-local provider permit.
+    """Admit one call, sharing window, live leases and cooldown across processes.
 
-    Each retry opens and revalidates the slot inode. A process-held ``flock``
-    handles inter-process contention; the per-slot thread mutex prevents a
-    platform's process-scoped flock behavior from oversubscribing threads in
-    one process.
+    Atomic state replacement is serialized only for admission/finish. Active
+    leases can outnumber a newly halved window; no new call starts until their
+    count falls below it. A crashed lease is reclaimed on the next acquisition.
+    Malformed/unwritable state fails closed, never falls back to a private pool.
     """
+    from src.autoslice.provider_admission import RateFeedback, observed_rate_feedback, rate_feedback
 
     if timeout_seconds is None:
         timeout_seconds = provider_wait_seconds()
-    if not isinstance(timeout_seconds, (int, float)) or isinstance(timeout_seconds, bool) or timeout_seconds <= 0:
+    if (not isinstance(timeout_seconds, (int, float)) or isinstance(timeout_seconds, bool)
+            or not math.isfinite(timeout_seconds) or timeout_seconds <= 0):
         raise ProviderSlotError("provider slot timeout must be positive")
-    if not isinstance(poll_seconds, (int, float)) or isinstance(poll_seconds, bool) or not 0 < poll_seconds <= 1:
+    if (not isinstance(poll_seconds, (int, float)) or isinstance(poll_seconds, bool)
+            or not 0 < poll_seconds <= 1):
         raise ProviderSlotError("provider slot poll interval must be between 0 and 1 second")
-
+    runtime_root = Path(runtime_root)
     runtime_info = _safe_runtime_root(runtime_root)
-    runtime_identity = (runtime_info.st_dev, runtime_info.st_ino)
-    root = runtime_root / "provider-slots"
-    _safe_directory(root)
-    capacity = provider_capacity()
-    deadline = time.monotonic() + float(timeout_seconds)
-    while True:
-        for index in range(capacity):
-            thread_lock = _thread_lock(runtime_identity, index)
-            if not thread_lock.acquire(blocking=False):
-                continue
-            descriptor: int | None = None
-            try:
-                live_runtime = _safe_runtime_root(runtime_root)
-                if (live_runtime.st_dev, live_runtime.st_ino) != runtime_identity:
-                    raise ProviderSlotError("provider runtime root ownership drifted")
-                _safe_directory(root)
-                descriptor, opened = _slot_fd(root / f"slot-{index}.lock")
-                try:
-                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except BlockingIOError:
-                    continue
-                # Re-stat only after the flock is owned: a replacement must
-                # fail rather than split the capacity across two inodes.
-                live_runtime = _safe_runtime_root(runtime_root)
-                if (live_runtime.st_dev, live_runtime.st_ino) != runtime_identity:
-                    raise ProviderSlotError("provider runtime root ownership drifted")
-                _safe_directory(root)
+    identity = (runtime_info.st_dev, runtime_info.st_ino)
+    route = _route_key(provider, modality)
+    root = _route_root(runtime_root, *route)
+    deadline = time.monotonic() + timeout_seconds
+    descriptor: int | None = None
+    index = 0
+    while descriptor is None:
+        with _window_lock(runtime_root, identity, root, deadline, poll_seconds):
+            state = _read_window(root, route)
+            state.active = _live_slots(root, identity, state.active)
+            if len(state.active) < state.limit and state.retry_at <= time.time():
+                index = 0
+                # Also respect held historical/default inodes without treating
+                # their former fixed capacity as an admission constraint.
+                while index in state.active:
+                    index += 1
+                mutex = _thread_lock(identity, index, str(root))
+                if mutex.acquire(blocking=False):
+                    try:
+                        descriptor, opened = _slot_fd(root / f"slot-{index}.lock")
+                        try:
+                            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        except BlockingIOError:
+                            os.close(descriptor)
+                            descriptor = None
+                        if descriptor is not None:
+                            live = _safe_runtime_root(runtime_root)
+                            if (live.st_dev, live.st_ino) != identity:
+                                raise ProviderSlotError("provider runtime root ownership drifted")
+                            _same_safe_slot(root / f"slot-{index}.lock", descriptor, opened)
+                            state.active.append(index)
+                            _write_window(root, route, state)
+                    except BaseException:
+                        if descriptor is not None:
+                            os.close(descriptor)
+                            descriptor = None
+                        mutex.release()
+                        raise
+                    if descriptor is None:
+                        mutex.release()
+        if descriptor is None:
+            _pause(deadline, poll_seconds)
+
+    feedback = RateFeedback()
+    def report(value: object) -> None:
+        nonlocal feedback
+        fresh = value if isinstance(value, RateFeedback) else observed_rate_feedback(value)
+        if not math.isfinite(fresh.retry_after) or fresh.retry_after < 0:
+            raise ProviderSlotError("provider retry-after is invalid")
+        feedback = RateFeedback(feedback.rate_limited or fresh.rate_limited,
+                                max(feedback.retry_after, fresh.retry_after),
+                                feedback.successful and fresh.successful)
+
+    error: BaseException | None = None
+    try:
+        yield ProviderSlotLease(runtime_root, index, opened.st_dev, opened.st_ino, report)
+    except BaseException as exc:
+        error = exc
+        raise
+    finally:
+        report(rate_feedback(error))
+        try:
+            with _window_lock(runtime_root, identity, root,
+                              time.monotonic() + timeout_seconds, poll_seconds):
                 _same_safe_slot(root / f"slot-{index}.lock", descriptor, opened)
-                try:
-                    yield ProviderSlotLease(runtime_root, index, opened.st_dev, opened.st_ino)
-                finally:
-                    fcntl.flock(descriptor, fcntl.LOCK_UN)
-                return
-            finally:
-                if descriptor is not None:
-                    os.close(descriptor)
-                thread_lock.release()
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise ProviderSlotTimeout("provider capacity wait timed out")
-        time.sleep(min(float(poll_seconds), remaining))
+                state = _read_window(root, route)
+                if index not in state.active:
+                    raise ProviderSlotError("provider window lease ownership drifted")
+                state.active.remove(index)
+                if feedback.rate_limited:
+                    state.limit = max(1, state.limit // 2)
+                    # Even a bare 429 must pace following calls. Retry-After
+                    # (when supplied) always takes precedence over this floor.
+                    state.retry_at = max(state.retry_at, time.time() + max(1.0, feedback.retry_after))
+                elif feedback.successful:
+                    state.limit += 1
+                _write_window(root, route, state)
+        finally:
+            os.close(descriptor)
+            mutex.release()

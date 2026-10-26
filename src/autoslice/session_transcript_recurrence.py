@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.restatement_recall import is_nonlexical_interjection
 
 
 PROVENANCE_SCHEMA = "session-transcript-recurrence-provenance.v1"
@@ -117,7 +118,10 @@ def _recurring_surface(
             if start > edit.proposed_start or end < edit.proposed_end:
                 continue
             surface = proposed[start:end]
-            if not _LEXICAL_SURFACE.fullmatch(surface) or not _HAN.search(surface):
+            if (
+                not _LEXICAL_SURFACE.fullmatch(surface) or not _HAN.search(surface)
+                or is_nonlexical_interjection(surface)
+            ):
                 continue
             occurrences = _surface_occurrences(
                 draft_cues,

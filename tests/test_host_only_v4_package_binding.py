@@ -8,6 +8,7 @@ import pytest
 from src.autoslice.cover_host_identity_gate import (
     HOST_ONLY_AUTHORITY,
     HOST_ONLY_SCHEMA_VERSION,
+    LEGACY_HOST_ONLY_SCHEMA_VERSION,
 )
 from src.autoslice.host_only_v4_package_binding import (
     BINDING_ITEM_KEY,
@@ -51,8 +52,9 @@ def _generation(
     }
 
 
+@pytest.mark.parametrize('proof_schema',[HOST_ONLY_SCHEMA_VERSION,LEGACY_HOST_ONLY_SCHEMA_VERSION])
 def test_materialize_freezes_external_sources_into_portable_binding(
-    tmp_path: Path,
+    tmp_path: Path, proof_schema: str,
 ) -> None:
     root = tmp_path / "package"
     root.mkdir()
@@ -77,6 +79,7 @@ def test_materialize_freezes_external_sources_into_portable_binding(
         comparison_path=str(comparison),
         comparison_bytes=comparison_bytes,
     )
+    generation['final_host_identity_verification']['schema_version']=proof_schema
 
     binding = materialize_package_binding(
         root=root,
@@ -84,6 +87,7 @@ def test_materialize_freezes_external_sources_into_portable_binding(
         generation=generation,
     )
     assert binding is not None
+    assert generation['final_host_identity_verification']['schema_version']==proof_schema
     item[BINDING_ITEM_KEY] = binding
     validate_package_binding(root=root, item=item, generation=generation)
 

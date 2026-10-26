@@ -10,24 +10,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from src.autoslice.channel_profile import LABEL_RE
 from src.autoslice.chat_authority import normalize_chat_text
-from src.autoslice.surface_canon import CHANNEL_PROFILE
 from src.autoslice.jingting_chunker import parse_srt_cues
 
 
 SCHEMA_VERSION = "lidousha-subtitle-regression.v1"
 AUDIT_SCHEMA_VERSION = "lidousha-subtitle-regression-audit.v1"
-_SPEAKER_LABEL = re.compile(
-    r"^\[(?:"
-    + re.escape(CHANNEL_PROFILE.host_speaker_label)
-    + "|"
-    + re.escape(CHANNEL_PROFILE.guest_speaker_label)
-    + r")\]\s*"
-)
 
 
 class SubtitleRegressionError(ValueError):
@@ -169,7 +161,12 @@ def load_subtitle_regression_document(
 def _surface_payload(srt_text: str) -> tuple[str, set[str]]:
     cue_payloads: list[str] = []
     for cue in parse_srt_cues(srt_text):
-        text = _SPEAKER_LABEL.sub("", cue.text).strip()
+        label = LABEL_RE.match(cue.text)
+        text = (
+            label.group(2)
+            if label is not None and cue.text[1:cue.text.index("]")] in {"李豆沙", "连线"}
+            else cue.text
+        ).strip()
         if text:
             cue_payloads.append(normalize_chat_text(text))
     return normalize_chat_text("".join(cue_payloads)), set(cue_payloads)

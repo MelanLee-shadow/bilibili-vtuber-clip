@@ -63,6 +63,9 @@ RECORD_PATH_POINTERS: frozenset[JsonPointer] = frozenset(
         ("publish_staging", "cover_generation", "pre_overlay_path"),
         ("publish_staging", "cover_generation", "ai_background"),
         ("publish_staging", "cover_generation", "reference_image"),
+        ("publish_staging", "cover_generation", "candidate_selection", "choose_path"),
+        ("publish_staging", "cover_generation", "request_path"),
+        ("publish_staging", "cover_generation", "response_path"),
         (
             "publish_staging",
             "cover_generation",
@@ -90,6 +93,9 @@ PUBLISH_PATH_POINTERS: frozenset[JsonPointer] = frozenset(
         ("cover_generation", "pre_overlay_path"),
         ("cover_generation", "ai_background"),
         ("cover_generation", "reference_image"),
+        ("cover_generation", "candidate_selection", "choose_path"),
+        ("cover_generation", "request_path"),
+        ("cover_generation", "response_path"),
         ("cover_generation", "builtin_imagegen_provenance_path"),
         ("cover_generation", "rendered_text_pixels", "mask_path"),
         ("cover_generation", "rendered_text_pixels", "pre_overlay_path"),
@@ -258,7 +264,51 @@ def speaker_record_pointer(pointer: JsonPointer) -> bool:
     )
 
 
-def is_mutable_pointer(kind: str, pointer: JsonPointer) -> bool:
+# Skill-candidate covers keep request/response/choose locators inside the
+# package, so they move with it.  For every other cover schema the same keys
+# are producer provenance and stay byte-for-byte (80-package-delivery: the
+# relocation tool must not rewrite cover/provenance evidence).
+SKILL_CANDIDATE_COVER_POINTERS: Mapping[str, frozenset[JsonPointer]] = {
+    "record": frozenset(
+        {
+            ("publish_staging", "cover_generation", "candidate_selection", "choose_path"),
+            ("publish_staging", "cover_generation", "request_path"),
+            ("publish_staging", "cover_generation", "response_path"),
+        }
+    ),
+    "publish": frozenset(
+        {
+            ("cover_generation", "candidate_selection", "choose_path"),
+            ("cover_generation", "request_path"),
+            ("cover_generation", "response_path"),
+        }
+    ),
+}
+
+
+def pointer_applies(kind: str, pointer: JsonPointer, document: Mapping[str, Any]) -> bool:
+    """Whether a whitelisted locator is a runtime locator for this document."""
+
+    if pointer not in SKILL_CANDIDATE_COVER_POINTERS.get(kind, frozenset()):
+        return True
+    generation = get_value(document, pointer[:-2] if pointer[-2] == "candidate_selection" else pointer[:-1])
+    return isinstance(generation, Mapping) and generation.get("method") == "skill.candidates"
+
+
+def is_mutable_pointer(
+    kind: str, pointer: JsonPointer, document: Mapping[str, Any] | None = None
+) -> bool:
+    """Whether ``pointer`` is a relocatable runtime locator.
+
+    The skill-candidate cover locators are mutable only for the document whose
+    cover generation is ``skill.candidates``.  Without that document they fail
+    closed, so every caller that does not pass it keeps the pre-D contract:
+    legacy cover request/response provenance is immutable evidence
+    (80-package-delivery L552-557, L953-955).
+    """
+
+    if pointer in SKILL_CANDIDATE_COVER_POINTERS.get(kind, frozenset()):
+        return document is not None and pointer_applies(kind, pointer, document)
     if kind == "record":
         return pointer in RECORD_PATH_POINTERS or speaker_record_pointer(pointer)
     if kind == "publish":
@@ -272,7 +322,9 @@ def _under(pointer: JsonPointer, prefix: JsonPointer) -> bool:
     return pointer[: len(prefix)] == prefix
 
 
-def _is_frozen_pointer(kind: str, pointer: JsonPointer) -> bool:
+def _is_frozen_pointer(
+    kind: str, pointer: JsonPointer, document: Mapping[str, Any] | None = None
+) -> bool:
     if kind == "record" and pointer[:1] == ("speaker_finalization",):
         nested = pointer[1:]
         if nested and not speaker_record_pointer(pointer):
@@ -283,7 +335,7 @@ def _is_frozen_pointer(kind: str, pointer: JsonPointer) -> bool:
         "chat": _CHAT_FROZEN_PREFIXES,
         "speaker": _SPEAKER_FROZEN_PREFIXES,
     }[kind]
-    return not is_mutable_pointer(kind, pointer) and any(
+    return not is_mutable_pointer(kind, pointer, document) and any(
         _under(pointer, prefix) for prefix in prefixes
     )
 
@@ -295,7 +347,7 @@ def reject_unknown_wsl_paths(
     for pointer, value in walk_strings(document):
         if marker not in value and value != source_workspace_root.rstrip("/"):
             continue
-        if is_mutable_pointer(kind, pointer) or _is_frozen_pointer(kind, pointer):
+        if is_mutable_pointer(kind, pointer, document) or _is_frozen_pointer(kind, pointer, document):
             continue
         raise PackageRelocationError(
             f"{kind}: unknown external-host path at {pointer_text(pointer)}"
@@ -384,6 +436,8 @@ def validate_document_root_roles(
         "speaker": SPEAKER_PATH_POINTERS,
     }[kind]
     for pointer in pointers:
+        if not pointer_applies(kind, pointer, document):
+            continue
         validate_path_root_role(
             get_value(document, pointer),
             kind=kind,
@@ -427,7 +481,7 @@ def project_uniform_host_locators(
         raise PackageRelocationError("uniform-host projection root mapping is invalid")
     allowed_frozen = dict(frozen_absolute_allowlist or {})
     for pointer, value in allowed_frozen.items():
-        if not _is_frozen_pointer(kind, pointer) or not isinstance(value, str) or not value.startswith("/"):
+        if not _is_frozen_pointer(kind, pointer, document) or not isinstance(value, str) or not value.startswith("/"):
             raise PackageRelocationError("uniform-host frozen absolute allow-list is invalid")
     frozen_roots = tuple(
         dict.fromkeys(
@@ -452,7 +506,7 @@ def project_uniform_host_locators(
     }[kind]
     for pointer in pointers:
         value = get_value(result, pointer)
-        if value is None:
+        if value is None or not pointer_applies(kind, pointer, result):
             continue
         matched = validate_path_root_role(
             value, kind=kind, pointer=pointer, mappings=mappings
@@ -492,7 +546,7 @@ def project_uniform_host_locators(
     for pointer, value in walk_strings(result):
         if not value.startswith("/"):
             continue
-        if is_mutable_pointer(kind, pointer):
+        if is_mutable_pointer(kind, pointer, result):
             matched = match_root_role(value, mappings=mappings)
             if matched is None:
                 raise PackageRelocationError(
@@ -500,7 +554,7 @@ def project_uniform_host_locators(
                 )
             validate_path_root_role(value, kind=kind, pointer=pointer, mappings=mappings)
             continue
-        if _is_frozen_pointer(kind, pointer):
+        if _is_frozen_pointer(kind, pointer, result):
             if pointer in allowed_frozen:
                 if value != allowed_frozen[pointer]:
                     raise PackageRelocationError(
@@ -516,7 +570,7 @@ def project_uniform_host_locators(
             raise PackageRelocationError(
                 f"{kind}: frozen path escapes source workspace at {pointer_text(pointer)}"
             )
-        if not _is_frozen_pointer(kind, pointer):
+        if not _is_frozen_pointer(kind, pointer, result):
             raise PackageRelocationError(
                 f"{kind}: non-frozen absolute path at {pointer_text(pointer)}"
             )

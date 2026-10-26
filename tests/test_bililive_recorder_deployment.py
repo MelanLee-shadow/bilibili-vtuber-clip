@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
+from ops.recording.recording_topology import load_topology
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,14 +62,14 @@ def test_health_cron_uses_the_strict_mount_probe():
 def test_oci3_recording_authority_and_cron_targets_are_present():
     env_path = ROOT / "ops" / "recording" / "recording-health.env"
     if env_path.is_file():
-        env = env_path.read_text(encoding="utf-8")
+        env = load_topology().shell()
+        root = _oci3_recording_root()
+        assert root == "/opt/bilive/recording-spool"
+        assert f"AUTOSLICE_RECORDING_BIND_ROOT={root}\n" in env
+        assert "AUTOSLICE_WATCHDOG" not in env
+        assert "云盘" not in root
         assert (
-            "AUTOSLICE_WATCHDOG_PROBE_DIR=/path/to/cloud-drive/云盘/"
-            "live-streaming-oci3test/22966160"
-        ) in env
-        assert (
-            "AUTOSLICE_WATCHDOG_EXPECTED_RECORDING_BIND_ROOT=/path/to/cloud-drive/"
-            "云盘/live-streaming-oci3test"
+            "AUTOSLICE_RECORD_HEALTH_STATE_PATH=/opt/bilive/recording/oci3-local-first/adapter-state.json"
         ) in env
     assert not (ROOT / "ops" / "recording" / "bilive-record-watchdog.cron").exists()
     assert (ROOT / "ops" / "recording" / "bilive-record-health.cron").is_file()
@@ -81,3 +83,73 @@ def test_health_cron_log_parent_is_existing_autoslice_path():
 
     assert ">> /opt/bilive/autoslice/logs/record-health-cron.log 2>&1" in cron
     assert "/opt/bilive/logs/runtime/record-health-cron.log" not in cron
+
+
+OCI3_COMPOSE = ROOT / "ops" / "recording" / "docker-compose.oci3-bililive-recorder.yml"
+
+
+def _oci3_compose() -> str:
+    template = OCI3_COMPOSE.read_text(encoding="utf-8")
+    rendered = load_topology().render_compose(template)
+    lines = []
+    for before, after in zip(template.splitlines(), rendered.splitlines()):
+        if "${AUTOSLICE_RECORDING_" in before:
+            prefix = after[:after.index("- ") + 2]
+            after = prefix + json.loads(after.strip()[2:])
+        lines.append(after)
+    return "\n".join(lines) + "\n"
+
+
+def _oci3_recording_root() -> str:
+    import re
+
+    sources = set(
+        re.findall(
+            r"^\s*-\s+(\S+):/(?:app|adapter|rec)/Videos:rshared\s*$",
+            _oci3_compose(),
+            re.MULTILINE,
+        )
+    )
+    assert len(sources) == 1
+    return sources.pop()
+
+
+def test_oci3_compose_records_locally_with_fresh_ledger():
+    """OCI3 compose: same services/images/gates as the Free locator, only the
+    local spool, archive receipt argument and fresh adapter ledger differ."""
+    import pytest
+
+    if not OCI3_COMPOSE.is_file():
+        pytest.skip("OCI3 deployment compose is private to the maintainer tree")
+    free = (ROOT / "ops" / "recording" / "docker-compose.bililive-recorder.yml").read_text(
+        encoding="utf-8"
+    )
+    oci3 = _oci3_compose()
+    root = _oci3_recording_root()
+    assert root == "/opt/bilive/recording-spool"
+    n100_archive_root = "/path/to/cloud-drive/115open/李豆沙录播"
+    assert "云盘" not in oci3
+    assert f"{n100_archive_root}:" not in oci3  # never the N100 archive root
+    for target in ("/app/Videos", "/adapter/Videos", "/rec/Videos"):
+        assert f"      - {root}:{target}:rshared\n" in oci3
+    assert "      - /opt/bilive/recording:/state:rw\n" in oci3
+    for name in ("status.json", "adapter-state.json", "webhook-events.jsonl"):
+        assert f"      - /state/oci3-local-first/{name}\n" in oci3
+        assert f"      - /state/{name}\n" not in oci3
+    normalized = oci3[oci3.index("services:"):]
+    assert normalized.count("      - --local-first\n") == 1
+    assert "      - --room\n      - " + load_topology().room + "\n" in normalized
+    normalized = normalized.replace("      - --local-first\n", "")
+    normalized = normalized.replace("      - --room\n      - " + load_topology().room + "\n", "")
+    for target in ("/app/Videos", "/adapter/Videos", "/rec/Videos"):
+        normalized = normalized.replace(
+            f"{root}:{target}", f"/path/to/cloud-drive/live-streaming:{target}"
+        )
+    normalized = normalized.replace("/state/oci3-local-first/", "/state/")
+    normalized = normalized.replace(
+        "      - --archive-state-path\n      - /state/archive-state.json\n", ""
+    )
+    # Comments describe each host's different startup contract.
+    normalized = "\n".join(line for line in normalized.splitlines() if not line.lstrip().startswith("#"))
+    free = "\n".join(line for line in free.splitlines() if not line.lstrip().startswith("#"))
+    assert normalized == free

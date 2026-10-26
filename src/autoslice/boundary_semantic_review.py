@@ -12,10 +12,18 @@ fails closed on missing/ambiguous evidence.
 
 from __future__ import annotations
 
+from src.autoslice.structured_output import call_json
+
 import hashlib
 import json
 from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 from typing import Any
+
+from src.autoslice.completed_review_checkpoint import (
+    CompletedReviewCheckpoint,
+    CompletedReviewCheckpointError,
+)
 
 from src.autoslice.frozen_boundary_receipt import (
     FrozenBoundaryReview,
@@ -33,8 +41,24 @@ from src.autoslice.clip_context import MAX_PROMPT_CHARS
 SCHEMA_VERSION = "talk-boundary-semantic-review.v1"
 SEARCH_SCOPE_SCHEMA_VERSION = "talk-boundary-search-scope.v1"
 ENDPOINT_SELECTION_CONTRACT_VERSION = (
-    "talk-boundary-endpoint-selection-contract.v2"
+    "talk-boundary-endpoint-selection-contract.v3"
 )
+
+
+
+
+STORY_ENDING_SCHEMA_VERSION = "talk-boundary-story-ending-comparison.v1"
+STORY_ENDING_PROOF_KIND = "story_complete_ending"
+STORY_ENDING_PAYLOAD_FIELDS = (
+    "core_topic_complete",
+    "leaves_audience_hanging",
+    "compared_end_cue_indexes",
+    "next_question_start_cue_index",
+    "ending_comparison_reason",
+)
+# The one bounded same-spec retry raises the cap to this value (30-boundary);
+# below it a better same-topic continuation still takes that retry first.
+BOUNDED_RETRY_CAP_MS = 60_000
 MAX_FORWARD_MS = 30_000
 SEMANTIC_TAIL_TRIM_MAX_MS = 15_000
 CONTEXT_CUES_EACH_SIDE = 8
@@ -779,6 +803,137 @@ def _valid_sha256(value: object) -> bool:
     )
 
 
+def _strict_index(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def story_ending_verdict_blocks(review: Mapping[str, object]) -> bool:
+    """Explicit incomplete/hanging/crossing verdicts block either proof route.
+
+    Reconciliation and persisted-review consumers must preserve these negatives,
+    even when a source topic-change witness is otherwise valid.
+    """
+    record = review.get("story_ending_comparison")
+    if not isinstance(record, Mapping):
+        return False
+    selected = _strict_index(review.get("recommended_end_cue_index"))
+    next_question = _strict_index(record.get("next_question_start_cue_index"))
+    selected_end_ms = _strict_index(record.get("selected_end_ms"))
+    next_start_ms = _strict_index(record.get("next_question_start_ms"))
+    reasons = record.get("reason_codes")
+    return bool(
+        record.get("core_topic_complete") is False
+        or record.get("leaves_audience_hanging") is True
+        or (isinstance(reasons, list) and "BOUNDARY_ENDING_CROSSES_NEXT_QUESTION" in reasons)
+        or (selected is not None and next_question is not None and next_question <= selected)
+        or (selected_end_ms is not None and next_start_ms is not None
+            and next_start_ms < selected_end_ms)
+    )
+
+
+def story_ending_proof_is_valid(review: object) -> bool:
+    """Re-validate a review whose ending is proven by the BND-03 comparison.
+
+    Every consumer (source witness, correlated projection, package audit)
+    calls this one function instead of trusting ``status`` or a flag.  The
+    typed comparison record must be bound to the same review request, cue
+    grid and selected cue, and a final-delivery proof must inherit it from a
+    PASS source witness of the same kind.
+    """
+
+    if not isinstance(review, Mapping):
+        return False
+    record = review.get("story_ending_comparison")
+    if not isinstance(record, Mapping):
+        return False
+    scope = review.get("review_scope")
+    selected = _strict_index(review.get("recommended_end_cue_index"))
+    selected_end_ms = _strict_index(review.get("recommended_end_ms"))
+    compared = record.get("compared_end_cue_indexes")
+    next_question = record.get("next_question_start_cue_index")
+    if not (
+        review.get("status") == "PASS"
+        and review.get("ending_proof_kind") == STORY_ENDING_PROOF_KIND
+        and scope in {"source_full_window", "final_delivery"}
+        and review.get("syntax_complete") is True
+        and review.get("story_closed") is True
+        and review.get("content_anchor_covered") is True
+        and review.get("next_topic_witness_valid") is True
+        and record.get("schema_version") == STORY_ENDING_SCHEMA_VERSION
+        and record.get("status") == "PASS"
+        and record.get("reason_codes") == []
+        and record.get("review_scope") == scope
+        and record.get("request_sha256") == review.get("request_sha256")
+        and record.get("cue_grid_sha256") == review.get("cue_grid_sha256")
+        and _valid_sha256(record.get("request_sha256"))
+        and _valid_sha256(record.get("cue_grid_sha256"))
+        and selected is not None
+        and record.get("selected_end_cue_index") == selected
+        and selected_end_ms is not None
+        and _strict_index(record.get("selected_end_ms")) == selected_end_ms
+        and record.get("core_topic_complete") is True
+        and record.get("leaves_audience_hanging") is False
+        and isinstance(compared, list)
+        and bool(compared)
+        and all(_strict_index(value) is not None for value in compared)
+        and selected in compared
+        and (
+            (next_question is None and record.get("next_question_start_ms") is None)
+            or (
+                _strict_index(next_question) is not None
+                and next_question > selected
+                and _strict_index(record.get("next_question_start_ms")) is not None
+                and record["next_question_start_ms"] >= selected_end_ms
+            )
+        )
+        and isinstance(record.get("comparison_reason"), str)
+        and bool(str(record.get("comparison_reason")).strip())
+    ):
+        return False
+    if scope == "final_delivery":
+        witness = review.get("source_separation_witness")
+        return bool(
+            isinstance(witness, Mapping)
+            and witness.get("status") == "PASS"
+            and witness.get("ending_proof_kind") == STORY_ENDING_PROOF_KIND
+            and next_question is None
+        )
+    return True
+
+
+def _source_ending_proof_reasons(
+    review: Mapping[str, object],
+) -> tuple[list[str], str | None]:
+    """Either typed proof carries the ending to the delivery layer."""
+
+    if story_ending_verdict_blocks(review):
+        return ["SOURCE_STORY_ENDING_NEGATIVE_VERDICT"], None
+    if (
+        review.get("next_topic_separated") is True
+        and review.get("next_topic_witness_valid") is True
+    ):
+        return [], None
+    if story_ending_proof_is_valid(review):
+        return [], STORY_ENDING_PROOF_KIND
+    reasons: list[str] = []
+    if review.get("next_topic_separated") is not True:
+        reasons.append("SOURCE_NEXT_TOPIC_SEPARATION_NOT_PROVEN")
+    if review.get("next_topic_witness_valid") is not True:
+        reasons.append("SOURCE_NEXT_TOPIC_WITNESS_INVALID")
+    return reasons, None
+
+
+def source_ending_proof_kind(review: object) -> str | None:
+    """The witness ``ending_proof_kind`` a PASS source review must produce.
+
+    ``None`` means the legacy topic-change proof (no key in the witness).
+    """
+
+    if not isinstance(review, Mapping):
+        return None
+    return _source_ending_proof_reasons(review)[1]
+
+
 def _source_separation_witness(
     review: Mapping[str, object] | None,
     *,
@@ -793,10 +948,8 @@ def _source_separation_witness(
     reasons: list[str] = []
     if review.get("status") != "PASS":
         reasons.append("SOURCE_BOUNDARY_REVIEW_NOT_PASS")
-    if review.get("next_topic_separated") is not True:
-        reasons.append("SOURCE_NEXT_TOPIC_SEPARATION_NOT_PROVEN")
-    if review.get("next_topic_witness_valid") is not True:
-        reasons.append("SOURCE_NEXT_TOPIC_WITNESS_INVALID")
+    proof_reasons, ending_proof_kind = _source_ending_proof_reasons(review)
+    reasons.extend(proof_reasons)
     if not _valid_sha256(review.get("request_sha256")):
         reasons.append("SOURCE_BOUNDARY_REQUEST_BINDING_INVALID")
     if not _valid_sha256(review.get("cue_grid_sha256")):
@@ -820,7 +973,7 @@ def _source_separation_witness(
         or binding.get("final_end_ms") != source_final_end_ms
     ):
         reasons.append("SOURCE_DELIVERY_INTERVAL_MISMATCH")
-    return {
+    witness: dict[str, object] = {
         "schema_version": "talk-boundary-source-separation-witness.v1",
         "status": "BLOCK" if reasons else "PASS",
         "source_review_sha256": semantic_review_sha256(review),
@@ -831,6 +984,14 @@ def _source_separation_witness(
         "source_final_end_ms": source_final_end_ms,
         "reason_codes": reasons,
     }
+    # Only the story-ending proof adds a key: a topic-change witness keeps the
+    # exact legacy shape that frozen/replayed receipts already bind.
+    if ending_proof_kind is not None:
+        witness["ending_proof_kind"] = ending_proof_kind
+        witness["source_story_ending_comparison_sha256"] = _canonical_sha256(
+            dict(review["story_ending_comparison"])
+        )
+    return witness
 
 
 def _target_index(rows: Sequence[Mapping[str, object]], target_ms: int) -> int:
@@ -850,6 +1011,10 @@ def _build_prompt(request: Mapping[str, object]) -> str:
 2. story_closed：切片承诺的故事、回答或包袱是否已经落地，不能只因有停顿就算完成。
 3. next_topic_separated：推荐结尾之后是否已经进入下一条 SC、谢礼或另一个话题；VAD 连续说话不能证明仍是同一话题。
 
+另外必须做结尾候选比较，并回答两个布尔：
+4. core_topic_complete：selection_hook 承诺的核心话题/故事，在推荐结尾处是否已经说完。
+5. leaves_audience_hanging：推荐结尾处是否还吊人胃口——问题问了没答、包袱没抖、故事讲到一半、刚抛出的追问还没有回应，都算 true。
+
 约束：
 - 只可从给出的 cue_index 中选 recommended_end_cue_index；不得改写字幕。
 - evidence_cue_indexes 的每个索引也只可从绑定请求 JSON 的 cues[*].cue_index 中选择；structured_context 和 candidate_context 只帮助理解语义，绝不可从中引用 cue 索引。
@@ -858,11 +1023,14 @@ def _build_prompt(request: Mapping[str, object]) -> str:
 - 若 next_topic_separated=true，evidence_cue_indexes 必须包含推荐 cue 之后、证明已进入下一话题/SC/谢礼的 cue；缺了会被判 BOUNDARY_NEXT_TOPIC_WITNESS_MISSING。
 - review_scope=source_full_window 时，选点前必须把 recommendation_cue_indexes 全部比较完，并逐项检查 next_topic_witness_cue_indexes；后者是 endpoint 上限之外专门保留的换题见证，不是可以跳过的附录。next_topic_separated 不要求紧邻推荐 cue 的下一 cue 就换题：任何绑定请求中可见、位于推荐 cue 之后的明确新 SC、谢礼、另一话题或直播阶段切换都可作证，但必须在 evidence_cue_indexes 中实际引用。
 - 可以从目标 cue 向后寻找，最多 {request["max_forward_ms"]}ms；exact_source_pin 的该值为 0。
-- “目标内容已经讲完”不等于“此处已经形成安全切点”。若紧接目标的同话题提问、回应或收尾互动仍在继续，必须把 endpoint 向后推进到明确换题见证之前、仍在 recommendation_cue_indexes 内的**最晚一个完整收束 cue**；不得把问句留在片尾，也不得把回应切到片外。只有目标之后第一段可见内容已经明确属于另一话题时，目标才可直接充当收束点。
-- “进入尾声”等字面词不能由确定性关键词自动签发 PASS；仍须结合绑定 cue 的上下文判断它是否真是推荐 endpoint 之后的阶段/话题切换。source_full_window 内没有可见的 post-end 换题见证时，next_topic_separated 必须为 false，即使 syntax/story 已经完整；final_delivery 只可使用下一条所述的 bound source witness 例外。
-- 若请求带 PASS 的 terminal source separation witness，说明 source full-window 已证明 cut 后进入下一话题；此时 delivery 最后一条 cue 可用该 witness 证明 next_topic_separated，但 syntax/story 仍须按当前最终字幕重新判断。
+- “目标内容已经讲完”不等于“此处已经形成安全切点”。若紧接目标的同话题提问、回应或收尾互动仍在继续，必须把 endpoint 向后推进到这段互动收束的完整 cue（仍在 recommendation_cue_indexes 内、且不越过下一个新问题起点）；不得把问句留在片尾，也不得把回应切到片外。
+- 结尾候选比较（source_full_window）：先在 recommendation_cue_indexes 里找出“句法完整且核心话题已说完”的候选结尾，逐个比较“截在这里是不是一个好故事”和“延续到下一个候选是否更好”，把比较过的候选写进 compared_end_cue_indexes（必须包含 recommended_end_cue_index；存在多个完整结尾时应比较它们；只有一个完整结尾时可只列它并解释为何不再延续，不得把推荐范围内的每条 cue 都当成完整结尾；也可以写入范围外、你判断更好的那个结尾），理由写进 ending_comparison_reason。判据：核心话题已说完、没有悬念或没讲完的问答，就可以在这里结尾，不需要换话题见证；还吊人胃口（问题问了没答、包袱没抖、故事讲到一半），就必须延续到话题结束；延续部分只是同话题的收束总结、感慨或落地时，优先包含它，选到总结末尾，故事更完整干净的直接占优；一般只要把核心话题说完就行，不要为了等换题点而越过它。
+- 下一个新问题、新故事、新 SC 或谢礼开始的那条 cue 就是自然的换题点：把它写进 next_question_start_cue_index（看不到就写 null），结尾不能越过它。即使仍属同一个大话题（例如都在聊学校），观众新提出、主播开始回答的另一个问题也算新问题，不是“同话题继续”。
+- same_topic_continues_after_target=true 只表示：推荐结尾之后还有属于本故事、包含进来更完整的同话题内容（收束总结、回答、包袱或互动回应），而它超出了 recommendation_cue_indexes；若它在范围内，应直接选到它的末尾。新问题不算同话题继续。此时须在 evidence_cue_indexes 引用这段延续开头的 cue。
+- “进入尾声”等字面词不能由确定性关键词自动签发 PASS；仍须结合绑定 cue 的上下文判断它是否真是推荐 endpoint 之后的阶段/话题切换。source_full_window 内没有可见的 post-end 换题见证时，next_topic_separated 必须如实为 false，即使 syntax/story 已经完整；这时能否结尾由上面的结尾候选比较决定。final_delivery 只可使用下一条所述的 bound source witness。
+- 若请求带 PASS 的 terminal source separation witness：其中没有 ending_proof_kind 时，说明 source full-window 已证明 cut 后进入下一话题，此时 delivery 最后一条 cue 可用该 witness 证明 next_topic_separated；ending_proof_kind=story_complete_ending 时，说明 source full-window 经结尾候选比较已确认核心话题说完、不吊胃口且结尾没有越过下一个新问题，此时 next_topic_separated 给 false，recommended_end_cue_index 与 compared_end_cue_indexes 都只填 delivery 最后一条 cue，next_question_start_cue_index 给 null。两种情况下 syntax/story/core_topic_complete/leaves_audience_hanging 仍须按当前最终字幕重新判断。
 - 结构化弹幕/SC 可证明话题触发或切换；长期记忆只能帮助理解指代，不能单独证明边界。
-- 任一项无法证明就给 false，不要为了产片凑结论。
+- 正向事实无法证明就给 false；无法排除吊胃口时 leaves_audience_hanging 必须给 true。不要为了产片凑结论。
 
 绑定请求 JSON：
 {json.dumps(request, ensure_ascii=False, sort_keys=True)}
@@ -870,7 +1038,10 @@ def _build_prompt(request: Mapping[str, object]) -> str:
 只输出 JSON：
 {{"syntax_complete":bool,"story_closed":bool,"next_topic_separated":bool,
 "content_anchor_covered":bool,
+"core_topic_complete":bool,"leaves_audience_hanging":bool,
 "recommended_end_cue_index":整数或null,"evidence_cue_indexes":[整数],
+"compared_end_cue_indexes":[整数],"next_question_start_cue_index":整数或null,
+"ending_comparison_reason":"一句中文比较理由",
 "same_topic_continues_after_target":bool,"needs_more_context":bool,
 "reason_codes":[字符串],"summary":"一句中文结论"}}
 """
@@ -930,6 +1101,7 @@ def _semantic_payload_for_request(
     replay_audit: dict[str, object] | None,
     llm_call: Callable[[str], str],
     extract_json: Callable[[str], Any],
+    completed_review: CompletedReviewCheckpoint | None = None,
 ) -> object:
     frozen_payload = frozen_review_payload(
         frozen_review,
@@ -942,7 +1114,14 @@ def _semantic_payload_for_request(
             replay_audit.update(carry)
         return payload
     try:
-        return extract_json(llm_call(_build_prompt(request)))
+        raw = (completed_review.response(lambda prompt: call_json(llm_call, prompt)) if completed_review is not None
+               # This producer deliberately declined the bound checkpoint
+               # (unknown source/framing). Generic raw reuse cannot override
+               # that admission guard or turn it into producer authority.
+               else call_json(llm_call, _build_prompt(request), reuse=False))
+        return extract_json(raw)
+    except CompletedReviewCheckpointError as exc:
+        raise BoundarySemanticReviewError(str(exc)) from exc
     except Exception as exc:
         raise BoundarySemanticReviewError(
             f"BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:{type(exc).__name__}"
@@ -1035,8 +1214,12 @@ def _next_topic_witness_assessment(
                     for index in evidence_indexes
                 )
                 or (
+                    # Only a topic-change source witness can stand in for the
+                    # post-end cue a delivery grid no longer contains; a
+                    # story-ending witness proves the ending, not a transition.
                     isinstance(source_separation_witness, Mapping)
                     and source_separation_witness.get("status") == "PASS"
+                    and "ending_proof_kind" not in source_separation_witness
                     and recommended_position == len(rows) - 1
                 )
             )
@@ -1061,6 +1244,448 @@ def _next_topic_witness_assessment(
     return valid, selected_projection
 
 
+def _story_ending_comparison(
+    *,
+    payload: Mapping[str, object],
+    review_scope: str,
+    request_sha256: str,
+    cue_grid_sha256_value: str,
+    scope: Mapping[str, object],
+    rows: Sequence[Mapping[str, object]],
+    visible_indexes: set[int],
+    recommended_index: int | None,
+    recommended: Mapping[str, object] | None,
+    recommendation_valid: bool,
+    target_end_ms: int,
+    booleans: Mapping[str, bool],
+    content_anchor_covered: bool,
+    evidence_valid: bool,
+    selector_pass: bool,
+    next_topic_witness_valid: bool,
+    same_topic_continues_after_target: bool,
+    source_separation_witness: Mapping[str, object] | None,
+) -> tuple[dict[str, object] | None, list[str]]:
+    """BND-03 ending comparison: a good-story ending needs no topic witness.
+
+    Returns the typed record (``None`` for a legacy reply without any of the
+    comparison fields, which keeps the old topic-witness-only behaviour) and
+    the reasons that block *every* ending route: a reviewer who says the
+    core topic is not told, the audience is left hanging, or whose ending
+    crosses the next new question cannot PASS through either proof.
+    """
+
+    if not any(field in payload for field in STORY_ENDING_PAYLOAD_FIELDS):
+        return None, []
+    reasons: list[str] = []
+    blocking: list[str] = []
+    if not all(field in payload for field in STORY_ENDING_PAYLOAD_FIELDS):
+        reasons.append("STORY_ENDING_FIELDS_MISSING")
+    core = payload.get("core_topic_complete")
+    hanging = payload.get("leaves_audience_hanging")
+    if not isinstance(core, bool):
+        reasons.append("STORY_ENDING_CORE_TOPIC_COMPLETE_INVALID")
+    elif not core:
+        blocking.append("STORY_ENDING_CORE_TOPIC_NOT_COMPLETE")
+    if not isinstance(hanging, bool):
+        reasons.append("STORY_ENDING_LEAVES_AUDIENCE_HANGING_INVALID")
+    elif hanging:
+        blocking.append("STORY_ENDING_LEAVES_AUDIENCE_HANGING")
+    row_positions = {
+        int(row["cue_index"]): position for position, row in enumerate(rows)
+    }
+    compared_raw = payload.get("compared_end_cue_indexes")
+    compared = (
+        sorted({value for value in compared_raw if _strict_index(value) is not None})
+        if isinstance(compared_raw, list)
+        else []
+    )
+    if (
+        not isinstance(compared_raw, list)
+        or not compared
+        or len(compared) != len(compared_raw)
+        or any(index not in visible_indexes for index in compared)
+        or recommended_index not in compared
+    ):
+        reasons.append("STORY_ENDING_COMPARISON_INVALID")
+    next_question_raw = payload.get("next_question_start_cue_index")
+    next_question = _strict_index(next_question_raw)
+    next_start_ms = (
+        int(rows[row_positions[next_question]]["start_ms"])
+        if next_question in visible_indexes else None
+    )
+    if next_question_raw is not None and (
+        next_question is None or next_question not in visible_indexes
+    ):
+        reasons.append("STORY_ENDING_NEXT_QUESTION_INVALID")
+    elif (
+        next_question is not None
+        and recommended_index is not None
+        and recommended_index in row_positions
+        and (
+            row_positions[next_question] <= row_positions[recommended_index]
+            or (recommended is not None and next_start_ms is not None
+                and int(recommended["end_ms"]) > next_start_ms)
+        )
+    ):
+        # the next new question is the natural topic change;
+        # the ending may not cross it on any route.
+        blocking.append("BOUNDARY_ENDING_CROSSES_NEXT_QUESTION")
+    comparison_reason = payload.get("ending_comparison_reason")
+    if not isinstance(comparison_reason, str) or not comparison_reason.strip():
+        reasons.append("STORY_ENDING_REASON_MISSING")
+    if scope.get("boundary_end_mode") == "exact_source_pin":
+        reasons.append("STORY_ENDING_EXACT_SOURCE_PIN_NOT_ELIGIBLE")
+    if (
+        not recommendation_valid
+        or recommended is None
+        or int(recommended["end_ms"]) < target_end_ms
+    ):
+        # The bounded backward trim keeps its own later-cues-are-new-topic
+        # proof; the story ending only decides how far forward to go.
+        reasons.append("STORY_ENDING_RECOMMENDATION_NOT_ELIGIBLE")
+    if not (
+        selector_pass
+        and booleans["syntax_complete"]
+        and booleans["story_closed"]
+        and content_anchor_covered
+        and evidence_valid
+    ):
+        reasons.append("STORY_ENDING_FOUR_PROPOSITION_BASE_NOT_PROVEN")
+    if not next_topic_witness_valid:
+        reasons.append("STORY_ENDING_UNPROVEN_TRANSITION_CLAIM")
+    retry_remaining = int(scope["repair_cap_ms"]) < BOUNDED_RETRY_CAP_MS
+    if review_scope == "source_full_window":
+        if same_topic_continues_after_target and retry_remaining:
+            # BND-03: a same-topic wrap-up that is better included wins; the
+            # one bounded retry looks at it before any ending is accepted.
+            reasons.append("STORY_ENDING_BETTER_CONTINUATION_PENDING_RETRY")
+    else:
+        recommended_position = (
+            row_positions.get(recommended_index)
+            if recommended_index is not None
+            else None
+        )
+        if not (
+            isinstance(source_separation_witness, Mapping)
+            and source_separation_witness.get("status") == "PASS"
+            and source_separation_witness.get("ending_proof_kind")
+            == STORY_ENDING_PROOF_KIND
+        ):
+            reasons.append("STORY_ENDING_SOURCE_WITNESS_NOT_STORY_PROOF")
+        if recommended_position != len(rows) - 1:
+            reasons.append("STORY_ENDING_DELIVERY_NOT_LAST_CUE")
+        if next_question is not None:
+            reasons.append("STORY_ENDING_NEXT_QUESTION_INVALID")
+    all_reasons = sorted(set(reasons + blocking))
+    record: dict[str, object] = {
+        "schema_version": STORY_ENDING_SCHEMA_VERSION,
+        "status": "BLOCK" if all_reasons else "PASS",
+        "review_scope": review_scope,
+        "request_sha256": request_sha256,
+        "cue_grid_sha256": cue_grid_sha256_value,
+        "selected_end_cue_index": recommended_index,
+        "selected_end_ms": int(recommended["end_ms"]) if recommended is not None else None,
+        "compared_end_cue_indexes": compared,
+        "core_topic_complete": core if isinstance(core, bool) else None,
+        "leaves_audience_hanging": (
+            hanging if isinstance(hanging, bool) else None
+        ),
+        "next_question_start_cue_index": next_question,
+        "next_question_start_ms": next_start_ms,
+        "comparison_reason": (
+            comparison_reason.strip()
+            if isinstance(comparison_reason, str)
+            else ""
+        ),
+        "same_topic_continues_after_selected": bool(
+            same_topic_continues_after_target
+        ),
+        "bounded_retry_remaining": retry_remaining,
+        "reason_codes": all_reasons,
+    }
+    return record, blocking
+
+
+def _interpret_semantic_reply(
+    *,
+    payload: object,
+    rows: Sequence[Mapping[str, object]],
+    visible_rows: Sequence[Mapping[str, object]],
+    target_pos: int,
+    target_ms: int,
+    candidate_id: str,
+    max_forward_ms: int,
+    scope: Mapping[str, object],
+    request: Mapping[str, object],
+    request_sha256: str,
+    current_cue_grid_sha256: str,
+    recommendation_indexes: Sequence[int],
+    recommendation_effective_end_ms: Mapping[int, int],
+    recommendation_relaxations: Sequence[Mapping[str, object]],
+    source_separation_witness: Mapping[str, object] | None,
+    terminal_source_review: Mapping[str, object] | None,
+    completed_review: CompletedReviewCheckpoint | None,
+    replay_audit: dict[str, object] | None,
+) -> dict[str, object]:
+    """Interpret and bind the reply; request construction stays in the entry."""
+
+    if not isinstance(payload, Mapping):
+        raise BoundarySemanticReviewError("BOUNDARY_SEMANTIC_REVIEW_NOT_OBJECT")
+
+    booleans: dict[str, bool] = {}
+    for field in ("syntax_complete", "story_closed", "next_topic_separated"):
+        value = payload.get(field)
+        if not isinstance(value, bool):
+            raise BoundarySemanticReviewError(
+                f"BOUNDARY_SEMANTIC_REVIEW_INVALID_{field.upper()}"
+            )
+        booleans[field] = value
+    recommended_index, recommendation_value_state = (
+        _parse_recommended_cue_index(payload)
+    )
+    by_index = {int(row["cue_index"]): row for row in rows}
+    recommended = by_index.get(recommended_index) if recommended_index is not None else None
+    target_end = int(rows[target_pos]["end_ms"])
+    recommendation_valid = bool(
+        recommended is not None
+        and recommended_index in recommendation_indexes
+        and recommended_index in recommendation_effective_end_ms
+    )
+    evidence_raw = payload.get("evidence_cue_indexes")
+    evidence_indexes = sorted(
+        {
+            value
+            for value in evidence_raw if isinstance(value, int) and not isinstance(value, bool)
+        }
+    ) if isinstance(evidence_raw, list) else []
+    visible_indexes = {
+        int(row["cue_index"]) for row in visible_rows
+    }
+    evidence_valid = bool(evidence_indexes) and all(
+        index in visible_indexes for index in evidence_indexes
+    )
+    selector_witness = request["selector_story_witness"]
+    selector_pass = (
+        isinstance(selector_witness, Mapping)
+        and selector_witness.get("status") == "PASS"
+    )
+    post_target_evidence = [
+        index
+        for index in evidence_indexes
+        if index in by_index
+        and int(by_index[index]["end_ms"]) > target_end
+    ]
+    next_topic_witness_valid, selected_projection = (
+        _next_topic_witness_assessment(
+            booleans=booleans,
+            recommendation_valid=recommendation_valid,
+            recommended_index=recommended_index,
+            rows=rows,
+            evidence_indexes=evidence_indexes,
+            source_separation_witness=source_separation_witness,
+            recommendation_relaxations=recommendation_relaxations,
+        )
+    )
+    same_topic_reported = payload.get(
+        "same_topic_continues_after_target"
+    ) is True
+    # 30-boundary: the first-round cap is 30 s; only the one bounded same-spec
+    # retry may raise it to 60 s. Eligibility is the evidence, not how a
+    # reviewer combines story_closed / needs_more_context wording: after the
+    # endpoint (the valid in-window recommendation, else the target) the
+    # reviewer cites same-topic continuation that starts inside the window,
+    # and no topic change inside the window is proven. While that retry is
+    # still available the named cue is not a PASS endpoint (BND-03: the more
+    # complete ending wins); a cue named outside the window anchors nothing.
+    window_end_ms = int(scope["max_recommended_end_ms"])
+    continuation_after_ms = (
+        max(target_end, int(recommended["end_ms"]))
+        if recommendation_valid and source_separation_witness is None
+        else target_end
+    )
+    continuation_evidence = [
+        index for index in post_target_evidence
+        if int(by_index[index]["end_ms"]) > continuation_after_ms
+        and int(by_index[index]["start_ms"]) < window_end_ms
+    ]
+    topic_change_proven = bool(
+        booleans["next_topic_separated"] and next_topic_witness_valid
+    )
+    same_topic_continues_after_target = bool(
+        same_topic_reported
+        and not topic_change_proven
+        and (recommended is None or source_separation_witness is None)
+        and continuation_evidence
+        and selector_pass
+    )
+    content_anchor_covered = _content_anchor_coverage_is_proven(
+        payload=payload,
+        recommendation_valid=recommendation_valid,
+        recommended=recommended,
+        target_end_ms=target_end,
+    )
+    review_scope = (
+        "final_delivery"
+        if source_separation_witness is not None
+        else "source_full_window"
+    )
+    story_ending, ending_blockers = _story_ending_comparison(
+        payload=payload,
+        review_scope=review_scope,
+        request_sha256=request_sha256,
+        cue_grid_sha256_value=current_cue_grid_sha256,
+        scope=scope,
+        rows=rows,
+        visible_indexes=visible_indexes,
+        recommended_index=recommended_index,
+        recommended=recommended,
+        recommendation_valid=recommendation_valid,
+        target_end_ms=target_end,
+        booleans=booleans,
+        content_anchor_covered=content_anchor_covered,
+        evidence_valid=evidence_valid,
+        selector_pass=selector_pass,
+        next_topic_witness_valid=next_topic_witness_valid,
+        same_topic_continues_after_target=same_topic_continues_after_target,
+        source_separation_witness=source_separation_witness,
+    )
+    topic_witness_pass = _semantic_review_passes(
+        selector_pass=selector_pass,
+        booleans=booleans,
+        recommendation_valid=recommendation_valid,
+        content_anchor_covered=content_anchor_covered,
+        evidence_valid=evidence_valid,
+        next_topic_witness_valid=next_topic_witness_valid,
+    )
+    story_ending_pass = bool(
+        story_ending is not None and story_ending["status"] == "PASS"
+    )
+    # Four propositions, BND-03 form: proposition 4 holds by a proven topic
+    # change OR by the story-ending comparison; a hanging/incomplete/crossing
+    # verdict blocks both.  The stronger topic witness is preferred as basis.
+    status = (
+        "PASS"
+        if (topic_witness_pass or story_ending_pass) and not ending_blockers
+        else "BLOCK"
+    )
+    ending_proof_kind = (
+        STORY_ENDING_PROOF_KIND
+        if status == "PASS" and not topic_witness_pass
+        else None
+    )
+    needs_more_context = bool(
+        same_topic_continues_after_target and status != "PASS"
+    )
+    reason_codes_raw = payload.get("reason_codes")
+    reason_codes = [
+        str(value)
+        for value in reason_codes_raw
+        if isinstance(value, str) and value.strip()
+    ] if isinstance(reason_codes_raw, list) else []
+    if not selector_pass:
+        reason_codes.append("SELECTOR_STORY_WITNESS_INSUFFICIENT")
+    if not recommendation_valid:
+        if recommendation_value_state == "MISSING":
+            reason_codes.append("BOUNDARY_RECOMMENDATION_MISSING")
+        elif recommendation_value_state == "INVALID":
+            reason_codes.append("BOUNDARY_RECOMMENDATION_INVALID")
+        elif recommended is None:
+            reason_codes.append("BOUNDARY_RECOMMENDATION_UNKNOWN_CUE")
+        else:
+            reason_codes.append("BOUNDARY_RECOMMENDATION_OUT_OF_SCOPE")
+    if not evidence_valid:
+        reason_codes.append("BOUNDARY_EVIDENCE_CUES_INVALID")
+    if not next_topic_witness_valid:
+        reason_codes.append("BOUNDARY_NEXT_TOPIC_WITNESS_MISSING")
+        if selected_projection is not None:
+            reason_codes.append(
+                "BOUNDARY_REVIEWED_PROJECTION_WITNESS_MISSING"
+            )
+    if not content_anchor_covered:
+        reason_codes.append("CONTENT_ANCHOR_COVERED_NOT_PROVEN")
+    if needs_more_context:
+        reason_codes.append("BOUNDARY_CONTEXT_EXHAUSTED")
+    reason_codes.extend(ending_blockers)
+    if (
+        story_ending is not None
+        and status != "PASS"
+        and not topic_witness_pass
+    ):
+        reason_codes.extend(str(code) for code in story_ending["reason_codes"])
+    for field, passed in booleans.items():
+        if not passed and not (
+            field == "next_topic_separated" and ending_proof_kind is not None
+        ):
+            reason_codes.append(field.upper() + "_NOT_PROVEN")
+    if ending_proof_kind is not None:
+        reason_codes.append("STORY_COMPLETE_ENDING_WITHOUT_TOPIC_WITNESS")
+
+    # Cache complete content observations, including negative verdicts. Missing
+    # fields/evidence and parser/provider failures remain eligible for a retry.
+    complete = bool(
+        isinstance(payload.get("content_anchor_covered"), bool)
+        and "recommended_end_cue_index" in payload
+        and (payload["recommended_end_cue_index"] is None or recommendation_valid)
+        and evidence_valid
+        and isinstance(reason_codes_raw, list)
+        and all(isinstance(value, str) for value in reason_codes_raw)
+        and isinstance(payload.get("summary"), str) and payload["summary"].strip()
+    )
+    if complete and completed_review is not None and completed_review.raw is not None:
+        completed_review.save()
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "status": status,
+        "review_scope": (
+            "final_delivery"
+            if source_separation_witness is not None
+            else "source_full_window"
+        ),
+        "candidate_id": candidate_id,
+        "request_sha256": request_sha256,
+        "cue_grid_sha256": current_cue_grid_sha256,
+        "target_ms": target_ms,
+        "target_cue_index": rows[target_pos]["cue_index"],
+        "max_forward_ms": max_forward_ms,
+        "boundary_search_scope": scope,
+        "recommended_end_cue_index": recommended_index,
+        "recommended_end_ms": (
+            int(recommendation_effective_end_ms[recommended_index])
+            if recommendation_valid and recommended is not None
+            else None
+        ),
+        "recommendation_relaxations": recommendation_relaxations,
+        **booleans,
+        "content_anchor_covered": content_anchor_covered,
+        "selector_story_witness": selector_witness,
+        "reviewer_independence_group": SEMANTIC_LLM_INDEPENDENCE_GROUP,
+        "semantic_independence_groups": [SEMANTIC_LLM_INDEPENDENCE_GROUP],
+        "independent_semantic_vote_count": 1,
+        "correlated_reviewer_disclosure": True,
+        "evidence_cue_indexes": evidence_indexes,
+        "next_topic_witness_valid": next_topic_witness_valid,
+        "source_separation_witness": source_separation_witness,
+        # Present only for a reply under the v3 comparison contract, so a
+        # legacy/frozen reply keeps its exact historical review shape.
+        **({"story_ending_comparison": story_ending}
+           if story_ending is not None else {}),
+        **({"ending_proof_kind": ending_proof_kind}
+           if ending_proof_kind is not None else {}),
+        **({'source_boundary_review': json.loads(json.dumps(terminal_source_review))}
+           if terminal_source_review is not None else {}),
+        **_frozen_decision_binding(replay_audit),
+        "same_topic_continues_after_target": (
+            same_topic_continues_after_target
+        ),
+        "needs_more_context": needs_more_context,
+        "retry_scope": (
+            "same_topic_continues" if needs_more_context else "none"
+        ),
+        "reason_codes": sorted(set(reason_codes)),
+        "summary": str(payload.get("summary") or "").strip(),
+    }
+
+
 def review_talk_boundary_semantics(
     *,
     cues: Sequence[object],
@@ -1079,6 +1704,7 @@ def review_talk_boundary_semantics(
     boundary_search_scope: Mapping[str, object] | None = None,
     frozen_review: FrozenBoundaryReview | None = None,
     replay_audit: dict[str, object] | None = None,
+    source_full_window_end_ms: int | None = None,
 ) -> dict[str, object]:
     """Return a validated, cue-grid-bound semantic boundary decision."""
 
@@ -1143,6 +1769,17 @@ def review_talk_boundary_semantics(
         len(rows),
         recommendation_hi + NEXT_TOPIC_WITNESS_CUES,
     )
+    if source_full_window_end_ms is not None:
+        if (type(source_full_window_end_ms) is not int
+                or source_full_window_end_ms != scope["required_local_source_context_end_ms"]
+                or source_final_end_ms is not None):
+            raise BoundarySemanticReviewError("BOUNDARY_SOURCE_WITNESS_CONTEXT_INVALID")
+        # An admitted physical reserve must be visible, even when more than
+        # NEXT_TOPIC_WITNESS_CUES rows separate it from the endpoint ceiling.
+        reserve_positions = [i for i, row in enumerate(rows)
+                             if int(row["start_ms"]) < source_full_window_end_ms]
+        if reserve_positions:
+            witness_hi = max(witness_hi, reserve_positions[-1] + 1)
     visible_rows = rows[lo:witness_hi]
     visible_chars = sum(len(str(row["text"])) for row in visible_rows)
     if (
@@ -1179,6 +1816,12 @@ def review_talk_boundary_semantics(
     )
     request_sha256 = _canonical_sha256(request)
     current_cue_grid_sha256 = cue_grid_sha256(cues)
+    completed_review = CompletedReviewCheckpoint.for_call(
+        stage="boundary-semantic-review", prompt=_build_prompt(request), llm_call=llm_call,
+        inputs={"request": request, "cue_grid_sha256": current_cue_grid_sha256,
+                "producer_binding": getattr(llm_call, "completed_review_binding", None)},
+        parser_path=Path(__file__),
+    )
     payload = _semantic_payload_for_request(
         request,
         current_cue_grid_sha256,
@@ -1186,166 +1829,25 @@ def review_talk_boundary_semantics(
         replay_audit=replay_audit,
         llm_call=llm_call,
         extract_json=extract_json,
+        completed_review=completed_review,
     )
-    if not isinstance(payload, Mapping):
-        raise BoundarySemanticReviewError("BOUNDARY_SEMANTIC_REVIEW_NOT_OBJECT")
-
-    booleans: dict[str, bool] = {}
-    for field in ("syntax_complete", "story_closed", "next_topic_separated"):
-        value = payload.get(field)
-        if not isinstance(value, bool):
-            raise BoundarySemanticReviewError(
-                f"BOUNDARY_SEMANTIC_REVIEW_INVALID_{field.upper()}"
-            )
-        booleans[field] = value
-    recommended_index, recommendation_value_state = (
-        _parse_recommended_cue_index(payload)
-    )
-    by_index = {int(row["cue_index"]): row for row in rows}
-    recommended = by_index.get(recommended_index) if recommended_index is not None else None
-    target_end = int(rows[target_pos]["end_ms"])
-    recommendation_valid = bool(
-        recommended is not None
-        and recommended_index in recommendation_indexes
-        and recommended_index in recommendation_effective_end_ms
-    )
-    evidence_raw = payload.get("evidence_cue_indexes")
-    evidence_indexes = sorted(
-        {
-            value
-            for value in evidence_raw if isinstance(value, int) and not isinstance(value, bool)
-        }
-    ) if isinstance(evidence_raw, list) else []
-    visible_indexes = {
-        int(row["cue_index"]) for row in visible_rows
-    }
-    evidence_valid = bool(evidence_indexes) and all(
-        index in visible_indexes for index in evidence_indexes
-    )
-    selector_witness = request["selector_story_witness"]
-    selector_pass = (
-        isinstance(selector_witness, Mapping)
-        and selector_witness.get("status") == "PASS"
-    )
-    post_target_evidence = [
-        index
-        for index in evidence_indexes
-        if index in by_index
-        and int(by_index[index]["end_ms"]) > target_end
-    ]
-    next_topic_witness_valid, selected_projection = (
-        _next_topic_witness_assessment(
-            booleans=booleans,
-            recommendation_valid=recommendation_valid,
-            recommended_index=recommended_index,
-            rows=rows,
-            evidence_indexes=evidence_indexes,
-            source_separation_witness=source_separation_witness,
-            recommendation_relaxations=recommendation_relaxations,
-        )
-    )
-    same_topic_reported = payload.get(
-        "same_topic_continues_after_target"
-    ) is True
-    more_context_reported = payload.get("needs_more_context") is True
-    same_topic_continues_after_target = bool(
-        same_topic_reported
-        and not booleans["story_closed"]
-        and not booleans["next_topic_separated"]
-        and recommended is None
-        and post_target_evidence
-        and selector_pass
-    )
-    needs_more_context = bool(
-        more_context_reported and same_topic_continues_after_target
-    )
-    content_anchor_covered = _content_anchor_coverage_is_proven(
+    return _interpret_semantic_reply(
         payload=payload,
-        recommendation_valid=recommendation_valid,
-        recommended=recommended,
-        target_end_ms=target_end,
+        rows=rows,
+        visible_rows=visible_rows,
+        target_pos=target_pos,
+        target_ms=target_ms,
+        candidate_id=candidate_id,
+        max_forward_ms=max_forward_ms,
+        scope=scope,
+        request=request,
+        request_sha256=request_sha256,
+        current_cue_grid_sha256=current_cue_grid_sha256,
+        recommendation_indexes=recommendation_indexes,
+        recommendation_effective_end_ms=recommendation_effective_end_ms,
+        recommendation_relaxations=recommendation_relaxations,
+        source_separation_witness=source_separation_witness,
+        terminal_source_review=terminal_source_review,
+        completed_review=completed_review,
+        replay_audit=replay_audit,
     )
-    status = "PASS" if _semantic_review_passes(
-        selector_pass=selector_pass,
-        booleans=booleans,
-        recommendation_valid=recommendation_valid,
-        content_anchor_covered=content_anchor_covered,
-        evidence_valid=evidence_valid,
-        next_topic_witness_valid=next_topic_witness_valid,
-    ) else "BLOCK"
-    reason_codes_raw = payload.get("reason_codes")
-    reason_codes = [
-        str(value)
-        for value in reason_codes_raw
-        if isinstance(value, str) and value.strip()
-    ] if isinstance(reason_codes_raw, list) else []
-    if not selector_pass:
-        reason_codes.append("SELECTOR_STORY_WITNESS_INSUFFICIENT")
-    if not recommendation_valid:
-        if recommendation_value_state == "MISSING":
-            reason_codes.append("BOUNDARY_RECOMMENDATION_MISSING")
-        elif recommendation_value_state == "INVALID":
-            reason_codes.append("BOUNDARY_RECOMMENDATION_INVALID")
-        elif recommended is None:
-            reason_codes.append("BOUNDARY_RECOMMENDATION_UNKNOWN_CUE")
-        else:
-            reason_codes.append("BOUNDARY_RECOMMENDATION_OUT_OF_SCOPE")
-    if not evidence_valid:
-        reason_codes.append("BOUNDARY_EVIDENCE_CUES_INVALID")
-    if not next_topic_witness_valid:
-        reason_codes.append("BOUNDARY_NEXT_TOPIC_WITNESS_MISSING")
-        if selected_projection is not None:
-            reason_codes.append(
-                "BOUNDARY_REVIEWED_PROJECTION_WITNESS_MISSING"
-            )
-    if not content_anchor_covered:
-        reason_codes.append("CONTENT_ANCHOR_COVERED_NOT_PROVEN")
-    if needs_more_context:
-        reason_codes.append("BOUNDARY_CONTEXT_EXHAUSTED")
-    for field, passed in booleans.items():
-        if not passed:
-            reason_codes.append(field.upper() + "_NOT_PROVEN")
-
-    return {
-        "schema_version": SCHEMA_VERSION,
-        "status": status,
-        "review_scope": (
-            "final_delivery"
-            if source_separation_witness is not None
-            else "source_full_window"
-        ),
-        "candidate_id": candidate_id,
-        "request_sha256": request_sha256,
-        "cue_grid_sha256": current_cue_grid_sha256,
-        "target_ms": target_ms,
-        "target_cue_index": rows[target_pos]["cue_index"],
-        "max_forward_ms": max_forward_ms,
-        "boundary_search_scope": scope,
-        "recommended_end_cue_index": recommended_index,
-        "recommended_end_ms": (
-            int(recommendation_effective_end_ms[recommended_index])
-            if recommendation_valid and recommended is not None
-            else None
-        ),
-        "recommendation_relaxations": recommendation_relaxations,
-        **booleans,
-        "content_anchor_covered": content_anchor_covered,
-        "selector_story_witness": selector_witness,
-        "reviewer_independence_group": SEMANTIC_LLM_INDEPENDENCE_GROUP,
-        "semantic_independence_groups": [SEMANTIC_LLM_INDEPENDENCE_GROUP],
-        "independent_semantic_vote_count": 1,
-        "correlated_reviewer_disclosure": True,
-        "evidence_cue_indexes": evidence_indexes,
-        "next_topic_witness_valid": next_topic_witness_valid,
-        "source_separation_witness": source_separation_witness,
-        **_frozen_decision_binding(replay_audit),
-        "same_topic_continues_after_target": (
-            same_topic_continues_after_target
-        ),
-        "needs_more_context": needs_more_context,
-        "retry_scope": (
-            "same_topic_continues" if needs_more_context else "none"
-        ),
-        "reason_codes": sorted(set(reason_codes)),
-        "summary": str(payload.get("summary") or "").strip(),
-    }

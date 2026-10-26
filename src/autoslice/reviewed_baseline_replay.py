@@ -18,6 +18,13 @@ from copy import deepcopy
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
+
+from src.autoslice.cpa_model_ladder import TOP_CPA_MODEL, cpa_call_timeout_seconds
+from src.autoslice.deployed_code_root import deployed_code_root
+from src.autoslice.clip_profile import (
+    ClipProfile, ClipProfileError, clip_profile_from_document_holder, intro_binding_problem,
+    requires_intro, CLIP_PROFILE_FIELD, spec_clip_profile_declaration,
+)
 from src.autoslice.branding_intro import pin_existing_delivery_intro, require_branding_intro
 from src.autoslice.recut_materialization import (
     _accurate_reencode_recut_command,
@@ -217,11 +224,21 @@ def regular_binding(path: Path, *, label: str) -> RegularBinding:
     return RegularBinding(path, "sha256:" + digest.hexdigest(), *identity)
 
 
-def _load_json(binding: RegularBinding, *, label: str) -> dict[str, Any]:
+def _load_json(
+    binding: RegularBinding,
+    *,
+    label: str,
+    review: bool = False,
+) -> dict[str, Any]:
     payload = _read_small_bytes(binding, label=label)
     try:
-        value = json.loads(payload.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        if review:
+            from src.autoslice.review_evidence_store import review_from_bytes
+
+            value = review_from_bytes(payload, directory=binding.path.parent)
+        else:
+            value = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         raise ReviewedBaselineReplayError(f"REPLAY_{label}_INVALID") from exc
     if not isinstance(value, dict):
         raise ReviewedBaselineReplayError(f"REPLAY_{label}_INVALID")
@@ -604,7 +621,7 @@ def _copy_deployed_authority(*, source_runtime_root: Path, private_runtime_root:
 
     source_root = _safe_directory(source_runtime_root)
     expected = deployment_authority_binding(source_root)
-    source_repo = _safe_directory(source_root / "repo")
+    source_repo = _safe_directory(deployed_code_root(source_root))
     private_repo = _mkdir_private(private_runtime_root / "repo")
     manifest_binding = regular_binding(
         source_repo / "DEPLOYED_AUTHORITY_MANIFEST.json", label="DEPLOYED_MANIFEST"
@@ -787,11 +804,19 @@ def replay_publish_adapter(
 
 
 def _replay_branding_intro(
-    *, runtime_authority_root: Path, burned: object
-) -> dict[str, object]:
-    """Rebind one subtitle replay to the intro already sealed in its record."""
+    *, runtime_authority_root: Path, burned: object, clip_profile: ClipProfile | None = None,
+) -> dict[str, object] | None:
+    """Rebind one subtitle replay to the intro already sealed in its record.
+
+    A sealed clip whose declared form takes no intro replays without one, and
+    its record must not carry an intro binding either.
+    """
 
     recorded_intro = burned.get("branding_intro") if isinstance(burned, Mapping) else None
+    if clip_profile is not None and not requires_intro(clip_profile):
+        if intro_binding_problem(clip_profile, recorded_intro, intro_mandatory=False):
+            raise ReviewedBaselineReplayError("REPLAY_BRANDING_FORBIDDEN_FOR_PROFILE")
+        return None
     if not isinstance(recorded_intro, Mapping):
         raise ReviewedBaselineReplayError("REPLAY_BRANDING_AUTHORITY_MISSING")
     try:
@@ -825,14 +850,14 @@ def _production_llm_call(*, runtime_root: Path, effort: str) -> Callable[[str], 
     )
 
     runtime = _safe_directory(runtime_root)
-    bridge = runtime / "repo" / "scripts" / "llm_via_cpa.sh"
+    bridge = deployed_code_root(runtime) / "scripts" / "llm_via_cpa.sh"
     return build_llm_call(LlmConfig(
         transport="command",
         command_template=(
             f"bash {shlex.quote(str(bridge))} {{prompt_file}} {{completion_file}} "
-            f"'gpt-6-sol' {effort} 1"
+            f"'{TOP_CPA_MODEL}' {effort} 1"
         ),
-        timeout_seconds=600.0,
+        timeout_seconds=cpa_call_timeout_seconds(),
         runtime_root=str(runtime),
         command_child_env=runtime_cpa_command_environment(runtime),
     ))
@@ -1046,12 +1071,11 @@ def synthesize_replay_spec_and_finalize_private(
         raise ReviewedBaselineReplayError("REPLAY_SOURCE_PIECE_BINDING_INVALID")
     padded_binding = regular_binding(plan.padded_path, label="PADDED_SOURCE")
     observed_padded_sha = final_recut.get("source_sha256")
-    allowed_padded_outputs = {None, str(plan.padded_path.resolve()), str(plan.padded_path)}
+    if not padded_binding.path.is_relative_to(plan.package_root.resolve()):
+        raise ReviewedBaselineReplayError("REPLAY_PADDED_SOURCE_ESCAPES_CANDIDATE")
     if (
-        final_recut.get("source_path") != str(plan.padded_path.resolve())
-        or not isinstance(observed_padded_sha, str)
+        not isinstance(observed_padded_sha, str)
         or observed_padded_sha.removeprefix("sha256:") != padded_binding.sha256.removeprefix("sha256:")
-        or padded.get("output_path") not in allowed_padded_outputs
     ):
         raise ReviewedBaselineReplayError("REPLAY_PROVENANCE_BINDING_DRIFT")
     boundary = record.get("boundary_audit")
@@ -1104,6 +1128,10 @@ def synthesize_replay_spec_and_finalize_private(
     from src.autoslice.reviewed_text_only_speaker_successor import (
         build_text_only_speaker_successor_fields,
     )
+    try:
+        replay_clip_profile = clip_profile_from_document_holder(record, lane="talk")
+    except ClipProfileError as exc:
+        raise ReviewedBaselineReplayError("REPLAY_CLIP_PROFILE_INVALID") from exc
     spec = build_reviewed_baseline_replay_spec(
         date=plan.date, candidate_id=plan.candidate_id, output_root=out_root,
         story=story, normalized_piece=normalized_piece, spec_piece=spec_piece,
@@ -1113,6 +1141,9 @@ def synthesize_replay_spec_and_finalize_private(
         error_factory=ReviewedBaselineReplayError,
         recovery_publication_authority=recovery_publication_authority,
     )
+    if CLIP_PROFILE_FIELD in record:
+        spec[CLIP_PROFILE_FIELD] = spec_clip_profile_declaration(replay_clip_profile)
+        spec["watched_media"] = replay_clip_profile.watched_media
     c12_delivery_projection = build_c12_final_delivery_projection(
         candidate_id=plan.candidate_id,
         config=plan.baseline.config,
@@ -1196,7 +1227,8 @@ def synthesize_replay_spec_and_finalize_private(
     # never a substitute for reviewing the newly materialized SRT bytes.
     run = finalizer or finalize_producer_package
     branding_intro = _replay_branding_intro(
-        runtime_authority_root=runtime_authority_root, burned=burned
+        runtime_authority_root=runtime_authority_root, burned=burned,
+        clip_profile=replay_clip_profile,
     )
     if speaker_python_revalidate is not None:
         # The explicit private-preflight launcher is outside the staged tree.
@@ -1211,7 +1243,8 @@ def synthesize_replay_spec_and_finalize_private(
         piece_provenance_rows=[normalized_piece],
         final_start=final_start, final_end=final_end, sanitized=source_cues,
         timing_qa=dict(timing), audit=dict(boundary), text_override_path=None,
-        subtitle_regression_path=None, chat_authority_audit=_load_json(chat, label="CHAT_AUTHORITY"),
+        subtitle_regression_path=None,
+        chat_authority_audit=_load_json(chat, label="CHAT_AUTHORITY", review=True),
         chat_authority_path=out_root / f"{plan.candidate_id}.chat-authority.json",
         branding_intro=branding_intro,
         adapters=adapters,
@@ -1412,7 +1445,7 @@ def _profile_delivery_root(*, runtime_authority_root: Path, date: str) -> Path:
     from src.autoslice.channel_profile import ChannelProfileError, load_channel_profile
 
     runtime = _safe_directory(runtime_authority_root)
-    repo = _safe_directory(runtime / "repo")
+    repo = _safe_directory(deployed_code_root(runtime))
     try:
         profile = load_channel_profile(repo)
         root = _safe_directory(profile.delivery_root_for(repo))
@@ -1552,7 +1585,7 @@ def project_private_finalization_to_live(
         (str(private_out), str(plan.package_root)),
         (
             str(finalization.private_runtime_root / "repo"),
-            str(_safe_directory(runtime_authority_root) / "repo"),
+            str(deployed_code_root(_safe_directory(runtime_authority_root))),
         ),
     )
     projection = _mkdir_private(finalization.private_runtime_root / "live-projection")
@@ -1565,7 +1598,11 @@ def project_private_finalization_to_live(
         staged = regular_binding(Path(staged_raw), label="PREPARED_ARTIFACT")
         if staged.sha256 != staged_sha:
             raise ReviewedBaselineReplayError("REPLAY_PREPARED_ARTIFACT_DRIFT")
-        original = _load_json(staged, label=f"PRIVATE_{role.upper()}")
+        original = _load_json(
+            staged,
+            label=f"PRIVATE_{role.upper()}",
+            review=role == "chat_authority",
+        )
         relocated = _project_document_locators(
             original, kind=kind, mappings=mappings,
             private_runtime_root=finalization.private_runtime_root,

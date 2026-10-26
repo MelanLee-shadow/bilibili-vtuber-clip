@@ -1,4 +1,6 @@
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -21,6 +23,19 @@ from src.autoslice.llm_client import (
     call_and_extract_json_with_parse_retry,
     extract_json_object,
 )
+
+
+def test_direct_script_help_bootstraps_without_pythonpath_from_unrelated_cwd(tmp_path):
+    script = Path(__file__).resolve().parents[2] / "scripts" / "cpa_semantic_qa_llm.py"
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith("GIT_") and key not in {"PYTHONPATH", "PYTHONHOME"}}
+    completed = subprocess.run(
+        [sys.executable, str(script), "--help"], cwd=tmp_path, env=env,
+        capture_output=True, text=True, check=False, timeout=30,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "--request" in completed.stdout
+    assert not list(tmp_path.iterdir())
 
 
 def _request(tmp_path: Path) -> CpaSemanticQaRequest:
@@ -527,6 +542,7 @@ def test_judge_falls_back_to_second_model_when_primary_rate_limited(tmp_path, mo
         "--api-base", "https://cpa.test/v1", "--api-key-env", "CPA_API_KEY",
     ])
     assert rc == 0
-    assert "gpt-5.5" in calls and calls.count("gpt-5.6-luna") == 2  # retries then fallback
+    from src.autoslice.infra_retry_policy import CPA_TEXT_MAX_ATTEMPTS
+    assert "gpt-5.5" in calls and calls.count("gpt-5.6-luna") == CPA_TEXT_MAX_ATTEMPTS
     saved = json.loads(response_path.read_text())
     assert saved["provider"]["name"] == "llm:gpt-5.5"  # evidence names the model that actually answered

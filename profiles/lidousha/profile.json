@@ -33,15 +33,19 @@
   "assets": {
     "root": "assets/lidousha",
     "files": {
+      "channel_census_config": "channel_census_config.v1.json",
+      "selection_census_clues": "selection_census_clues.v1.json",
       "branding_intro_manifest": "intro/branding_intro.v1.json",
       "clip_opening_address": "clip_opening_address.json",
       "community_name_sources": "community_name_sources.v1.json",
       "community_names": "community_names.v1.json",
       "game_glossary": "game_glossary.v1.json",
+      "cover_art_direction": "cover_art_direction.md",
       "cover_identity_prompt": "cover_identity_prompt.txt",
       "cover_reference_overrides": "cover_reference_overrides.v1.json",
       "emote_library": "emote_library.v1.json",
       "entity_confusables": "entity_confusables.json",
+      "external_audio_sources": "external_audio_sources.v1.json",
       "final_media_review_contracts": "final_media_review_contracts.v1.json",
       "gift_names": "bilibili_gift_names.v1.json",
       "glossary": "glossary.txt",
@@ -62,7 +66,7 @@
       "speech_memory_ledger": "speech_memory_ledger.v1.json",
       "subtitle_correction_principles": "subtitle_correction_principles.md",
       "subtitle_truth_ledger": "subtitle_truth_ledger.v1.json",
-    "talk_quota_policy_authority": "talk_quota_policy_authority.v1.json",
+      "talk_quota_policy_authority": "talk_quota_policy_authority.v1.json",
       "timely_term_seeds": "timely_term_seeds.json",
       "timely_term_sources": "timely_term_sources.json",
       "timely_terms": "timely_terms.json",
@@ -87,6 +91,7 @@
       "game_glossary",
       "glossary",
       "branding_intro_manifest",
+      "cover_art_direction",
       "cover_reference_overrides",
       "cover_identity_prompt",
       "emote_library",
@@ -242,6 +247,21 @@
         "surface": "日嘎多",
         "canonical": "ありがとう",
         "authority": "lidousha-code-switch-canon.v1"
+      },
+      {
+        "surface": "superchat",
+        "canonical": "SC",
+        "authority": "lidousha-caption-display-canon.v1"
+      },
+      {
+        "surface": "姐0",
+        "canonical": "姐零",
+        "authority": "lidousha-caption-display-canon.v1"
+      },
+      {
+        "surface": "年上0",
+        "canonical": "年上零",
+        "authority": "lidousha-caption-display-canon.v1"
       }
     ]
   },

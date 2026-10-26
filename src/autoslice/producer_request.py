@@ -5,14 +5,22 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from dataclasses import dataclass
+import shutil
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
+from src.autoslice.channel_profile import (
+    ChannelProfile, ChannelProfileError, binding_for_profile,
+    load_channel_profile, normalize_profile_binding, require_profile_binding,
+)
 
 from src.autoslice.boundary_semantic_review import (
     SEMANTIC_TAIL_TRIM_MAX_MS,
 )
 from src.autoslice.branding_intro import BrandingIntroError, require_branding_intro
+from src.autoslice.clip_profile import (
+    ClipProfile, clip_profile_from_spec, default_clip_profile, requires_intro,
+)
 from src.autoslice.producer_boundary import (
     BOUNDARY_REPAIR_EXTEND_CAP_MAX_MS,
     BOUNDARY_REPAIR_EXTEND_CAP_MS,
@@ -40,6 +48,66 @@ from src.autoslice.supplement_audio_budget import (
 _FOREIGN_SCRIPT_WITNESS_PROVIDERS = frozenset({"agy", "moss", "mai"})
 
 
+class ProducerRuntimePrerequisiteError(ValueError):
+    """A selected execution dependency is unavailable, rather than bad content."""
+
+    def __init__(self, dependency: str, detail: str):
+        self.dependency = dependency
+        super().__init__(f"RUNTIME_PREREQUISITE: {dependency}: {detail}")
+
+
+def resolve_runtime_base(value: str | Path) -> Path:
+    """Pin the configured root without reinterpreting it in a child's cwd."""
+    raw = str(value).strip()
+    path = Path(raw).expanduser()
+    if not raw or not path.is_absolute():
+        raise ProducerRuntimePrerequisiteError("AUTOSLICE_BASE", "must be an absolute path")
+    # Do not resolve symlink ancestors: the delivery authority check must see them.
+    return Path(os.path.abspath(path))
+
+
+def validate_producer_runtime_prerequisites(
+    *,
+    host: str = "localhost",
+    speaker_mode: str = "uniform_host",
+    speaker_python: str | Path | None = None,
+    lane: str = "talk",
+    host_vocal_python: str | Path | None = None,
+    check_media: bool = True,
+) -> None:
+    """Check only executables the selected branch will actually launch.
+
+    AGY is deliberately absent here: its client has a supported provider fallback.
+    Auto speaker routing checks its Python when it actually selects binary fallback.
+    Remote Python paths cannot be tested against the controller's filesystem.
+    """
+    commands = ["ffmpeg", "ffprobe"] if check_media else []
+    local = host in {"localhost", "127.0.0.1", "::1"}
+    if not local:
+        commands.extend(("ssh", "scp"))
+    for command in commands:
+        if shutil.which(command) is None:
+            raise ProducerRuntimePrerequisiteError(command, "executable is unavailable")
+    python = None
+    dependency = "speaker_python"
+    if local and lane == "song":
+        python = host_vocal_python
+        dependency = "host_vocal_python"
+    elif local and speaker_mode == "required":
+        python = speaker_python
+    if local and (lane == "song" or speaker_mode == "required"):
+        if python is None:
+            root = resolve_runtime_base(os.environ.get("AUTOSLICE_BASE", "/opt/bilive/autoslice"))
+            env_name = "AUTOSLICE_HOST_VOCAL_PYTHON" if lane == "song" else "AUTOSLICE_SPEAKER_PYTHON"
+            python = os.environ.get(env_name, str(root / "venv-diar/bin/python"))
+        raw = str(python).strip()
+        path = Path(raw).expanduser()
+        if not raw or (len(path.parts) > 1 and not path.is_absolute()):
+            raise ProducerRuntimePrerequisiteError(dependency, "must be an absolute path or PATH command")
+        if shutil.which(str(path)) is None:
+            raise ProducerRuntimePrerequisiteError(dependency, "executable is unavailable")
+
+
 @dataclass(frozen=True)
 class ProducerRequest:
     spec: dict
@@ -50,6 +118,8 @@ class ProducerRequest:
     host: str
     text_override_path: Path | None
     subtitle_regression_path: Path | None
+    profile_binding: dict[str, str]
+    clip_profile: ClipProfile = field(default_factory=lambda: default_clip_profile("talk"))
 
 
 def parse_producer_args(
@@ -64,6 +134,16 @@ def parse_producer_args(
     if configured_correction not in ("bcut_agy_cpa", "moss_cpa", "cpa"):
         parser.error("AUTOSLICE_CORRECTION_MODE must retain CPA: bcut_agy_cpa, moss_cpa or cpa")
     parser.add_argument("--spec", type=Path, required=True)
+    parser.add_argument("--resume-prepared", type=Path,
+                        help="resume a sealed private Talk prepare at its completed finalization stages")
+    parser.add_argument("--resume-spec-sha256", help="exact original spec SHA256 for prepared recovery")
+    parser.add_argument("--resume-output-root", type=Path,
+                        help="separate private successor output root; original prepare remains read-only")
+    parser.add_argument("--resume-cover-failure", type=Path,
+                        help="cover-only successor from a hash-bound native failure; requires --resume-prepared")
+    parser.add_argument("--resume-cover-failure-sha256")
+    parser.add_argument("--resume-cover-prepare-qc", action="store_true",
+                        help="render retained cover and prepare the real identity comparison without calling its provider")
     # 媒体宿主由用户自己决定；默认本机（媒体在别的机器时显式传 --ssh-host）。
     parser.add_argument("--ssh-host", default="localhost")
     parser.add_argument(
@@ -112,7 +192,10 @@ def parse_producer_args(
         "--speaker-python",
         type=Path,
         default=Path(
-            os.environ.get("AUTOSLICE_SPEAKER_PYTHON", "/opt/bilive/autoslice/venv-diar/bin/python")
+            os.environ.get(
+                "AUTOSLICE_SPEAKER_PYTHON",
+                str(Path(os.environ.get("AUTOSLICE_BASE", "/opt/bilive/autoslice")) / "venv-diar/bin/python"),
+            )
         ),
     )
     parser.add_argument(
@@ -231,8 +314,41 @@ def load_producer_request(
     *,
     repo_root: Path,
     profile_asset_file: Callable[[str], Path],
+    selected_channel_profile: ChannelProfile | None = None,
+    trusted_parent_profile_binding: dict[str, str] | None = None,
 ) -> ProducerRequest:
     spec = json.loads(args.spec.read_text(encoding="utf-8"))
+    try:
+        # Legacy specs have a positive compatibility authority only when their
+        # parent explicitly passes its frozen selection. Never guess default.
+        binding = normalize_profile_binding(spec.get("profile_binding", trusted_parent_profile_binding))
+        if trusted_parent_profile_binding is not None:
+            binding = require_profile_binding(task_binding=binding,
+                current_binding=trusted_parent_profile_binding, repo_root=repo_root)
+        selected = selected_channel_profile or load_channel_profile(repo_root, profile_binding=binding)
+        require_profile_binding(task_binding=binding,
+            current_binding=binding_for_profile(selected), repo_root=repo_root)
+        # Re-load against the original task binding to capture the extension
+        # proof even when the CLI imported its selected profile before the spec.
+        verified = load_channel_profile(repo_root, profile_binding=binding)
+        spec["profile_binding"] = binding
+        spec.pop("profile_binding_extensions", None)
+        if verified.binding_extension is not None:
+            spec["profile_binding_extensions"] = [verified.binding_extension.as_dict()]
+    except ChannelProfileError as exc:
+        raise ProducerRuntimePrerequisiteError("channel_profile", str(exc)) from exc
+    from src.autoslice.argon_escalation_defaults import (
+        apply_production_argon_default, is_production_runtime_spec,
+    )
+    # Derived rerun SPECs (copied from an older SPEC) bound to the live runtime
+    # get the same production Argon default as runner-built SPECs.
+    if is_production_runtime_spec(spec):
+        apply_production_argon_default(spec)
+    from src.autoslice.first_publication_boundary import bind_published_recall_to_spec
+    # Replay source provenance before creating output or invoking any provider.
+    bind_published_recall_to_spec(spec)
+    from src.autoslice.source_checkpoint_parent import validate_source_checkpoint_parent
+    validate_source_checkpoint_parent(spec)
     _validate_foreign_script_witness_provider(spec)
     if spec.get(EXACT_INTERVAL_RUNTIME_CONFIG_KEY) is not None:
         raise ValueError(
@@ -314,10 +430,17 @@ def load_producer_request(
         text_override_path=text_override_preflight_path,
         subtitle_regression_path=subtitle_regression_preflight_path,
     )
+    # The spec's one clip_profile declaration decides whether this delivery
+    # carries the channel intro; undeclared specs keep the talk default.
+    clip_profile = clip_profile_from_spec(spec, lane="talk")
     try:
-        branding_intro = require_branding_intro(
-            repo_root,
-            manifest_path=profile_asset_file("branding_intro_manifest"),
+        branding_intro = (
+            require_branding_intro(
+                repo_root,
+                manifest_path=profile_asset_file("branding_intro_manifest"),
+            )
+            if requires_intro(clip_profile)
+            else None
         )
     except BrandingIntroError as exc:
         raise SystemExit(f"BRANDING_INTRO_UNAVAILABLE: {exc}")
@@ -328,8 +451,51 @@ def load_producer_request(
         os.environ["AUTOSLICE_TERM_AS_OF"] = spec["date"]
         os.environ["LIDOUSHA_TERM_AS_OF"] = spec["date"]
 
+    validate_producer_runtime_prerequisites(
+        host=args.ssh_host,
+        speaker_mode=getattr(args, "speaker_mode", "uniform_host"),
+        speaker_python=getattr(args, "speaker_python", None),
+    )
+    resume = getattr(args, "resume_prepared", None)
+    if resume is not None:
+        from src.autoslice.producer_prepared_recovery import validate_resume_options
+        validate_resume_options(args)
+        # Runtime identity comes from the hash-bound original spec, never the
+        # depth of the writable successor directory. Keep it explicit in this
+        # in-memory request so every later prepare uses the same authority.
+        from src.autoslice.producer_delivery_prepare import resolve_talk_delivery_runtime_root
+        from src.autoslice.producer_delivery_transaction import ProducerDeliveryTransactionError
+        try:
+            runtime_root = resolve_talk_delivery_runtime_root(spec)
+            if not args.resume_output_root.is_relative_to(runtime_root):
+                raise ProducerDeliveryTransactionError("resume output escapes original runtime root")
+        except (ProducerDeliveryTransactionError, OSError, ValueError) as exc:
+            raise ProducerRuntimePrerequisiteError("delivery_runtime", str(exc)) from exc
+        spec["runtime_root"] = str(runtime_root)
+        spec["output_root"] = str(args.resume_output_root)
+    elif any(getattr(args, name, None) for name in (
+        "resume_output_root", "resume_spec_sha256", "resume_cover_failure",
+        "resume_cover_failure_sha256", "resume_cover_prepare_qc",
+    )):
+        raise ValueError("PREPARED_RESUME_OPTIONS_REQUIRE_HANDLE")
     out_root = Path(spec["output_root"]) / cid
     out_root.mkdir(parents=True, exist_ok=True)
+    if verified.binding_extension is not None:
+        from src.autoslice.package_import import atomic_write_bytes
+        atomic_write_bytes(out_root / "profile_binding_extensions.json", (json.dumps({
+            "profile_binding": binding,
+            "profile_binding_extensions": spec["profile_binding_extensions"],
+        }, sort_keys=True, indent=2) + "\n").encode())
+    if getattr(args, "prepare_only", False):
+        from src.autoslice.producer_delivery_prepare import resolve_talk_delivery_runtime_root
+        from src.autoslice.producer_delivery_transaction import (
+            ProducerDeliveryTransactionError,
+            deployment_authority_binding,
+        )
+        try:
+            deployment_authority_binding(resolve_talk_delivery_runtime_root(spec))
+        except (ProducerDeliveryTransactionError, OSError, ValueError) as exc:
+            raise ProducerRuntimePrerequisiteError("delivery_runtime", str(exc)) from exc
     host = args.ssh_host
     return ProducerRequest(
         spec=spec,
@@ -340,4 +506,6 @@ def load_producer_request(
         host=host,
         text_override_path=text_override_path,
         subtitle_regression_path=subtitle_regression_path,
+        profile_binding=binding,
+        clip_profile=clip_profile,
     )

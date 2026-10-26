@@ -103,6 +103,8 @@ def init_profile(
     manifest_dst.write_text(
         json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
+    from src.autoslice.profile_manifest_history import archive_manifest
+    archive_manifest(repo_root, manifest_dst)
 
     validator_script = repo_root / "scripts/validate_channel_profile.py"
     if validator_script.is_file():

@@ -17,6 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.autoslice.channel_profile import LABEL_RE
 from src.autoslice.restatement_recall import (
     RestatementCue,
     find_restatement_pairs,
@@ -41,9 +42,13 @@ def load_cues(srt_path: Path) -> list[RestatementCue]:
         lines = block.splitlines()
         text = "\n".join(lines[2:])
         label = None
-        match = re.match(r"^\[([^\]]+)\] ?", text)
+        match = LABEL_RE.match(text)
         if match:
-            label, text = match.group(1), text[match.end():]
+            # Keep the original raw label and one-space payload convention.
+            closing = text.index("]")
+            label, text = text[1:closing], text[closing + 1:]
+            if text.startswith(" "):
+                text = text[1:]
         cues.append(
             RestatementCue(
                 index=int(lines[0].strip()),

@@ -8,19 +8,20 @@ executes the runner as __main__.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import copy
 import hashlib
 import json
 import re
 import subprocess
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 
+from src.autoslice.cpa_model_ladder import TOP_CPA_MODEL, cpa_call_timeout_seconds
 from src.autoslice.boundary_semantic_review import (
     SEMANTIC_TAIL_TRIM_MAX_MS,
-    SOURCE_WITNESS_RESERVE_MS,
     boundary_search_scope_is_valid,
     required_source_context_end_ms,
 )
@@ -101,6 +102,27 @@ from src.autoslice.producer_prepare_result import (
 
 _runner = RunnerProxy()
 
+
+def _runtime_scratch_child_env(env: dict[str, str], item: Mapping[str, object]) -> dict[str, str]:
+    """Point a talk child process at the dispatcher-owned live scratch lease."""
+
+    raw_scratch = item.get("runtime_scratch_dir")
+    if raw_scratch is None:
+        return env
+    scratch = Path(str(raw_scratch)).absolute()
+    if (
+        scratch.is_symlink()
+        or not scratch.is_dir()
+        or not scratch.name.startswith("work-")
+        or scratch.parent.name != "runtime-scratch"
+        or scratch.parent.is_symlink()
+    ):
+        raise RuntimeError("runtime scratch lease is not a dedicated live workspace")
+    # tempfile and common media/transport helpers honor all three names.
+    for key in ("TMPDIR", "TMP", "TEMP"):
+        env[key] = str(scratch)
+    return env
+
 # 5400s ended a real complex talk during title generation; keep a bounded
 # two-hour wall stop so final-review carryover remains available on timeout.
 TALK_PRODUCER_TIMEOUT_SECONDS = 7_200
@@ -155,6 +177,22 @@ def _bound_boundary_retry_source_end_ms(
         )
     except (TypeError, ValueError):
         return None
+
+
+_FIRST_ATTEMPT_TEXT_CHECKPOINTS = (
+    "current-text-checkpoint", "source-text-checkpoint", "partial-source-text-checkpoint",
+)
+
+
+def _first_attempt_text_checkpoint_present(*, out_root: Path, candidate_id: str) -> bool:
+    """The producer's own resumable text checkpoint of the first attempt."""
+
+    root = out_root / candidate_id
+    return any(
+        (root / f"{candidate_id}.{name}.json").is_file()
+        and not (root / f"{candidate_id}.{name}.json").is_symlink()
+        for name in _FIRST_ATTEMPT_TEXT_CHECKPOINTS
+    )
 
 
 def _load_boundary_retry_owner_contract(
@@ -283,9 +321,9 @@ def recall_candidates(srt_path: Path, hints: str | None, danmaku_xml: Path | Non
     llm = build_llm_call(
         LlmConfig(
             transport="command",
-            # Talk semantic recall = deep open-ended lane → gpt-5.6-sol medium.
-            command_template=f"bash {_runner.REPO_ROOT}/scripts/llm_via_cpa.sh {{prompt_file}} {{completion_file}} 'gpt-6-sol' medium",
-            timeout_seconds=600.0,
+            # Talk semantic recall = deep open-ended lane → gpt-6.1-sol medium.
+            command_template=f"bash {_runner.REPO_ROOT}/scripts/llm_via_cpa.sh {{prompt_file}} {{completion_file}} '{TOP_CPA_MODEL}' medium",
+            timeout_seconds=cpa_call_timeout_seconds(),
         )
     )
     try:
@@ -296,9 +334,7 @@ def recall_candidates(srt_path: Path, hints: str | None, danmaku_xml: Path | Non
         scorecards = diag.get("scorecards") or {}
         filler_proposals = diag.get("filler_proposals") or {}
         merge_gap_plans = diag.get("merge_gaps") or {}
-        source_srt_sha256 = "sha256:" + hashlib.sha256(
-            srt_path.read_bytes()
-        ).hexdigest()
+        source_srt_sha256 = "sha256:" + _evidence_file_sha256(srt_path)
         extras = {}
         for cand in candidates:
             cid = cand.anchor.candidate_id
@@ -471,7 +507,8 @@ def _read_final_review_surface(path: Path) -> tuple[dict | None, str | None]:
         ):
             return None, None
         payload = path.read_bytes()
-        document = json.loads(payload)
+        from src.autoslice.review_evidence_store import review_from_bytes
+        document = review_from_bytes(payload, directory=path.parent)
     except (OSError, ValueError):
         return None, None
     if not isinstance(document, dict):
@@ -794,12 +831,19 @@ def _classify_final_review_release(
             True,
             evidence,
         )
+    from .finding_lifecycle import ENGINEERING_FAILURE, CONTENT_BLOCK, is_finding_failure
+    if CONTENT_BLOCK in reason_codes:
+        return "subtitle_authority", "final_review_content_block", False, evidence
+    if ENGINEERING_FAILURE in reason_codes:
+        evidence['recovery'] = 'REVALIDATE_RETAINED_ANSWER_OR_RESUME_ORIGINAL_CALL_OWNER'
+        evidence['new_model_call_authorized'] = False
+        return "subtitle_authority", "final_review_engineering", True, evidence
     finding_count = evidence.get("validated_finding_count")
     if (
         isinstance(finding_count, int)
         and not isinstance(finding_count, bool)
         and finding_count > 0
-    ) or "FINAL_REVIEW_UNRESOLVED_FINDINGS" in reason_codes:
+    ) or any(is_finding_failure(code) for code in reason_codes):
         carryover = evidence.get("carryover")
         if (
             isinstance(carryover, Mapping)
@@ -883,7 +927,24 @@ def classify_talk_failure(attempt_output: str) -> dict:
     nonempty = [line.strip() for line in tail.splitlines() if line.strip()]
     message = nonempty[-1][:1200] if nonempty else "producer exited without diagnostic"
     failure_evidence: dict[str, object] | None = None
-    if "BOUNDARY_RETRY_OWNER_SET_DRIFT" in tail:
+    if "RUNTIME_PREREQUISITE:" in tail or re.search(
+        r"(?:FileNotFoundError|PermissionError):[^\n]*: ['\"](?:ffmpeg|ffprobe|ssh|scp)['\"]", tail
+    ):
+        kind, stage, recoverable = "runtime_prerequisite", "producer_preflight", True
+    elif (continuation := re.search(r"CurrentTextContinuationError: (\S+)\s*$", message)) is not None:
+        # A cold read of the previous attempt's authority could not be continued
+        # (41 lifecycle: engineering, never content D). Its reason code is the
+        # validator's own, possibly a FINAL_REVIEW_* contract name; it is not a
+        # review verdict. Revalidation after a code/truth wave may continue it;
+        # no new model call is authorized by this classification.
+        kind, stage, recoverable = "pipeline_engineering", "continuation_authority", True
+        failure_evidence = {
+            "schema_version": "continuation-authority-failure.v1",
+            "reason_code": continuation.group(1),
+            "recovery": "REVALIDATE_PREVIOUS_AUTHORITY_ON_CODE_OR_TRUTH_WAVE",
+            "new_model_call_authorized": False,
+        }
+    elif "BOUNDARY_RETRY_OWNER_SET_DRIFT" in tail:
         kind, stage, recoverable = (
             "pipeline_contract",
             "boundary_retry_owner_contract",
@@ -1063,6 +1124,11 @@ def classify_talk_failure(attempt_output: str) -> dict:
         # 审片员修复提案因 provider 失败未决——文本本身可修，等 provider
         # AGY 恢复或成功缓存可用后重试即可，不是内容缺陷。
         kind, stage, recoverable = "provider_transient", "final_review_adjudication", True
+    elif ("CAPTION_OBSERVER_PROVIDER_RETRY_BACKOFF" in tail
+          or ("CAPTION_OBSERVER_PROVIDER_UNAVAILABLE" in tail
+              and any(code == 429 or 500 <= code <= 599
+                      for code in _provider_failure.provider_failure_status_codes(tail)))):
+        kind, stage, recoverable = "provider_transient", "caption_observer", True
     elif any(
         marker in tail.upper()
         for marker in ("TOO MANY REQUESTS", "INDIVIDUAL QUOTA REACHED", "TIMED OUT", "TIMEOUT")
@@ -1183,9 +1249,9 @@ def _prepare_talk_filler_plan(item: dict) -> dict[str, object]:
             command_template=(
                 f"bash {_runner.REPO_ROOT}/scripts/llm_via_cpa.sh "
                 "{prompt_file} {completion_file} "
-                "'gpt-6-sol' medium"
+                f"'{TOP_CPA_MODEL}' medium"
             ),
-            timeout_seconds=600.0,
+            timeout_seconds=cpa_call_timeout_seconds(),
         )
     )
     global_verification = verify_automatic_filler_plan(
@@ -1292,9 +1358,9 @@ def _apply_optional_talk_spec_fields(
     spec: dict[str, object],
     item: dict,
 ) -> None:
-    # Preserve declared watched-media ownership at the ordinary spec handoff.
+    # Preserve the clip form and watched-media ownership at the ordinary spec handoff.
     # The materializer validates the binding; missing evidence must still block.
-    for key in ("watched_media", "nested_media_caption_dedup"):
+    for key in ("clip_profile", "watched_media", "nested_media_caption_dedup", "nested_media_acoustic"):
         if key in item:
             spec[key] = copy.deepcopy(item[key])
     slot = item.get("cover_diversity_slot")
@@ -1443,9 +1509,6 @@ def _run_talk_producer_with_boundary_context_retry(
     log_path: Path,
     cmd: list[str],
 ):
-    boundary_context_retries = 0
-    retry_owner_contract_sha256: str | None = None
-
     def run_producer():
         speaker_review_state = _runner._speaker_review_manifest_state(out_root / candidate_id)
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1461,14 +1524,74 @@ def _run_talk_producer_with_boundary_context_retry(
             completed = subprocess.run(
                 cmd, check=False, stdout=sink, stderr=subprocess.STDOUT,
                 timeout=TALK_PRODUCER_TIMEOUT_SECONDS,
-                cwd=str(_runner.REPO_ROOT), env=_runner.child_env_for_date(date),
+                cwd=str(_runner.REPO_ROOT),
+                env=_runtime_scratch_child_env(
+                    {**_runner.child_env_for_date(date), "AUTOSLICE_CPA_USAGE_FILE": str(out_root / candidate_id / f"{candidate_id}.cpa-usage.jsonl")}, item
+                ),
             )
         with open(log_path, "rb") as source:
             source.seek(attempt_offset)
             attempt_output = source.read().decode("utf-8", "replace")
         return completed, attempt_output, speaker_review_state
 
-    completed, attempt_output, speaker_review_state = run_producer()
+    def append_log(text: str) -> None:
+        with open(log_path, "a", encoding="utf-8") as sink:
+            sink.write(text)
+
+    return boundary_context_retry(
+        first=run_producer(),
+        run_producer=run_producer,
+        spec=spec,
+        out_root=out_root,
+        candidate_id=candidate_id,
+        item=item,
+        write_spec=lambda text: spec_path.write_text(text, encoding="utf-8"),
+        append_log=append_log,
+        retry_cap_ms=_runner.BOUNDARY_REPAIR_RETRY_CAP_MS,
+        allowed_scopes=RUNNER_BOUNDARY_RETRY_SCOPES,
+        discover_cross_segment_reserve=lambda deficit_ms: _discover_cross_segment_witness_reserve(
+            date=date, item=item, deficit_ms=deficit_ms,
+        ),
+    )
+
+
+# 30-boundary 有界重试的适用范围：runner 沿用两种 scope；单候选入口只用
+# same_topic_continues（见 scripts/boundary_retry_entry.py）。
+RUNNER_BOUNDARY_RETRY_SCOPES = frozenset(
+    {"same_topic_continues", "source_witness_reserve"}
+)
+SINGLE_CANDIDATE_BOUNDARY_RETRY_SCOPES = frozenset({"same_topic_continues"})
+# 有界重试的观测余量：只在文字会重新推导时吸收新转写的原点偏移（1573 案 40ms），
+# 固定 3 秒，不随首轮 PIECE_POST_MS 放大（行政 方案 A）。
+BOUNDARY_RETRY_HEADROOM_MS = 3_000
+
+
+def boundary_context_retry(
+    *,
+    first: tuple[object, str, object],
+    run_producer: Callable[[], tuple[object, str, object]],
+    spec: dict,
+    out_root: Path,
+    candidate_id: str,
+    item: Mapping[str, object],
+    write_spec: Callable[[str], object],
+    append_log: Callable[[str], object],
+    retry_cap_ms: int,
+    allowed_scopes: frozenset[str] = RUNNER_BOUNDARY_RETRY_SCOPES,
+    discover_cross_segment_reserve: Callable[[int], dict | None] | None = None,
+):
+    """30-boundary: BOUNDARY_CONTEXT_EXHAUSTED 后同一 spec 的一次有界重试。
+
+    runner talk lane 与单候选入口共用这一个函数，保证同一首次终态得到
+    字节相同的改写 spec。``first`` 是首次 producer 的
+    ``(completed, attempt_output, extra)``；``item`` 只提供 ``seg_dur_ms``
+    （录像段时长，0 表示未知）与 ``end_ms``（语义终点，仅写日志）。
+    加宽终点与 headroom 只由首次 review-flags 的 bound scope 和常量算出，
+    调用方不选端点；第二次在同一 out_root 调 ``run_producer()``，绝无第三次。
+    """
+    boundary_context_retries = 0
+    retry_owner_contract_sha256: str | None = None
+    completed, attempt_output, speaker_review_state = first
     first_tail = attempt_output[-4000:]
     failure_evidence = _boundary_context_failure_evidence(first_tail)
     retry_scope = failure_evidence.get("retry_scope")
@@ -1478,11 +1601,7 @@ def _run_talk_producer_with_boundary_context_retry(
             "BOUNDARY_UNREPAIRABLE" in first_tail
             or "BOUNDARY_CONTEXT_EXHAUSTED" in first_tail
         )
-        and retry_scope
-        in {
-            "same_topic_continues",
-            "source_witness_reserve",
-        }
+        and retry_scope in allowed_scopes
     )
     if not should_retry:
         return (
@@ -1497,7 +1616,7 @@ def _run_talk_producer_with_boundary_context_retry(
     scoped_retry_end = _bound_boundary_retry_source_end_ms(
         out_root=out_root,
         candidate_id=candidate_id,
-        repair_cap_ms=_runner.BOUNDARY_REPAIR_RETRY_CAP_MS,
+        repair_cap_ms=retry_cap_ms,
     )
     retry_end = scoped_retry_end or piece["end_ms"]
     current_cap = int(spec["boundary_repair_extend_cap_ms"])
@@ -1525,17 +1644,17 @@ def _run_talk_producer_with_boundary_context_retry(
         and item["seg_dur_ms"] > 0
         and scoped_retry_end > item["seg_dur_ms"]
     ):
-        cross_segment_reserve = _discover_cross_segment_witness_reserve(
-            date=date,
-            item=item,
-            deficit_ms=scoped_retry_end - item["seg_dur_ms"],
+        cross_segment_reserve = (
+            discover_cross_segment_reserve(scoped_retry_end - item["seg_dur_ms"])
+            if discover_cross_segment_reserve is not None
+            else None
         )
         if cross_segment_reserve is not None:
             source_context_reachable = True
             retry_end = item["seg_dur_ms"]
     retry_allowed = bool(
         source_context_reachable
-        and _runner.BOUNDARY_REPAIR_RETRY_CAP_MS > current_cap
+        and retry_cap_ms > current_cap
         and (
             retry_end > piece["end_ms"]
             or source_context_already_sufficient
@@ -1561,8 +1680,7 @@ def _run_talk_producer_with_boundary_context_retry(
             "first-attempt frozen owner contract; refusing widened "
             "context retry"
         )
-        with open(log_path, "a", encoding="utf-8") as sink:
-            sink.write("\n" + drift_marker + "\n")
+        append_log("\n" + drift_marker + "\n")
         attempt_output += "\n" + drift_marker + "\n"
     else:
         retry_owner_contract_sha256 = str(
@@ -1571,16 +1689,22 @@ def _run_talk_producer_with_boundary_context_retry(
         spec["boundary_retry_frozen_owner_contract"] = frozen_owner_contract
         boundary_context_retries = 1
         # Fresh-ASR timing can move the scope origin a few ms after the first
-        # attempt. Reuse the initial 48s post-context slack as observation-only
-        # headroom, while never extending the current recording past its file.
-        retry_headroom_ms = max(
-            0,
-            int(_runner.PIECE_POST_MS)
-            - int(_runner.BOUNDARY_REPAIR_INITIAL_CAP_MS)
-            - SOURCE_WITNESS_RESERVE_MS,
-        )
+        # attempt. A fixed observation-only headroom absorbs that, while never
+        # extending the current recording past its file.
+        retry_headroom_ms = BOUNDARY_RETRY_HEADROOM_MS
         materialized_retry_end = retry_end
-        if cross_segment_reserve is None:
+        # The headroom absorbs a RE-DERIVED transcript (fresh ASR) moving the
+        # origin. With the window already covering the bound scope and the
+        # first attempt's text checkpoint in this output root, the second
+        # attempt reuses the same hash-bound piece/padded and resumes that
+        # checkpoint, so the origin cannot move; widening would only create a
+        # padded the checkpoint can never resume (xiamen 021d68b7,
+        # CURRENT_AUTO_RESUME_CHECKPOINT_PADDED_DRIFT).
+        resumes_first_text = bool(
+            source_context_already_sufficient
+            and _first_attempt_text_checkpoint_present(out_root=out_root, candidate_id=candidate_id)
+        )
+        if cross_segment_reserve is None and not resumes_first_text:
             materialized_retry_end += retry_headroom_ms
             if item.get("seg_dur_ms"):
                 materialized_retry_end = min(
@@ -1605,26 +1729,21 @@ def _run_talk_producer_with_boundary_context_retry(
                 "reserve_chat_binding_absent="
                 f"{cross_segment_reserve['chat_binding_absent']}"
             )
-        spec["boundary_repair_extend_cap_ms"] = (
-            _runner.BOUNDARY_REPAIR_RETRY_CAP_MS
+        spec["boundary_repair_extend_cap_ms"] = retry_cap_ms
+        write_spec(json.dumps(spec, ensure_ascii=False, indent=2))
+        append_log(
+            "\nBOUNDARY_CONTEXT_RETRY: retaining/widening source "
+            f"post-context to {piece['end_ms']}ms "
+            "with hash-bound frozen owner set "
+            f"{retry_owner_contract_sha256} "
+            "and absolute repair cap to "
+            f"{retry_cap_ms}ms "
+            f"(semantic end remains {item['end_ms']}ms; "
+            f"bound_scope_required_end={scoped_retry_end}; "
+            f"retry_scope={retry_scope})"
+            f"{reserve_log_note}"
+            f"{' first_attempt_text_checkpoint=resumed' if resumes_first_text else ''}\n"
         )
-        spec_path.write_text(
-            json.dumps(spec, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        with open(log_path, "a", encoding="utf-8") as sink:
-            sink.write(
-                "\nBOUNDARY_CONTEXT_RETRY: retaining/widening source "
-                f"post-context to {piece['end_ms']}ms "
-                "with hash-bound frozen owner set "
-                f"{retry_owner_contract_sha256} "
-                "and absolute repair cap to "
-                f"{_runner.BOUNDARY_REPAIR_RETRY_CAP_MS}ms "
-                f"(semantic end remains {item['end_ms']}ms; "
-                f"bound_scope_required_end={scoped_retry_end}; "
-                f"retry_scope={retry_scope})"
-                f"{reserve_log_note}\n"
-            )
         completed, attempt_output, speaker_review_state = run_producer()
     return (
         completed,
@@ -1762,6 +1881,13 @@ def produce_talk(
     scorecard_rejection = _selection_scorecard_rejection(item)
     if scorecard_rejection is not None:
         return _carry_talk_recovery_result(item, scorecard_rejection)
+    if item.get("prepared_recovery") is not None:
+        from src.autoslice.producer_prepared_runner import produce_prepared_talk
+        return _carry_talk_recovery_result(item, produce_prepared_talk(
+            runner=_runner, date=date, item=item, prepare_only=prepare_only, reuse_cover=reuse_cover,
+            timeout_seconds=TALK_PRODUCER_TIMEOUT_SECONDS,
+            child_env=_runtime_scratch_child_env(_runner.child_env_for_date(date), item),
+        ))
     filler_plan = _prepare_talk_filler_plan(item)
     # 合并候选的缝隙移除若被 plan 拒绝，绝不回退成整窗连续交付——那会把
     # 缝里的 8 分钟无关内容一起端出去（fail-closed，候选拒绝留审计）。
@@ -1815,6 +1941,8 @@ def produce_talk(
         spec, item, candidate_id=cid
     )
     _apply_optional_talk_spec_fields(spec, item)
+    from src.autoslice.argon_escalation_defaults import apply_production_argon_default
+    apply_production_argon_default(spec)
     candidate_text_override = _runner.candidate_text_override_path(cid)
     if candidate_text_override is not None:
         spec["subtitle_text_overrides"] = str(candidate_text_override)
@@ -1840,7 +1968,7 @@ def produce_talk(
     if speaker_session_context is not None:
         spec["speaker_session_context"] = speaker_session_context
         spec["speaker_session_context_sha256"] = (
-            "sha256:" + hashlib.sha256(Path(speaker_session_context).read_bytes()).hexdigest()
+            "sha256:" + _evidence_file_sha256(Path(speaker_session_context))
         )
     spec_path = out_root / f"spec_{cid}.json"
     spec_path.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")

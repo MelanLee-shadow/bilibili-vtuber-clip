@@ -9,7 +9,7 @@ import stat
 import tempfile
 import base64
 import threading
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +21,7 @@ class QixiTransactionCoreError(ValueError):
 
 _LEASE_CAPABILITY = object()
 _lease_local = threading.local()
+_recovery_reference_local = threading.local()
 
 
 class RunnerCommitLease:
@@ -31,7 +32,7 @@ class RunnerCommitLease:
     a lock path or a boolean as synchronization.
     """
 
-    __slots__ = ("runtime_root", "lock_path", "device", "inode", "_capability")
+    __slots__ = ("runtime_root", "lock_path", "device", "inode", "_capability", "_owner_pid")
 
     def __init__(
         self, *, runtime_root: Path, lock_path: Path, device: int, inode: int, capability: object,
@@ -43,6 +44,7 @@ class RunnerCommitLease:
         self.device = device
         self.inode = inode
         self._capability = capability
+        self._owner_pid = os.getpid()
 
 
 def require_runner_commit_lease(lease: RunnerCommitLease, *, runtime_root: Path) -> None:
@@ -53,6 +55,7 @@ def require_runner_commit_lease(lease: RunnerCommitLease, *, runtime_root: Path)
         or lease._capability is not _LEASE_CAPABILITY
         or lease.runtime_root != runtime_root
         or getattr(_lease_local, "active", None) is not lease
+        or lease._owner_pid != os.getpid()
     ):
         raise QixiTransactionCoreError("runner commit lease is invalid")
 
@@ -459,3 +462,71 @@ def exclusive_runner_lock(runtime_root: Path):
 
     with exclusive_runner_commit(runtime_root):
         yield
+
+
+@contextmanager
+def _recovery_reference_window(runtime_root: Path, *, maintenance: bool):
+    """Exclude GC while private APIs publish references to original inputs.
+
+    Shared writers can copy independent private artifacts concurrently without
+    taking the runner commit mutex. Maintenance owns the exclusive side.
+    """
+    active = getattr(_recovery_reference_local, "active", None)
+    if active is not None and active[1] == os.getpid():
+        if active[0] != runtime_root or active[2] != maintenance:
+            raise QixiTransactionCoreError("recovery reference window nesting is forbidden")
+        _same_safe_runner_lock(active[3], active[4], active[5])
+        yield
+        return
+    lock = runtime_root / "recovery-reference.lock"
+    _safe_parent(lock)
+    try:
+        descriptor = os.open(lock, _runner_lock_open_flags(), 0o600)
+    except OSError as exc:
+        raise QixiTransactionCoreError("recovery reference lock cannot be opened safely") from exc
+    try:
+        opened = os.fstat(descriptor)
+        _same_safe_runner_lock(lock, descriptor, opened)
+        try:
+            mode = fcntl.LOCK_EX if maintenance else fcntl.LOCK_SH
+            fcntl.flock(descriptor, mode | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise QixiTransactionCoreError("recovery reference lock busy") from exc
+        _same_safe_runner_lock(lock, descriptor, opened)
+        previous = active
+        _recovery_reference_local.active = (
+            runtime_root, os.getpid(), maintenance, lock, descriptor, opened,
+        )
+        try:
+            yield
+            _same_safe_runner_lock(lock, descriptor, opened)
+        finally:
+            _recovery_reference_local.active = previous
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
+@contextmanager
+def recovery_reference_write_window(runtime_root: Path):
+    """Protect one private filesystem publication, without provider work."""
+    with _recovery_reference_window(runtime_root, maintenance=False):
+        yield
+
+
+@contextmanager
+def exclusive_recovery_maintenance(runtime_root: Path):
+    """Freeze state/journals and private recovery references for cleanup.
+
+    Reuse this thread's actual live runner lease. An external shell flock is
+    not an opaque lease; callers should use this API instead of nesting it
+    beneath that shell lock.
+    """
+    lease = current_runner_commit_lease(runtime_root=runtime_root)
+    runner_window = nullcontext(lease) if lease is not None else exclusive_runner_commit(runtime_root)
+    with runner_window as owned:
+        require_runner_commit_lease(owned, runtime_root=runtime_root)
+        with _recovery_reference_window(runtime_root, maintenance=True):
+            yield owned

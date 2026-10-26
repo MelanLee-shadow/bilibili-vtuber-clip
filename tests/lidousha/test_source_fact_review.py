@@ -1,12 +1,17 @@
 import hashlib
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
 
 import src.autoslice.reviewed_subtitle_baseline_registry as baseline_registry
+import src.autoslice.source_fact_staging as source_fact_staging
 from src.autoslice.llm_client import LlmCallError
-from src.autoslice.publish_staging import _stage_publish_draft
+from src.autoslice.publish_staging import (
+    _bind_normal_source_entity_projection,
+    _stage_publish_draft,
+)
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.source_fact_review import (
     _finalize_receipt,
@@ -94,28 +99,269 @@ def _completion(
     changed_surfaces: list[dict[str, object]] | None = None,
     selection_scorecard_review: dict[str, str] | None = None,
     addressee_attribution: list[dict[str, object]] | None = None,
+    source_entity_candidates: list[dict[str, object]] | None = None,
 ) -> str:
-    return json.dumps(
-        {
-            "schema_version": "lidousha-source-fact-review.v1",
-            "status": status,
-            "final_selection_hook": final_hook,
-            "final_title": final_title,
-            "supported_by": supported_by,
-            "changed_surfaces": changed_surfaces or [],
-            # F12：受话人归属判项在每份新回应里都必须存在（缺键=形状无效）。
-            # 这些历史用例都没有说话人转写，判项按 UNVERIFIABLE 车道留空。
-            "addressee_attribution": addressee_attribution or [],
-            "selection_scorecard_review": (
-                selection_scorecard_review
-                or {
-                    "status": "NOT_NEEDED",
-                    "reason": "selection hook remains unchanged",
-                }
-            ),
-            "summary": "相邻的同片文字证据足以完成事实裁决。",
-        },
-        ensure_ascii=False,
+    payload: dict[str, object] = {
+        "schema_version": "lidousha-source-fact-review.v1",
+        "status": status,
+        "final_selection_hook": final_hook,
+        "final_title": final_title,
+        "supported_by": supported_by,
+        "changed_surfaces": changed_surfaces or [],
+        # F12：受话人归属判项在每份新回应里都必须存在（缺键=形状无效）。
+        # 这些历史用例都没有说话人转写，判项按 UNVERIFIABLE 车道留空。
+        "addressee_attribution": addressee_attribution or [],
+        "selection_scorecard_review": (
+            selection_scorecard_review
+            or {
+                "status": "NOT_NEEDED",
+                "reason": "selection hook remains unchanged",
+            }
+        ),
+        "summary": "相邻的同片文字证据足以完成事实裁决。",
+    }
+    if source_entity_candidates is not None:
+        payload["source_entity_candidates"] = source_entity_candidates
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _completed_fact_fixture(tmp_path):
+    calls = []
+    srt = tmp_path / "final.srt"
+    transcript = "技能可以叫李姐拉拉吗\n不行，我这个应该叫李姐网"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\n" + transcript + "\n")
+    hook, title = "弹幕提议把技能叫李姐拉拉。", "【李豆沙】短标题"
+
+    def call(prompt):
+        calls.append(prompt)
+        current_hook, current_title = call.test_surfaces
+        return _completion(
+            status="REPAIR", final_hook=current_hook,
+            final_title="【李豆沙】弹幕提议把技能叫李姐拉拉，主播随即拒绝",
+            supported_by=["final_transcript"], changed_surfaces=[{
+                "artifact": "title", "before": current_title.split("】", 1)[1], "after": "弹幕提议把技能叫李姐拉拉，主播随即拒绝",
+                "reason": "补足最终字幕明确支持的完整事件。",
+                "evidence": ["技能可以叫李姐拉拉吗", "不行，我这个应该叫李姐网"],
+            }],
+        )
+
+    call.cpa_cache_identity = {"transport": "cpa_command", "models": ["fixture-model"], "effort": "high"}
+    call.test_surfaces = [hook, title]
+    call.provider_runtime_binding = {"provider_transport": "runtime_cpa", "provider_credential_source": str(tmp_path / "cpa.env"), "provider_endpoint_host": "fixture.invalid"}
+    kwargs = dict(selection_hook=hook, title=title, final_transcript=transcript,
+                  clip_context_prompt="", selection_scorecard=None, llm_call=call,
+                  title_repair_allowed=False, candidate_id="ordinary", final_reviewed_srt_path=srt,
+                  story_contract={"source_media_sha256s": ["sha256:" + "a" * 64]})
+    return kwargs, call, calls
+
+
+@pytest.mark.parametrize('change', [None, 'srt', 'title', 'hook', 'scorecard', 'receipt'])
+def test_pinned_complete_editorial_stage_revalidates_without_a_new_fact_call(tmp_path, change):
+    cid, hook, title, transcript = 'retained-editorial', '聊读春雪的感受。', '【李豆沙】分享读春雪时的真实感受', '读春雪很有意思'
+    srt = tmp_path/'candidate.srt'
+    srt.write_text('1\n00:00:00,000 --> 00:00:02,000\n' + transcript + '\n')
+    story = build_story_contract(candidate_id=cid, selection_hook=hook, transcript_text=transcript,
+        selection_scorecard=None, session_relation_authority=None)
+    review = review_and_repair_source_facts(selection_hook=hook, title=title, final_transcript=transcript,
+        clip_context_prompt=story['clip_context_prompt'], speaker_evidence=_absent_speaker_evidence(),
+        candidate_id=cid, final_reviewed_srt_path=srt,
+        llm_call=lambda _: _completion(status='KEEP', final_hook=hook, final_title=title, supported_by=['final_transcript']))
+    original = deepcopy(review)
+    if change == 'srt':
+        transcript = '改变后的最终字幕'
+        srt.write_text('1\n00:00:00,000 --> 00:00:02,000\n' + transcript + '\n')
+    elif change == 'title': title += '！'
+    elif change == 'hook': hook += '改变内容'
+    elif change == 'scorecard': story['selection_scorecard'] = {'changed': True}
+    elif change == 'receipt': review['passes'][0]['response_sha256'] = 'sha256:'+'f'*64
+    calls = []
+    result = source_fact_staging.resolve_initial_source_fact_review(candidate_id=cid,
+        title_source='llm', title=title, selection_hook=hook, story_contract=story,
+        record={'speaker_mode':'uniform_host', 'subtitle_path':str(srt)},
+        cues=[SourceCue('cue-1',0,2000,transcript,'zh','speech',1.0)],
+        source_fact_llm_call=lambda p: calls.append(p), recovery_publication_authority=None,
+        title_authority_status='RESOLVED_CPA', title_llm_enabled=True,
+        prior_authority_error=None, completed_review=review)
+    assert calls == []
+    if change is None:
+        assert result.review == original and result.authority_error is None
+        assert review == original
+    else:
+        assert result.review is None and 'EXISTING_SOURCE_FACT_REVIEW_STALE' in result.authority_error
+
+
+def test_model_bound_raw_fallback_keeps_hidden_source_material_in_shared_key(tmp_path):
+    kwargs, call, calls = _completed_fact_fixture(tmp_path)
+    del call.provider_runtime_binding
+    first = review_and_repair_source_facts(**kwargs)
+    assert first['reason_code'] == 'SOURCE_FACT_TITLE_AUTHORITY_REQUIRED'
+    assert review_and_repair_source_facts(**kwargs) == first and len(calls) == 1
+    kwargs['story_contract']['source_media_sha256s'] = ['sha256:' + 'b' * 64]
+    second = review_and_repair_source_facts(**kwargs)
+    assert second['reason_code'] == 'SOURCE_FACT_TITLE_AUTHORITY_REQUIRED' and len(calls) == 2
+    assert calls[0] == calls[1]  # Hidden source identity is not a prompt rewrite.
+
+
+def test_repaired_title_enters_a_new_run_without_review_round_noise(tmp_path):
+    kwargs, original, calls = _completed_fact_fixture(tmp_path)
+    kwargs['title_repair_allowed'] = True
+    repaired_title = '【李豆沙】弹幕提议把技能叫李姐拉拉，主播随即拒绝'
+    def call(prompt):
+        if not calls:
+            return original(prompt)
+        calls.append(prompt)
+        return _completion(status='KEEP', final_hook=kwargs['selection_hook'],
+            final_title=repaired_title, supported_by=['final_transcript'])
+    call.__dict__.update(original.__dict__)
+    kwargs['llm_call'] = call
+    first = review_and_repair_source_facts(**kwargs)
+    assert first['status'] == 'PASS' and first['decision'] == 'REPAIRED' and len(calls) == 2
+    kwargs['title'] = repaired_title
+    resumed = review_and_repair_source_facts(**kwargs)
+    assert resumed['status'] == 'PASS' and resumed['decision'] == 'KEEP' and len(calls) == 2
+    assert first['passes'][1]['response_sha256'] == resumed['passes'][0]['response_sha256']
+    assert first['passes'][1]['review_pass'] == 2 and resumed['passes'][0]['review_pass'] == 1
+    assert all('review_pass:' not in prompt for prompt in calls)
+
+
+@pytest.mark.parametrize("change", ["srt", "title", "hook", "context", "scorecard", "source", "model", "provider", "speaker"])
+def test_completed_source_fact_response_reuses_title_block_and_invalidates_inputs(tmp_path, change):
+    kwargs, call, calls = _completed_fact_fixture(tmp_path)
+    first = review_and_repair_source_facts(**kwargs)
+    root = tmp_path / ".completed-review-observations"
+    original = {p: p.read_bytes() for p in root.rglob("*.json")}
+    assert first["reason_code"] == "SOURCE_FACT_TITLE_AUTHORITY_REQUIRED" and original
+    assert review_and_repair_source_facts(**kwargs) == first and len(calls) == 1
+    changed = deepcopy(kwargs)
+    changed["llm_call"] = call
+    if change == "srt":
+        path = changed["final_reviewed_srt_path"]
+        path.write_text(path.read_text().replace("00:00:01,000", "00:00:01,500"))
+    elif change == "title":
+        changed["title"] = "【李豆沙】短标题变了"
+        call.test_surfaces[1] = changed["title"]
+    elif change == "hook":
+        changed["selection_hook"] = "弹幕建议把技能叫李姐拉拉。"
+        call.test_surfaces[0] = changed["selection_hook"]
+    elif change == "context":
+        changed["clip_context_prompt"] = "当前片内语境变化。"
+    elif change == "scorecard":
+        changed["selection_scorecard"] = {"status": "VALID", "dimensions": {"self_contained": 4}}
+    elif change == "source":
+        changed["story_contract"]["source_media_sha256s"] = ["sha256:" + "b" * 64]
+    elif change == "model":
+        call.cpa_cache_identity["models"] = ["another-fixture-model"]
+    elif change == "provider":
+        call.provider_runtime_binding["provider_endpoint_host"] = "another.invalid"
+    else:
+        changed["speaker_evidence"] = _absent_speaker_evidence()
+    second = review_and_repair_source_facts(**changed)
+    assert second["reason_code"] == "SOURCE_FACT_TITLE_AUTHORITY_REQUIRED" and len(calls) == 2
+    assert review_and_repair_source_facts(**changed) == second and len(calls) == 2
+    assert all(path.read_bytes() == raw for path, raw in original.items())
+
+
+def test_completed_source_fact_response_damaged_observation_is_not_provider_retry(tmp_path):
+    kwargs, call, calls = _completed_fact_fixture(tmp_path)
+    review_and_repair_source_facts(**kwargs)
+    saved = next((tmp_path / ".completed-review-observations").rglob("*.json"))
+    saved.write_bytes(saved.read_bytes() + b" corrupted")
+    damaged = saved.read_bytes()
+    review = review_and_repair_source_facts(**kwargs)
+    assert review["status"] == "FAILED" and review["reason_code"] == "COMPLETED_REVIEW_BYTES_DRIFT"
+    assert len(calls) == 1 and saved.read_bytes() == damaged
+
+
+@pytest.mark.parametrize("failure", ["transport", "incomplete"])
+def test_completed_source_fact_response_retries_failure_without_caching_it(tmp_path, failure):
+    kwargs, original, calls = _completed_fact_fixture(tmp_path)
+
+    def call(prompt):
+        if not calls:
+            calls.append(prompt)
+            if failure == "transport":
+                raise RuntimeError("offline transport failed")
+            return '{"status":"REPAIR"}'
+        return original(prompt)
+
+    call.__dict__.update(original.__dict__)
+    kwargs["llm_call"] = call
+    first = review_and_repair_source_facts(**kwargs)
+    if failure == 'incomplete':
+        assert first['reason_code'] == 'CPA_TEXT_REVIEW_INVALID'
+        assert first['passes'][-1]['failure_layer'] == 'CONTRACT_ERROR'
+        assert len(calls) == 1 and not first['provider_retries']
+        saved = list((tmp_path / '.completed-review-observations').rglob('*.json'))
+        original_bytes = {path: path.read_bytes() for path in saved}
+        assert len(saved) == 1 and json.loads(saved[0].read_text())['response'] == '{"status":"REPAIR"}'
+        resumed = review_and_repair_source_facts(**kwargs)
+        assert resumed == first and len(calls) == 1
+        assert all(path.read_bytes() == raw for path, raw in original_bytes.items())
+        return
+    if failure == "transport":
+        assert first["reason_code"] == "CPA_TEXT_REVIEW_CALL_FAILED"
+        assert not list((tmp_path / ".completed-review-observations").rglob("*.json"))
+        first = review_and_repair_source_facts(**kwargs)
+    assert first["reason_code"] == "SOURCE_FACT_TITLE_AUTHORITY_REQUIRED" and len(calls) == 2
+    resumed = review_and_repair_source_facts(**kwargs)
+    assert resumed["reason_code"] == first["reason_code"]
+    assert resumed["passes"] == first["passes"] and not resumed["provider_retries"]
+    assert len(calls) == 2
+
+
+def test_completed_source_fact_response_keep_parser_pass_still_validates_current_srt(tmp_path):
+    kwargs, original, calls = _completed_fact_fixture(tmp_path)
+    kwargs["title"] = "【李豆沙】弹幕提议把技能叫李姐拉拉，主播随即拒绝"
+
+    def call(prompt):
+        calls.append(prompt)
+        return _completion(status="KEEP", final_hook=kwargs["selection_hook"], final_title=kwargs["title"], supported_by=["final_transcript"])
+
+    call.__dict__.update(original.__dict__)
+    kwargs["llm_call"] = call
+    first = review_and_repair_source_facts(**kwargs)
+    assert first["status"] == "PASS"
+    assert review_and_repair_source_facts(**kwargs) == first and len(calls) == 1
+
+
+def test_game_relationship_title_repair_preserves_context_in_final_surface() -> None:
+    hook = "游戏对白里闺蜜问别先结婚，小李连声说太暧昧了。"
+    old = "【李豆沙】闺蜜问别先结婚，上帝视角的小李连声说太暧昧了"
+    corrected = "【李豆沙】游戏里闺蜜问别先结婚，小李连声说太暧昧了"
+    transcript = "这应该是Galgame吧\n你不会抛下我先跑去结婚的对吧\n有点太暧昧了"
+    calls = []
+
+    def cpa(prompt: str) -> str:
+        calls.append(prompt)
+        assert "投稿标题必须脱离 selection_hook" in prompt
+        assert "钩子已写游戏、标题没直接说是主播本人" in prompt
+        assert "现实经历同样不得凭空改成游戏剧情" in prompt
+        if len(calls) == 1:
+            return _completion(
+                status="REPAIR", final_hook=hook, final_title=corrected,
+                supported_by=["final_transcript"],
+                changed_surfaces=[{
+                    "artifact": "title", "before": old, "after": corrected,
+                    "reason": "标题独立展示时缺少游戏语境，会上升为现实闺蜜关系。",
+                    "evidence": ["final_transcript: 这应该是Galgame吧"],
+                }],
+            )
+        return _completion(status="KEEP", final_hook=hook, final_title=corrected,
+                           supported_by=["final_transcript"])
+
+    review = review_and_repair_source_facts(
+        selection_hook=hook, title=old, final_transcript=transcript,
+        clip_context_prompt="", llm_call=cpa,
+    )
+    assert review["decision"] == "REPAIRED"
+    assert len(calls) == 2
+    assert validate_source_fact_review(
+        review, selection_hook=hook, title=corrected,
+        final_transcript=transcript, clip_context_prompt="",
+    )
+    assert not validate_source_fact_review(
+        review, selection_hook=hook, title=old,
+        final_transcript=transcript, clip_context_prompt="",
     )
 
 
@@ -628,6 +874,86 @@ def test_title_policy_violation_must_be_repaired_before_keep() -> None:
     assert len(review["passes"]) == 2
 
 
+def test_source_fact_review_repairs_unjoined_real_quotes_without_banning_natural_quotes() -> None:
+    hook = "玩自己的语音"
+    bad_title = "【李豆沙】玩自己的语音，怎么“我讨厌你”还“不许讨厌我”？"
+    fixed_title = "【李豆沙】玩自己的语音：我讨厌你，但你不许讨厌我"
+    transcript = "我讨厌你\n不许讨厌我"
+    calls: list[str] = []
+
+    def cpa(prompt: str) -> str:
+        calls.append(prompt)
+        assert "事实支持不等于标题通顺" in prompt
+        assert "不一律禁用引号、问号或口语省略" in prompt
+        if len(calls) == 1:
+            return _completion(
+                status="REPAIR",
+                final_hook=hook,
+                final_title=fixed_title,
+                supported_by=["final_transcript"],
+                changed_surfaces=[
+                    {
+                        "artifact": "title",
+                        "before": bad_title,
+                        "after": fixed_title,
+                        "reason": "两句原话真实，但原标题把它们并排成了需要读者自行拼接的句法。",
+                        "evidence": ["我讨厌你", "不许讨厌我"],
+                    }
+                ],
+            )
+        return _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title=fixed_title,
+            supported_by=["final_transcript"],
+        )
+
+    review = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=bad_title,
+        final_transcript=transcript,
+        clip_context_prompt="",
+        llm_call=cpa,
+        enforce_automatic_title_style=True,
+    )
+
+    assert review["decision"] == "REPAIRED"
+    assert review["final_title"] == fixed_title
+    assert len(calls) == 2
+
+
+def test_source_fact_review_scopes_fluency_gate_to_automatic_title_style() -> None:
+    hook = "玩自己的语音"
+    title = "【李豆沙】玩自己的语音，怎么“我讨厌你”还“不许讨厌我”？"
+    prompts: list[str] = []
+
+    def cpa(prompt: str) -> str:
+        prompts.append(prompt)
+        return _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title=title,
+            supported_by=["final_transcript"],
+        )
+
+    review = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript="我讨厌你\n不许讨厌我",
+        clip_context_prompt="",
+        llm_call=cpa,
+        enforce_automatic_title_style=False,
+    )
+
+    assert source_fact_review_passes(review)
+    assert review["decision"] == "KEEP"
+    assert review["passes"][0]["title_policy_mode"] == "baseline"
+    assert len(prompts) == 1
+    assert "自动文案审查的通顺要求" not in prompts[0]
+    assert "当前是 baseline/manual 文案审查" in prompts[0]
+    assert "事实、模态、角色、条件和因果" in prompts[0]
+
+
 def test_proposal_must_not_become_completed_naming() -> None:
     bad_hook = "弹幕又把她的技能强行命名成“李姐拉拉”。"
     bad_title = "【李豆沙】话还没说完，技能又被命名成“李姐拉拉”"
@@ -683,7 +1009,8 @@ def test_proposal_must_not_become_completed_naming() -> None:
     assert review["final_selection_hook"] == fixed_hook
     assert review["final_title"] == fixed_title
     assert len(review["passes"]) == 2
-    assert "review_pass: 2" in calls[1]
+    assert review['passes'][1]['review_pass'] == 2
+    assert all('review_pass:' not in prompt for prompt in calls)
 
 
 def test_repair_accepts_source_labels_and_bound_chat_citation_format() -> None:
@@ -1206,7 +1533,8 @@ def test_source_fact_repair_stops_after_five_nonconverging_passes() -> None:
     assert review["decision"] == "REPAIR_EXHAUSTED"
     assert review["reason_code"] == "CPA_SOURCE_FACT_REPAIR_EXHAUSTED"
     assert len(review["passes"]) == 5
-    assert "review_pass: 5" in calls[-1]
+    assert review['passes'][-1]['review_pass'] == 5
+    assert all('review_pass:' not in prompt for prompt in calls)
 
 
 def test_repaired_hook_refuses_stale_selection_scorecard() -> None:
@@ -1552,11 +1880,32 @@ def test_publish_choke_rebuilds_story_before_cover_after_joint_repair(
     media = tmp_path / "candidate.recut.mp4"
     media.write_bytes(b"video")
 
+    # 60-title L10-14: automatic titles read the complete final SRT and return
+    # 2–4 compared candidates, each with a verbatim final-subtitle quote.
+    srt = tmp_path / "candidate.srt"
+    srt.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\n技能可以叫李姐拉拉吗\n\n"
+        "2\n00:00:01,000 --> 00:00:02,000\n不行，我这个应该叫李姐网\n",
+        encoding="utf-8",
+    )
+
     def title_llm(prompt: str) -> str:
         title_prompts.append(prompt)
+        body = bad_title.removeprefix("【李豆沙】")
+        quote = {"text": "李姐拉拉", "speaker": ""}
         return json.dumps(
             {
-                "title": bad_title,
+                "title": body,
+                "candidates": [
+                    {"title": body, "quote": quote, "status": "SELECTED", "rationale": "offline fixture"},
+                    {
+                        "title": "弹幕问技能能不能叫“李姐拉拉”",
+                        "quote": quote,
+                        "status": "REJECTED",
+                        "rationale": "offline fixture",
+                    },
+                ],
+                "editorial_choice": {"selected": body, "reason": "offline fixture"},
                 "selection_hook_anchor": "命名成李姐拉拉",
             },
             ensure_ascii=False,
@@ -1567,6 +1916,7 @@ def test_publish_choke_rebuilds_story_before_cover_after_joint_repair(
             "status": "MATERIALIZED",
             "speaker_mode": "uniform_host",
             "media_path": str(media),
+            "subtitle_path": str(srt),
             "story_contract": contract(bad_hook),
             "artifact_hashes": {},
         },
@@ -1594,8 +1944,11 @@ def test_publish_choke_rebuilds_story_before_cover_after_joint_repair(
     assert cover_record["story_contract"]["selection_hook"] == fixed_hook
     assert cover_record["story_contract"]["source_fact_review"]["decision"] == "REPAIRED"
     assert len(title_prompts) == 1
-    assert "关系缺失或未确认" in title_prompts[0]
-    assert "source text 保持不变" in title_prompts[0]
+    # 60-title L10-11: the skill title prompt carries only the complete final
+    # SRT as facts (not StoryContract/selection-hook text); the relation
+    # constraint is still enforced by the joint source-fact review (`cpa`).
+    assert "技能可以叫李姐拉拉吗" in title_prompts[0]
+    assert bad_hook not in title_prompts[0]
     assert calls == 2
 
 
@@ -1741,9 +2094,99 @@ def test_prompt_teaches_hard_meme_canon_semantics() -> None:
 
     assert review["status"] == "PASS"
     prompt = seen["prompt"]
-    assert "hard-meme-canon" in prompt
+    assert "频道固定显示规范" in prompt
     assert "「直女」一律写作「侄女」" in prompt
     assert "不得把规范词面" in prompt or "永远不得把规范词面" in prompt
+
+
+def test_prompt_and_receipt_record_consumed_editorial_research() -> None:
+    hook = "小李分享小说，朋友反扣成找到聊得来的男的"
+    title = "【李豆沙】分享《春雪》的句子，却被小室说成找到聊得来的男的了"
+    research = {
+        "schema": "research-editorial-applications.v1",
+        "path": "candidate-applications.json",
+        "sha256": "sha256:" + "a" * 64,
+        "application_id": "E04",
+        "applicability": "title-and-tags",
+        "applications": [
+            {
+                "id": "E04",
+                "first_title": "小李分享几句小说，朋友却说她找到聊得来的男的了",
+                "rejected_version": "小李找到男朋友了",
+            }
+        ],
+    }
+    seen: dict[str, str] = {}
+
+    def cpa(prompt: str) -> str:
+        seen["prompt"] = prompt
+        return _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title=title,
+            supported_by=["final_transcript"],
+        )
+
+    review = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript="小李分享《春雪》的句子，小室说这下找到聊得来的男的了",
+        clip_context_prompt="",
+        llm_call=cpa,
+        selection_scorecard={"tier_reason": "literary exchange", "editorial_research": research},
+    )
+
+    assert review["status"] == "PASS"
+    assert "candidate-applications.json" in seen["prompt"]
+    assert "不是 source-fact authority" in seen["prompt"]
+    first_pass = review["passes"][0]
+    assert first_pass["editorial_research"]["application_id"] == "E04"
+    assert first_pass["editorial_research_sha256"].startswith("sha256:")
+
+
+def test_inapplicable_editorial_research_is_disclosed_without_being_used_as_authority() -> None:
+    hook = "小李分享小说，朋友反扣成找到聊得来的男的"
+    title = "【李豆沙】分享《春雪》的句子，却被小室说成找到聊得来的男的了"
+    research = {
+        "schema": "editorial-research-consumption.v1",
+        "schema_version": "selection-scorecard-fallback.v1",
+        "version": "selection-scorecard.v1",
+        "source_kind": "runtime_record_field",
+        "path": "record.selection_scorecard",
+        "source_sha256": "sha256:" + "b" * 64,
+        "applicable": False,
+        "applicability": "没有绑定本片的 source-specific research projection",
+        "inapplicable_reason": "普通 record 没有 editorial_research 字段",
+        "status": "INAPPLICABLE",
+        "scope": "normal_title_tags",
+    }
+    seen: dict[str, str] = {}
+
+    def cpa(prompt: str) -> str:
+        seen["prompt"] = prompt
+        return _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title=title,
+            supported_by=["final_transcript"],
+        )
+
+    review = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript="小李分享《春雪》的句子，小室说这下找到聊得来的男的了",
+        clip_context_prompt="",
+        llm_call=cpa,
+        selection_scorecard={"tier_reason": "literary exchange", "editorial_research": research},
+    )
+
+    assert review["status"] == "PASS"
+    assert "INAPPLICABLE" in seen["prompt"]
+    assert "不要读取未部署 reports" in seen["prompt"]
+    first_pass = review["passes"][0]
+    assert first_pass["editorial_research"]["status"] == "INAPPLICABLE"
+    assert first_pass["editorial_research"]["applicable"] is False
+    assert first_pass["editorial_research_sha256"].startswith("sha256:")
 
 
 def _story_entity_srt() -> Path:
@@ -1751,6 +2194,488 @@ def _story_entity_srt() -> Path:
         Path(__file__).resolve().parents[2]
         / "assets/lidousha/reviewed_subtitle_baselines"
         / "auto_223750_578_734.reviewed.srt"
+    )
+
+
+def test_source_fact_response_binds_typed_entities_to_current_srt(tmp_path: Path) -> None:
+    """A provider nomination is usable only when the final subtitle still matches."""
+
+    hook = "小李聊三岛由纪夫的《春雪》"
+    title = "【李豆沙】小李聊三岛由纪夫的《春雪》"
+    final_transcript = "我讲三岛由纪夫的《春雪》"
+    srt = tmp_path.resolve() / "current.srt"
+    srt_text = (
+        "1\n00:00:00,000 --> 00:00:02,000\n"
+        f"{final_transcript}\n"
+    )
+    srt.write_text(srt_text, encoding="utf-8")
+
+    def cpa(_prompt: str) -> str:
+        assert "source_entity_candidates" in _prompt
+        assert "不要从identity/spelling-only entity_context" in _prompt
+        return _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title=title,
+            supported_by=["final_transcript"],
+            source_entity_candidates=[
+                {
+                    "tag": "三岛由纪夫",
+                    "role": "author",
+                    "status": "SOURCE_CONFIRMED",
+                    "surfaces": ["三岛由纪夫"],
+                    "evidence": [final_transcript],
+                },
+                {
+                    "tag": "《春雪》",
+                    "role": "work",
+                    "status": "SOURCE_CONFIRMED",
+                    "surfaces": ["《春雪》"],
+                    "evidence": [final_transcript],
+                },
+                {
+                    "tag": "未在字幕出现的人名",
+                    "role": "person",
+                    "status": "SOURCE_CONFIRMED",
+                    "surfaces": ["未在字幕出现的人名"],
+                    "evidence": ["未在字幕出现的人名"],
+                },
+            ],
+        )
+
+    review = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript=final_transcript,
+        clip_context_prompt="",
+        llm_call=cpa,
+        candidate_id="candidate-source-entity",
+        final_reviewed_srt_path=srt,
+    )
+
+    assert review["status"] == "PASS"
+    assert [row["tag"] for row in review["source_entity_candidates"]] == [
+        "三岛由纪夫",
+        "《春雪》",
+    ]
+    assert review["passes"][0]["source_entity_candidate_rejections"] == [
+        "source-entity-candidate-2:tag-not-in-current-final-srt-and-transcript"
+    ]
+    source = review["source_entity_candidates"][0]["source"]
+    assert source["source_kind"] == "source_fact_cpa_final_srt"
+    assert source["srt_sha256"] == source["sha256"]
+    assert source["request_sha256"] == review["passes"][0]["request_sha256"]
+    assert source["response_sha256"] == review["passes"][0]["response_sha256"]
+    assert validate_source_fact_review(
+        review,
+        selection_hook=hook,
+        title=title,
+        final_transcript=final_transcript,
+        clip_context_prompt="",
+        candidate_id="candidate-source-entity",
+        final_reviewed_srt_path=srt,
+    )
+
+    srt.write_text(srt_text + "\n", encoding="utf-8")
+    assert not validate_source_fact_review(
+        review,
+        selection_hook=hook,
+        title=title,
+        final_transcript=final_transcript,
+        clip_context_prompt="",
+        candidate_id="candidate-source-entity",
+        final_reviewed_srt_path=srt,
+    )
+
+
+def test_empty_source_entity_response_without_srt_preserves_legacy_validation() -> None:
+    hook = "小李聊一段普通对话"
+    title = "【李豆沙】小李聊一段普通对话"
+    review = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript="今天聊一段普通对话",
+        clip_context_prompt="",
+        llm_call=lambda _prompt: _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title=title,
+            supported_by=["final_transcript"],
+            source_entity_candidates=[],
+        ),
+    )
+
+    assert review["status"] == "PASS"
+    assert review["source_entity_candidates"] == []
+    assert validate_source_fact_review(
+        review,
+        selection_hook=hook,
+        title=title,
+        final_transcript="今天聊一段普通对话",
+        clip_context_prompt="",
+    )
+
+
+@pytest.mark.parametrize("changed", [None, "srt", "title", "scorecard", "candidate"])
+def test_normal_resume_keeps_original_fact_receipt_only_for_identical_inputs(
+    tmp_path: Path, changed: str | None,
+) -> None:
+    """Package relocation must not fabricate a new CPA request or lose its verdict."""
+
+    cid = "fact-resume"
+    hook = "小李聊三岛由纪夫的《春雪》"
+    title = "【李豆沙】小李聊三岛由纪夫的《春雪》"
+    transcript = "我讲三岛由纪夫的《春雪》"
+    subtitle = tmp_path / "original.srt"
+    subtitle.write_text("1\n00:00:00,000 --> 00:00:02,000\n" + transcript + "\n")
+    story = build_story_contract(
+        candidate_id=cid, selection_hook=hook, transcript_text=transcript,
+        selection_scorecard=None, session_relation_authority=None,
+    )
+    receipt = review_and_repair_source_facts(
+        selection_hook=hook, title=title, final_transcript=transcript,
+        clip_context_prompt=story["clip_context_prompt"],
+        speaker_evidence=_absent_speaker_evidence(),
+        candidate_id=cid, final_reviewed_srt_path=subtitle,
+        llm_call=lambda _prompt: _completion(
+            status="KEEP", final_hook=hook, final_title=title,
+            supported_by=["final_transcript"], source_entity_candidates=[{
+                "tag": "三岛由纪夫", "role": "author", "status": "SOURCE_CONFIRMED",
+                "surfaces": ["三岛由纪夫"], "evidence": [transcript],
+            }],
+        ),
+    )
+    frozen = deepcopy(receipt)
+    copied = tmp_path / "delivery.srt"
+    copied.write_bytes(subtitle.read_bytes())
+    if changed == "srt":
+        copied.write_text(copied.read_text() + "\n")
+    if changed == "title":
+        title = "【李豆沙】小李聊三岛由纪夫的《春雪》，又笑了"
+    if changed == "scorecard":
+        story["selection_scorecard"] = {"tier_reason": "different story"}
+    if changed == "candidate":
+        cid = "different-candidate"
+    story["source_fact_review"] = receipt
+    media = tmp_path / "resume.recut.mp4"
+    media.write_bytes(b"video")
+    cover = tmp_path / "cover.png"
+    cover.write_bytes(b"cover")
+    staged = _stage_publish_draft(
+        {"status": "MATERIALIZED", "speaker_mode": "uniform_host",
+         "media_path": str(media), "subtitle_path": str(copied),
+         "story_contract": story, "source_fact_review": receipt, "artifact_hashes": {}},
+        candidate_id=cid, title=title,
+        cues=[SourceCue("cue-1", 0, 2_000, transcript, "zh", "speech", 1.0)],
+        run_ffmpeg=False, title_llm_call=None, source_fact_llm_call=None,
+        selection_hook=hook,
+        stage_cover=lambda *_args, **_kwargs: {
+            "status": "AI_COVER_READY", "cover_path": str(cover),
+            "cover_generation": {"status": "READY"}, "reason_codes": [],
+        },
+    )
+    assert staged is not None
+    assert receipt == frozen
+    if changed is None:
+        assert staged["publish_staging"]["source_fact_review"] == frozen
+        assert staged["story_contract"]["source_fact_review"] == frozen
+        publish = json.loads(Path(staged["publish_staging"]["publish_json_path"]).read_text())
+        assert publish["source_fact_review"] == frozen
+        assert frozen["source_entity_candidates"][0]["source"]["path"] == str(subtitle)
+    else:
+        assert staged["publish_staging"]["source_fact_review"] is None
+        assert "EXISTING_SOURCE_FACT_REVIEW_STALE" in str(
+            staged["publish_staging"].get("title_authority_error")
+        )
+
+
+@pytest.mark.parametrize("changed", [None, "quantities", "research_method"])
+def test_normal_staging_projects_source_fact_entities_into_editorial_research(
+    tmp_path: Path, changed: str | None,
+) -> None:
+    """The ordinary stage consumer sees the same receipt without preset candidates."""
+
+    candidate_id = "candidate-source-entity-stage"
+    hook = "小李聊三岛由纪夫的《春雪》"
+    title = "【李豆沙】小李聊三岛由纪夫的《春雪》"
+    transcript = "我讲三岛由纪夫的《春雪》"
+    root = tmp_path.resolve()
+    subtitle = root / "candidate.srt"
+    subtitle.write_text(
+        "1\n00:00:00,000 --> 00:00:02,000\n" f"{transcript}\n",
+        encoding="utf-8",
+    )
+    media = root / "candidate.recut.mp4"
+    media.write_bytes(b"video")
+    story = build_story_contract(
+        candidate_id=candidate_id,
+        selection_hook=hook,
+        transcript_text=transcript,
+        selection_scorecard={"raw_score": 75.0, "dimensions": {"comedic_payoff": 3}},
+        session_relation_authority=None,
+    )
+
+    def cpa(_prompt: str) -> str:
+        return _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title=title,
+            supported_by=["final_transcript"],
+            source_entity_candidates=[
+                {
+                    "tag": "三岛由纪夫",
+                    "role": "author",
+                    "status": "SOURCE_CONFIRMED",
+                    "surfaces": ["三岛由纪夫"],
+                    "evidence": [transcript],
+                },
+                {
+                    "tag": "《春雪》",
+                    "role": "work",
+                    "status": "SOURCE_CONFIRMED",
+                    "surfaces": ["《春雪》"],
+                    "evidence": [transcript],
+                },
+            ],
+        )
+
+    def stage_cover(_record: dict[str, object], **_kwargs: object) -> dict[str, object]:
+        cover = root / "cover.png"
+        cover.write_bytes(b"cover")
+        return {
+            "status": "AI_COVER_READY",
+            "cover_path": str(cover),
+            "cover_generation": {"status": "READY"},
+            "reason_codes": [],
+        }
+
+    staged = _stage_publish_draft(
+        {
+            "status": "MATERIALIZED",
+            "speaker_mode": "uniform_host",
+            "media_path": str(media),
+            "subtitle_path": str(subtitle),
+            "story_contract": story,
+            "artifact_hashes": {},
+        },
+        candidate_id=candidate_id,
+        title=title,
+        cues=[SourceCue("cue-1", 0, 2_000, transcript, "zh", "speech", 1.0)],
+        run_ffmpeg=False,
+        title_llm_call=None,
+        selection_hook=hook,
+        source_fact_llm_call=cpa,
+        story_contract_rebuilder=lambda _hook: story,
+        stage_cover=stage_cover,
+    )
+
+    assert staged is not None
+    receipt = staged["story_contract"]["source_fact_review"]
+    assert [row["tag"] for row in receipt["source_entity_candidates"]] == [
+        "三岛由纪夫",
+        "《春雪》",
+    ]
+    research = staged["story_contract"]["editorial_research"]
+    projection = research["candidate_projection"]
+    assert projection["status"] == "APPLIED"
+    assert projection["path"] == "record/story_contract.source_fact_review.source_entity_candidates"
+    assert [row["tag"] for row in projection["source_entity_candidates"]] == [
+        "三岛由纪夫",
+        "《春雪》",
+    ]
+    assert projection["srt_sha256"] == receipt["source_entity_candidates"][0]["source"]["srt_sha256"]
+    assert projection["bound_title"] == title
+
+
+    # The receipt judges an immutable scorecard input. Current entity-tag
+    # projection is a downstream output, retained separately on the story.
+    judged_scorecard = staged["story_contract"]["selection_scorecard"]
+    assert _canonical_sha256(judged_scorecard) == receipt["passes"][-1][
+        "selection_scorecard_sha256"
+    ]
+    frozen_receipt = deepcopy(receipt)
+    current_resume = _stage_publish_draft(
+        deepcopy(staged), candidate_id=candidate_id, title=title,
+        cues=[SourceCue("cue-1", 0, 2_000, transcript, "zh", "speech", 1.0)],
+        run_ffmpeg=False, title_llm_call=None, source_fact_llm_call=None,
+        selection_hook=hook, stage_cover=stage_cover,
+    )
+    assert current_resume["publish_staging"]["source_fact_review"] == frozen_receipt
+    assert current_resume["story_contract"]["selection_scorecard"] == judged_scorecard
+    assert current_resume["story_contract"]["editorial_research"][
+        "candidate_projection"
+    ]["status"] == "APPLIED"
+
+    # Reproduce older staging's overwrite using its actual derived projection.
+    # Only that proven overwrite can be recovered; a changed score or research
+    # method must remain stale, even with a valid original receipt present.
+    historical = deepcopy(staged)
+    historical_scorecard = historical["story_contract"]["selection_scorecard"]
+    historical_scorecard["editorial_research"] = deepcopy(research)
+    if changed == "quantities":
+        historical_scorecard["raw_score"] = 76.0
+    if changed == "research_method":
+        historical_scorecard["editorial_research"]["method"] = "changed-method"
+    resumed = _stage_publish_draft(
+        historical, candidate_id=candidate_id, title=title,
+        cues=[SourceCue("cue-1", 0, 2_000, transcript, "zh", "speech", 1.0)],
+        run_ffmpeg=False, title_llm_call=None, source_fact_llm_call=None,
+        selection_hook=hook, stage_cover=stage_cover,
+    )
+    assert receipt == frozen_receipt
+    if changed is None:
+        assert resumed["publish_staging"]["source_fact_review"] == frozen_receipt
+        assert resumed["story_contract"]["selection_scorecard"] == judged_scorecard
+        assert resumed["story_contract"]["editorial_research"][
+            "candidate_projection"
+        ]["status"] == "APPLIED"
+    else:
+        assert resumed["publish_staging"]["source_fact_review"] is None
+        assert "EXISTING_SOURCE_FACT_REVIEW_STALE" in str(
+            resumed["publish_staging"].get("title_authority_error")
+        )
+
+
+def test_normal_staging_does_not_project_nonempty_entities_without_srt(
+    tmp_path: Path,
+) -> None:
+    candidate_id = "candidate-source-entity-no-srt"
+    hook = "小李聊三岛由纪夫的《春雪》"
+    title = "【李豆沙】小李聊三岛由纪夫的《春雪》"
+    transcript = "我讲三岛由纪夫的《春雪》"
+    root = tmp_path.resolve()
+    media = root / "candidate.recut.mp4"
+    media.write_bytes(b"video")
+    story = build_story_contract(
+        candidate_id=candidate_id,
+        selection_hook=hook,
+        transcript_text=transcript,
+        selection_scorecard=None,
+        session_relation_authority=None,
+    )
+
+    def cpa(_prompt: str) -> str:
+        return _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title=title,
+            supported_by=["final_transcript"],
+            source_entity_candidates=[
+                {
+                    "tag": "三岛由纪夫",
+                    "role": "author",
+                    "status": "SOURCE_CONFIRMED",
+                    "surfaces": ["三岛由纪夫"],
+                    "evidence": [transcript],
+                }
+            ],
+        )
+
+    def stage_cover(_record: dict[str, object], **_kwargs: object) -> dict[str, object]:
+        cover = root / "cover.png"
+        cover.write_bytes(b"cover")
+        return {
+            "status": "AI_COVER_READY",
+            "cover_path": str(cover),
+            "cover_generation": {"status": "READY"},
+            "reason_codes": [],
+        }
+
+    staged = _stage_publish_draft(
+        {
+            "status": "MATERIALIZED",
+            "speaker_mode": "uniform_host",
+            "media_path": str(media),
+            "story_contract": story,
+            "artifact_hashes": {},
+        },
+        candidate_id=candidate_id,
+        title=title,
+        cues=[SourceCue("cue-1", 0, 2_000, transcript, "zh", "speech", 1.0)],
+        run_ffmpeg=False,
+        title_llm_call=None,
+        selection_hook=hook,
+        source_fact_llm_call=cpa,
+        story_contract_rebuilder=lambda _hook: story,
+        stage_cover=stage_cover,
+    )
+
+    assert staged is not None
+    receipt = staged["story_contract"]["source_fact_review"]
+    assert receipt["source_entity_candidates"] == []
+    assert receipt["source_entity_candidate_rejections"] == [
+        "source-entity-candidates-final-srt-unavailable"
+    ]
+    projection = staged["story_contract"]["editorial_research"]["candidate_projection"]
+    assert projection["status"] == "INAPPLICABLE"
+    assert "source_entity_candidates" not in projection
+
+
+def test_publish_projection_requires_source_fact_pass_hash_binding(tmp_path: Path) -> None:
+    hook = "小李聊三岛由纪夫的《春雪》"
+    title = "【李豆沙】小李聊三岛由纪夫的《春雪》"
+    transcript = "我讲三岛由纪夫的《春雪》"
+    srt = tmp_path.resolve() / "current.srt"
+    srt_text = "1\n00:00:00,000 --> 00:00:02,000\n" f"{transcript}\n"
+    srt.write_text(srt_text, encoding="utf-8")
+    review = review_and_repair_source_facts(
+        selection_hook=hook,
+        title=title,
+        final_transcript=transcript,
+        clip_context_prompt="",
+        llm_call=lambda _prompt: _completion(
+            status="KEEP",
+            final_hook=hook,
+            final_title=title,
+            supported_by=["final_transcript"],
+            source_entity_candidates=[
+                {
+                    "tag": "三岛由纪夫",
+                    "role": "author",
+                    "status": "SOURCE_CONFIRMED",
+                    "surfaces": ["三岛由纪夫"],
+                    "evidence": [transcript],
+                }
+            ],
+        ),
+        candidate_id="candidate-source-entity-binding",
+        final_reviewed_srt_path=srt,
+    )
+    assert validate_source_fact_review(
+        review,
+        selection_hook=hook,
+        title=title,
+        final_transcript=transcript,
+        clip_context_prompt="",
+        candidate_id="candidate-source-entity-binding",
+        final_reviewed_srt_path=srt,
+    )
+
+    tampered = deepcopy(review)
+    tampered["source_entity_candidates"][0]["source"]["request_sha256"] = (
+        "sha256:" + "0" * 64
+    )
+    assert not validate_source_fact_review(
+        tampered,
+        selection_hook=hook,
+        title=title,
+        final_transcript=transcript,
+        clip_context_prompt="",
+        candidate_id="candidate-source-entity-binding",
+        final_reviewed_srt_path=srt,
+    )
+    projection = _bind_normal_source_entity_projection(
+        normalized_research={"status": "APPLICABLE"},
+        record={},
+        story_contract={"source_fact_review": tampered},
+        title=title,
+        final_srt_text=srt_text,
+        final_srt_sha256=review["source_entity_candidates"][0]["source"]["srt_sha256"],
+    )
+    assert projection is not None
+    assert projection["candidate_projection"]["status"] == "INAPPLICABLE"
+    assert "source-fact-request-response-binding-missing-or-drifted" in str(
+        projection["candidate_projection"]["rejected_candidates"]
     )
 
 
@@ -1847,7 +2772,7 @@ def test_entry_canonicalizes_banned_surface_in_handwritten_spec() -> None:
     assert f"selection_hook:\n{canon_hook}" in seen["prompt"]
 
 
-def test_transient_invalid_response_retried_within_same_pass() -> None:
+def test_invalid_response_is_contract_error_without_same_pass_retry() -> None:
     hook = "小李当场语塞三秒，弹幕全体起立。"
     title = "【李豆沙】小李当场语塞三秒弹幕全体起立"
     calls = {"n": 0}
@@ -1871,16 +2796,17 @@ def test_transient_invalid_response_retried_within_same_pass() -> None:
         llm_call=cpa,
     )
 
-    assert review["status"] == "PASS"
-    assert review["decision"] == "KEEP"
-    assert calls["n"] == 2
+    assert review['status'] == 'FAILED' and review['reason_code'] == 'CPA_TEXT_REVIEW_INVALID'
+    assert review['failure_layer'] == 'CONTRACT_ERROR'
+    assert calls['n'] == 1 and not review['provider_retries']
+    assert review['final_title'] == title and review['final_selection_hook'] == hook
+    assert review["decision"] == "NONE"
     assert len(review["passes"]) == 1
-    assert len(review["provider_retries"]) == 1
-    assert review["provider_retries"][0]["reason_code"] == "CPA_TEXT_REVIEW_INVALID"
-    assert review["provider_retries"][0]["response_sha256"] == (
+    assert review["passes"][0]["response_sha256"] == (
         "sha256:" + hashlib.sha256("这不是JSON".encode("utf-8")).hexdigest()
     )
-    assert validate_source_fact_review(
+    assert not source_fact_review_passes(review)
+    assert not validate_source_fact_review(
         review,
         selection_hook=hook,
         title=title,

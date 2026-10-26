@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 import argparse
 from collections.abc import Mapping, Sequence
 
@@ -113,6 +112,8 @@ def parse_args(
     )
     se.add_argument("--manifest", required=True)
     se.add_argument("--bvid", default=None)
+    se.add_argument("--attempt-id", default=None,
+                    help="select one original upload attempt; requires explicit --bvid")
     se.add_argument("--ledger", default=str(defaults["ledger"]))
     season_args(se)
     se.set_defaults(func=handlers["season_add"])
@@ -125,7 +126,10 @@ def parse_args(
         "repair-plan",
         help="freeze a manifest-bound existing-BV repair; no remote mutation",
     )
-    rp.add_argument("--manifest", required=True)
+    repair_input = rp.add_mutually_exclusive_group(required=True)
+    repair_input.add_argument("--manifest")
+    repair_input.add_argument("--stage-request", help="explicit partial correction; never a final publication manifest")
+    rp.add_argument("--biliup-bin", default="/opt/bilive/bin/biliup")
     rp.add_argument("--bvid", required=True)
     rp.add_argument("--out", required=True)
     rp.add_argument("--journal", default=str(defaults["repair_ledger"]))
@@ -159,6 +163,7 @@ def parse_args(
         help="resume an append-at-most-once same-BV repair transaction",
     )
     rr.add_argument("--plan", required=True)
+    rr.add_argument("--biliup-bin", default="/opt/bilive/bin/biliup")
     rr.add_argument("--journal", default=str(defaults["repair_ledger"]))
     rr.add_argument("--lock", default=None)
     rr.add_argument("--cookie-json", default=str(defaults["cookie_json"]))
@@ -205,6 +210,7 @@ def parse_args(
         ),
     )
     rv.add_argument("--plan", required=True)
+    rv.add_argument("--biliup-bin", default="/opt/bilive/bin/biliup")
     rv.add_argument("--journal", default=str(defaults["repair_ledger"]))
     rv.add_argument("--out", required=True)
     rv.add_argument("--lock", default=None)
@@ -281,82 +287,47 @@ def parse_args(
     cv.add_argument("--lock", default=None)
     cv.add_argument("--cookie-json", default=str(defaults["cookie_json"]))
     cv.set_defaults(func=handlers["cover_repair_verify_live"])
-    return parser.parse_args(argv)
-
-
-# Existing-BV title+cover-only commands are deliberately routed through a
-# separate parser branch so the legacy upload parser remains byte-compatible.
-_TITLE_COVER_COMMANDS = {
-    "title-cover-repair-plan",
-    "title-cover-repair-run",
-    "title-cover-repair-status",
-    "title-cover-repair-verify-live",
-}
-_BASE_PARSE_ARGS = parse_args
-
-
-def _parse_title_cover_args(argv, *, handlers, defaults):
-    from src.autoslice import same_bv_title_cover_cli as title_cover_cli
-
-    parser = argparse.ArgumentParser(
-        prog="authorized_upload.py",
-        description="Hash-bound existing-BV title-and-cover-only revision.",
+    tr = sub.add_parser("tags-repair", help="same-BV tags-only edit; resumed intent only observes")
+    for name in ("manifest", "bvid", "tag-input", "tag-result", "receipt", "quote"):
+        tr.add_argument("--" + name, required=True)
+    tr.add_argument("--authorized-by", default="维护者")
+    tr.add_argument("--cookie-json", default=str(defaults["cookie_json"]))
+    tr.add_argument("--lock", default=None)
+    tr.add_argument("--execute", action="store_true")
+    tr.add_argument("--wait", type=float, default=240.0)
+    tr.add_argument("--poll", type=float, default=10.0)
+    tr.set_defaults(func=handlers["tags_repair"])
+    tit = sub.add_parser(
+        "title-repair",
+        help="same-BV title-only edit; resumed intent only observes",
     )
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    plan = sub.add_parser("title-cover-repair-plan", help="freeze authority and live baseline; no mutation")
-    plan.add_argument("--authority", required=True)
-    plan.add_argument("--out", required=True)
-    plan.add_argument("--journal", required=True)
-    plan.add_argument("--cookie-json", default=defaults["cookie_json"])
-    plan.add_argument("--biliup-cookie-json", default=defaults["biliup_cookie_json"])
-    plan.add_argument("--lock")
-    plan.add_argument("--dry-run", action="store_true")
-    plan.set_defaults(func=title_cover_cli.entry_plan)
-
-    run = sub.add_parser("title-cover-repair-run", help="resume the one journaled edit")
-    run.add_argument("--plan", required=True)
-    run.add_argument("--journal", required=True)
-    run.add_argument("--cookie-json", default=defaults["cookie_json"])
-    run.add_argument("--biliup-cookie-json", default=defaults["biliup_cookie_json"])
-    run.add_argument("--lock")
-    run.add_argument("--wait", type=float, default=240.0)
-    run.add_argument("--poll", type=float, default=30.0)
-    run.set_defaults(func=title_cover_cli.entry_run)
-
-    status = sub.add_parser("title-cover-repair-status", help="validate local plan/journal only")
-    status.add_argument("--plan", required=True)
-    status.add_argument("--journal", required=True)
-    status.set_defaults(func=title_cover_cli.entry_status)
-
-    verify = sub.add_parser(
-        "title-cover-repair-verify-live",
-        help="fresh four-surface verification and create-only reconciliation",
+    for name in (
+        "manifest",
+        "bvid",
+        "title-input",
+        "title-result",
+        "receipt",
+        "quote",
+    ):
+        tit.add_argument("--" + name, required=True)
+    tit.add_argument("--authorized-by", default="维护者")
+    tit.add_argument("--cookie-json", default=str(defaults["cookie_json"]))
+    tit.add_argument("--lock", default=None)
+    tit.add_argument(
+        "--predecessor-cover-completed",
+        default=None,
+        help=(
+            "reuse and revalidate an existing VERIFIED_SAME_BV_COVER "
+            "completion as the current title predecessor"
+        ),
     )
-    verify.add_argument("--authority", required=True)
-    verify.add_argument("--plan", required=True)
-    verify.add_argument("--journal", required=True)
-    verify.add_argument("--out", required=True)
-    verify.add_argument("--reconciliation-out", required=True)
-    verify.add_argument("--cookie-json", default=defaults["cookie_json"])
-    verify.add_argument("--biliup-cookie-json", default=defaults["biliup_cookie_json"])
-    verify.add_argument("--lock")
-    verify.set_defaults(func=title_cover_cli.entry_verify_live)
-    return parser.parse_args(list(argv))
-
-
-def parse_args(argv, *, description, handlers, defaults):
-    effective = list(sys.argv[1:] if argv is None else argv)
-    if effective and effective[0] in _TITLE_COVER_COMMANDS:
-        return _parse_title_cover_args(effective, handlers=handlers, defaults=defaults)
-    if effective in (["-h"], ["--help"]):
-        print(
-            "Additional same-BV commands: " + ", ".join(sorted(_TITLE_COVER_COMMANDS)),
-            file=sys.stdout,
+    tit.add_argument("--execute", action="store_true")
+    for name in ("receipt", "input", "result"):
+        tit.add_argument(
+            "--predecessor-title-" + name, default=None,
+            help="explicit previous VERIFIED_TITLE_ONLY transaction (provide all three artifacts)",
         )
-    return _BASE_PARSE_ARGS(
-        effective,
-        description=description,
-        handlers=handlers,
-        defaults=defaults,
-    )
+    tit.add_argument("--wait", type=float, default=240.0)
+    tit.add_argument("--poll", type=float, default=10.0)
+    tit.set_defaults(func=handlers["title_repair"])
+    return parser.parse_args(argv)

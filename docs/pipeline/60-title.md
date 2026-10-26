@@ -1,3 +1,7 @@
+# 当前版本说明
+
+下文保留已公开的完整说明；执行命令前同时阅读文末的接口兼容说明。
+
 # 60 标题
 
 本文件是标题步骤的**分步权威**。LLM few-shot 语料与完整风格规范的强权威是
@@ -10,9 +14,9 @@
   `title_policy.publish_title_policy_violations`。同一门由
   `publish_staging.py`、package auditor 与 `authorized_upload.py` 分别调用；任何入口都
   不能靠 `title_llm_call=None` 或手工 JSON 绕过。
-- 维护者 手定标题拥有**正文 authority**：正文逐字保留，不送 LLM 改写，也不套自动标题的
+- 公开规则手定标题拥有**正文 authority**：正文逐字保留，不送 LLM 改写，也不套自动标题的
   selection-hook/机器味重写；它不拥有绕过频道 archive envelope 的权限。talk 最终统一补
-  profile 的标题前缀（默认 profile：`【李豆沙】`），song 统一成精确目录式；两者都验 12–49 字、外层空白与括号/引号栈。
+  profile 的标题前缀（默认 profile：`【李豆沙】`），song 统一成精确目录式；两者都验 `assets/lidousha/title_policy.json` 定义的字数范围、外层空白与括号/引号栈。
 - `assets/lidousha/manual_title_overrides.v1.json` 存正文，不存一条可免检的“最终发布标题”。
 - 单个候选若只有**公共生成文案**中的逐字专名裁决，而没有整份字幕/说话人的完整人工复审，
   只能使用
@@ -33,17 +37,17 @@
 - CPA 只对人工标题提出了**未获授权的改写**时，可用
   `assets/lidousha/authorities/<candidate>.manual-title-keep-authority.v1.json` 做一次候选级
   KEEP adjudication。它必须封存完整 FAILED receipt、原 title/hook、最终字幕、当次裁决使用的
-  clip-context prompt、scorecard、speaker/entity evidence、维护者 的原题批准与发布授权；消费后写
+ clip-context prompt、scorecard、speaker/entity evidence、公开规则的原题批准与发布授权；消费后写
   `PASS_WITH_RECORDED_DISSENT`，保留模型异议而不重掷 provider。任一 current bytes/hash/surface
   漂移都继续阻断，不能把这条门当成“人工标题永远正确”。fresh ASR 重建出的 clip-context
   只作为 diagnostic 另记 SHA；它不得替换、伪装或否决已经封存并绑定原 FAILED receipt 的裁决
   prompt。
 - `auto_123655_1613_1676` 的 operator exact title/source-fact projection 只可消费
   `assets/lidousha/authorities/auto_123655_1613_1676.operator-exact-title-source-fact-authority.v1.json`。
-  它逐字绑定 维护者 的 Claude JSONL 身份、line、时间和原话，及 exact title；并重放当前 SRT、
+ 它逐字绑定 公开规则的 Claude JSONL 身份、line、时间和原话，及 exact title；并重放当前 SRT、
   final-review、chat、boundary、source media、StoryContract/context/scorecard 与完整 FAILED
   source-fact receipt。它只产生 `OPERATOR_EXACT_TITLE_WITH_RECORDED_SOURCE_FACT_DISSENT`：
-  CPA 已支持的 `final_selection_hook` 是唯一 final hook；维护者 只裁定 exact title，
+ CPA 已支持的 `final_selection_hook` 是唯一 final hook；公开规则只裁定 exact title，
   `provider_pass_claim=false`，完整 CPA FAILED/REPAIR 回执仍保留，绝不可写成 provider PASS。
   此 authority 不授权字幕、媒体、边界、封面或上传；任一候选/标题/sidecar/hash 漂移都必须在
   provider 或封面调用前阻断。
@@ -53,7 +57,7 @@
   维护者/Pro 证据；runtime 重建 transcript/scorecard/entity，并从 Git/deploy-sealed 独立资产重放
   原裁决 prompt 后才可确定性消费，且不得再调 provider。fresh ASR context 只另记 diagnostic SHA，
   不进入裁决 identity。当前唯一 50-codepoint 标题例外也只删除该 candidate、该 exact title/hook/receipt 的
-  `publish_title_length_out_of_bounds`；其他标题规则与其他候选仍按 12–49 字 fail closed。
+  `publish_title_length_out_of_bounds`；其他标题规则与其他候选仍按 `assets/lidousha/title_policy.json` 定义的字数范围 fail closed。
 - 已发布 same-BV 的媒体恢复不得裸抄旧 record 的 `title`，也不得靠操作员逐条补几个可选
   evidence 参数。唯一入口是 deployable
   `assets/lidousha/recovery_publication_authority.v1.json`：它把 exact recovery 集合中的每个
@@ -61,7 +65,7 @@
   用显式 asset SHA 一次解析**完整队列**，缺任一 candidate 即拒绝；生成的
   `recovery-same-bv-publication-authority.v1` 随 queue→spec→record→publish draft→review
   manifest→authorized manifest→repair plan 全链传递。`verified_public_exact` 逐字保留已
-  合规的公开标题；`reviewer_manual_override` 则要求 registry 中的旧公开正文与现有 维护者 手定
+ 合规的公开标题；`reviewer_manual_override` 则要求 registry 中的旧公开正文与现有 公开规则手定
   正文完全相等，再统一补当前频道前缀。历史 `authorized-upload-public-verify.v2` receipt
   保留作 registry 的生成/本地复核证据；production 只依赖受管部署的 hash-bound asset，不
   依赖默认不部署的 `reports/`。任一 asset、身份、模式、标题或 surface 漂移都阻断。
@@ -103,7 +107,7 @@
   暂不可用时，如果最终 CPA/词表链已经在整片字幕中稳定落下登记规范专名，hook 内对应的
   **未登记**误听面可继承该 expected-value 证据机械规范化；普通短语 false-positive 必须
   保留，两个已登记专名冲突仍交 CPA，不能借字幕中任意出现一次就互换。
-- **受话人归属判项（F12，维护者 2026-08-08 受骗片标题案纠错）**：source-fact 复审此前只验
+- **受话人归属判项（F12，公开规则受骗片标题案纠错）**：source-fact 复审此前只验
   “这话说过没有”，不验“对谁说”，于是「李豆沙刚被劝别再受骗」这种把连线主持对上一位选手
   说的话安到主角头上的 hook 能整条通过。现在 `review_and_repair_source_facts` 额外接收一份
   **带说话人标签的最终转写**（`speaker-final.srt` 经 sha 绑定 + 与最终字幕逐条对齐才采用，
@@ -128,3 +132,23 @@
 - 封面文字按 [70-cover.md](70-cover.md) 的短梗字/歌切/显式全文合同选择；投稿标题与封面
   文案是不同字段。旧“封面必须等于完整标题去前缀”已被后来的短梗字要求取代，不能因
   投稿标题是 维护者 手定就恢复该旧默认。
+
+## 本版接口兼容说明
+
+本页保留此前公开的完整设计、判例与操作细节。代码已经继续演进：
+CLI 参数、模块是否存在和机器强制层以本版源码及 `--help` 为准；历史回执或
+旧入口名不授予当前执行权。当前补充规则如下；冲突时按当前规则和代码处理。
+
+# 60 标题
+
+标题是独立的发布字段。自动标题从已绑定的 StoryContract、字幕和选题证据生成；
+人工标题可以冻结正文，但只能改变标题字段，不能改变源区间、字幕、封面或发布
+权限。标题样式配置见公开的 `assets/lidousha/title_style.md`。
+
+标题必须准确描述当前候选，不能添加源画面没有承担的角色、动作、物件或关系。
+事实不确定时缩小表述或返回待审，不用模型推断补全。短标题、质问或反差文案可以
+承接事件，但不能以模板词代替事件证据。
+
+生成结果必须记录输入故事摘要、最终文本、规范化版本、长度/字符检查和对应哈希。
+自动审查只提供建议或拒绝原因；人工正文的显式替换仍需通过标题和封面联合质检。
+标题通过不等于包通过，也不等于获得上传权。

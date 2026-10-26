@@ -105,6 +105,25 @@ def authoritative_song_title(record: Any) -> str | None:
     return _text(authority.get("song_title")) or None
 
 
+#: 歌切进入投稿暂存时没有音频证成的歌名：没有标题权威，停在发布闸门。
+SONG_NAME_AUTHORITY_UNPROVEN = "SONG_NAME_AUTHORITY_UNPROVEN"
+
+
+def song_catalog_publish_title(source_context_job: Any) -> str | None:
+    """歌切投稿暂存用的标题：音频证成歌名的目录式「前缀《歌名》」，否则 None。
+
+    60-title 歌切铁律只有这一种标题，且不进谈话标题模型。读的是与
+    ``song_lane._apply_canonical_song_title`` 相同的权威（同一份
+    ``source_context_job``），所以暂存标题、它决定的歌切封面路线和交付时的
+    active record 标题一致。None 表示没有权威名（不回落到 ASR/hook 提示名）。
+    """
+
+    from src.autoslice.song_completion import verified_song_fallback_title
+
+    authority = extract_audio_song_name_authority({"source_context_job": source_context_job})
+    return verified_song_fallback_title(authority.get("song_title") if authority else None)
+
+
 def quoted_titles_in(*texts: Any, limit: int = 2) -> list[str]:
     """《…》里的歌名候选——来自 BCUT ASR 文本或它派生的 hook，只是提示。"""
 

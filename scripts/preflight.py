@@ -18,6 +18,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from src.autoslice.cpa_model_ladder import cpa_call_timeout_seconds
+
 RESULTS: list[tuple[str, str, str]] = []
 
 
@@ -155,6 +157,12 @@ def check_env() -> None:
         )
     # 听音腿：AGY（订阅）与 GEMINI_API_KEY（API）是同一个模型的两种接入，
     # 二选一即可；都配则管线按 订阅→API 次序自动兜底。
+    from src.autoslice.cpa_gemini_client import enabled
+    if enabled():
+        configured = bool(os.environ.get('CPA_BASE_URL') and os.environ.get('CPA_API_KEY'))
+        _record('ok' if configured else 'warn', '听音腿(Gemini)',
+                'CPA 原生客户端已选择；凭据轮换由 CPA 管理（尚未做真实请求验证）' if configured else 'CPA 环境未配置')
+        return
     agy = os.path.expanduser(os.environ.get("AGY_BIN", "~/.local/bin/agy"))
     agy_ok = Path(agy).is_file() or bool(shutil.which(agy))
     gemini_ok = bool(os.environ.get("GEMINI_API_KEY"))
@@ -215,7 +223,7 @@ def _check_local_agy() -> None:
     """Validate the executable used by the native loopback AGY adapter."""
 
     # The native adapter keeps the historical remote-binary override because
-    # runtime host's production install lives at agy.  AGY_BIN remains
+    # OCI3's production install lives at agy.  AGY_BIN remains
     # a useful local preflight override for developer shells.
     configured = (
         os.environ.get("AGY_REMOTE_BIN", "").strip()
@@ -245,6 +253,10 @@ def check_self_ssh(host: str | None = None) -> None:
     from src.autoslice.jingting_remote_runner import is_local_host
 
     _check_system_python_vad()
+    from src.autoslice.cpa_gemini_client import enabled
+    if enabled():
+        _record('ok', 'Gemini transport', '已选择 CPA；无需本地 AGY 或 SSH')
+        return
     if is_local_host(transport_host):
         _check_local_agy()
         return
@@ -293,6 +305,16 @@ def check_gemini_live() -> None:
     import json
     import urllib.request
 
+    from src.autoslice import cpa_gemini_client
+    if cpa_gemini_client.enabled():
+        try:
+            completion = cpa_gemini_client.generate(prompt='Reply exactly OK.', model='gemini-3.8-flash',
+                purpose='preflight', generation_config={'maxOutputTokens': 16}, timeout_seconds=30)
+            _record('ok' if completion.text.strip() == 'OK' else 'FAIL', 'Gemini live',
+                    'CPA 原生文本调用已返回；不代表所有媒体或备用层级已验收')
+        except Exception as exc:
+            _record('FAIL', 'Gemini live', f'CPA 调用失败：{type(exc).__name__}')
+        return
     key = os.environ.get("GEMINI_API_KEY")
     if not key:
         _record("warn", "Gemini live", "GEMINI_API_KEY 未设置，跳过实探")
@@ -321,7 +343,7 @@ def check_cpa_live() -> None:
             capture_output=True,
             text=True,
             check=False,
-            timeout=240,
+            timeout=cpa_call_timeout_seconds(),
         )
         if probe.returncode == 0 and reply.is_file() and reply.read_text().strip():
             _record("ok", "CPA live", f"回复：{reply.read_text().strip()[:40]}")

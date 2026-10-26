@@ -184,6 +184,24 @@ def test_process_date_v6_requeues_then_proves_typed_transition_after_writeback(
     assert persisted["pending_song"] == [{"candidate_id": "song_unrelated", "status": "pending"}]
 
 
+def test_process_date_persists_dependency_baseline_without_requeue(monkeypatch, tmp_path):
+    def maintain(_date, value, **_kwargs):
+        value["picks"][0]["talk_dependency_snapshot"] = {"baseline": "actual current input"}
+        value["picks"][0]["recovery_dependency_status"] = "LEGACY_BASELINE_ADOPTED_NO_REPLAY"
+        return 0, 0, 0, 0, False
+
+    base = _install_runner_fixture(monkeypatch, tmp_path, maintain=maintain)
+    initial = _persisted(base)
+    initial.pop("operator_processing_scope")
+    (base / "state" / f"{DATE}.json").write_text(json.dumps(initial), encoding="utf-8")
+    runner.process_date(DATE)
+    persisted = _persisted(base)
+    assert persisted["picks"][0]["recovery_dependency_status"] == "LEGACY_BASELINE_ADOPTED_NO_REPLAY"
+    assert persisted["picks"][0]["talk_dependency_snapshot"] == {"baseline": "actual current input"}
+    assert persisted["pending_talk"] == []
+    assert persisted["pending_song"] == initial["pending_song"]
+
+
 def test_real_v6_maintain_builds_the_receipt_that_runner_commits(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:

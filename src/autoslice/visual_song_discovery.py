@@ -15,7 +15,7 @@ from src.autoslice import agy_gemini_client
 
 VISUAL_SONG_SCHEMA_VERSION = "visual-song-inventory.v1"
 VISUAL_SONG_PROMPT_VERSION = "lidousha-numbered-song-list.v1"
-DEFAULT_MODEL = "Gemini 3.6 Flash (High)"
+DEFAULT_MODEL = agy_gemini_client.DEFAULT_AGY_FLASH_HIGH
 VISUAL_SONG_AGY_MODEL_ENV = "AUTOSLICE_VISUAL_SONG_AGY_MODEL"
 _RESULT_KEYS = {"song_title", "start_ms", "end_ms", "evidence", "confidence"}
 
@@ -519,6 +519,15 @@ def _run_agy_once(
     agy_bin: Path,
     command_runner: CommandRunner,
 ) -> None:
+    if agy_gemini_client.cpa_gemini_client.enabled():
+        completion = agy_gemini_client.cpa_gemini_client.generate_files(
+            prompt=(job_dir / 'prompt.md').read_text(encoding='utf-8'),
+            files=sorted(job_dir.glob('contact_*.jpg')), model=config.model,
+            purpose='visual_song_discovery', timeout_seconds=config.timeout_seconds)
+        (job_dir / 'visual_songs.json').write_text(completion.text, encoding='utf-8')
+        (job_dir / 'cpa-gemini.receipt.json').write_text(
+            json.dumps(dict(completion.receipt)), encoding='utf-8')
+        return
     short_prompt = (
         f"Open {job_dir}/prompt.md with view_file and follow it exactly. "
         f"Use only {job_dir}/prompt.md, {job_dir}/contact_*.jpg, and {job_dir}/visual_songs.json. "
@@ -526,19 +535,8 @@ def _run_agy_once(
     )
     try:
         completed = command_runner(
-            [
-                str(agy_bin),
-                "--sandbox",
-                "--dangerously-skip-permissions",
-                "--add-dir",
-                str(job_dir),
-                "--model",
-                config.model,
-                "-p",
-                short_prompt,
-                "--print-timeout",
-                f"{max(1, config.timeout_seconds // 60)}m",
-            ],
+            agy_gemini_client.agy_argv(str(agy_bin), job_dir=job_dir, model=config.model,
+                prompt=short_prompt, print_timeout=f"{max(1, config.timeout_seconds // 60)}m"),
             cwd=str(job_dir),
             check=False,
             capture_output=True,
@@ -729,7 +727,7 @@ def discover_visual_songs(
                 agy_bin, env_names=("AUTOSLICE_AGY_BIN", "AGY_BIN")
             )
         )
-        agy_present = agy_gemini_client.local_agy_available(
+        agy_present = agy_gemini_client.cpa_gemini_client.enabled() or agy_gemini_client.local_agy_available(
             agy_bin, env_names=("AUTOSLICE_AGY_BIN", "AGY_BIN")
         )
         if not agy_present:
@@ -766,6 +764,8 @@ def discover_visual_songs(
                         output.read_text(encoding="utf-8"), duration_ms=duration_ms
                     )
                 except Exception as exc:
+                    if agy_gemini_client.cpa_gemini_client.enabled():
+                        raise
                     if isinstance(exc, VisualSongProviderError):
                         category = exc.category
                         returncode = exc.returncode

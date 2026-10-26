@@ -8,7 +8,7 @@ the large package auditor so the closure remains independently testable.
 
 from __future__ import annotations
 
-import hashlib
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -88,11 +88,8 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 
 def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return digest
 
 
 def audit_recovery_title_authority(

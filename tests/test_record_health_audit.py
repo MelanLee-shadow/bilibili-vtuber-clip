@@ -4,12 +4,48 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+from ops.recording.record_health_audit import ROOM_ID
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "ops" / "recording" / "record_health_audit.py"
 NOW = 1_788_393_600.0  # T00:00:00Z
-RELATIVE = "2026-09-02/22966160_20260902-23-59-00.flv"
+RELATIVE = f"2026-09-02/{ROOM_ID}_20260902-23-59-00.flv"
+
+
+def test_local_capture_health_reports_archive_backlog_without_cloud_probe(tmp_path: Path) -> None:
+    from ops.recording import record_health_audit
+    from ops.recording import recording_archive
+    status, state = _write_ledgers(
+        tmp_path, webhook={RELATIVE: {"status": "CLOSED", "file_size": 1}},
+        finalized={RELATIVE: {"source_size": 1}},
+    )
+    spool = tmp_path / "spool"
+    for name in recording_archive.artifact_paths(RELATIVE):
+        path = spool / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x")
+    result = record_health_audit.audit(status_path=status, state_path=state,
+                                      lookback_hours=96, now_epoch=NOW, spool_root=spool,
+                                      archive_state_path=tmp_path / "not-yet-created.json")
+    assert result["healthy"] is True
+    assert result["spool"]["archive_pending_segments"] == [RELATIVE]
+    assert "RECORDING_ARCHIVE_BACKLOG" in result["spool"]["warnings"]
+
+
+def test_local_capture_health_rejects_missing_unarchived_spool_file(tmp_path: Path) -> None:
+    from ops.recording import record_health_audit
+    status, state = _write_ledgers(
+        tmp_path, webhook={RELATIVE: {"status": "CLOSED", "file_size": 1}},
+        finalized={RELATIVE: {"source_size": 1}},
+    )
+    spool = tmp_path / "spool"
+    spool.mkdir()
+    result = record_health_audit.audit(status_path=status, state_path=state,
+                                      lookback_hours=96, now_epoch=NOW, spool_root=spool,
+                                      archive_state_path=tmp_path / "not-yet-created.json")
+    assert result["healthy"] is False
+    assert any("missing without verified archive" in issue for issue in result["unresolved"])
 
 
 def _write_ledgers(
@@ -28,7 +64,7 @@ def _write_ledgers(
         json.dumps(
             {
                 "schema_version": "recorder-neutral-status.v1",
-                "room_id": "22966160",
+                "room_id": ROOM_ID,
                 "generated_at_epoch": generated,
                 "service_reachable": True,
                 "streaming": recording,
@@ -130,7 +166,7 @@ def test_health_audit_fails_unresolved_closed_and_open_recording_mismatch(
     assert result.returncode == 1
     assert "OPEN source is not currently recording" in " ".join(payload["unresolved"])
 
-    second = "2026-09-02/22966160_20260902-23-58-00.flv"
+    second = f"2026-09-02/{ROOM_ID}_20260902-23-58-00.flv"
     status, state = _write_ledgers(
         tmp_path,
         recording=True,
@@ -165,7 +201,7 @@ def test_health_audit_accepts_typed_connection_stub_disposition(tmp_path: Path) 
 def test_health_audit_allows_only_same_session_closed_pending_while_recording(
     tmp_path: Path,
 ) -> None:
-    open_relative = "2026-09-02/22966160_20260902-23-58-00.flv"
+    open_relative = f"2026-09-02/{ROOM_ID}_20260902-23-58-00.flv"
     session_id = "active-session"
     status, state = _write_ledgers(
         tmp_path,

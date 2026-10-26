@@ -1,3 +1,7 @@
+# 当前版本说明
+
+下文保留已公开的完整说明；执行命令前同时阅读文末的接口兼容说明。
+
 # 流水线分步权威索引
 
 **本目录是切片流水线的分步文档权威。** 结构规则：
@@ -49,3 +53,32 @@ runtime 状态。
 | 70 | [70-cover.md](70-cover.md) | 封面路由、最终像素、人物与真实字形 | `src/autoslice/cover_generation.py`、`publish_staging.py`、`cover_repair.py`、`cover_title_rendering.py`、`cover_text_pixel_evidence.py`、`cover_route_evidence.py` |
 | 80 | [80-package-delivery.md](80-package-delivery.md) | 打包、片头、严格 SRT、raw-byte 与双层边界回执闭包 | `src/autoslice/producer_package_finalization.py`、`subtitle_validation.py`、`review_package_ass_audit.py`、`review_package_boundary_contract.py`、`private_boundary_package.py`、`scripts/verify_private_boundary_package.py`、`scripts/build_recovery_review_manifest.py`、`scripts/audit_review_package.py` |
 | 90 | [90-publish.md](90-publish.md) | authorized upload、最终感知复核 receipt、durable 同 BV 修复、合集与公开验证 | `scripts/build_final_human_review.py`、`scripts/authorized_upload.py`、`src/autoslice/final_human_review.py`、`src/autoslice/same_bv_repair.py`、`bilibili_member_api.py` |
+
+## 本版接口兼容说明
+
+本页保留此前公开的完整设计、判例与操作细节。代码已经继续演进：
+CLI 参数、模块是否存在和机器强制层以本版源码及 `--help` 为准；历史回执或
+旧入口名不授予当前执行权。当前补充规则如下；冲突时按当前规则和代码处理。
+
+# 公开流水线分步文档
+
+本目录只描述可复用的软件契约。运行时状态、凭据、主机路径、人工会话和
+候选历史不属于公开文档；它们必须由调用方在当前环境中提供并单独验证。
+
+步骤顺序为：
+
+1. [10-source-recording.md](10-source-recording.md)：固定源媒体和时间轴。
+2. [20-selection.md](20-selection.md)：召回候选并记录评分证据。
+3. [30-boundary.md](30-boundary.md)：解析完整内容边界。
+4. [40-subtitle-text.md](40-subtitle-text.md) 与 [41-semantic-repair.md](41-semantic-repair.md)：生成并审查字幕。
+5. [50-song-lane.md](50-song-lane.md)：处理歌切专用时间轴。
+6. [60-title.md](60-title.md) 与 [70-cover.md](70-cover.md)：生成标题和封面。
+7. [80-package-delivery.md](80-package-delivery.md)：冻结可交付包。
+8. [90-publish.md](90-publish.md)：在授权后上传并核对公开结果。
+
+每一步都应消费上一步的结构化结果和哈希。缺字段、来源漂移、证据不完整或
+语义不确定时返回明确的 BLOCK/UNKNOWN，不能用默认值伪造通过。自动模型可以
+召回或提出候选，但不能自行产生人工授权、发布权或事实真值。
+
+代码、schema 和当前配置是具体实现的强权威；本目录说明模块边界和不变量，
+不保存任何单次候选的台账、引语或部署状态。

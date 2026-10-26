@@ -24,6 +24,7 @@
 """
 
 from __future__ import annotations
+from src.autoslice.finding_context import Relation
 
 import hashlib
 import json
@@ -33,6 +34,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Mapping, Sequence
 
+from src.autoslice.channel_profile import LABEL_RE
 from src.autoslice.speaker_common import (
     GUEST_SPEAKER,
     HOST_SPEAKER,
@@ -50,12 +52,6 @@ ADDRESSEE_UNRESOLVED_REASON = "CPA_TEXT_REVIEW_ADDRESSEE_ATTRIBUTION_UNRESOLVED"
 MODE_SPEAKER_LABELLED = "speaker_labelled"
 MODE_UNVERIFIABLE = "unverifiable_no_speaker_transcript"
 
-_SPEAKER_LINE_RE = re.compile(
-    r"^\[("
-    + "|".join(re.escape(value) for value in (HOST_SPEAKER, GUEST_SPEAKER))
-    + r")\]\s*(.*)\Z",
-    re.S,
-)
 _SRT_CLOCK_RE = re.compile(r"(\d{2}):(\d{2}):(\d{2}),(\d{3})\Z")
 _SRT_TIMING_LINE_RE = re.compile(
     r"(\d{2}:\d{2}:\d{2},\d{3})\s+-->\s+"
@@ -241,8 +237,13 @@ def _parse_speaker_srt_bytes(value: bytes) -> list[_SpeakerSegment]:
                 "SPEAKER_SRT_INVALID", f"speaker segment {expected_index} has invalid timing"
             )
         payload = "\n".join(lines[2:]).strip()
-        labelled = _SPEAKER_LINE_RE.fullmatch(payload)
-        if labelled is None or not labelled.group(2).strip():
+        labelled = LABEL_RE.fullmatch(payload)
+        speaker = payload[1:payload.index("]")] if labelled is not None else None
+        if (
+            labelled is None
+            or speaker not in {HOST_SPEAKER, GUEST_SPEAKER}
+            or not labelled.group(2).strip()
+        ):
             raise SpeakerEvidenceRejected(
                 "SPEAKER_SRT_INVALID",
                 f"speaker segment {expected_index} lacks a canonical non-empty label",
@@ -266,7 +267,7 @@ def _parse_speaker_srt_bytes(value: bytes) -> list[_SpeakerSegment]:
                 end=end,
                 start_ms=start_ms,
                 end_ms=end_ms,
-                speaker=labelled.group(1),
+                speaker=speaker,
                 text=labelled.group(2).strip(),
             )
         )
@@ -1084,3 +1085,42 @@ def addressee_prompt_block(speaker_transcript: str | None) -> str:
         "作为下一轮输入，下一轮再对它产出 addressee_attribution 并作 KEEP/REPAIR 裁决。"
         "文案里若确实没有任何归属断言，addressee_attribution 填空数组。\n"
     )
+
+
+def speaker_turn_relations(evidence: SpeakerEvidenceResult, *, current_srt: str) -> list[Relation]:
+    """Return dependency groups only from the owner's validated alignment."""
+    from src.autoslice.jingting_chunker import parse_srt_cues
+
+    if evidence.state == SpeakerEvidenceState.ABSENT_AUTHORIZED:
+        return []
+    document = evidence.speaker_evidence
+    if (evidence.state != SpeakerEvidenceState.PRESENT_VALID
+            or evidence.speaker_evidence_sha256 != 'sha256:' + _sha256_bytes(_canonical_json_bytes(document))):
+        raise SpeakerEvidenceRejected('SPEAKER_DEPENDENCY_BINDING_DRIFT', 'speaker evidence digest differs')
+    alignment = document.get('alignment')
+    if (not isinstance(alignment, Mapping)
+            or document.get('alignment_sha256') != 'sha256:' + _sha256_bytes(_canonical_json_bytes(alignment))):
+        raise SpeakerEvidenceRejected('SPEAKER_DEPENDENCY_BINDING_DRIFT', 'alignment digest differs')
+    cues = parse_srt_cues(current_srt)
+    groups = alignment.get('groups', [])
+    if len(groups) != len(cues) or any(
+            row['source_index'] != index or row['start_ms'] != cue.start_ms or row['end_ms'] != cue.end_ms
+            for index, (row, cue) in enumerate(zip(groups, cues, strict=True), 1)):
+        raise SpeakerEvidenceRejected('SPEAKER_CONTEXT_GRID_DRIFT', 'speaker source clock differs')
+    relations: list[Relation] = []
+    active: list[int] = []
+    previous = None
+    for row in groups:
+        speakers = {segment['speaker'] for segment in row['segments']}
+        speaker = next(iter(speakers)) if len(speakers) == 1 else None
+        index = row['source_index']
+        if speaker is None or speaker != previous or (active and index != active[-1] + 1):
+            if len(active) > 1:
+                relations.append({'kind': 'speaker_turn', 'cue_indexes': active})
+            active = []
+        if speaker is not None:
+            active.append(index)
+        previous = speaker
+    if len(active) > 1:
+        relations.append({'kind': 'speaker_turn', 'cue_indexes': active})
+    return relations

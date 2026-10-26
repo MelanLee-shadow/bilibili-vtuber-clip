@@ -27,8 +27,10 @@ def _consume_four(budget) -> None:
         budget.consume("moss", "moss-transcribe-diarize-pro", index * 1_000, (index + 1) * 1_000)
 
 
-def test_default_budget_keeps_three_window_cap() -> None:
-    budget = start_budget(Path("/tmp/native-budget-default-test"))
+def test_explicit_enforcement_keeps_three_window_cap() -> None:
+    budget = start_budget(
+        Path("/tmp/native-budget-default-test"), enforce_limits=True,
+    )
     for index in range(3):
         budget.consume("moss", "moss-transcribe-diarize-pro", index * 1_000, (index + 1) * 1_000)
 
@@ -41,7 +43,10 @@ def test_default_budget_keeps_three_window_cap() -> None:
 
 def test_explicit_budget_allows_fourth_window_then_rejects_fifth() -> None:
     budget = start_budget(
-        Path("/tmp/native-budget-explicit-test"), max_windows=4, max_audio_ms=4_000
+        Path("/tmp/native-budget-explicit-test"),
+        max_windows=4,
+        max_audio_ms=4_000,
+        enforce_limits=True,
     )
     _consume_four(budget)
 

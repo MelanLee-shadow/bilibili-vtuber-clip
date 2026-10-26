@@ -71,6 +71,7 @@ def _record(runtime, code="AGY_AND_GEMINI_API_FAILED", *, resumed=False):
             "status": "blocked", "window_classified_song": True, "song_complete": False,
             "reason_codes": [code], "transient_failure_code": code,
         })
+    record["song_dependency_fingerprint"] = runner.capture_song_dependency_fingerprint(DATE, record)
     return record
 
 
@@ -90,7 +91,7 @@ def test_due_same_pipeline_provider_retry_resumes_full_stage(runtime, code, resu
 
 @pytest.mark.parametrize("change", [
     "no_full_attempt", "not_authoritative", "not_song", "full_positive",
-    "different_failure", "missing_failure", "new_pipeline", "partial_resumed_flags",
+    "different_failure", "missing_failure", "new_dependency", "partial_resumed_flags",
 ])
 def test_ineligible_resume_still_uses_normal_retry_path(runtime, change):
     record = _record(runtime)
@@ -106,8 +107,8 @@ def test_ineligible_resume_still_uses_normal_retry_path(runtime, change):
         record["full_source_retry"]["transient_failure_code"] = "AGY_TIMEOUT"
     elif change == "missing_failure":
         record["full_source_retry"].pop("transient_failure_code")
-    elif change == "new_pipeline":
-        record["song_pipeline_fingerprint"] = "sha256:" + "2" * 64
+    elif change == "new_dependency":
+        record["song_dependency_fingerprint"] = "sha256:" + "2" * 64
     else:
         record = _record(runtime, resumed=True)
         record.pop("resumed_full_source_after_transient")
@@ -128,16 +129,18 @@ def test_future_backoff_and_existing_pending_are_not_bypassed(runtime):
 
 
 @pytest.mark.parametrize("code", ["SONG_AUDIO_LRC_IDENTITY_AMBIGUOUS",
-                                  "SONG_AUDIO_LRC_ALIGNMENT_INVALID"])
-def test_full_source_deterministic_negative_remains_terminal(runtime, code):
+                                  "SONG_AUDIO_LRC_ALIGNMENT_INVALID",
+                                  "SONG_LRC_REFERENCE_UNRESOLVED",
+                                  "SONG_AUDIO_LRC_PROOF_UNRESOLVED"])
+def test_reference_or_alignment_failure_does_not_prove_content_rejection(runtime, code):
     record = _record(runtime, code)
     record.pop("transient_failure_code")
     record["song_pipeline_fingerprint"] = "sha256:" + "2" * 64
     state = {"songs": [record], "pending_song": []}
     assert runner.requeue_recoverable_songs(DATE, state) == 0
-    assert record["status"] == "candidate_rejected"
-    assert record["song_terminal_disposition"]["retryable"] is False
-    assert state["pending_song"] == []
+    assert record["status"] != "candidate_rejected"
+    assert "song_terminal_disposition" not in record
+    assert state['pending_song'] == []
 
 
 def _selector_fixture(runtime, monkeypatch):
@@ -236,3 +239,13 @@ def test_talk_only_scope_does_not_call_song_recovery(runtime, monkeypatch):
     assert result[0] == result[3] == 0
     for key in ("songs", "pending_song", "song_backlog", "song_selection_backlog", "song_superseded_attempts"):
         assert state[key] == before[key]
+
+
+def test_unrelated_deployment_preserves_full_source_resume(runtime):
+    record = _record(runtime)
+    record["pipeline_fingerprint"] = "sha256:" + "3" * 64
+    record["song_pipeline_fingerprint"] = "sha256:" + "4" * 64
+    state = {"songs": [record], "pending_song": []}
+    assert runner.requeue_recoverable_songs(DATE, state) == 1
+    assert state["pending_song"][0]["resume_full_source"] is True
+    assert state["pending_song"][0]["transient_retry_count"] == 3

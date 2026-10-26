@@ -24,6 +24,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.autoslice.deployed_code_root import deployed_code_root
+
 
 FINGERPRINT_RX = re.compile(r"sha256:[0-9a-f]{64}")
 SUPPORTED_SOURCE_RERUN_PLAN_SCHEMAS = frozenset(
@@ -619,7 +621,7 @@ def main(argv: list[str] | None = None) -> int:
     if source_base == target_base:
         raise SystemExit("source and target recovery bases must differ")
     repo_root = Path(__file__).resolve().parents[1]
-    expected_target_repo = target_base / "repo"
+    expected_target_repo = deployed_code_root(target_base)
     if not expected_target_repo.is_dir() or (
         expected_target_repo.resolve() != repo_root.resolve()
     ):
@@ -665,6 +667,8 @@ def main(argv: list[str] | None = None) -> int:
         source_base / "repo" / "AUTO_UPLOAD",
         target_base / "AUTO_UPLOAD",
         target_base / "repo" / "AUTO_UPLOAD",
+        deployed_code_root(source_base) / "AUTO_UPLOAD",
+        expected_target_repo / "AUTO_UPLOAD",
     ):
         if manifest.exists() or manifest.is_symlink():
             raise SystemExit(f"AUTO_UPLOAD is forbidden in recovery rerun: {manifest}")

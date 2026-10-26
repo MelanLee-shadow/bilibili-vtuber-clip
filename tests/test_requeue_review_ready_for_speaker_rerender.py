@@ -14,9 +14,7 @@ from src.autoslice import delivery_recovery, publication_registry
 DATE = "2026-08-11"
 CID = "auto_173005_934_1166"
 OTHER_CID = "synthetic_other_candidate"
-AUTHORITY_QUOTE = (
-    "目前先把host改成单一host，全部只有李豆沙一人直播，默认这样。重新做一下这些切片。"
-)
+SYNTHETIC_RERENDER_TEXT = '合成样例：为指定的测试候选采用统一主讲人配置并重新渲染；本段只构造本地测试所需的授权字段。'
 AUTHORITY_TIMESTAMP = "2026-08-18T00:00:00Z"
 
 
@@ -92,7 +90,7 @@ def _argv(h: dict, *extra: str) -> list[str]:
         "--package-root",
         str(h["package_root"]),
         "--authority-quote",
-        AUTHORITY_QUOTE,
+        SYNTHETIC_RERENDER_TEXT,
         "--authority-timestamp",
         AUTHORITY_TIMESTAMP,
         *extra,
@@ -126,7 +124,7 @@ def test_review_ready_apply_flips_to_recoverable_failed(harness):
     assert row["speaker_rerender_authority"]["reason"] == "speaker_mode uniform_host rerender"
     assert (
         row["speaker_rerender_authority"]["user_authorization"]["quote"]
-        == AUTHORITY_QUOTE
+        == SYNTHETIC_RERENDER_TEXT
     )
     assert row["speaker_rerender_authority"]["old_package"]["package_root"] == str(
         harness["package_root"]
@@ -210,7 +208,7 @@ def test_missing_candidate_is_refused(harness):
             "--package-root",
             str(harness["package_root"]),
             "--authority-quote",
-            AUTHORITY_QUOTE,
+            SYNTHETIC_RERENDER_TEXT,
             "--authority-timestamp",
             AUTHORITY_TIMESTAMP,
             "--apply",
@@ -263,7 +261,7 @@ def test_batch_poison_one_bad_candidate_blocks_whole_batch(harness):
         "--package-root",
         str(harness["package_root"]),
         "--authority-quote",
-        AUTHORITY_QUOTE,
+        SYNTHETIC_RERENDER_TEXT,
         "--authority-timestamp",
         AUTHORITY_TIMESTAMP,
         "--apply",
@@ -300,7 +298,7 @@ def test_bad_authority_timestamp_is_refused(harness):
             "--package-root",
             str(harness["package_root"]),
             "--authority-quote",
-            AUTHORITY_QUOTE,
+            SYNTHETIC_RERENDER_TEXT,
             "--authority-timestamp",
             "not-a-timestamp",
             "--apply",
@@ -323,7 +321,7 @@ def test_missing_base_directory_is_refused(harness):
             "--package-root",
             str(harness["package_root"]),
             "--authority-quote",
-            AUTHORITY_QUOTE,
+            SYNTHETIC_RERENDER_TEXT,
             "--authority-timestamp",
             AUTHORITY_TIMESTAMP,
             "--apply",

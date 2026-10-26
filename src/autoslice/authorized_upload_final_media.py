@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from src.autoslice import final_media_review_release_gate as final_media_release
+from src.autoslice.publication_identity import publication_identity
 
 
 def _candidate_id(
@@ -22,15 +23,10 @@ def _candidate_id(
         value = str(review_item.get("candidate_id") or "").strip()
         if value:
             declared.append(value)
-    story = record.get("story_contract")
-    for value in (
-        record.get("candidate_id"),
-        record.get("delivery_candidate_id"),
-        story.get("candidate_id") if isinstance(story, Mapping) else None,
-    ):
-        normalized = str(value or "").strip()
-        if normalized:
-            declared.append(normalized)
+    try:
+        declared.extend(publication_identity(record).declared_ids)
+    except ValueError:
+        return None, ["FINAL_MEDIA_REVIEW_CANDIDATE_ID_MISMATCH"]
 
     configured: list[str] = []
     verification = package_root / "verification"

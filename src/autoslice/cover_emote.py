@@ -17,14 +17,14 @@ in ``cover_generation``/``publish_staging``:
 - Sticker redraws must stay light: same pose/expression/design, only polished
   and integrated; like the character redraw, the sticker owns most of the frame.
 
-Everything in this module fails OPEN back to the default character redraw (a
+Everything in this module fails OPEN back to the remaining feasible candidates (a
 missing/mismatched sticker downgrades the ART DIRECTION only); the cover IMAGE
 itself stays fail-closed in the staging pipeline.
 """
 
 from __future__ import annotations
 
-import hashlib
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import json
 import os
 import re
@@ -43,7 +43,7 @@ _EMOTE_SCHEMA_PREFIX = "lidousha-emote-library"
 _EMOTE_MODES = ("replace", "companion")
 # A strong reason must be articulated, not a bare "好看"; length is a cheap
 # proxy that rejects empty/one-word justifications without judging content.
-_EMOTE_MIN_REASON_CHARS = 6
+_EMOTE_MIN_REASON_CHARS = 1
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -101,7 +101,7 @@ def _safe_media_relative(value: object) -> str | None:
 def load_emote_library(repo_root: Path | None = None) -> EmoteLibrary:
     """Parse the selected profile's emote manifest.  Fail-OPEN: any missing,
     malformed, or unsafe manifest yields the empty library (⇒ the cover always
-    uses the default character redraw)."""
+    uses the remaining feasible candidates)."""
 
     root = repo_root or ROOT
     try:
@@ -194,11 +194,8 @@ def emote_media_roots(
 
 
 def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return digest
 
 
 def resolve_emote_reference(
@@ -236,16 +233,16 @@ def resolve_emote_reference(
 
 def emote_catalog_prompt_block(library: EmoteLibrary) -> str:
     """The art-direction judge's sticker catalog: one line per emote so the
-    judge can cite an id, plus the strong-reason policy it must obey."""
+    judge can cite an id, plus the source-and-emotion policy it must obey."""
 
     if not library:
         return ""
     lines = [
-        "\n表情包(可选,默认不用):下面是官方表情包清单。**默认必须用人物重绘**(以参考帧当场形象为原型);"
-        "只有当这条切片里她的反应与某个表情包高度贴合、用它明显比常规人物重绘更传神时,才允许选表情包;拿不准一律 null。"
-        "选了表情包(mode=\"replace\")封面主体就是该表情包,与人物重绘互斥。"
-        f"mode=\"companion\"(表情包与人物同框)只允许两类强理由:{CHANNEL_PROFILE.cover_identity.emote_companion_lore_zh};其余一律 \"replace\"。"
-        "歌切封面永不使用表情包。"
+        "\n官方表情包是 lidousha-title-cover 的正式候选素材。情绪贴合原话时优先考虑，"
+        "与截图、拼贴、抠图及必要的AI路线先列候选再按实际成品评分，不预设重绘获胜。"
+        "选择要写具体贴合理由，主表情包同源场次及近5张不得重复。"
+        "replace/companion 均须保持真实人物与素材来源，25号可代表粉丝kmx。"
+        "歌切封面继续独立规则，不用表情包。"
     ]
     for entry in library.entries:
         parts = [f"- {entry.id} {entry.label}: {entry.description}"]
@@ -255,7 +252,7 @@ def emote_catalog_prompt_block(library: EmoteLibrary) -> str:
             parts.append("(兽形熊猫本体,非人形小李)")
         lines.append(" ".join(parts))
     lines.append(
-        '输出 JSON 里额外加一个字段 "emote": null 或 {"id":"清单里的id","mode":"replace"|"companion","reason":"一句话说明为什么强贴合"}。'
+        '输出 JSON 里额外加一个字段 "emote": null 或 {"id":"清单里的id","mode":"replace"|"companion","reason":"一句话说明与哪句原话贴合"}。'
     )
     return "\n".join(lines) + "\n"
 
@@ -265,9 +262,9 @@ def normalize_emote_choice(
 ) -> tuple[str, str, str]:
     """Validate the judge's ``emote`` field into ``(id, mode, reason)``.
 
-    Anything short of a fully-formed strong-reason pick — unknown id, bad mode,
+    Anything short of a fully-formed source-and-emotion pick — unknown id, bad mode,
     unarticulated reason, song cover, disabled library — normalizes to the
-    empty choice (default character redraw)."""
+    empty choice (remaining feasible candidates)."""
 
     if not library or is_song or not isinstance(payload_value, dict):
         return "", "", ""

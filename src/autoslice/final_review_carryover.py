@@ -33,6 +33,8 @@ from src.autoslice.exact_source_transcript_authority import (
     exact_source_transcript_candidate_marked,
     valid_exact_source_transcript_adjudication_handoff,
 )
+from src.autoslice.surface_canon import canonicalize_hard_meme_surfaces
+from src.autoslice.term_authority import registered_name_change_allowed
 
 SCHEMA_VERSION = "final-review-carryover.v1"
 
@@ -188,6 +190,7 @@ def adjudicated_proposed_full_cue(
     srt_text: str | None = None,
     expected_srt_sha256: object = None,
     clip_context: Mapping[str, object] | None = None,
+    adjudication_stage: str = "exact_release_adjudication",
 ) -> str | None:
     """Return the exact CPA-authorized target cue, including normalized gaps.
 
@@ -199,13 +202,74 @@ def adjudicated_proposed_full_cue(
     disclosure loop.
     """
 
+    if adjudication_stage not in {"exact_release_adjudication", "context_audio_adjudication"}:
+        return None
+    from src.autoslice.span_phoneme_resolution import marked, valid_adjudication
+    span_adjudication = finding.get(adjudication_stage)
+    if isinstance(span_adjudication, Mapping) and marked(span_adjudication):
+        if not valid_adjudication(span_adjudication, srt_text=srt_text):
+            return None
     direct = finding.get("proposed_full_cue")
-    adjudication = finding.get("exact_release_adjudication")
+    if isinstance(direct, str) and direct.strip():
+        _, hard_meme_replacements = canonicalize_hard_meme_surfaces(direct)
+        if hard_meme_replacements:
+            return None
+    adjudication = finding.get(adjudication_stage)
+    if isinstance(adjudication, Mapping) and adjudication.get("schema_version") == "subtitle-editorial-adjudication.v1":
+        from src.autoslice.editorial_subtitle import validate_authority
+        try:
+            if not adjudication.get("repaired"):
+                return None
+            proposed = validate_authority(adjudication["editorial_authority"],
+                                          srt_text=srt_text, clip_context=clip_context)
+            expected = str(expected_srt_sha256 or "").removeprefix("sha256:")
+            if expected and expected != adjudication["editorial_authority"]["request"]["srt_sha256"]:
+                return None
+            if isinstance(direct, str) and direct.strip() and direct != proposed:
+                return None
+            _, replacements = canonicalize_hard_meme_surfaces(proposed)
+            return None if replacements else proposed
+        except (ValueError, TypeError, KeyError):
+            return None
     request = (
         adjudication.get("request")
         if isinstance(adjudication, Mapping)
         else None
     )
+    witness_judge = adjudication.get("witness_judge") if isinstance(adjudication, Mapping) else None
+    judge = witness_judge.get("judge") if isinstance(witness_judge, Mapping) else None
+    if (
+        isinstance(judge, Mapping)
+        and judge.get("decision_contract") == "current-proposed-candidate-id-neither.v1"
+        and judge.get("choice") == "PROPOSED"
+        and (
+            not isinstance(request, Mapping)
+            or judge.get("selected_candidate_text") != request.get("proposed_cue")
+            or (isinstance(direct, str) and direct.strip()
+                and direct != judge.get("selected_candidate_text"))
+        )
+    ):
+        return None
+    if isinstance(request, Mapping):
+        candidate = direct if isinstance(direct, str) and direct.strip() else request.get("proposed_cue")
+        if isinstance(candidate, str) and not registered_name_change_allowed(
+            str(request.get("current_cue") or ""), candidate, judge=judge,
+            context_before=str(request.get("context_before") or ""),
+            context_after=str(request.get("context_after") or ""),
+            structured_chat=str(judge.get("registered_name_structured_chat_context") or "") if isinstance(judge, Mapping) else "",
+        ):
+            return None
+    if isinstance(adjudication, Mapping):
+        from src.autoslice.argon_escalation_integration import argon_adjudication_marked
+        if argon_adjudication_marked(adjudication):
+            from src.autoslice.argon_escalation_integration import valid_argon_adjudication
+            if not valid_argon_adjudication(adjudication):
+                return None
+            if srt_text is not None and request.get("whole_clip_current_srt") != srt_text:
+                return None
+            expected = str(expected_srt_sha256 or "").removeprefix("sha256:")
+            if expected and expected != hashlib.sha256(request["whole_clip_current_srt"].encode()).hexdigest():
+                return None
     candidate_provenance = finding.get("candidate_provenance")
     exact_source_transcript_candidate = (
         exact_source_transcript_candidate_marked(
@@ -253,6 +317,10 @@ def adjudicated_proposed_full_cue(
         if isinstance(request, Mapping)
         else None
     )
+    if isinstance(proposed, str) and proposed.strip():
+        _, hard_meme_replacements = canonicalize_hard_meme_surfaces(proposed)
+        if hard_meme_replacements:
+            return None
     current = (
         request.get("current_cue")
         if isinstance(request, Mapping)
@@ -395,6 +463,12 @@ def checkpoint_final_review_carryover(
     stale-guards them exactly like a fresh LLM finding.
     """
 
+    if audit.get("final_review_mode") == "per_finding":
+        # Only a validated new journal retires the legacy writer. Existing
+        # sidecars remain readable and are never deleted or re-signed.
+        from src.autoslice.final_review_contract import validate_final_review_release
+        validate_final_review_release(audit, expected_srt_sha256=audit.get("reviewed_srt_sha256"))
+        return 0
     checkpoint = carryover_checkpoint_path(path)
     rows = _deduplicated_rows(
         [
@@ -415,6 +489,10 @@ def checkpoint_final_review_carryover(
 def persist_final_review_carryover(path: Path, audit: Mapping[str, Any]) -> int:
     """Persist B's confirmed findings without losing an unconsumed prior round."""
 
+    if audit.get("final_review_mode") == "per_finding":
+        from src.autoslice.final_review_contract import validate_final_review_release
+        validate_final_review_release(audit, expected_srt_sha256=audit.get("reviewed_srt_sha256"))
+        return 0
     prior_rows = load_final_review_carryover(path)
     checkpoint_rows = _load_carryover_rows(
         carryover_checkpoint_path(path),

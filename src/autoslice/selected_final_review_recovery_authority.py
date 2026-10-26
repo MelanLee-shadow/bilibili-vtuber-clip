@@ -14,3 +14,7 @@ def _unavailable(*_args, **_kwargs):
 
 load_selected_final_review_recovery_authority = _unavailable
 validate_selected_final_review_recovery_authority = _unavailable
+build_authorized_selected_final_review_recovery_receipt = _unavailable
+materialize_selected_final_review_recovery_scope = _unavailable
+validate_selected_final_review_scope_predecessor = _unavailable
+validate_selected_final_review_recovery_rejection = _unavailable

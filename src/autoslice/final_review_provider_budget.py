@@ -11,7 +11,13 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import threading
 from typing import Any, Callable, Mapping
+
+from src.autoslice.audio_question_identity import same_audio_question
+from src.autoslice.exact_final_witness_authority import (
+    history_audio_recovery_from_adjudication,
+)
 
 
 AdjudicateContext = Callable[..., tuple[str, dict[str, Any]]]
@@ -76,6 +82,11 @@ def _adjudication_input_fingerprint(
     source_media_timeline_offset_ms: int,
     judge_llm_call: Callable[[str], str] | None,
 ) -> str:
+    finding = dict(finding)
+    # An empty evidence pool and no pool represent the same input. The exact
+    # review owner scopes accumulated handoffs before either replay or I/O.
+    if not finding.get("_prior_exact_source_transcript_handoffs"):
+        finding.pop("_prior_exact_source_transcript_handoffs", None)
     identity = {
         "srt_text": srt_text,
         "finding": _public_identity(finding),
@@ -84,6 +95,9 @@ def _adjudication_input_fingerprint(
         "cpa_cache_identity": _public_identity(
             getattr(judge_llm_call, "cpa_cache_identity", None)
         ),
+        # A bound request for new audio changes the work to do. The remaining
+        # adjudication bookkeeping stays excluded from same-input identity.
+        "pending_audio_obligation": _pending_audio_obligation(finding),
     }
     encoded = json.dumps(
         identity,
@@ -93,6 +107,50 @@ def _adjudication_input_fingerprint(
         default=repr,
     ).encode("utf-8")
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def relevant_transcript_handoffs(
+    finding: Mapping[str, Any],
+    handoffs,
+    *,
+    request: Mapping[str, Any] | None,
+) -> list[Mapping[str, Any]]:
+    """Scope an accumulated pool with G6; retain explicitly supplied inputs.
+
+    Only the original finding's attached inputs are explicit. An automatically
+    accumulated agenda pool is not an input until G6 selects it. This selects
+    dependencies, not authority: ordinary sealed-handoff validation still runs.
+    """
+    explicit = list(finding.get("_prior_exact_source_transcript_handoffs") or [])
+    attached = finding.get("_exact_source_transcript_handoff")
+    selected = []
+    for handoff in [*explicit, *handoffs]:
+        if handoff in selected:
+            continue
+        original = handoff.get("input_request") if isinstance(handoff, Mapping) else None
+        if (handoff in explicit or handoff == attached or (
+            request is not None and isinstance(original, Mapping)
+            and same_audio_question(original, request, compare_proposed=False,
+                                    strict_source=True)[0]
+        )):
+            selected.append(handoff)
+    return selected
+
+
+def _pending_audio_obligation(finding: Mapping[str, Any]) -> object:
+    prior = finding.get("exact_release_adjudication")
+    if not isinstance(prior, Mapping):
+        return None
+    request = prior.get("request")
+    if not isinstance(request, Mapping):
+        return None
+    recovery = history_audio_recovery_from_adjudication(prior, request=request)
+    if not isinstance(recovery, Mapping) or recovery.get("status") != "BLOCK":
+        return None
+    return {
+        "request_sha256": request.get("request_sha256"),
+        "recovery": recovery,
+    }
 
 
 class ContextAdjudicationBudget:
@@ -136,8 +194,35 @@ class ContextAdjudicationBudget:
         self.adjudicate_context = adjudicate_context
         self.provider_adjudication_count = self.initial_provider_adjudication_count
         self._adjudications_by_input: dict[str, dict[str, Any]] = {}
+        self._state_lock = threading.RLock()
 
     def adjudicate(self, srt_text: str, finding: Mapping[str, Any]) -> dict[str, Any]:
+        return self.prepare(srt_text, finding)()
+
+    def remember(self, srt_text: str, finding: Mapping[str, Any], result: dict[str, Any]) -> None:
+        """Publish the canonical serial input identity at ordered collection."""
+        fingerprint = _adjudication_input_fingerprint(
+            srt_text, finding, clip_context=self.clip_context,
+            source_media_timeline_offset_ms=self.source_media_timeline_offset_ms,
+            judge_llm_call=self.judge_llm_call,
+        )
+        if "same_input_replay" in result:
+            result["same_input_replay"]["input_fingerprint_sha256"] = fingerprint
+        with self._state_lock:
+            self._adjudications_by_input[fingerprint] = copy.deepcopy(result)
+
+    def prepare(self, srt_text: str, finding: Mapping[str, Any], *,
+                adjudicate_context: AdjudicateContext | None = None) -> Callable[[], dict[str, Any]]:
+        """Admit in agenda order, then execute providers outside the state lock.
+
+        The scheduler calls this on its owner thread, after the previous item
+        of this G6 group finishes. No in-flight duplicate can reach this seam.
+        Ordinary serial callers continue to use adjudicate().
+        """
+        with self._state_lock:
+            return self._prepare_locked(srt_text, finding, adjudicate_context or self.adjudicate_context)
+
+    def _prepare_locked(self, srt_text: str, finding: Mapping[str, Any], adjudicate_context):
         input_fingerprint = _adjudication_input_fingerprint(
             srt_text,
             finding,
@@ -154,7 +239,7 @@ class ContextAdjudicationBudget:
             entity_verifier=self.entity_verifier,
             clip_context=self.clip_context,
             source_media_timeline_offset_ms=(self.source_media_timeline_offset_ms),
-            adjudicate_context=self.adjudicate_context,
+            adjudicate_context=adjudicate_context,
             judge_llm_call=judge_call,
         )
         if replayed is not None:
@@ -164,11 +249,13 @@ class ContextAdjudicationBudget:
                 reason_code="CACHE_REPLAY",
             )
             self._adjudications_by_input[input_fingerprint] = copy.deepcopy(result)
-            return result
+            return lambda: result
 
-        previous = self._adjudications_by_input.get(input_fingerprint)
+        previous = (None if getattr(self.entity_verifier, "argon_escalation", None) is not None
+                    else self._adjudications_by_input.get(input_fingerprint))
         if previous is not None:
-            return self._same_input_replay(previous, input_fingerprint)
+            result = self._same_input_replay(previous, input_fingerprint)
+            return lambda: result
 
         if not self.provider_calls_allowed:
             result = {
@@ -184,34 +271,49 @@ class ContextAdjudicationBudget:
                 reason_code="PROVIDER_CALLS_DISABLED_CACHE_MISS",
             )
             self._adjudications_by_input[input_fingerprint] = copy.deepcopy(result)
+            return lambda: result
+
+        from src.autoslice.semantic_retry_progress import SemanticAttemptRecorder
+        recorder = SemanticAttemptRecorder(
+            srt_text=srt_text, finding=finding, clip_context=self.clip_context,
+            offset_ms=self.source_media_timeline_offset_ms,
+        )
+        judge_call = recorder.wrap(judge_call)
+        self.provider_adjudication_count += 1
+        admission_count = self.provider_adjudication_count
+
+        def execute():
+            _output, adjudication = adjudicate_context(
+                srt_text,
+                finding,
+                entity_verifier=self.entity_verifier,
+                clip_context=self.clip_context,
+                source_media_timeline_offset_ms=(self.source_media_timeline_offset_ms),
+                judge_llm_call=judge_call,
+                screen_read_probe=self.screen_read_probe,
+                exact_source_transcript_provider=(
+                    self.exact_source_transcript_provider
+                    if callable(self.exact_source_transcript_provider)
+                    else None
+                ),
+            )
+            if recorder.events or recorder.blocked:
+                adjudication = {**adjudication, "semantic_retry_progress": recorder.audit()}
+            result = self._with_resource_pressure(
+                adjudication,
+                provider_calls_this_decision=1,
+                count=admission_count,
+                reason_code=(
+                    "SOFT_LIMIT_EXCEEDED_CONTINUED"
+                    if admission_count > self.limit
+                    else "WITHIN_SOFT_LIMIT"
+                ),
+            )
+            with self._state_lock:
+                self._adjudications_by_input[input_fingerprint] = copy.deepcopy(result)
             return result
 
-        self.provider_adjudication_count += 1
-        _output, adjudication = self.adjudicate_context(
-            srt_text,
-            finding,
-            entity_verifier=self.entity_verifier,
-            clip_context=self.clip_context,
-            source_media_timeline_offset_ms=(self.source_media_timeline_offset_ms),
-            judge_llm_call=judge_call,
-            screen_read_probe=self.screen_read_probe,
-            exact_source_transcript_provider=(
-                self.exact_source_transcript_provider
-                if callable(self.exact_source_transcript_provider)
-                else None
-            ),
-        )
-        result = self._with_resource_pressure(
-            adjudication,
-            provider_calls_this_decision=1,
-            reason_code=(
-                "SOFT_LIMIT_EXCEEDED_CONTINUED"
-                if self.provider_adjudication_count > self.limit
-                else "WITHIN_SOFT_LIMIT"
-            ),
-        )
-        self._adjudications_by_input[input_fingerprint] = copy.deepcopy(result)
-        return result
+        return execute
 
     def _with_resource_pressure(
         self,
@@ -219,16 +321,27 @@ class ContextAdjudicationBudget:
         *,
         provider_calls_this_decision: int,
         reason_code: str,
+        count: int | None = None,
     ) -> dict[str, Any]:
+        count = self.provider_adjudication_count if count is None else count
         result = copy.deepcopy(dict(adjudication))
         result["cpa_resource_pressure"] = {
-            "provider_adjudication_count": self.provider_adjudication_count,
+            "provider_adjudication_count": count,
             "soft_limit": self.limit,
-            "soft_limit_exceeded": self.provider_adjudication_count > self.limit,
+            "soft_limit_exceeded": count > self.limit,
             "provider_calls_this_decision": provider_calls_this_decision,
+            "counter_kind": "LOGICAL_ADJUDICATION_ADMISSION_NOT_HTTP",
             "reason_code": reason_code,
         }
+        self._retain_unknown_usage(result)
         return result
+
+    def _retain_unknown_usage(self, result):
+        lineage = getattr(self.judge_llm_call, "cpa_partial_usage_lineage", None)
+        if lineage:
+            from src.autoslice.semantic_request_history import preserve_partial_usage
+            result["cpa_resource_pressure"] = preserve_partial_usage(
+                result["cpa_resource_pressure"], {"retained_partial_evidence":lineage})
 
     def _same_input_replay(
         self, adjudication: Mapping[str, Any], input_fingerprint: str
@@ -248,22 +361,27 @@ class ContextAdjudicationBudget:
             "provider_calls_this_decision": 0,
             "reason_code": "SAME_INPUT_REPLAY",
         }
+        self._retain_unknown_usage(result)
         return result
 
 
 def with_cpa_resource_pressure(
     call: Callable[[str], str] | None, count: int, soft_target: int,
 ) -> Callable[[str], str] | None:
-    """Expose growing resource pressure to the existing CPA word-choice prompt."""
+    """Expose resource pressure as telemetry without changing ruling identity."""
     if call is None or count <= soft_target:
         return call
 
     def pressured_judge(prompt: str) -> str:
         return call(prompt)
 
-    for attr in ("cpa_cache_identity", "provider_runtime_binding", "provider_diagnostics"):
+    for attr in ("cpa_cache_identity", "provider_runtime_binding", "provider_diagnostics", "cpa_partial_usage_lineage",
+                 "terminal_retry_capable", "terminal_retry_wallclock_seconds", "timeout_seconds",
+                 "structured_output_transport", "_semantic_attempt_recorder"):
         if hasattr(call, attr):
             setattr(pressured_judge, attr, getattr(call, attr))
+    from .completed_review_checkpoint import inherit_ruling_context
+    inherit_ruling_context(pressured_judge, call)
     # Keep exact counts in the decision ledger. Changing only that counter
     # must not change every judge prompt and defeat strict cached replay.
     ratio = count // max(soft_target, 1)
@@ -284,7 +402,11 @@ def replay_cached_context_adjudication(
     adjudicate_context: AdjudicateContext,
     judge_llm_call: Callable[[str], str] | None = None,
 ) -> dict[str, Any] | None:
-    """Return a strict witness+CPA double/triple hit, or ``None`` on any miss.
+    """Replay completed ordinary decisions from their required original caches.
+
+    Acoustic decisions require strict witness+CPA double/triple hits. A saved
+    context-only decision requires both proposal and convergence CPA caches;
+    the ordinary adjudicator must still find no acoustic duty for this input.
 
     The sentinel transport makes this safe in an explicit cache-only pass and
     after the soft provider-call threshold.  The witness probe owns physical
@@ -292,8 +414,25 @@ def replay_cached_context_adjudication(
     current/base/proposed/context request.
     """
 
+    # Replaying the old word judge cannot fulfill its request for a new
+    # semantic audio range. Keep the cache-only wrapper free of live provider
+    # seams; let the ordinary caller use its actual range observer instead.
+    if (
+        callable(getattr(entity_verifier, "observe_range_context", None))
+        and _pending_audio_obligation(finding) is not None
+    ):
+        return None
+
+    if getattr(entity_verifier, "argon_escalation", None) is not None:
+        return None  # Do not replay a pre-upgrade judgment over a pending/new job.
     cache_probe = getattr(entity_verifier, "probe_witness_cache", None)
-    if not callable(cache_probe):
+    prior = finding.get("exact_release_adjudication")
+    prior_request = prior.get("request") if isinstance(prior, Mapping) else None
+    context_only_candidate = bool(
+        isinstance(prior_request, Mapping)
+        and prior_request.get("kind") == "missing_proposal_context_only_convergence"
+    )
+    if not callable(cache_probe) and not context_only_candidate:
         return None
     witness_hits: list[Mapping[str, Any]] = []
     witness_misses = 0
@@ -308,7 +447,7 @@ def replay_cached_context_adjudication(
         request: Mapping[str, Any],
     ) -> Mapping[str, Any] | None:
         nonlocal witness_misses
-        result = cache_probe(request)
+        result = cache_probe(request) if callable(cache_probe) else None
         if isinstance(result, Mapping) and result.get("served_from_cache") is True:
             witness_hits.append(result)
             return result
@@ -327,6 +466,9 @@ def replay_cached_context_adjudication(
     provider_forbidden.cpa_cache_identity = getattr(
         judge_llm_call, "cpa_cache_identity", None
     )
+    for attr in ("provider_runtime_binding", "completed_review_root", "semantic_policy_version"):
+        if hasattr(judge_llm_call, attr):
+            setattr(provider_forbidden, attr, getattr(judge_llm_call, attr))
     if hasattr(judge_llm_call, "cpa_resource_pressure"):
         provider_forbidden.cpa_resource_pressure = judge_llm_call.cpa_resource_pressure
 
@@ -362,6 +504,52 @@ def replay_cached_context_adjudication(
     judge = witness_judge.get("judge") if isinstance(witness_judge, Mapping) else None
     exact_handoff = adjudication.get("exact_source_transcript_handoff")
     exact_attempted = bool(exact_hits or exact_misses)
+    convergence = adjudication.get("cpa_missing_proposal_convergence")
+    bootstrap = adjudication.get("proposal_bootstrap")
+    mutation = adjudication.get("mutation_authority")
+    if (
+        context_only_candidate
+        and provider_seam_attempts == 0
+        and not witness_hits
+        and not exact_attempted
+        and adjudication.get("status") == "OBSERVED"
+        and adjudication.get("repaired") is False
+        and adjudication.get("decision_authority") == "CPA_JUDGE"
+        and adjudication.get("timing_immutable") is True
+        and isinstance(mutation, Mapping)
+        and mutation.get("status") == "NOT_APPLIED"
+        and isinstance(request, Mapping)
+        and request.get("kind") == "missing_proposal_context_only_convergence"
+        and _digest(request.get("final_srt_sha256"))
+        == hashlib.sha256(srt_text.encode("utf-8")).hexdigest()
+        and isinstance(witness, Mapping)
+        and witness.get("status") == "NOT_REQUIRED"
+        and isinstance(judge, Mapping)
+        and judge.get("status") == "JUDGED"
+        and judge.get("choice") == "CURRENT"
+        and isinstance(bootstrap, Mapping)
+        and bootstrap.get("served_from_cache") is True
+        and isinstance(convergence, Mapping)
+        and convergence.get("schema_version") == "subtitle-missing-proposal-cpa-convergence.v1"
+        and convergence.get("status") == "RESOLVED"
+        and convergence.get("decision") == "KEEP_EXISTING"
+        and convergence.get("served_from_cache") is True
+        and convergence.get("needs_audio") is not True
+    ):
+        # The ordinary adjudicator rebuilt the current request from both CPA
+        # caches and found no acoustic duty. A probe miss cannot turn that
+        # completed context-only decision into a new listening requirement.
+        return {**adjudication, "provider_budget_replay": {
+            "schema_version": "final-review-provider-budget-replay.v1",
+            "status": "PASS", "provider_call_count": 0,
+            "basis": "CONTEXT_ONLY_CPA_CACHES",
+            "witness_cache_hit": False, "judge_cache_hit": True,
+            "exact_source_transcript_cache_hit": False,
+            "proposal_prompt_sha256": _digest(bootstrap.get("prompt_sha256")),
+            "proposal_completion_sha256": _digest(bootstrap.get("completion_sha256")),
+            "judge_prompt_sha256": _digest(convergence.get("prompt_sha256")),
+            "judge_completion_sha256": _digest(convergence.get("completion_sha256")),
+        }}
     if not (
         witness_hits
         and witness_misses == 0

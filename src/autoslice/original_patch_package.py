@@ -7,6 +7,7 @@ are independently checked. Only a committed, existing-BV target may use it.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import hashlib
 import json
 import os
@@ -43,17 +44,18 @@ def sha_file(path):
     need(not any(p.is_symlink() for p in (path, *path.parents)), "symlink input")
     before = path.stat()
     need(stat.S_ISREG(before.st_mode), "input is not a file")
-    h = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(4 * 1024 * 1024), b""):
-            h.update(chunk)
+    from .evidence_identity import EvidenceFileChangedError
+    try:
+        h = _evidence_file_sha256(path)
+    except EvidenceFileChangedError as exc:
+        raise OriginalPackageError("input changed while reading") from exc
     after = path.stat()
 
     def stable(s):
         return (s.st_dev, s.st_ino, s.st_mode, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
 
     need(stable(before) == stable(after), "input changed while reading")
-    return h.hexdigest()
+    return h
 
 
 def json_file(path):
@@ -145,10 +147,11 @@ def publication_authority(candidate, *, repo_root=ROOT):
         all(type(target[k]) is int and target[k] > 0 for k in ["aid", "cid"]),
         "target numeric identity",
     )
-    from src.autoslice.title_policy import publish_title_policy_violations
+    from src.autoslice.title_policy import publish_title_lane, publish_title_policy_violations
 
     need(
-        not publish_title_policy_violations(target["final_title"], lane="talk"),
+        not publish_title_policy_violations(
+            target["final_title"], lane=publish_title_lane(target["final_title"])),
         "target title policy",
     )
     reference = target["authorization_ref"]

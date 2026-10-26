@@ -62,7 +62,9 @@ def load_source_config(path: Path) -> dict[str, Any]:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise StreamerRegistryError(f"cannot load streamer registry config: {exc}") from exc
-    if not isinstance(payload, dict) or set(payload) != {"schema_version", "sources"}:
+    required = {"schema_version", "sources"}
+    if (not isinstance(payload, dict) or not required <= set(payload)
+            or set(payload) - required - {"reviewed_accounts"}):
         raise StreamerRegistryError("streamer registry config has unknown or missing fields")
     if payload.get("schema_version") != SOURCE_SCHEMA:
         raise StreamerRegistryError("unsupported streamer registry source schema")
@@ -83,7 +85,116 @@ def load_source_config(path: Path) -> dict[str, Any]:
             "virtuareal_bilibili_announcements",
         }:
             raise StreamerRegistryError(f"source {source_id} has unsupported kind")
+    reviewed_account_records(payload)
     return payload
+
+
+def reviewed_account_records(
+    config: Mapping[str, Any], *, as_of: dt.datetime | None = None
+) -> list[dict[str, Any]]:
+    """Read bounded operator-reviewed facts without declaring a crawler refresh.
+
+    This supplement is independent of the complete registry and its TTL/count
+    gates. Recorded reactions are historical context, never live presence,
+    community aliases, cue-occurrence evidence, or subtitle mutation authority.
+    """
+    records = config.get("reviewed_accounts", [])
+    if not isinstance(records, list) or len(records) > 16:
+        raise StreamerRegistryError("reviewed_accounts must contain at most 16 records")
+    cutoff = as_of or dt.datetime.now(dt.timezone.utc)
+    if cutoff.tzinfo is None or cutoff.utcoffset() is None:
+        raise StreamerRegistryError("reviewed account as_of must be timezone-aware")
+    result: list[dict[str, Any]] = []
+    seen_mids: set[int] = set()
+    for row in records:
+        fields = {"canonical", "account_name", "official_mid", "homepage", "affiliation",
+                  "verified_at", "profile_evidence", "historical_events"}
+        if not isinstance(row, dict) or set(row) != fields:
+            raise StreamerRegistryError("reviewed account has invalid fields")
+        for key in ("canonical", "account_name", "affiliation"):
+            _safe_atom(row[key], label=f"reviewed account {key}")
+        mid = row["official_mid"]
+        if type(mid) is not int or mid <= 0 or mid in seen_mids:
+            raise StreamerRegistryError("reviewed account MID is invalid or duplicate")
+        seen_mids.add(mid)
+        if row["homepage"] != f"https://space.bilibili.com/{mid}":
+            raise StreamerRegistryError("reviewed account homepage/MID mismatch")
+        verified_at = dt.datetime.fromisoformat(
+            _iso_timestamp(row["verified_at"], label="reviewed account verified_at")
+        )
+        evidence = row["profile_evidence"]
+        if (not isinstance(evidence, dict)
+                or set(evidence) != {"source_bvid", "page_state_sha256", "affiliation_excerpt"}
+                or re.fullmatch(r"BV[0-9A-Za-z]{10}", str(evidence["source_bvid"])) is None
+                or re.fullmatch(r"[0-9a-f]{64}", str(evidence["page_state_sha256"])) is None):
+            raise StreamerRegistryError("reviewed account profile evidence is invalid")
+        _safe_atom(evidence["affiliation_excerpt"], label="profile affiliation excerpt")
+        events = row["historical_events"]
+        if not isinstance(events, list) or not events or len(events) > 8:
+            raise StreamerRegistryError("reviewed account historical events are invalid")
+        event_ids: set[str] = set()
+        eligible_events: list[dict[str, Any]] = []
+        for event in events:
+            event_fields = {"event_id", "relationship", "not_a_live_collaboration",
+                            "recording_date", "source_bvid", "start_ms", "end_ms",
+                            "reference_bvid", "reference_subject", "source_info_sha256"}
+            if not isinstance(event, dict) or set(event) != event_fields:
+                raise StreamerRegistryError("reviewed event has invalid fields")
+            event_id = _safe_atom(event["event_id"], label="reviewed event id")
+            if event_id in event_ids:
+                raise StreamerRegistryError("duplicate reviewed event id")
+            event_ids.add(event_id)
+            _safe_atom(event["reference_subject"], label="reviewed event reference subject")
+            if (event["relationship"] != "watching_and_commenting_on_recorded_clips"
+                    or event["not_a_live_collaboration"] is not True):
+                raise StreamerRegistryError("reviewed reaction cannot assert live collaboration")
+            for key in ("source_bvid", "reference_bvid"):
+                if re.fullmatch(r"BV[0-9A-Za-z]{10}", str(event[key])) is None:
+                    raise StreamerRegistryError("reviewed event BVID is invalid")
+            if re.fullmatch(r"[0-9a-f]{64}", str(event["source_info_sha256"])) is None:
+                raise StreamerRegistryError("reviewed event source hash is invalid")
+            if (type(event["start_ms"]) is not int or type(event["end_ms"]) is not int
+                    or not 0 <= event["start_ms"] < event["end_ms"]):
+                raise StreamerRegistryError("reviewed event interval is invalid")
+            try:
+                recording_date = dt.date.fromisoformat(event["recording_date"])
+            except (TypeError, ValueError) as exc:
+                raise StreamerRegistryError("reviewed event recording date is invalid") from exc
+            if recording_date > verified_at.date():
+                raise StreamerRegistryError("reviewed event postdates its verification")
+            if recording_date <= cutoff.date():
+                eligible_events.append(dict(event))
+        # as_of is the production recording date, not the research date. An
+        # eligible source replay also anchors this account's existence then;
+        # a later profile review must not hide that historical evidence.
+        if not eligible_events:
+            continue
+        result.append({
+            "entity_id": f"bilibili:{mid}",
+            "canonical": row["canonical"],
+            "account_name": row["account_name"],
+            "homepage": row["homepage"],
+            "affiliation_as_observed": row["affiliation"],
+            "verified_at": verified_at.isoformat(),
+            "profile_evidence": dict(evidence),
+            "historical_events": eligible_events,
+        })
+    return result
+
+
+def reviewed_accounts_context(path: Path, *, as_of: dt.datetime | None = None) -> str:
+    """Render reviewed source records for the existing glossary consumer."""
+    records = reviewed_account_records(load_source_config(path), as_of=as_of)
+    if not records:
+        return ""
+    lines = [
+        "已核实主播资料与历史观看事件（人工核实的来源补充，非完整名单爬虫刷新；",
+        "账号与事件按源录播日期提供；所属仅为核实日期观察到的账号简介，",
+        "不回溯断言录播时所属或出道日期；历史观看/评论录播切片不代表实时联动。",
+        "只供实体及话题候选，不证明当前句出现，也不授权改字或声称在场）:",
+    ]
+    lines.extend("- " + json.dumps(row, ensure_ascii=False, sort_keys=True) for row in records)
+    return "\n".join(lines) + "\n"
 
 
 def _source_by_kind(config: Mapping[str, Any], kind: str) -> Mapping[str, Any]:

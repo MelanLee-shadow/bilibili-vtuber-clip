@@ -21,7 +21,7 @@ description: 为频道切片生成、审查或修复 B 站档案标题与封面�
 4. 不论人工还是自动，都运行 `publish_title_policy_violations`：
    - talk 最终带 profile 标题前缀（默认 profile：`【李豆沙】`）；
    - song 精确为 profile 歌切格式（默认 profile：`【李豆沙】豆沙歌，《canonical歌名》`），绝无 hook/副标题；
-   - 最终 12–48 字、无外层空白、括号/引号正确成对。
+   - 最终长度见 `../../../assets/lidousha/title_policy.json` 的 `min_length` / `max_length`；无外层空白、括号/引号正确成对。
 5. 自动标题另外过 selection-hook 与机器味/违禁词门；人工正文不自动重写，结构不合格则
    fail closed 并请求修正 authority。
 6. 封面文字从**已通过的最终发布标题**派生：不带频道前缀；song 固定 `《歌名》`。

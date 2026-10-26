@@ -15,6 +15,10 @@ from src.autoslice.cover_route_evidence import (
     build_cover_route_decision,
     record_cover_route_execution,
 )
+from src.autoslice.cover_host_identity_gate import (
+    HOST_ONLY_AUTHORITY,
+    HOST_ONLY_SCHEMA_VERSION,
+)
 from src.autoslice.host_only_v4_package_binding import (
     BINDING_ISSUE_CODE,
     BINDING_ITEM_KEY,
@@ -22,7 +26,7 @@ from src.autoslice.host_only_v4_package_binding import (
 )
 
 
-def test_host_only_v3_route_reports_exact_v4_witness_blocker() -> None:
+def test_host_only_v3_route_reports_exact_current_witness_blocker() -> None:
     story = {
         "schema_version": "lidousha-story-contract.v1",
         "selection_hook": "主播说自己被内定",
@@ -86,9 +90,7 @@ def test_host_only_v3_route_reports_exact_v4_witness_blocker() -> None:
 
     assert detail
     parsed = json.loads(detail)
-    assert parsed["required_schema_version"] == (
-        "lidousha-cover-final-host-identity-verification.v4"
-    )
+    assert parsed["required_schema_version"] == HOST_ONLY_SCHEMA_VERSION
     assert parsed["actual_schema_version"] == (
         "lidousha-cover-final-host-identity-verification.v3"
     )
@@ -116,7 +118,7 @@ def _json_bytes(value: dict[str, object]) -> bytes:
     ).encode("utf-8")
 
 
-def _v4_bound_package(tmp_path):
+def _current_host_only_bound_package(tmp_path):
     root = tmp_path / "package"
     evidence = root / "evidence"
     evidence.mkdir(parents=True)
@@ -131,11 +133,8 @@ def _v4_bound_package(tmp_path):
         return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
     verification = {
-        "schema_version": "lidousha-cover-final-host-identity-verification.v4",
-        "authority": (
-            "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_PROMINENCE_"
-            "AND_HOST_ONLY_COMPARISON"
-        ),
+        "schema_version": HOST_ONLY_SCHEMA_VERSION,
+        "authority": HOST_ONLY_AUTHORITY,
         "status": "PASS",
         "host_only_required": True,
         "final_cover_path": cover.name,
@@ -186,8 +185,8 @@ def _binding_issues(root, item, generation):
     return issues
 
 
-def test_host_only_v4_binding_rehashes_all_package_bytes(tmp_path) -> None:
-    root, item, generation, comparison = _v4_bound_package(tmp_path)
+def test_host_only_current_binding_rehashes_all_package_bytes(tmp_path) -> None:
+    root, item, generation, comparison = _current_host_only_bound_package(tmp_path)
     assert _binding_issues(root, item, generation) == []
 
     comparison.write_bytes(b"drifted after witness validation")
@@ -196,16 +195,16 @@ def test_host_only_v4_binding_rehashes_all_package_bytes(tmp_path) -> None:
     assert "comparison_sha256 does not match package bytes" in issues[0]["detail"]
 
 
-def test_host_only_v4_requires_explicit_package_binding(tmp_path) -> None:
-    root, item, generation, _comparison = _v4_bound_package(tmp_path)
+def test_host_only_current_binding_requires_explicit_package_binding(tmp_path) -> None:
+    root, item, generation, _comparison = _current_host_only_bound_package(tmp_path)
     item.pop(BINDING_ITEM_KEY)
     issues = _binding_issues(root, item, generation)
     assert [row["code"] for row in issues] == [BINDING_ISSUE_CODE]
     assert "lacks HOST_ONLY v4 binding" in issues[0]["detail"]
 
 
-def test_host_only_v4_binding_rejects_symlinked_comparison(tmp_path) -> None:
-    root, item, generation, comparison = _v4_bound_package(tmp_path)
+def test_host_only_current_binding_rejects_symlinked_comparison(tmp_path) -> None:
+    root, item, generation, comparison = _current_host_only_bound_package(tmp_path)
     external = tmp_path / "external.png"
     external.write_bytes(comparison.read_bytes())
     comparison.unlink()

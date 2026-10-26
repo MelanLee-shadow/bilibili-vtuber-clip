@@ -531,7 +531,7 @@ def _prepare_exact_triple_cache(tmp_path, *, store_second_judge=True):
     return source, finding, clip_context, witness, cached_observation
 
 
-def test_exhausted_budget_replays_exact_source_triple_cache(tmp_path, monkeypatch):
+def test_cached_unlocalized_judge_cannot_authorize_whole_cue_rebuild(tmp_path, monkeypatch):
     import src.autoslice.final_review_auditor as auditor
 
     monkeypatch.setattr(auditor, "MAX_CONTEXT_ADJUDICATIONS", 0)
@@ -565,11 +565,12 @@ def test_exhausted_budget_replays_exact_source_triple_cache(tmp_path, monkeypatc
 
     assert resolved == [] and len(unresolved) == 1
     adjudication = unresolved[0]["exact_release_adjudication"]
-    assert adjudication["repaired"] is True
+    assert adjudication["repaired"] is False
+    assert adjudication["policy_branch"] == "SPAN_LOCALIZATION_RESULT_REQUIRED"
     replay = adjudication["provider_budget_replay"]
     assert replay["provider_call_count"] == 0
     assert replay["witness_cache_hit"] is True
-    assert replay["exact_source_transcript_cache_hit"] is True
+    assert replay["exact_source_transcript_cache_hit"] is False
     assert replay["judge_cache_hit"] is True
     assert adjudication["cpa_resource_pressure"]["provider_calls_this_decision"] == 0
 
@@ -612,10 +613,10 @@ def test_exact_triple_cache_partial_hit_never_crosses_exhausted_budget(
         provider_calls_allowed=False,
     )
     assert resolved == []
-    assert (
-        unresolved[0]["exact_release_adjudication"]["status"]
-        == "SKIPPED_PROVIDER_DISABLED"
-    )
+    decision = unresolved[0]["exact_release_adjudication"]
+    assert decision['status'] == 'OBSERVED' and decision['repaired'] is False
+    assert decision['policy_branch'] == 'SPAN_LOCALIZATION_RESULT_REQUIRED'
+    assert decision['provider_budget_replay']['provider_call_count'] == 0
 
 
 def test_soft_threshold_does_not_drop_new_findings_after_twelve():
@@ -650,6 +651,7 @@ def test_soft_threshold_does_not_drop_new_findings_after_twelve():
         "soft_limit": 12,
         "soft_limit_exceeded": False,
         "provider_calls_this_decision": 1,
+        "counter_kind": "LOGICAL_ADJUDICATION_ADMISSION_NOT_HTTP",
         "reason_code": "WITHIN_SOFT_LIMIT",
     }
     assert results[12]["cpa_resource_pressure"] == {
@@ -657,6 +659,7 @@ def test_soft_threshold_does_not_drop_new_findings_after_twelve():
         "soft_limit": 12,
         "soft_limit_exceeded": True,
         "provider_calls_this_decision": 1,
+        "counter_kind": "LOGICAL_ADJUDICATION_ADMISSION_NOT_HTTP",
         "reason_code": "SOFT_LIMIT_EXCEEDED_CONTINUED",
     }
 
@@ -798,8 +801,8 @@ def test_soft_pressure_reaches_cpa_text_first_without_an_audio_provider():
     def judge(prompt):
         prompts.append(prompt)
         assert "TEXT_FIRST" in prompt
-        assert "单片软资源压力" in prompt
-        assert '\"pressure_multiple\": 1' in prompt
+        assert "单片软资源压力" not in prompt
+        assert '\"pressure_multiple\"' not in prompt
         return json.dumps({"choice": "PROPOSED", "needs_audio": False,
                            "reason": "语境支持歌债"}, ensure_ascii=False)
 
@@ -841,8 +844,12 @@ def test_soft_pressure_cached_judge_survives_counter_only_resume(tmp_path, monke
 
     def judge(prompt):
         calls.append(prompt)
-        return json.dumps({"choice": "CURRENT", "needs_audio": True,
-                           "reason": "bound original audio supports seconds"})
+        return json.dumps({
+            "choice": "CURRENT", "needs_audio": False,
+            "current_utterance_supported": True,
+            "current_utterance_support_reason": "Bound whole utterance is audible",
+            "reason": "bound original audio supports seconds",
+        })
 
     class CachedWitness:
         def __call__(self, request):

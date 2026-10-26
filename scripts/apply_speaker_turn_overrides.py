@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.channel_profile import LABEL_RE, load_channel_profile
 
 CHANNEL_PROFILE = load_channel_profile(ROOT)
 HOST_SPEAKER = CHANNEL_PROFILE.host_speaker_label
@@ -38,10 +38,6 @@ SRT_BLOCK_RE = re.compile(
     r"(\d{2}:\d{2}:\d{2},\d{3})\s+-->\s+"
     r"(\d{2}:\d{2}:\d{2},\d{3})\s*\n"
     r"(.*?)(?=\n{2,}|\Z)"
-)
-LABEL_RE = re.compile(
-    r"^\[(" + "|".join(re.escape(value) for value in SPEAKER_LABELS) + r")(?:\s+[+-]?\d+(?:\.\d+)?)?\]\s*(.*)$",
-    re.S,
 )
 SPEAKER_SUBTITLE_STYLE_ID = (
     f"{CHANNEL_PROFILE.profile_id}-speaker-sapphire-host-white-guest-v2"
@@ -168,7 +164,7 @@ def parse_labelled_srt(path: Path) -> list[Cue]:
         source_index = int(match.group(1))
         body = " ".join(line.strip() for line in match.group(4).strip().splitlines())
         label_match = LABEL_RE.match(body)
-        if not label_match:
+        if not label_match or label_match.group(1) not in SPEAKERS:
             raise ValueError(
                 f"source cue {source_index} is not labelled as "
                 f"[{HOST_SPEAKER}] or [{GUEST_SPEAKER}]: {body!r}"
@@ -357,63 +353,17 @@ def _ass_timestamp(value: str) -> str:
     return f"{int(hours)}:{minutes}:{seconds}.{millis[:2]}"
 
 
-def _ass_timestamp_ms(value: int) -> str:
-    centiseconds = max(0, (int(value) + 5) // 10)
-    hours, remainder = divmod(centiseconds, 360_000)
-    minutes, remainder = divmod(remainder, 6_000)
-    seconds, centis = divmod(remainder, 100)
-    return f"{hours}:{minutes:02d}:{seconds:02d}.{centis:02d}"
+def write_ass(cues: list[Cue], path: Path) -> None:
+    from src.autoslice.subtitle_rendering import AssLaneStyle, BurnedAssCue, render_burned_ass
 
-
-def _ass_escape(value: str) -> str:
-    # ``_layout_cue_for_display`` already uses ASS's literal ``\N`` line-break
-    # marker. Preserve that marker while escaping arbitrary user backslashes;
-    # turning it into ``\\N`` makes libass render characters instead of a break.
-    line_break = "\u0000ASS_LINE_BREAK\u0000"
-    return (
-        value.replace(r"\N", line_break)
-        .replace("\\", r"\\")
-        .replace("{", r"\{")
-        .replace("}", r"\}")
-        .replace("\n", line_break)
-        .replace(line_break, r"\N")
+    rendered = render_burned_ass(
+        [BurnedAssCue(timestamp_ms(c.start), timestamp_ms(c.end), c.text,
+                      c.speaker, c.layer, c.placement) for c in cues],
+        host_speaker=HOST_SPEAKER,
+        lane=AssLaneStyle(styles=(("LDS", LDS_SAPPHIRE_STYLE), ("GUEST", GUEST_WHITE_STYLE)),
+                          include_unused_styles=True, escaping="talk"),
     )
-
-
-def write_ass(cues: list[Cue], path: Path, *, show_speaker_labels: bool = False) -> None:
-    header = f"""[Script Info]
-ScriptType: v4.00+
-PlayResX: 1920
-PlayResY: 1080
-WrapStyle: 2
-ScaledBorderAndShadow: yes
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: LDS,{LDS_SAPPHIRE_STYLE}
-Style: GUEST,{GUEST_WHITE_STYLE}
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-"""
-    events = []
-    from src.autoslice.subtitle_rendering import _layout_cue_sequence_for_display
-
-    rows = [(timestamp_ms(cue.start), timestamp_ms(cue.end),
-             f"[{cue.speaker}] {cue.text}" if show_speaker_labels else cue.text) for cue in cues]
-    keys = [(cue.speaker, cue.layer, cue.placement) for cue in cues]
-    for source_index, start_ms, end_ms, display_text in _layout_cue_sequence_for_display(
-        rows, continuity_keys=keys
-    ):
-        cue = cues[source_index]
-        style = "LDS" if cue.speaker == HOST_SPEAKER else "GUEST"
-        margin_v = 142 if cue.placement == "above" else 0
-        text = _ass_escape(display_text)
-        events.append(
-            f"Dialogue: {cue.layer},{_ass_timestamp_ms(start_ms)},{_ass_timestamp_ms(end_ms)},"
-            f"{style},,0,0,{margin_v},,{text}"
-        )
-    atomic_write_text(path, header + "\n".join(events) + "\n")
+    atomic_write_text(path, rendered)
 
 
 def build_manifest(

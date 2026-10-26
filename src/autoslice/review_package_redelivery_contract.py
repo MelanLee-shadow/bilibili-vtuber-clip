@@ -1,8 +1,8 @@
 """Check a portable redelivery against its registered subtitle time domain."""
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 from collections.abc import Callable
-import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -71,7 +71,7 @@ def _audit_redelivery_time_domain(
     expected_sha = str(baseline.config.get("sha256") or "")
     try:
         actual_sha = (
-            hashlib.sha256(subtitle_path.read_bytes()).hexdigest()
+            _evidence_file_sha256(subtitle_path)
             if subtitle_path is not None
             else ""
         )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import hashlib
 import json
 import os
@@ -45,6 +46,21 @@ class AgyExecutionResult:
     agy_chunk_count: int | None = None
     api_fallback_chunk_count: int | None = None
     chunk_attestations: tuple[AgyChunkAttestation, ...] = ()
+    # CPA text-context evidence.  These fields remain optional so legacy AGY
+    # callers and song proof contexts retain their existing result contract.
+    prompt_sha256: str | None = None
+    completion_sha256: str | None = None
+    prompt_path: str | None = None
+    completion_path: str | None = None
+    request_path: str | None = None
+    request_id_kind: str | None = None
+    cpa_cache_identity: Mapping[str, object] | None = None
+    deleted_cue_indexes: tuple[int, ...] = ()
+    timing_grid_sha256: str | None = None
+    completion_source: str | None = None
+    cpa_cache_key: str | None = None
+    # The immutable request can target the ladder head while another model answers.
+    requested_model: str | None = None
 
 
 class AgyRunnerError(RuntimeError):
@@ -319,8 +335,13 @@ def execute_source_context_job(
             agy_result = agy_runner(context_media_path, context_draft_srt_path, context_refined_srt_path)
             refined_srt_path = context_refined_srt_path
         except Exception as exc:
-            findings: tuple[str, ...] = ("AGY_SOURCE_CONTEXT_RUNNER_FAILED",)
             specific = getattr(exc, "reason_code", None)
+            failure_label = (
+                "CPA_SOURCE_CONTEXT_RUNNER_FAILED"
+                if isinstance(specific, str) and specific.startswith("CPA_")
+                else "AGY_SOURCE_CONTEXT_RUNNER_FAILED"
+            )
+            findings: tuple[str, ...] = (failure_label,)
             if isinstance(specific, str) and specific:
                 findings = findings + (specific,)
             retry_after_seconds = getattr(exc, "retry_after_seconds", None)
@@ -333,8 +354,16 @@ def execute_source_context_job(
                 findings=findings,
                 metadata=metadata,
             )
+            decision = (
+                "BLOCK"
+                if any(
+                    code == "CPA_CORRECTION_INVALID_OUTPUT" or code.startswith("CPA_RESULT_")
+                    for code in findings
+                )
+                else "RETRY_INFRA"
+            )
             return SourceContextExecutionResult(
-                decision="RETRY_INFRA",
+                decision=decision,
                 reason_codes=findings,
                 context_media_path=str(context_media_path),
                 context_draft_srt_path=str(context_draft_srt_path),
@@ -364,6 +393,8 @@ def execute_source_context_job(
         "job_id": job_id,
         "provider": agy_result.provider,
         "model": agy_result.model,
+        **({"requested_model": agy_result.requested_model}
+           if getattr(agy_result, 'requested_model', None) is not None else {}),
         "agy_rc": agy_result.agy_rc,
         "provider_fallback_used": agy_result.provider_fallback_used,
         "provider_request_id": agy_result.provider_request_id,
@@ -377,6 +408,24 @@ def execute_source_context_job(
         "chunk_count": agy_result.chunk_count,
         "agy_chunk_count": agy_result.agy_chunk_count,
         "api_fallback_chunk_count": agy_result.api_fallback_chunk_count,
+        "source_context_route": (
+            "cpa_text_correction"
+            if agy_result.provider == "cpa"
+            else "agy_audio_context"
+            if agy_result.provider == "agy"
+            else agy_result.provider
+        ),
+        "prompt_sha256": agy_result.prompt_sha256,
+        "completion_sha256": agy_result.completion_sha256,
+        "prompt_path": agy_result.prompt_path,
+        "completion_path": agy_result.completion_path,
+        "request_path": agy_result.request_path,
+        "request_id_kind": agy_result.request_id_kind,
+        "cpa_cache_identity": dict(agy_result.cpa_cache_identity or {}) or None,
+        "deleted_cue_indexes": list(agy_result.deleted_cue_indexes),
+        "timing_grid_sha256": agy_result.timing_grid_sha256,
+        "completion_source": agy_result.completion_source,
+        "cpa_cache_key": agy_result.cpa_cache_key,
         "chunk_attestations": [
             {
                 "chunk_index": row.chunk_index,
@@ -401,9 +450,39 @@ def execute_source_context_job(
         "source_sha256": f"sha256:{source_sha256}",
         "input_sha256": f"sha256:{_sha256_file(context_draft_srt_path)}",
         "output_sha256": f"sha256:{output_sha256}" if output_sha256 else None,
-        "prompt_sha256": f"sha256:{_sha256_bytes(json.dumps(prompt_payload, sort_keys=True).encode('utf-8'))}",
+        "job_prompt_sha256": f"sha256:{_sha256_bytes(json.dumps(prompt_payload, sort_keys=True).encode('utf-8'))}",
     }
+    if manifest["prompt_sha256"] is None:
+        manifest["prompt_sha256"] = manifest["job_prompt_sha256"]
+    cpa_reason_codes: tuple[str, ...] = ()
+    if agy_result.provider == "cpa":
+        from src.autoslice.source_context_cpa_refinement import validate_cpa_source_context_result
+
+        cpa_reason_codes = validate_cpa_source_context_result(
+            agy_result,
+            context_media_path=context_media_path,
+            context_draft_srt_path=context_draft_srt_path,
+            context_refined_srt_path=context_refined_srt_path,
+        )
+        manifest["cpa_validation"] = {
+            "status": "BLOCK" if cpa_reason_codes else "PASS",
+            "reason_codes": list(cpa_reason_codes),
+        }
     jingting_manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    if cpa_reason_codes:
+        _write_review_required(review_required_path, release_ready=False, findings=cpa_reason_codes)
+        return SourceContextExecutionResult(
+            decision="BLOCK",
+            reason_codes=cpa_reason_codes,
+            context_media_path=str(context_media_path),
+            context_draft_srt_path=str(context_draft_srt_path),
+            context_refined_srt_path=str(context_refined_srt_path) if context_refined_srt_path.exists() else None,
+            jingting_manifest_path=str(jingting_manifest_path),
+            review_required_path=str(review_required_path),
+            source_cues_path=str(source_cues_path),
+            jingting_done=False,
+        )
 
     reason_codes = _agy_reason_codes(agy_result, refinement_required=refinement_required)
     if reason_codes:
@@ -550,6 +629,10 @@ def _agy_reason_codes(
 ) -> tuple[str, ...]:
     if not refinement_required and result.provider == "source_draft_context":
         return ()
+    if result.provider == "cpa":
+        # CPA evidence is checked against the exact context bytes above.  Keep
+        # this legacy AGY gate from rejecting a valid text-only route.
+        return ()
     if result.provider == GEMINI_API_FALLBACK_PROVIDER:
 
 
@@ -578,11 +661,8 @@ def _agy_reason_codes(
 
 
 def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return digest
 
 
 def _sha256_bytes(data: bytes) -> str:

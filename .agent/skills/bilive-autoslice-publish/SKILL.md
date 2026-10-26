@@ -1,6 +1,6 @@
 ---
 name: bilive-autoslice-publish
-description: "操作、修复、审查或发布 autoslice 成品；从 live runtime authority 开始，按当前打包审计、适用最终复核与 authorized-upload 闭环执行。"
+description: "操作、修复、审查或发布 autoslice 成品，以及准备人设批量审核与投影计划；按当前 pipeline 的对应步骤执行。"
 ---
 
 # Bilive Autoslice Publish
@@ -76,3 +76,60 @@ create-only 构建各自独立的 receipt，不互相冒充。具体输入、证
 - 不从历史文档冻结账号、合集 ID、部署 commit、运行状态或配额。
 - 发布路径 fail closed；需要新权限、验证码或无法证明闭环时停止并报告 blocker。
 - 封面事实与叙事的验收只读 [70-cover.md](../../../docs/pipeline/70-cover.md)。
+
+## 7. 人设批量审核与投影计划
+
+本节操作的输入、审核者、回复格式、原始消息绑定、状态机和投影准入，统一读
+[41：终审字幕之后的人设事实审核](../../../docs/pipeline/41-semantic-repair.md#终审字幕之后的人设事实审核)。
+在仓库根目录先查现有接口：
+
+```bash
+python3 scripts/extract_persona_facts.py --help
+python3 scripts/apply_persona_review.py prepare --help
+python3 scripts/apply_persona_review.py review --help
+python3 scripts/promote_persona_projection.py --help
+```
+
+为【主播名】选定现有台账与终审输入。若尚无抽取回执，按
+[抽取 CLI](../../../scripts/extract_persona_facts.py) 的 `--bundle` 格式准备输入，以
+`--ledger`、`--profile-id`、`--output-dir` 和显式 `--extractor`、`--extractor-id`、
+`--extractor-version` 生成独立审核目录；`--proposals-json` 用于重放保存的模拟提案。
+输入字段及路径解析看该脚本，事实与纠错材料的取舍按
+[41](../../../docs/pipeline/41-semantic-repair.md#终审字幕之后的人设事实审核)。
+从工具返回目录取 `extraction-receipt.json`，不要把抽取摘要直接当作已接受事实。
+
+以下为待填变量模板：`PERSONA_PROFILE` 是频道 id，`PERSONA_LEDGER` 是现有台账路径，
+`PERSONA_RECEIPT` 是抽取回执，`PERSONA_BATCH` 是尚不存在的新批次目录，
+`PERSONA_RECORDED_AT` 是本批 UTC 时间戳。在运行环境填好实际值后准备批次：
+
+```bash
+python3 scripts/apply_persona_review.py prepare \
+  --ledger "$PERSONA_LEDGER" --profile-id "$PERSONA_PROFILE" \
+  --extraction-receipt "$PERSONA_RECEIPT" --output-dir "$PERSONA_BATCH" \
+  --recorded-at "$PERSONA_RECORDED_AT"
+```
+
+将生成的 `review-summary.md` 连同原编号交给 41 指定的审核者，保留同批 `batch.json`
+与回执。取得对本批的原始回复后，按 41 核对消息来源并准备 authority JSON；
+将其路径填入 `PERSONA_AUTHORITY`，原始 UTF-8 回复路径填入 `PERSONA_RAW_MESSAGE`，先预览：
+
+```bash
+python3 scripts/apply_persona_review.py review \
+  --ledger "$PERSONA_LEDGER" --profile-id "$PERSONA_PROFILE" \
+  --batch-dir "$PERSONA_BATCH" --authority "$PERSONA_AUTHORITY" \
+  --raw-message "$PERSONA_RAW_MESSAGE"
+```
+
+核对预览与原话后，按 [41](../../../docs/pipeline/41-semantic-repair.md#终审字幕之后的人设事实审核)
+在同一命令加 `--apply` 追加修订；有输入漂移则按该节重新准备批次。
+投影是独立动作：把当前在途清单路径填入 `PERSONA_INFLIGHT_INVENTORY`，先看计划：
+
+```bash
+python3 scripts/promote_persona_projection.py \
+  --profile-id "$PERSONA_PROFILE" --ledger "$PERSONA_LEDGER" \
+  --inflight-inventory "$PERSONA_INFLIGHT_INVENTORY"
+```
+
+读回计划、当前/目标 SHA 与阻塞；实际提升按
+[41](../../../docs/pipeline/41-semantic-repair.md#终审字幕之后的人设事实审核) 和其指向的
+[80：资产写入先查绑定面](../../../docs/pipeline/80-package-delivery.md#资产写入先查绑定面) 执行。

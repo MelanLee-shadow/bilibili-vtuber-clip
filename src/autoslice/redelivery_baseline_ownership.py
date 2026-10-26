@@ -148,12 +148,12 @@ def suppress_baseline_owned_self_heal_findings(
         *suppressed,
     ]
     if not kept:
+        from .finding_lifecycle import is_finding_failure
         reason_codes = [
             code
             for code in (audit.get("reason_codes") or [])
-            if code
+            if not is_finding_failure(code) and code
             not in {
-                "FINAL_REVIEW_UNRESOLVED_FINDINGS",
                 "CPA_CYCLE_ADJUDICATION_UNAVAILABLE",
                 "CPA_CYCLE_ADJUDICATION_INVALID",
             }

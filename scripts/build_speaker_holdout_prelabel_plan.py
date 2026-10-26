@@ -17,9 +17,14 @@ import os
 import re
 import secrets
 import stat
+import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+from src.autoslice.deployed_code_root import DEFAULT_RUNTIME_BASE, deployed_code_root_reference
 
 SCHEMA_VERSION = "speaker-holdout-extraction-plan.v1"
 SOURCE_SCHEMA_VERSION = "speaker-holdout-source-freeze.v0"
@@ -92,7 +97,9 @@ SOURCE_MEDIA_FIELDS = {
 FORBIDDEN_REMOTE_ROOTS = (
     Path("/opt/bilive/autoslice/state"),
     Path("/opt/bilive/autoslice/out"),
-    Path("/opt/bilive/autoslice/repo"),
+    DEFAULT_RUNTIME_BASE / "repo",  # retained legacy data; never a code selector
+    deployed_code_root_reference(),
+    DEFAULT_RUNTIME_BASE / "versions",
     Path("/opt/bilive/recording"),
 )
 RUN_ID_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}\Z")

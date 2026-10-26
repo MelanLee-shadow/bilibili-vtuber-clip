@@ -53,12 +53,12 @@ def candidate_package_review_allowed(state: Mapping[str, object], candidate_id: 
 
 
 SONG_TERMINAL_DISPOSITION_SCHEMA_VERSION = "song-terminal-disposition.v1"
-SONG_DETERMINISTIC_PROOF_REJECTION_CODES = frozenset(
-    {
-        "SONG_AUDIO_LRC_IDENTITY_AMBIGUOUS",
-        "SONG_AUDIO_LRC_ALIGNMENT_INVALID",
-    }
-)
+# A reference/clock proof failure says nothing decisive about the performance.
+# Only the separately typed performer/content observations authorize rejection.
+SONG_PROOF_UNRESOLVED_CODES = frozenset({
+    'SONG_AUDIO_LRC_IDENTITY_AMBIGUOUS', 'SONG_AUDIO_LRC_ALIGNMENT_INVALID',
+    'SONG_LRC_REFERENCE_UNRESOLVED', 'SONG_AUDIO_LRC_PROOF_UNRESOLVED',
+})
 
 
 def song_infra_transient_is_active(
@@ -69,22 +69,11 @@ def song_infra_transient_is_active(
     retry_cap: int | None = None,
     fallback_to_reason_codes: bool = False,
 ) -> bool:
-    """Whether this song attempt still counts as a waitable provider transient.
+    """Keep actual provider failures separate from unresolved song proof.
 
-    An explicitly typed transient emitted by ``song_lane`` normally outranks
-    stale/partial negative reasons (``PUBLIC_CASE_ID``).  That veto was
-    unbounded, and combined with the song lane's JINGTING provenance false
-    positives it produced an immortal candidate: ``refill_songs`` gives
-    ``selected_repair`` items first claim on ``song_delivery_budget`` (one per
-    live session), so 's ``song_200130_1012`` sat at
-    ``transient_retry_count=4`` holding the only slot while the other eight
-    candidates of that session never got a single attempt.
-
-    Past ``retry_cap`` the veto lapses, but **only** against a coexisting
-    deterministic content rejection.  A record carrying nothing but a genuine
-    infrastructure code keeps waiting however high the counter climbs — a
-    provider outage never becomes a content failure by sitting in the queue
-    (``test_rate_limited_song_retry_cap_is_terminal_for_same_pipeline``).
+    A reference/clock failure does not establish an outage through an old
+    preliminary provider hint. Explicit service failures remain waitable;
+    the terminal owner separately applies the cap to typed performer vetoes.
     """
 
     infra_codes = {str(code) for code in infra_transient_reason_codes}
@@ -96,15 +85,11 @@ def song_infra_transient_is_active(
         # honours the typed field alone, so an untyped record with a confirmed
         # non-host performance still terminalizes exactly as it did before.
         return fallback_to_reason_codes and bool(reasons & infra_codes) and not (
-            reasons & SONG_DETERMINISTIC_PROOF_REJECTION_CODES
+            reasons & SONG_PROOF_UNRESOLVED_CODES
         )
     if explicit not in infra_codes:
         return False
-    if retry_cap is None:
-        return True
-    retries = record.get("transient_retry_count")
-    exhausted = not isinstance(retries, bool) and int(retries or 0) >= int(retry_cap)
-    return not (exhausted and reasons & SONG_DETERMINISTIC_PROOF_REJECTION_CODES)
+    return True
 
 
 def project_terminal_song_disposition(
@@ -116,10 +101,9 @@ def project_terminal_song_disposition(
 ) -> bool:
     """Project a completed negative song proof into a durable terminal receipt.
 
-    A pipeline fingerprint change is not new acoustic evidence.  Completed
-    audio/LRC negatives and confirmed non-host performances therefore remain
-    rejected until an operator explicitly revives the candidate.  An explicit
-    typed provider transient always wins over stale/partial negative reasons.
+    A reference/clock proof failure remains blocked; it is not evidence of an
+    unsuitable performance. Confirmed performer negatives retain their typed
+    terminal meaning. Existing terminal records are not reopened here.
     """
 
     if record.get("delivered") or record.get("verified_delivery_pending_commit") is True:
@@ -133,9 +117,8 @@ def project_terminal_song_disposition(
     performer_codes = {
         str(code) for code in terminal_performer_rejection_codes
     }
-    proof_rejections = reasons & SONG_DETERMINISTIC_PROOF_REJECTION_CODES
     performer_rejections = reasons & performer_codes
-    if not proof_rejections and not performer_rejections:
+    if not performer_rejections:
         return False
 
     # A nonzero selector exit cannot authorize a semantic rejection.  Missing
@@ -144,18 +127,20 @@ def project_terminal_song_disposition(
     rc = record.get("rc")
     if rc is not None and rc != 0:
         return False
-    if proof_rejections and rc != 0:
-        return False
 
-    if song_infra_transient_is_active(
+    active_transient = song_infra_transient_is_active(
         record=record,
         reason_codes=reasons,
         infra_transient_reason_codes=infra_transient_reason_codes,
         retry_cap=song_infra_retry_cap,
-    ):
+    )
+    retries = record.get('transient_retry_count')
+    exhausted_performer_veto = (bool(performer_rejections) and song_infra_retry_cap is not None
+        and type(retries) is int and retries >= song_infra_retry_cap)
+    if active_transient and not exhausted_performer_veto:
         return False
 
-    decisive_reasons = sorted(proof_rejections | performer_rejections)
+    decisive_reasons = sorted(performer_rejections)
     record["status"] = "candidate_rejected"
     record["decision"] = "REJECT"
     record["song_terminal_disposition"] = {

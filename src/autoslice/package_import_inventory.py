@@ -10,6 +10,7 @@ from pathlib import Path
 from src.autoslice.failed_pick_import import PackageImportError
 from src.autoslice.package_relocation_contract import (
     JsonPointer, RECORD_PATH_POINTERS, PUBLISH_PATH_POINTERS, SPEAKER_PATH_POINTERS, get_value,
+    pointer_applies,
 )
 
 if TYPE_CHECKING:
@@ -61,6 +62,8 @@ def _referenced_locators(
         ),
     ):
         for pointer in sorted(pointers):
+            if not pointer_applies(kind, pointer, document):
+                continue
             value = get_value(document, pointer)
             if isinstance(value, str) and value.startswith("/"):
                 found.append((kind, pointer, value))

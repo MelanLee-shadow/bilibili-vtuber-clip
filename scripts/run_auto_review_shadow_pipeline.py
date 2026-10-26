@@ -39,6 +39,9 @@ from src.autoslice.branding_intro import (
     prepend_branding_intro,
     require_branding_intro,
 )
+from src.autoslice.clip_profile import (
+    CLIP_PROFILE_FIELD, clip_profile_from_spec, spec_clip_profile_transcription, requires_intro,
+)
 # _editorial_score is deliberately shared with the analyzer so the semantic
 # authority override cannot drift from the canonical editorial formula.
 from src.autoslice.content_evidence import _editorial_score, analyze_content_evidence
@@ -75,6 +78,7 @@ from src.autoslice.song_repair import (
 from src.autoslice.host_vocal_proof import verify_host_vocal_proof_claim
 from src.autoslice.source_integrity import MediaSegmentObservation, build_source_range_ledger, plan_bilibili_replay_compensation
 from src.autoslice.source_context_executor import AgyExecutionResult, SourceContextExecutionResult, execute_source_context_job
+from src.autoslice.source_context_cpa_refinement import run_source_context_cpa
 from src.autoslice.source_context_planner import JingtingJobProvenance, plan_source_context_jingting_jobs
 from src.autoslice.subtitle_timing_qa import SpeechSpansProvider, sanitize_cue_timing
 from src.autoslice.style_profile import ManualStyleProfile, apply_style_profile
@@ -289,15 +293,29 @@ def _run_live_source(
     )
     candidate_id = str(job_manifest.get("candidate_id") or candidate_id)
     song_candidate = _job_is_song_candidate(job_manifest)
+    from src.autoslice.song_materialized_successor import load_materialized_successor, completed_boundary
+    successor = load_materialized_successor(
+        source_video=source_video, job=job_manifest, output_dir=output_dir,
+    ) if song_candidate else None
+    if successor is not None:
+        job_manifest = successor[0]
     source_refinement_required = not song_candidate or refined_srt is not None
-    source_context = execute_source_context_job(
+    context_runner = source_context_agy_runner
+    if (
+        context_runner is None
+        and refined_srt is None
+        and agy_result is None
+        and source_refinement_required
+    ):
+        context_runner = run_source_context_cpa
+    source_context = successor[1] if successor is not None else execute_source_context_job(
         job_manifest,
         source_video_path=source_video,
         output_dir=output_dir / "source_context" / candidate_id,
         full_source_srt_path=source_srt,
         refined_srt_path=refined_srt,
         agy_result=agy_result,
-        agy_runner=source_context_agy_runner or (_run_source_context_agy if refined_srt is None else None),
+        agy_runner=context_runner or (_run_source_context_agy if refined_srt is None and agy_result is not None else None),
         refinement_required=source_refinement_required,
         run_ffmpeg=source_context_run_ffmpeg,
     )
@@ -376,30 +394,32 @@ def _run_live_source(
     # lateness bias (fix) that a fresh independent ASR timeline
     # does not share.
     song_asr_anchor_cues = _parse_srt(source_srt) if source_srt is not None else ()
-    job_manifest, song_repair_result = _attempt_song_repair_stage(
-        job_manifest,
-        cues,
-        candidate_id=candidate_id,
-        output_dir=output_dir,
-        lrc_provider=lrc_provider,
-        hint_llm_call=song_hint_llm_call,
-        extra_queries=song_lrc_queries,
-        # The AGY audio/LRC proof, CAM++ proof, and final recut must share one
-        # canonical source.  Proving a disposable context copy and rendering
-        # from ``source_video`` left no exact verified-to-output path binding.
-        source_media_path=source_video,
-        audio_lrc_aligner=audio_lrc_aligner,
-        asr_anchor_cues=song_asr_anchor_cues,
-    )
-    job_manifest = _attempt_host_vocal_proof_stage(
-        job_manifest,
-        candidate_id=candidate_id,
-        # song_boundary/alignment timestamps are source-video-relative; the
-        # refined context media may begin later and would shift every sample.
-        source_media_path=source_video,
-        output_dir=output_dir,
-        host_vocal_prover=host_vocal_prover,
-    )
+    song_repair_result = None
+    if successor is None:
+        job_manifest, song_repair_result = _attempt_song_repair_stage(
+            job_manifest,
+            cues,
+            candidate_id=candidate_id,
+            output_dir=output_dir,
+            lrc_provider=lrc_provider,
+            hint_llm_call=song_hint_llm_call,
+            extra_queries=song_lrc_queries,
+            # The AGY audio/LRC proof, CAM++ proof, and final recut must share one
+            # canonical source.  Proving a disposable context copy and rendering
+            # from ``source_video`` left no exact verified-to-output path binding.
+            source_media_path=source_video,
+            audio_lrc_aligner=audio_lrc_aligner,
+            asr_anchor_cues=song_asr_anchor_cues,
+        )
+        job_manifest = _attempt_host_vocal_proof_stage(
+            job_manifest,
+            candidate_id=candidate_id,
+            # song_boundary/alignment timestamps are source-video-relative; the
+            # refined context media may begin later and would shift every sample.
+            source_media_path=source_video,
+            output_dir=output_dir,
+            host_vocal_prover=host_vocal_prover,
+        )
     boundary_resolution = _resolve_live_source_boundary(job_manifest, cues, output_dir=output_dir)
     evidence = analyze_content_evidence(candidate_id=candidate_id, cues=cues, title=title)
     counts["candidates_with_content_evidence"] = 1
@@ -430,7 +450,7 @@ def _run_live_source(
         if lyric_timeline_loaded is not None
         else None
     )
-    materialized_recut = _materialize_recut_record(
+    materialized_recut = successor[2] if successor is not None else _materialize_recut_record(
         source_video=source_video,
         candidate_id=candidate_id,
         boundary_resolution=boundary_resolution,
@@ -443,11 +463,29 @@ def _run_live_source(
         speech_spans_provider=speech_spans_provider,
         fresh_talk_transcriber=fresh_talk_transcriber,
     )
-    if burn_preview:
+    profile_document = spec_clip_profile_transcription(
+        job_manifest, lane="song" if song_candidate else "talk",
+    )
+    if profile_document is not None and materialized_recut is not None:
+        materialized_recut[CLIP_PROFILE_FIELD] = profile_document
+    if burn_preview and successor is None:
+        # The job's declared clip form (lane default) decides the intro; a
+        # song candidate is a derived member that takes none.
+        clip_form = clip_profile_from_spec(job_manifest, lane="song" if song_candidate else "talk")
         materialized_recut = _burn_preview_subtitles(
             materialized_recut,
             run_ffmpeg=source_context_run_ffmpeg,
-            branding_intro=branding_intro,
+            branding_intro=branding_intro if requires_intro(clip_form) else None,
+        )
+    successor_receipt = None
+    completed = completed_boundary(job_manifest, materialized_recut, boundary_resolution)
+    if completed is not None:
+        boundary_resolution, successor_receipt = completed
+        if successor is not None:
+            successor_receipt["predecessor_summary"] = successor[3]
+        evidence = _apply_live_source_context_metadata(
+            evidence, source_context_job=job_manifest, source_context=source_context,
+            boundary_resolution=boundary_resolution,
         )
     evidence = _apply_materialized_recut_render_qa(evidence, materialized_recut)
     if (
@@ -499,11 +537,11 @@ def _run_live_source(
             decision=decision,
             candidate_id=candidate_id,
             title=title,
-            cues=cues,
-            output_dir=output_dir,
+            cues=cues, output_dir=output_dir,
             run_ffmpeg=source_context_run_ffmpeg,
             title_llm_call=title_llm_call,
             art_direction_llm_call=art_direction_llm_call,
+            song_job=job_manifest if song_candidate else None,
         )
 
     evidence_path = output_dir / "evidence" / f"{candidate_id}.evidence.json"
@@ -534,6 +572,7 @@ def _run_live_source(
             strict_song_streams=lyric_timeline_loaded is not None,
         ),
         "materialized_recut": materialized_recut,
+        **({"materialized_song_successor": successor_receipt} if successor_receipt else {}),
     }
     return _live_source_summary(
         source_video=source_video,
@@ -709,6 +748,7 @@ from src.autoslice.publish_staging_paths import (
     materialized_artifact_root as _materialized_artifact_root,
     staged_transcript_sample as _staged_transcript_sample,
 )
+from src.autoslice.song_name_authority import SONG_NAME_AUTHORITY_UNPROVEN, song_catalog_publish_title
 
 
 def _stage_ai_cover(
@@ -757,6 +797,7 @@ def _stage_publish_draft(
     title_llm_call: LlmCall | None,
     art_direction_llm_call: LlmCall | None = None,
     skip_cover: bool = False,
+    reuse_cover_source_record: Path | None = None,
     selection_hook: str | None = None,
     cover_diversity_slot: int | None = None,
     recovery_publication_authority: Mapping[str, object] | None = None,
@@ -774,6 +815,7 @@ def _stage_publish_draft(
         title_llm_call=title_llm_call,
         art_direction_llm_call=art_direction_llm_call,
         skip_cover=skip_cover,
+        reuse_cover_source_record=reuse_cover_source_record,
         selection_hook=selection_hook,
         cover_diversity_slot=cover_diversity_slot,
         recovery_publication_authority=recovery_publication_authority,
@@ -794,7 +836,14 @@ def _stage_publish_after_release_gate(
     run_ffmpeg: bool,
     title_llm_call: LlmCall | None,
     art_direction_llm_call: LlmCall | None = None,
+    song_job: Mapping[str, object] | None = None,
 ) -> dict[str, object] | None:
+    if song_job is not None:  # 60-title：歌切只用音频证成歌名的目录式标题，不进谈话标题模型
+        title_llm_call, catalog_title = None, song_catalog_publish_title(song_job)
+        title = catalog_title or title
+        if catalog_title is None:
+            unproven = (*decision.reason_codes, SONG_NAME_AUTHORITY_UNPROVEN)
+            decision = replace(decision, reason_codes=tuple(dict.fromkeys(unproven)))
     return _stage_publish_after_release_gate_impl(
         materialized_recut,
         decision=decision,
@@ -932,6 +981,7 @@ def _call_cpa_image_edit(
     base_url: str,
     api_key: str,
     reference_path: Path,
+    style_reference_paths: Sequence[Path] = (),
     output_path: Path,
     prompt: str,
     request_path: Path,
@@ -945,6 +995,7 @@ def _call_cpa_image_edit(
         base_url=base_url,
         api_key=api_key,
         reference_path=reference_path,
+        style_reference_paths=style_reference_paths,
         output_path=output_path,
         prompt=prompt,
         request_path=request_path,
@@ -1070,9 +1121,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             build_lrclib_lrc_provider(),
             build_kugou_lrc_provider(),
         )
+    intro_job = source_context_job if isinstance(source_context_job, Mapping) else {}
+    intro_form = clip_profile_from_spec(
+        intro_job, lane="song" if _job_is_song_candidate(intro_job) else "talk",
+    )
     branding_intro = (
         require_branding_intro(ROOT, manifest_path=args.branding_intro_manifest)
-        if args.branding_intro_manifest is not None
+        if args.branding_intro_manifest is not None and requires_intro(intro_form)
         else None
     )
     summary = run_shadow_pipeline(

@@ -1,13 +1,20 @@
-"""Last-resort PAID Gemini key policy (维护者).
+"""Last-resort PAID Gemini key policy (维护者, revised /20).
 
 The three free keys (``GEMINI_API_KEY``/``_2``/``_3``) are the primary
-slicing keys. ``GEMINI_KEY_BACKUP`` is a PAID key and must stay rare:
+slicing keys. ``GEMINI_KEY_BACKUP`` is a PAID key; the order is always
+AGY subscription, then free keys, then the paid key (维护者
+「先调用AGY订阅，然后用免费key，最后用付费key」), and the paid key never
+gets a cooldown (「付费key不能加冷却期」):
 
-* Unattended production: a work item (identified by its content hash)
-  becomes eligible only after the complete free-key chain has already
-  failed **>= 3 separate rounds** for that same item — i.e. waiting and
-  retrying did not bring the free keys back. The strike count is persisted
-  per item, so the gate holds across ticks and process restarts.
+* Quota exhaustion (revision 「429 可同 run 连补」): when the whole
+  free chain answered HTTP 429, the paid key is admitted in that same round
+  (``agy_gemini_client.quota_fastpath_paid_gate``); waiting three rounds on a
+  deterministic quota error is not required.
+* Other failure classes (503, timeouts, invalid output): a work item
+  (identified by its content hash) becomes eligible only after the complete
+  free-key chain has already failed **>= 3 separate rounds** for that same
+  item (the rule). The strike count is persisted per item, so the
+  gate holds across ticks and process restarts.
 * Development phase (维护者 update): setting
   ``GEMINI_PAID_BACKUP_DEV_EXCEPTION=1`` on a run lets the paid key fire in
   the same round the free chain fails — free keys are still always tried
@@ -46,12 +53,25 @@ _PAID_STAMP_KEYS = {
 }
 
 
+
+
+
+
+
+
+FREE_CHAIN_UNSERVABLE_MODE = "free_chain_unservable"
+FREE_CHAIN_UNSERVABLE_BASES = frozenset({
+    "FREE_TIER_UNAVAILABLE_FOR_MODEL", "FREE_CHAIN_DEFINITIVE_REJECTIONS",
+})
+
+
 def validate_key_acceptance_metadata(
     *,
     configured_key_count: object,
     accepted_key_ordinal: object,
     accepted_key_tier: object,
     paid_backup_policy: object,
+    allow_free_chain_unservable: bool = False,
 ) -> str | None:
     """Validate the shared free-chain/paid-backup proof carried by artifacts."""
 
@@ -76,6 +96,8 @@ def validate_key_acceptance_metadata(
         policy = paid_backup_policy
         gate_ok = isinstance(policy, Mapping) and (
             policy.get("mode") == "dev_exception"
+            or (allow_free_chain_unservable is True
+                and policy.get("mode") == FREE_CHAIN_UNSERVABLE_MODE)
             or (
                 isinstance(policy.get("free_chain_strikes"), int)
                 and not isinstance(policy.get("free_chain_strikes"), bool)
@@ -89,7 +111,8 @@ def validate_key_acceptance_metadata(
 
 
 def valid_paid_policy_stamp(
-    stamp: object, *, expected_purpose: str, expected_item_key: str
+    stamp: object, *, expected_purpose: str, expected_item_key: str,
+    allow_free_chain_unservable: bool = False,
 ) -> bool:
     """Validate one secret-free paid-use proof against its exact call identity."""
 
@@ -106,9 +129,11 @@ def valid_paid_policy_stamp(
         stamp.get("key_tier") == PAID_KEY_TIER
         and stamp.get("purpose") == expected_purpose
         and stamp.get("item_key") == _safe_item_name(expected_item_key)
-        and stamp.get("mode") in {"dev_exception", "strict"}
+        and (stamp.get("mode") in {"dev_exception", "strict"}
+             or (allow_free_chain_unservable is True
+                 and stamp.get("mode") == FREE_CHAIN_UNSERVABLE_MODE))
         and isinstance(strikes, int) and not isinstance(strikes, bool) and strikes >= 0
-        and (stamp.get("mode") == "dev_exception" or strikes >= MIN_FREE_CHAIN_STRIKES)
+        and (stamp.get("mode") != "strict" or strikes >= MIN_FREE_CHAIN_STRIKES)
         and isinstance(calls_before, int)
         and not isinstance(calls_before, bool)
         and calls_before >= 0
@@ -232,7 +257,8 @@ def paid_calls_today() -> int:
 
 
 def paid_attempt_allowed(
-    item_key: str, *, prior_strikes: int | None = None
+    item_key: str, *, prior_strikes: int | None = None, key_configured: bool | None = None,
+    uncapped: bool = False,
 ) -> tuple[bool, str]:
     """Gate one paid attempt; returns (allowed, bounded machine reason).
 
@@ -241,7 +267,10 @@ def paid_attempt_allowed(
     three complete free-chain failures.
     """
 
-    if paid_backup_key() is None:
+    if key_configured is not None and type(key_configured) is not bool:
+        raise TypeError("key_configured must be a bool or None")
+    configured = paid_backup_key() is not None if key_configured is None else key_configured
+    if not configured:
         return False, "PAID_KEY_NOT_CONFIGURED"
     dev_exception = dev_exception_active()
     strikes = free_chain_strikes(item_key) if prior_strikes is None else int(prior_strikes)
@@ -252,7 +281,9 @@ def paid_attempt_allowed(
     except OSError:
         # No auditable ledger -> no paid use, ever.
         return False, "PAID_LEDGER_UNAVAILABLE"
-    cap = daily_cap()
+    if type(uncapped) is not bool:
+        raise TypeError("uncapped must be bool")
+    cap = None if uncapped else daily_cap()
     if cap is not None:
         used = paid_calls_today()
         if used >= cap:
@@ -262,28 +293,60 @@ def paid_attempt_allowed(
     return True, f"FREE_CHAIN_STRIKES_{strikes}"
 
 
-def record_paid_use(item_key: str, *, purpose: str) -> dict[str, object]:
+def unservable_free_chain_paid_gate(
+    item_key: str, *, basis: str, key_configured: bool | None = None,
+    uncapped: bool = False,
+) -> tuple[bool, str]:
+    """Same-round paid admission when the free chain cannot serve this item.
+
+    ``basis`` must name a proven condition (a provider tier table excluding
+    the model from the free tier, or definitive zero-inference rejections on
+    every free route). The strike requirement is treated as met exactly like
+    the quota fast path; key configuration, ledger availability
+    and the optional cap are still enforced by ``paid_attempt_allowed``.
+    """
+
+    if basis not in FREE_CHAIN_UNSERVABLE_BASES:
+        return False, "FREE_CHAIN_UNSERVABLE_BASIS_INVALID"
+    allowed, reason = paid_attempt_allowed(
+        item_key, prior_strikes=MIN_FREE_CHAIN_STRIKES,
+        key_configured=key_configured, uncapped=uncapped,
+    )
+    return allowed, f"FREE_CHAIN_UNSERVABLE:{basis}:{reason}"
+
+
+def record_paid_use(item_key: str, *, purpose: str, uncapped: bool = False,
+                    admission: str | None = None,
+                    unservable_basis: str | None = None) -> dict[str, object]:
     """Append one paid-key use to today's ledger and return the policy stamp.
 
     The returned stamp is what adapters embed into their run manifests so a
     later delivery validator can prove the gate held (strikes >= 3, cap not
-    exceeded) without any secret material.
+    exceeded) without any secret material. ``admission`` (for example a
+    ``QUOTA_FASTPATH:...`` gate reason) is written to the ledger line only.
     """
 
+    if type(uncapped) is not bool:
+        raise TypeError("uncapped must be bool")
+    if unservable_basis is not None and unservable_basis not in FREE_CHAIN_UNSERVABLE_BASES:
+        raise ValueError("unservable_basis is not a proven free-chain condition")
     now = dt.datetime.now(dt.timezone.utc)
     used_before = paid_calls_today()
     stamp: dict[str, object] = {
         "key_tier": PAID_KEY_TIER,
-        "mode": "dev_exception" if dev_exception_active() else "strict",
+        "mode": (FREE_CHAIN_UNSERVABLE_MODE if unservable_basis is not None
+                 else "dev_exception" if dev_exception_active() else "strict"),
         "item_key": _safe_item_name(item_key),
         "free_chain_strikes": free_chain_strikes(item_key),
         "calls_today_before": used_before,
-        "daily_cap": daily_cap(),
+        "daily_cap": None if uncapped else daily_cap(),
         "recorded_at": now.isoformat(),
         "purpose": str(purpose)[:64],
     }
     path = _usage_path(now.date())
     path.parent.mkdir(parents=True, exist_ok=True)
+    line = {**stamp, **({"admission": str(admission)[:96]} if admission else {}),
+            **({"unservable_basis": unservable_basis} if unservable_basis else {})}
     with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(stamp, ensure_ascii=False) + "\n")
+        handle.write(json.dumps(line, ensure_ascii=False) + "\n")
     return stamp

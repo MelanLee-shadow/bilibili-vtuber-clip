@@ -42,10 +42,21 @@ TIER_ONE_BASES = frozenset(
 )
 TIER_BASES = TIER_ONE_BASES | {"personal_stance", "generic_event"}
 ADMISSION_POLICY_FIELD = "admission_policy"
+# Candidate quality is deliberately separate from the seven arithmetic
+# dimensions.  It answers the production question that a valid scorecard
+# cannot answer by itself: is this particular candidate worth spending a
+# production slot on, and what in the window supports that decision?
+CANDIDATE_QUALITY_FIELD = "candidate_quality"
+CANDIDATE_QUALITY_SCHEMA = "candidate-selection-quality.v1"
+QUALITY_WATCHABILITY_VALUES = frozenset({"STRONG", "ORDINARY", "THIN"})
+QUALITY_DIFFERENTIATION_VALUES = frozenset({"DISTINCTIVE", "ORDINARY", "THIN"})
+QUALITY_DISPOSITION_VALUES = frozenset({"PRODUCTION", "RESERVE", "HOLD"})
 # New scorecards carry the policy explicitly.  Historical v1 scorecards did
-# not have this field and remain valid under the legacy arithmetic/admission
-# rules (see ``selection_scorecard_is_valid``).
-CURRENT_ADMISSION_POLICY = "selection-scorecard-admission.v2"
+# not have this field and remain valid under their original arithmetic/admission
+# rules (see ``selection_scorecard_is_valid``).  v2 is retained as a distinct
+# historical policy because its bytes and tier facts may be receipt-bound.
+LEGACY_ADMISSION_POLICY = "selection-scorecard-admission.v2"
+CURRENT_ADMISSION_POLICY = "selection-scorecard-admission.v3"
 _CHANNEL_PROFILE = load_channel_profile(
     Path(__file__).resolve().parents[2]
 )
@@ -331,13 +342,13 @@ def _performance_tier_one_admitted(
     dimensions: Mapping[str, int],
     evidence_cues: list[int],
     *,
-    strong_policy: bool,
+    admission_policy: str | None,
 ) -> bool:
     """Return whether a performance card may occupy the highest tier.
 
-    The legacy gate is intentionally kept here because scorecards written
-    before the admission-policy field was introduced remain historical
-    evidence.  New cards use the stronger, explicitly identified policy.
+    The no-policy and v2 branches intentionally remain separate from v3:
+    scorecards written under either policy can be bound by a receipt and must
+    not be silently re-scored under the current rubric.
     """
 
     admitted = (
@@ -345,13 +356,89 @@ def _performance_tier_one_admitted(
         and dimensions["persona_reversal"] >= 3
         and len(evidence_cues) >= 2
     )
-    if strong_policy:
+    if admission_policy in {LEGACY_ADMISSION_POLICY, CURRENT_ADMISSION_POLICY}:
         admitted = admitted and (
             dimensions["audience_salience"] >= 2
             and dimensions["self_contained"] >= 3
             and dimensions["comedic_payoff"] == 4
         )
     return admitted
+
+
+def _v3_quality_gate(quality: Mapping[str, object] | None) -> bool:
+    """Return whether a candidate has the common v3 Tier 1 content proof."""
+
+    if not isinstance(quality, Mapping):
+        return False
+    return (
+        quality.get("watchability") == "STRONG"
+        and quality.get("differentiation") == "DISTINCTIVE"
+        and quality.get("production_disposition") == "PRODUCTION"
+        and bool(str(quality.get("reason") or "").strip())
+        and isinstance(quality.get("evidence_cues"), list)
+        and bool(quality.get("evidence_cues"))
+    )
+
+
+def _v3_common_dimensions_gate(dimensions: Mapping[str, int]) -> bool:
+    """Return whether the v3 common content dimensions are substantive."""
+
+    return (
+        dimensions["audience_salience"] >= 2
+        and dimensions["self_contained"] >= 3
+        and dimensions["comedic_payoff"] >= 3
+    )
+
+
+def _normalize_candidate_quality(
+    raw: object,
+    *,
+    start_cue: int,
+    end_cue: int,
+) -> dict[str, object] | None:
+    """Normalize the non-arithmetic, candidate-scoped production judgment.
+
+    This is intentionally categorical rather than another score.  The model
+    must state what a viewer gets from the window, how distinctive it is, and
+    which in-window cues support that statement.  The production disposition
+    remains an explicit editorial output; deterministic code only prevents a
+    thin or unsupported claim from entering a production slot.
+    """
+
+    if not isinstance(raw, Mapping):
+        return None
+    watchability = str(raw.get("watchability") or "").strip().upper()
+    differentiation = str(raw.get("differentiation") or "").strip().upper()
+    disposition = str(raw.get("production_disposition") or "").strip().upper()
+    reason = str(raw.get("reason") or "").strip()[:500]
+    evidence_raw = raw.get("evidence_cues")
+    if (
+        watchability not in QUALITY_WATCHABILITY_VALUES
+        or differentiation not in QUALITY_DIFFERENTIATION_VALUES
+        or disposition not in QUALITY_DISPOSITION_VALUES
+        or not reason
+        or not isinstance(evidence_raw, list)
+        or not evidence_raw
+    ):
+        return None
+    evidence_cues: list[int] = []
+    for value in evidence_raw:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or not start_cue <= value <= end_cue
+        ):
+            return None
+        if value not in evidence_cues:
+            evidence_cues.append(value)
+    return {
+        "schema_version": CANDIDATE_QUALITY_SCHEMA,
+        "watchability": watchability,
+        "differentiation": differentiation,
+        "production_disposition": disposition,
+        "reason": reason,
+        "evidence_cues": evidence_cues,
+    }
 
 
 def _normalize_selection_scorecard(
@@ -407,6 +494,15 @@ def _normalize_selection_scorecard(
     tier_basis = str(raw.get("tier_basis") or "").strip()
     if tier_basis not in TIER_BASES:
         return None
+    quality: dict[str, object] | None = None
+    if CANDIDATE_QUALITY_FIELD in raw:
+        quality = _normalize_candidate_quality(
+            raw.get(CANDIDATE_QUALITY_FIELD),
+            start_cue=start_cue,
+            end_cue=end_cue,
+        )
+        if quality is None:
+            return None
     reason_codes: list[str] = []
     if tier == 1:
         relationship_admitted = (
@@ -420,14 +516,32 @@ def _normalize_selection_scorecard(
             and _performance_tier_one_admitted(
                 dimensions,
                 evidence_cues,
-                strong_policy=admission_policy == CURRENT_ADMISSION_POLICY,
+                admission_policy=admission_policy,
             )
         )
-        if tier_basis not in TIER_ONE_BASES or not (
-            relationship_admitted or performance_admitted
-        ):
+        v3_quality_admitted = _v3_quality_gate(quality)
+        v3_personal_or_event_admitted = (
+            tier_basis in {"personal_stance", "generic_event"}
+            and (dimensions["lidousha_centrality"] >= 3 or dimensions["stance_intensity"] >= 3)
+            and len(evidence_cues) >= 1
+        )
+        if admission_policy == CURRENT_ADMISSION_POLICY:
+            admitted = _v3_common_dimensions_gate(dimensions) and v3_quality_admitted and (
+                relationship_admitted
+                or performance_admitted
+                or v3_personal_or_event_admitted
+            )
+        else:
+            admitted = tier_basis in TIER_ONE_BASES and (
+                relationship_admitted or performance_admitted
+            )
+        if not admitted:
             tier = 2
             reason_codes.append("TIER1_ADMISSION_DOWNGRADED")
+            if admission_policy == CURRENT_ADMISSION_POLICY and not v3_quality_admitted:
+                reason_codes.append("TIER1_COMMON_QUALITY_GATE_FAILED")
+            if admission_policy == CURRENT_ADMISSION_POLICY and not _v3_common_dimensions_gate(dimensions):
+                reason_codes.append("TIER1_COMMON_DIMENSION_GATE_FAILED")
 
     # A clip whose hook/payoff cannot stand on its own is the metric's Tier 3,
     # even when the model assigned high topical scores elsewhere.
@@ -457,6 +571,8 @@ def _normalize_selection_scorecard(
         "effective_score": round(effective_score, 2),
         "reason_codes": reason_codes,
     }
+    if quality is not None:
+        normalized[CANDIDATE_QUALITY_FIELD] = quality
     if admission_policy == CURRENT_ADMISSION_POLICY:
         normalized[ADMISSION_POLICY_FIELD] = CURRENT_ADMISSION_POLICY
     return normalized
@@ -468,11 +584,12 @@ def normalize_selection_scorecard(
     start_cue: int,
     end_cue: int,
 ) -> dict[str, object] | None:
-    """Normalize a new scorecard under the current admission policy.
+    """Normalize a new scorecard under the current v3 admission policy.
 
     The public signature is intentionally unchanged.  Scorecards produced by
-    this path carry an explicit policy identifier; absence of that field is
-    reserved for historical v1 cards accepted by ``selection_scorecard_is_valid``.
+    this path carry an explicit policy identifier.  Historical v1/v2 cards
+    are accepted only by ``selection_scorecard_is_valid`` with their original
+    policy semantics.
     """
 
     if not isinstance(raw, Mapping):
@@ -508,7 +625,9 @@ def _ranking_tier(scorecard: Mapping[str, object]) -> float:
         evidence = scorecard.get("tier_evidence_cues")
         if isinstance(dimensions, Mapping) and isinstance(evidence, list):
             if not _performance_tier_one_admitted(
-                dimensions, evidence, strong_policy=True
+                dimensions,
+                evidence,
+                admission_policy=LEGACY_ADMISSION_POLICY,
             ):
                 return 2.0
     return tier
@@ -542,6 +661,72 @@ def selection_rank_key(item: Mapping[str, object]) -> tuple[float, float, float,
         -confidence,
         str(item.get("cid") or item.get("candidate_id") or ""),
     )
+
+
+def selection_scorecard_production_admission(raw: object) -> dict[str, object]:
+    """Return the candidate-scoped production disposition.
+
+    Historical cards have no ``admission_policy`` and retain their original
+    admission fact.  v2 cards retain the previous quality gate.  Only v3
+    cards use the current rubric before a normal semantic candidate can take
+    a fresh production seat.
+    This gate never changes Tier or either seven-dimension score.
+    """
+
+    if not selection_scorecard_is_valid(raw):
+        return {
+            "status": "HOLD",
+            "reason_code": "SELECTION_SCORECARD_INVALID",
+        }
+    assert isinstance(raw, Mapping)
+    policy = raw.get(ADMISSION_POLICY_FIELD)
+    if policy not in {LEGACY_ADMISSION_POLICY, CURRENT_ADMISSION_POLICY}:
+        return {
+            "status": "ADMIT",
+            "reason_code": "HISTORICAL_SCORECARD_COMPATIBILITY",
+        }
+    quality = raw.get(CANDIDATE_QUALITY_FIELD)
+    if not isinstance(quality, Mapping):
+        review_context: dict[str, object] = {}
+        dimensions = raw.get("dimensions")
+        if isinstance(dimensions, Mapping):
+            review_context = {
+                "tier_basis": str(raw.get("tier_basis") or ""),
+                "dimensions": dict(dimensions),
+                "tier_reason": str(raw.get("tier_reason") or "").strip()[:500],
+            }
+        return {
+            "status": "HOLD",
+            "reason_code": "CANDIDATE_QUALITY_REVIEW_REQUIRED",
+            "review_context": review_context,
+        }
+    watchability = str(quality.get("watchability") or "")
+    differentiation = str(quality.get("differentiation") or "")
+    disposition = str(quality.get("production_disposition") or "")
+    reason = str(quality.get("reason") or "").strip()
+    if disposition != "PRODUCTION":
+        return {
+            "status": "HOLD",
+            "reason_code": f"CANDIDATE_QUALITY_{disposition or 'INVALID'}",
+            "reason": reason,
+        }
+    if watchability == "THIN" or differentiation == "THIN":
+        return {
+            "status": "HOLD",
+            "reason_code": "CANDIDATE_QUALITY_THIN_CANNOT_PRODUCE",
+            "reason": reason,
+        }
+    if watchability == "ORDINARY" and differentiation == "ORDINARY":
+        return {
+            "status": "HOLD",
+            "reason_code": "CANDIDATE_QUALITY_ORDINARY_RESERVE",
+            "reason": reason,
+        }
+    return {
+        "status": "ADMIT",
+        "reason_code": "CANDIDATE_QUALITY_PRODUCTION",
+        "reason": reason,
+    }
 
 
 def selection_calibration_violations(
@@ -585,15 +770,29 @@ def apply_reviewed_selection_calibration(
     *,
     policy: SelectionCalibrationPolicy | None = None,
 ) -> dict[str, object] | None:
-    """Apply a reviewed anchor while preserving the candidate's cue evidence."""
+    """Apply a reviewed v3 anchor while preserving historical card bytes."""
 
     selected_policy = policy or load_selected_selection_calibration_policy()
     if not selection_scorecard_is_valid(scorecard):
         return dict(scorecard) if isinstance(scorecard, dict) else None
     assert isinstance(scorecard, Mapping)
+    # Historical v1 cards (no policy field) and explicit v2 cards are
+    # receipt-bound facts.  Calibration is allowed to produce a fresh v3 card
+    # through the normal/rescore path, but this helper must not silently
+    # rewrite an old current-pool row while rebuilding or recovering it.
+    if scorecard.get(ADMISSION_POLICY_FIELD) != CURRENT_ADMISSION_POLICY:
+        return dict(scorecard)
     anchor = selected_policy.anchors.get(str(candidate_id or ""))
     if anchor is None:
         evidence = list(scorecard.get("tier_evidence_cues") or [])
+        quality = scorecard.get(CANDIDATE_QUALITY_FIELD)
+        quality_evidence = (
+            list(quality.get("evidence_cues") or [])
+            if isinstance(quality, Mapping)
+            and isinstance(quality.get("evidence_cues"), list)
+            else []
+        )
+        calibration_evidence = evidence + quality_evidence
         normalized = normalize_selection_scorecard(
             {
                 "tier": scorecard.get("requested_tier"),
@@ -603,9 +802,14 @@ def apply_reviewed_selection_calibration(
                 "dimensions": scorecard.get("dimensions"),
                 "uncertainty_penalty": scorecard.get("uncertainty_penalty"),
                 "fatigue_penalty": scorecard.get("fatigue_penalty"),
+                **(
+                    {CANDIDATE_QUALITY_FIELD: scorecard.get(CANDIDATE_QUALITY_FIELD)}
+                    if CANDIDATE_QUALITY_FIELD in scorecard
+                    else {}
+                ),
             },
-            start_cue=min(evidence, default=0),
-            end_cue=max(evidence, default=0),
+            start_cue=min(calibration_evidence, default=0),
+            end_cue=max(calibration_evidence, default=0),
         )
         if normalized is None:
             return None
@@ -620,6 +824,14 @@ def apply_reviewed_selection_calibration(
             str(candidate_id or ""),
         )
     evidence = list(scorecard.get("tier_evidence_cues") or [])
+    quality = scorecard.get(CANDIDATE_QUALITY_FIELD)
+    quality_evidence = (
+        list(quality.get("evidence_cues") or [])
+        if isinstance(quality, Mapping)
+        and isinstance(quality.get("evidence_cues"), list)
+        else []
+    )
+    calibration_evidence = evidence + quality_evidence
     normalized = normalize_selection_scorecard(
         {
             "tier": anchor.get("expected_tier"),
@@ -629,9 +841,14 @@ def apply_reviewed_selection_calibration(
             "dimensions": dict(dimensions),
             "uncertainty_penalty": anchor.get("uncertainty_penalty"),
             "fatigue_penalty": anchor.get("fatigue_penalty"),
+            **(
+                {CANDIDATE_QUALITY_FIELD: scorecard.get(CANDIDATE_QUALITY_FIELD)}
+                if CANDIDATE_QUALITY_FIELD in scorecard
+                else {}
+            ),
         },
-        start_cue=min(evidence, default=0),
-        end_cue=max(evidence, default=0),
+        start_cue=min(calibration_evidence, default=0),
+        end_cue=max(calibration_evidence, default=0),
     )
     if normalized is None or selection_calibration_violations(
         candidate_id, normalized, policy=selected_policy
@@ -657,9 +874,12 @@ def selection_scorecard_is_valid(raw: object) -> bool:
         return False
     admission_policy: str | None
     if ADMISSION_POLICY_FIELD in raw:
-        if raw.get(ADMISSION_POLICY_FIELD) != CURRENT_ADMISSION_POLICY:
+        if raw.get(ADMISSION_POLICY_FIELD) not in {
+            LEGACY_ADMISSION_POLICY,
+            CURRENT_ADMISSION_POLICY,
+        }:
             return False
-        admission_policy = CURRENT_ADMISSION_POLICY
+        admission_policy = str(raw[ADMISSION_POLICY_FIELD])
     else:
         # No identifier is the compatibility marker for historical v1 cards.
         admission_policy = None
@@ -693,6 +913,16 @@ def selection_scorecard_is_valid(raw: object) -> bool:
         effective - round(expected_effective, 2)
     ) > 0.001:
         return False
+    validation_cues = list(evidence)
+    raw_quality = raw.get(CANDIDATE_QUALITY_FIELD)
+    if isinstance(raw_quality, Mapping) and isinstance(
+        raw_quality.get("evidence_cues"), list
+    ):
+        validation_cues.extend(
+            value
+            for value in raw_quality["evidence_cues"]
+            if isinstance(value, int) and not isinstance(value, bool)
+        )
     normalized = _normalize_selection_scorecard(
         {
             "tier": raw.get("requested_tier"),
@@ -702,9 +932,14 @@ def selection_scorecard_is_valid(raw: object) -> bool:
             "dimensions": dimensions,
             "uncertainty_penalty": uncertainty,
             "fatigue_penalty": fatigue,
+            **(
+                {CANDIDATE_QUALITY_FIELD: raw.get(CANDIDATE_QUALITY_FIELD)}
+                if CANDIDATE_QUALITY_FIELD in raw
+                else {}
+            ),
         },
-        start_cue=min(evidence, default=0),
-        end_cue=max(evidence, default=0),
+        start_cue=min(validation_cues, default=0),
+        end_cue=max(validation_cues, default=0),
         admission_policy=admission_policy,
     )
     return bool(
@@ -713,4 +948,6 @@ def selection_scorecard_is_valid(raw: object) -> bool:
         and normalized["tier_evidence_cues"] == evidence
         and normalized["reason_codes"] == raw.get("reason_codes")
         and normalized["effective_score"] == raw.get("effective_score")
+        and normalized.get(CANDIDATE_QUALITY_FIELD)
+        == raw.get(CANDIDATE_QUALITY_FIELD)
     )

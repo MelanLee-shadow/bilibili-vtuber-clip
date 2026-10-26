@@ -52,6 +52,7 @@ v1 七维卡里（``selection_scorecard_is_valid`` 硬要求维度集合逐字�
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import argparse
 import hashlib
 import json
@@ -1170,7 +1171,7 @@ def observe_span(
                 score=round(best_score, 5),
                 best_prototype=best_prototype,
                 prototype_scores={name: round(value, 5) for name, value in scores.items()},
-                audio_sha256="sha256:" + hashlib.sha256(window_path.read_bytes()).hexdigest(),
+                audio_sha256="sha256:" + _evidence_file_sha256(window_path),
             )
         )
     return smooth_labels(observations)
@@ -1306,7 +1307,7 @@ def enrollment_prototypes(
     manifest: list[dict[str, object]] = []
     for reference in references:
         path = reference_dir / str(reference["filename"])
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        digest = _evidence_file_sha256(path)
         if digest != str(reference["sha256"]).lower().removeprefix("sha256:"):
             raise HostOccupancyError(f"enrollment reference drifted: {reference['id']}")
         with wave.open(str(path), "rb") as handle:

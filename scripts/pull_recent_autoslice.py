@@ -19,10 +19,12 @@ from typing import Iterable, Iterator, Sequence
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+from src.autoslice.deployed_code_root import deployed_code_root_reference
 DEFAULT_LOCAL_ROOT = PROJECT_ROOT / "lidousha"
 DEFAULT_REPORTS_ROOT = PROJECT_ROOT / "reports/slice_monitor/autoslice_free"
 DEFAULT_STATE_DIR = Path.home() / "Library/Application Support/lidousha-autoslice-pull"
-DEFAULT_REMOTE_ROOT = "/opt/bilive/autoslice/repo/lidousha"
+DEFAULT_REMOTE_ROOT = str(deployed_code_root_reference() / "lidousha")
 DEFAULT_REPORTS_REMOTE = "/opt/bilive/autoslice/reports"
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 

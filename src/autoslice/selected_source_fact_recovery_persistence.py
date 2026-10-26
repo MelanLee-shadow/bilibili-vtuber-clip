@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from copy import deepcopy
 
 from src.autoslice import (
     historical_failed_talk_scope,
@@ -172,11 +173,12 @@ def maintain_and_persist(
 ) -> tuple[int, int, int, int, bool]:
     """Run maintenance and make an admitted v6 requeue a verified commit.
 
-    This deliberately retains the runner's ordinary result tuple and its
-    pre-existing persistence behavior.  Only a captured v6 grant replaces the
+    Persist comparison-baseline migrations even when no candidate requeues.
+    Only a captured v6 grant replaces the
     count-based acknowledgement with a validated writeback/readback boundary.
     """
 
+    before = deepcopy(state)
     scope = capture_active_scope(state, date=date, candidate_ids=candidate_ids)
     result = historical_failed_talk_scope.maintain(
         date,
@@ -208,6 +210,7 @@ def maintain_and_persist(
     if not scope and (
         any((requeued_stale_talks, requeued_talks, requeued_songs))
         or song_fingerprint_baseline_changed
+        or state != before
     ):
         persist()
     if requeued_stale_talks or requeued_talks or requeued_songs:

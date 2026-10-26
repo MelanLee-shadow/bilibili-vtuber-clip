@@ -10,6 +10,7 @@ does not manufacture a next-topic transition or identify any speaker.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import hashlib
 import json
 import re
@@ -50,11 +51,8 @@ def _canonical_sha256(value: Mapping[str, object]) -> str:
 
 
 def _file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return "sha256:" + digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return "sha256:" + digest
 
 
 def _is_int(value: object) -> bool:

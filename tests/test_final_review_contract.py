@@ -1,3 +1,59 @@
+import copy
+import hashlib
+
+from src.autoslice.final_review_meaning_policy import POLICY_VERSION, bind_current_risk
+
+
+_EQUIVALENT_SRT = "1\n00:00:01,000 --> 00:00:03,000\n我先喝口水\n"
+_EQUIVALENT_SRT_SHA256 = "sha256:" + hashlib.sha256(_EQUIVALENT_SRT.encode()).hexdigest()
+
+
+def _with_current_equivalence(row):
+    """Controlled drink-request fixture, never attached to historical raw rows."""
+    row = copy.deepcopy(row)
+    row.update(cue_index=1, base_text_sha256=hashlib.sha256("我先喝口水".encode()).hexdigest(),
+               content_risk="noncritical_uncertainty",
+               risk_basis="当前句与补全量词的说法都表示说话人先喝少量水，人物和动作不变。")
+    row["current_content_risk"] = bind_current_risk(
+        row, srt_text=_EQUIVALENT_SRT, cue_count=1, prompt=_EQUIVALENT_SRT,
+        meaning_equivalence={
+            "status": "EQUIVALENT", "current_meaning": "说话人先喝少量水。",
+            "alternative_meaning": "我先喝一口水也表示说话人先喝少量水。",
+            "shared_meaning": "说话人先进行喝少量水的动作。", "uncertain_detail": "量词前是否有一字。",
+            "context_basis": "本例完整字幕仅为该离席说明；两种说法的人物、动作及先后相同。",
+            "evidence_cue_ids": [1],
+        },
+    )
+    return row
+
+
+def test_noncritical_no_new_dispatch_plan_gate_is_disclosed_without_clearing_history():
+    import copy
+    from src.autoslice.final_review_contract import is_noncritical_disclosed
+    finding = {'content_risk': 'noncritical_uncertainty', 'risk_basis': '普通未知，没有具体严重错误依据',
+               'exact_release_adjudication': {'status': 'UNCERTAIN', 'repaired': False,
+                    'reason_code': 'RetryNeedsPlan', 'semantic_retry_progress': {
+                        'schema_version': 'semantic-retry-progress.v1', 'mutation_authorized': False,
+                        'status': 'CONTINUATION_VALUE_PLAN_REQUIRED', 'events': [{
+                            'status': 'CONTINUATION_VALUE_PLAN_REQUIRED', 'provider_calls': 0,
+                            'prior_unresolved_answers': 3}]}}}
+    assert not is_noncritical_disclosed(finding)
+    finding = _with_current_equivalence(finding)
+    before = copy.deepcopy(finding)
+    assert is_noncritical_disclosed(finding)
+    assert finding == before
+    for risk in ('meaning_reversal', 'factual_error', 'potential_harm'):
+        assert not is_noncritical_disclosed({**finding, 'content_risk': risk})
+    for status, calls in [('CONTINUATION_VALUE_PLAN_REQUIRED', 1), ('OUTCOME_UNKNOWN', 0),
+                          ('STARTED', 0), ('CONTINUATION_VALUE_PLAN_REQUIRED', False)]:
+        corrupt = copy.deepcopy(finding)
+        corrupt['exact_release_adjudication']['semantic_retry_progress']['events'][0].update(
+            status=status, provider_calls=calls)
+        assert not is_noncritical_disclosed(corrupt)
+    for state in ('OUTCOME_UNKNOWN', 'ERROR', 'STARTED'):
+        corrupt = copy.deepcopy(finding)
+        corrupt['exact_release_adjudication']['status'] = state
+        assert not is_noncritical_disclosed(corrupt)
 
 
 def test_keep_current_disclosed_classifier():
@@ -19,7 +75,7 @@ def test_keep_current_disclosed_classifier():
             "mutation_authority": {"status": "NOT_APPLIED"},
         }
         adjudication.update(overrides)
-        return {"cue_index": 1, "exact_release_adjudication": adjudication}
+        return _with_current_equivalence({"exact_release_adjudication": adjudication})
 
     assert _is_keep_current_disclosed(row()) is True
     assert _is_keep_current_disclosed(
@@ -58,14 +114,14 @@ def test_exact_keep_current_contract_requires_complete_support_and_bound_receipt
         is_keep_current_disclosed as _is_keep_current_disclosed,
     )
 
-    source = "1\n00:00:01,000 --> 00:00:03,000\n当前整句\n"
+    source = _EQUIVALENT_SRT
     request = build_context_adjudication_request(
         source,
         {
             "cue_index": 1,
-            "suspect": "句",
-            "suggestion": "完整句",
-            "proposed_full_cue": "当前整完整句",
+            "suspect": "口",
+            "suggestion": "一口",
+            "proposed_full_cue": "我先喝一口水",
             "repair_class": "phonetic",
         },
         require_complete_utterance_support=True,
@@ -90,7 +146,7 @@ def test_exact_keep_current_contract_requires_complete_support_and_bound_receipt
         },
         "mutation_authority": {"status": "NOT_APPLIED"},
     }
-    row = {"cue_index": 1, "exact_release_adjudication": adjudication}
+    row = _with_current_equivalence({"exact_release_adjudication": adjudication})
 
     assert _is_keep_current_disclosed(row) is True
 
@@ -145,17 +201,12 @@ def test_exact_keep_current_contract_requires_complete_support_and_bound_receipt
         mutate_judge_sha,
         mutate_witness_sha,
     ):
-        candidate = {
-            "cue_index": row["cue_index"],
-            "exact_release_adjudication": copy.deepcopy(
-                row["exact_release_adjudication"]
-            ),
-        }
+        candidate = copy.deepcopy(row)
         mutate(candidate)
         assert _is_keep_current_disclosed(candidate) is False
 
-    # A historical ordinary/context receipt has no stronger flag and keeps its
-    # pre-existing disclosure contract.
+    # Ordinary typed decisions retain their branch contract only alongside
+    # the independent current meaning-equivalence receipt.
     legacy = copy.deepcopy(row)
     legacy["exact_release_adjudication"]["request"].pop(
         REQUIRE_COMPLETE_UTTERANCE_SUPPORT
@@ -182,7 +233,7 @@ def test_decided_keep_current_branches_disclose_and_infra_branches_block():
             "mutation_authority": {"status": "NOT_APPLIED"},
         }
         adjudication.update(overrides)
-        return {"cue_index": 1, key: adjudication}
+        return _with_current_equivalence({key: adjudication})
 
     for branch in (
         "JUDGE_KEEPS_CURRENT",
@@ -213,11 +264,11 @@ def test_decided_keep_current_branches_disclose_and_infra_branches_block():
         ) is False
 
 
-def test_witness_conflict_keep_current_is_a_decided_keep():
-    """8/8 F3 证据门否决 CPA PROPOSED = 已完成的机器决定，可披露交付。
+def test_historical_witness_conflict_is_decided_but_requires_current_meaning_review():
+    """The historical typed decision survives, but cannot disclose damaged text.
 
-    A typed keep-current branch must stay registered in the public
-    disclosure allowlist so an unchanged decided finding can resolve.
+    A representative historical sample retains its decision and
+    must not acquire a fabricated current equivalence assessment.
     """
 
     from src.autoslice.acoustic_witness_adjudication import (
@@ -272,7 +323,11 @@ def test_witness_conflict_keep_current_is_a_decided_keep():
             "exact_release_adjudication": adjudication,
         }
 
-    assert _is_keep_current_disclosed(finding()) is True
+    from src.autoslice.final_review_contract import decided_keep_current_adjudication
+    assert decided_keep_current_adjudication(
+        finding()["exact_release_adjudication"], timing_immutable=True,
+    )
+    assert _is_keep_current_disclosed(finding()) is False
 
     # 反向门：判官没授权 / 改过字节 / 时间轴动过 / 机器没能决定 —— 仍必须拦住。
     assert _is_keep_current_disclosed(
@@ -334,10 +389,12 @@ def test_release_accepts_disclosed_witness_conflict_and_still_blocks_unauthorize
             },
         },
     }
+    disclosed_row = _with_current_equivalence(disclosed_row)
     grid = "sha256:" + "d" * 64
     audit = {
         "schema_version": "final-review-audit.v2",
-        "reviewed_srt_sha256": "sha256:" + "b" * 64,
+        "meaning_policy": POLICY_VERSION,
+        "reviewed_srt_sha256": _EQUIVALENT_SRT_SHA256,
         "status": "CLEAN",
         "release_gate": "PASS",
         "discovery": {"status": "COMPLETE"},
@@ -383,13 +440,13 @@ def test_release_accepts_disclosed_witness_conflict_and_still_blocks_unauthorize
 
     assert validate_final_review_release(
         audit,
-        expected_srt_sha256="sha256:" + "b" * 64,
+        expected_srt_sha256=_EQUIVALENT_SRT_SHA256,
     )["release_gate"] == "PASS"
 
     # 同一分支名但判官授权已行使（改过字节）——不得借披露出口溜走。
     audit["unresolved_findings_disclosed"] = [
         {
-            "cue_index": 2,
+            **disclosed_row,
             "exact_release_adjudication": {
                 **disclosed_row["exact_release_adjudication"],
                 "repaired": True,
@@ -408,7 +465,7 @@ def test_release_accepts_disclosed_witness_conflict_and_still_blocks_unauthorize
     ):
         validate_final_review_release(
             audit,
-            expected_srt_sha256="sha256:" + "b" * 64,
+            expected_srt_sha256=_EQUIVALENT_SRT_SHA256,
         )
 
 
@@ -435,6 +492,7 @@ def test_release_rejects_unconsumed_remapped_carryover():
     }
     audit = {
         "schema_version": "final-review-audit.v2",
+        "meaning_policy": POLICY_VERSION,
         "reviewed_srt_sha256": "sha256:" + "b" * 64,
         "status": "CLEAN",
         "release_gate": "PASS",
@@ -465,7 +523,8 @@ def test_release_rejects_unconsumed_remapped_carryover():
         "timing_immutable": True,
         "mutation_authority": {"status": "NOT_APPLIED"},
     }
-    assert unconsumed_correction_carryover_count(audit) == 0
+    # An old closed-set choice still lacks the current meaning review.
+    assert unconsumed_correction_carryover_count(audit) == 1
 
     replay.pop("context_audio_adjudication")
     replay["carryover_consumption"] = {
@@ -548,18 +607,8 @@ def _downgraded_row(verdict, **adjudication_overrides):
     return row
 
 
-def test_history_convergence_downgrade_discloses_only_with_an_observed_ear():
-    """审片员说「别改、只披露」，出口就不能反过来说「不许披露」。
-
-    ``HISTORY_CONVERGENCE_DOWNGRADED_TO_DISCLOSURE_ONLY`` 把 repair_class 改成
-    disclosure_only、mutation 置 NOT_APPLIED、一个字节都没动，却因为
-    adjudication.status 被写成 UNCERTAIN 而进不了披露出口 —— 既不能改也不能
-    披露，整条候选会永久悬停。
-
-    放行判据只认一件事：声学机器是否真的跑完并交出观测。耳朵给了 OBSERVED
-    才算「证据在手做出的保留原文」；耳朵自己 UNCERTAIN 就是机器没能决定，
-    继续拦死。
-    """
+def test_historical_convergence_downgrade_needs_observation_and_current_meaning_review():
+    """Historical observed audio keeps its typed decision, not current release authority."""
 
     from src.autoslice.exact_final_witness_authority import DOWNGRADE_BRANCH
     from src.autoslice.final_review_contract import (
@@ -577,24 +626,23 @@ def test_history_convergence_downgrade_discloses_only_with_an_observed_ear():
     assert adjudication["status"] == "UNCERTAIN"
     assert adjudication["repaired"] is False
     assert adjudication["mutation_authority"]["status"] == "NOT_APPLIED"
-    assert _is_keep_current_disclosed(observed) is True
+    from src.autoslice.final_review_contract import decided_history_convergence_disclosure
+    assert decided_history_convergence_disclosure(adjudication, timing_immutable=True)
+    assert _is_keep_current_disclosed(observed) is False
 
-    # 耳朵没能给出观测 = 机器没能决定，fail-closed 一格不让。
-    assert _is_keep_current_disclosed(
-        _downgraded_row(_UNCERTAIN_BLIND_WITNESS)
-    ) is False
-    assert _is_keep_current_disclosed(_downgraded_row({})) is False
-    assert _is_keep_current_disclosed(
-        _downgraded_row(
-            {**_OBSERVED_BLIND_WITNESS, "status": "UNAVAILABLE"}
+    # Keep the original typed observation checks meaningful even though all
+    # these historical rows independently lack a current meaning judgment.
+    for verdict in (
+        _UNCERTAIN_BLIND_WITNESS,
+        {},
+        {**_OBSERVED_BLIND_WITNESS, "status": "UNAVAILABLE"},
+        {**_OBSERVED_BLIND_WITNESS, "witness_protocol": "legacy_sighted"},
+    ):
+        row = _downgraded_row(verdict)
+        assert not decided_history_convergence_disclosure(
+            row["exact_release_adjudication"], timing_immutable=True,
         )
-    ) is False
-    # 睁眼证人（legacy_sighted）不是这条出口认的证据。
-    assert _is_keep_current_disclosed(
-        _downgraded_row(
-            {**_OBSERVED_BLIND_WITNESS, "witness_protocol": "legacy_sighted"}
-        )
-    ) is False
+        assert not _is_keep_current_disclosed(row)
 
 
 def test_history_convergence_disclosure_rejects_forged_downgrade_shells():
@@ -604,9 +652,12 @@ def test_history_convergence_disclosure_rejects_forged_downgrade_shells():
         is_keep_current_disclosed as _is_keep_current_disclosed,
     )
 
-    assert _is_keep_current_disclosed(
-        _downgraded_row(_OBSERVED_BLIND_WITNESS)
-    ) is True
+    from src.autoslice.final_review_contract import decided_history_convergence_disclosure
+    assert decided_history_convergence_disclosure(
+        _downgraded_row(_OBSERVED_BLIND_WITNESS)["exact_release_adjudication"],
+        timing_immutable=True,
+    )
+    assert not _is_keep_current_disclosed(_downgraded_row(_OBSERVED_BLIND_WITNESS))
 
     for forgery in (
         # 见证门被改成 PASS：真 PASS 时引擎根本不会走降级，这是伪造壳子。
@@ -632,6 +683,10 @@ def test_history_convergence_disclosure_rejects_forged_downgrade_shells():
         {"policy_branch": "GLOSSARY_CANDIDATE_WITNESS_CONFLICT_ORTHOGRAPHY_NOT_DECIDABLE"},
     ):
         row = _downgraded_row(_OBSERVED_BLIND_WITNESS, **forgery)
+        assert not decided_history_convergence_disclosure(
+            row["exact_release_adjudication"],
+            timing_immutable=row["exact_release_adjudication"].get("timing_immutable") is True,
+        ), forgery
         assert _is_keep_current_disclosed(row) is False, forgery
 
 
@@ -653,14 +708,13 @@ def test_infra_incomplete_branches_stay_blocked_even_dressed_as_keep_current():
             "repaired": False,
             "timing_immutable": True,
             "decision_authority": "CPA_JUDGE",
-            "verdict": dict(_OBSERVED_BLIND_WITNESS),
             "mutation_authority": {
                 "schema_version": "subtitle-correction-mutation-authority.v1",
                 "status": "NOT_APPLIED",
             },
         }
         adjudication.update(overrides)
-        return {"cue_index": 1, "exact_release_adjudication": adjudication}
+        return _with_current_equivalence({"exact_release_adjudication": adjudication})
 
     # 基线：这套外壳本身是能放行的，所以下面每一条都只差 policy_branch/status。
     assert _is_keep_current_disclosed(dressed()) is True
@@ -698,13 +752,176 @@ def test_infra_incomplete_branches_stay_blocked_even_dressed_as_keep_current():
     assert _is_keep_current_disclosed(dressed(status="SKIPPED_BUDGET")) is False
 
 
-def test_release_accepts_disclosed_history_convergence_downgrade():
-    """合同层放行：耳朵听见的降级条目随包披露；耳朵没听清的仍是合同违规。
+def test_exact_final_cycle_return_memo_closes_pending_then_pass_chain():
+    """A new CPA memo may close A->B->A; an ordinary cycle remains blocked."""
 
-    只测谓词不够——真正卡住交付的是 ``validate_final_review_release`` 里
-    ``unresolved_findings_disclosed`` 那一圈校验；这条测的是整份回执能不能
-    带着降级条目通过发布门。
-    """
+    import copy
+    import hashlib
+    import json
+    import pytest
+
+    from src.autoslice.exact_final_convergence import (
+        collect_exact_final_convergence_memos,
+        converge_reconsidered_exact_final_findings,
+    )
+    from src.autoslice.final_review_contract import (
+        FinalReviewContractError,
+        _validate_exact_final_cpa_self_heal,
+    )
+    from src.autoslice.producer_package_finalization import (
+        _apply_exact_final_cpa_repairs,
+    )
+    from tests.test_exact_final_convergence import _finding
+
+    def srt(text: str) -> str:
+        return f"1\n00:00:00,000 --> 00:00:01,000\n{text}\n"
+
+    def digest(text: str) -> str:
+        return "sha256:" + hashlib.sha256(text.encode()).hexdigest()
+
+    first_text = "版本0"
+    second_text = "版本1"
+    first_finding = _finding(
+        cue_index=1,
+        start_ms=0,
+        end_ms=1_000,
+        current=first_text,
+        proposed=second_text,
+        salt="contract-first",
+    )
+    _first_srt, first_repairs = _apply_exact_final_cpa_repairs(
+        srt(first_text),
+        {"findings": [first_finding]},
+    )
+    assert len(first_repairs) == 1
+    first_pass = {
+        "schema_version": "exact-final-cpa-self-heal-pass.v1",
+        "pass_index": 1,
+        "input_srt_sha256": digest(srt(first_text)),
+        "output_srt_sha256": digest(srt(second_text)),
+        "repairs": first_repairs,
+    }
+    second_finding = _finding(
+        cue_index=1,
+        start_ms=0,
+        end_ms=1_000,
+        current=second_text,
+        proposed=first_text,
+        salt="contract-cycle",
+    )
+    authority = {
+        "exact_final_cpa_self_heal": {
+            "schema_version": "exact-final-cpa-self-heal-audit.v1",
+            "status": "REVIEW_PENDING",
+            "passes": [first_pass],
+        }
+    }
+    unresolved, resolved = converge_reconsidered_exact_final_findings(
+        srt(second_text),
+        [second_finding],
+        authority_audit=authority,
+        judge_llm_call=lambda _prompt: json.dumps(
+            {"choice": "PROPOSED", "reason": "新的完整 CPA 证据闭合返回"},
+            ensure_ascii=False,
+        ),
+    )
+    assert resolved == []
+    assert len(unresolved) == 1
+    _second_srt, second_repairs = _apply_exact_final_cpa_repairs(
+        srt(second_text),
+        {"findings": unresolved},
+    )
+    assert len(second_repairs) == 1
+    second_repairs[0]["exact_final_cpa_cycle_memo"] = (
+        collect_exact_final_convergence_memos({"findings": unresolved})[0]
+    )
+    pending = {
+        "schema_version": "exact-final-cpa-self-heal-audit.v1",
+        "status": "REVIEW_PENDING",
+        "passes": [
+            first_pass,
+            {
+                "schema_version": "exact-final-cpa-self-heal-pass.v1",
+                "pass_index": 2,
+                "input_srt_sha256": digest(srt(second_text)),
+                "output_srt_sha256": digest(srt(first_text)),
+                "repairs": second_repairs,
+            },
+        ],
+    }
+    pending_audit = {"exact_final_cpa_self_heal": pending}
+    _validate_exact_final_cpa_self_heal(
+        pending_audit,
+        expected_srt_sha256=digest(srt(first_text)),
+        allow_pending=True,
+    )
+    complete = copy.deepcopy(pending_audit)
+    complete["exact_final_cpa_self_heal"].update(
+        status="PASS",
+        final_srt_sha256=digest(srt(first_text)),
+    )
+    _validate_exact_final_cpa_self_heal(
+        complete,
+        expected_srt_sha256=digest(srt(first_text)),
+    )
+
+    ordinary_cycle = copy.deepcopy(pending_audit)
+    ordinary_cycle["exact_final_cpa_self_heal"]["passes"][1]["repairs"][0].pop(
+        "exact_final_cpa_cycle_memo"
+    )
+    with pytest.raises(
+        FinalReviewContractError,
+        match="CYCLE_RETURN_UNAUTHORIZED",
+    ):
+        _validate_exact_final_cpa_self_heal(
+            ordinary_cycle,
+            expected_srt_sha256=digest(srt(first_text)),
+            allow_pending=True,
+        )
+
+    tampered = copy.deepcopy(pending_audit)
+    tampered["exact_final_cpa_self_heal"]["passes"][1]["repairs"][0][
+        "exact_final_cpa_cycle_memo"
+    ]["final_text"] = "篡改"
+    with pytest.raises(FinalReviewContractError, match="CYCLE_RETURN_BINDING_INVALID"):
+        _validate_exact_final_cpa_self_heal(
+            tampered,
+            expected_srt_sha256=digest(srt(first_text)),
+            allow_pending=True,
+        )
+
+    replayed = copy.deepcopy(pending_audit)
+    replayed["exact_final_cpa_self_heal"]["passes"][1]["repairs"].append(
+        copy.deepcopy(
+            replayed["exact_final_cpa_self_heal"]["passes"][1]["repairs"][0]
+        )
+    )
+    with pytest.raises(FinalReviewContractError, match="CYCLE_RETURN_MEMO_REPLAY"):
+        _validate_exact_final_cpa_self_heal(
+            replayed,
+            expected_srt_sha256=digest(srt(first_text)),
+            allow_pending=True,
+        )
+
+    unrelated = copy.deepcopy(pending_audit)
+    unrelated_memo = unrelated["exact_final_cpa_self_heal"]["passes"][1][
+        "repairs"
+    ][0]["exact_final_cpa_cycle_memo"]
+    unrelated_memo["matched_start_ms"] = 10
+    unrelated_memo["matched_end_ms"] = 20
+    with pytest.raises(
+        FinalReviewContractError,
+        match="CYCLE_RETURN_BINDING_INVALID",
+    ):
+        _validate_exact_final_cpa_self_heal(
+            unrelated,
+            expected_srt_sha256=digest(srt(first_text)),
+            allow_pending=True,
+        )
+
+
+def test_release_rejects_historical_convergence_without_current_meaning_review():
+    """Neither observed historical audio nor a new policy label certifies current meaning."""
 
     import pytest
 
@@ -716,6 +933,7 @@ def test_release_accepts_disclosed_history_convergence_downgrade():
     grid = "sha256:" + "d" * 64
     audit = {
         "schema_version": "final-review-audit.v2",
+        "meaning_policy": POLICY_VERSION,
         "reviewed_srt_sha256": "sha256:" + "b" * 64,
         "status": "CLEAN",
         "release_gate": "PASS",
@@ -762,10 +980,8 @@ def test_release_accepts_disclosed_history_convergence_downgrade():
         },
     }
 
-    assert validate_final_review_release(
-        audit,
-        expected_srt_sha256="sha256:" + "b" * 64,
-    )["release_gate"] == "PASS"
+    with pytest.raises(FinalReviewContractError, match="FINAL_REVIEW_FINDINGS_CONTRACT_INVALID"):
+        validate_final_review_release(audit, expected_srt_sha256="sha256:" + "b" * 64)
 
     # 耳朵没能给出观测的同名降级条目混进披露 —— 仍是合同违规,拦死。
     audit["unresolved_findings_disclosed"] = [

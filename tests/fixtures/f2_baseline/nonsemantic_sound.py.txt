@@ -1,0 +1,40 @@
+"""Comparison-only SUB-26 sound surfaces; never a transcript or edit authority.
+
+Only conventional repeated laughter and standalone hesitation sounds are
+handled. Foreign words, interjections with possible meaning, lexical fragments
+and arbitrary unrecognized script remain untouched.
+"""
+import re
+
+
+# Only a standalone sound token. 哈哈 in 哈哈镜 is lexical and must remain.
+_LAUGHTER = re.compile(r"(?<![\w])(?:哈{2,}|嘿{2,}|呵{2,}|嘻{2,})(?![\w])")
+# A full Hangul token is required: 아 in 아이/아니 is a real word constituent.
+# Do not collapse an arbitrary Korean ASR output to an uncertainty wildcard.
+_HESITATION = re.compile(r"(?<![\w])(?:어|아|으|음|uh|um)(?![\w])", re.I)
+_SPELLINGS = {"어": "呃", "으": "呃", "아": "啊", "음": "嗯", "uh": "呃", "um": "嗯"}
+
+
+def hesitation_spelling(text):
+    return _HESITATION.sub(lambda m: _SPELLINGS[m[0].lower()], text)
+
+
+def clear_comparison(text, proposed):
+    """Allow conventional foreign-ASR hesitation spelling or its omission."""
+    has_foreign_hesitation = bool(_HESITATION.search(text))
+    text, proposed = substantive_text(hesitation_spelling(text)), substantive_text(hesitation_spelling(proposed))
+    if has_foreign_hesitation:
+        # Only standalone tokens; an 啊 inside a lexical word never disappears.
+        hesitation = re.compile(r'(?<![\w])[呃啊嗯](?![\w])')
+        text, proposed = hesitation.sub('', text), hesitation.sub('', proposed)
+    return text, proposed
+
+
+def substantive_text(text):
+    """Laughter need not be transcribed for the surrounding words to match."""
+    return _LAUGHTER.sub("", text)
+
+
+def sound_only(text):
+    normalized = hesitation_spelling(text)
+    return bool(normalized.strip()) and re.fullmatch(r"[\s，,。.!！?？、呃啊嗯哈嘿呵嘻咳]+", normalized) is not None

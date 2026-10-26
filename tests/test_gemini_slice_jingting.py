@@ -21,6 +21,7 @@ def test_gemini_correct_uses_api_key_header_not_url_or_body(tmp_path, monkeypatc
     audio = _write(tmp_path / "audio.mp3", b"audio")
     secret = "header-only-secret"
     captured = {}
+    monkeypatch.setattr(jingting, "GEMINI_MODEL", "gemini-3.6-flash")
 
     class Response(io.BytesIO):
         def __enter__(self):
@@ -45,6 +46,9 @@ def test_gemini_correct_uses_api_key_header_not_url_or_body(tmp_path, monkeypatc
     assert secret not in request.full_url
     assert secret not in request.data.decode("utf-8")
     assert request.get_header("X-goog-api-key") == secret
+    generation_config = json.loads(request.data.decode("utf-8"))["generationConfig"]
+    assert "temperature" not in generation_config
+    assert "thinkingConfig" not in generation_config
 
 
 def test_agy_subprocess_env_sets_home_when_daemon_environment_omits_it(monkeypatch):

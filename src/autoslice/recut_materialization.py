@@ -9,6 +9,7 @@ from __future__ import annotations
 import inspect
 import json
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -23,10 +24,15 @@ from .live_source_review import (
     _mapping,
     _recut_plan_record,
     _verify_lyrics_alignment_proof,
+    _verify_live_performance_observation,
 )
 from .render_qa import RenderRequest, RenderedTimelineMetadata, evaluate_render_pts
 from .review_evidence import ReviewEvidence, SourceCue
 from .shadow_review import _sha256
+from .song_alignment import is_timing_model_report
+from .song_common import is_lrc_non_lyric_metadata
+from .song_omission_shape import stored_shape_speech_cues, stored_shape_uses_source_cues
+from .song_spoken_interlude import SongSubtitleTimeline, checked_interlude_text
 from .subtitle_rendering import (
     _escape_ffmpeg_filter_path,
     _write_sapphire_ass_from_srt,
@@ -83,11 +89,29 @@ def _video_dimensions(path: Path) -> tuple[int | None, int | None]:
     except (ValueError, IndexError):
         return None, None
 
+
+_BURN_REVISION_PATTERN = re.compile(r"^r[0-9a-f]{16}$")
+
+
+def _versioned_burn_path(path: Path, burn_revision: str) -> Path:
+    """Return a deterministic sibling for a typed successor burn.
+
+    The unversioned names are the established first-burn contract.  A caller
+    that is re-entering after a real text mutation opts into this namespace so
+    that the historical ASS/video remain immutable and the existing-output
+    guard still protects a repeated render of the same revision.
+    """
+
+    if _BURN_REVISION_PATTERN.fullmatch(burn_revision) is None:
+        raise ValueError(f"invalid burn revision: {burn_revision!r}")
+    return path.with_name(f"{path.stem}.burn-{burn_revision}{path.suffix}")
+
 def _burn_preview_subtitles(
     materialized_recut: dict[str, object] | None,
     *,
     run_ffmpeg: bool,
     branding_intro: Mapping[str, object] | None = None,
+    burn_revision: str | None = None,
 ) -> dict[str, object] | None:
     """Burn the recut subtitles into a preview render (shadow artifact, never published).
 
@@ -112,8 +136,40 @@ def _burn_preview_subtitles(
             record.get("subtitle_style")
             or f"{PROFILE_ID}-speaker-sapphire-host-white-guest-v2"
         )
+    else:
+        ass_path = media_path.with_suffix(".final-sapphire72.ass")
+        burned_path = media_path.with_suffix(".burned-final-sapphire72.mp4")
+        subtitle_style = f"{PROFILE_ID}-final-sapphire72"
+    base_ass_path = ass_path
+    base_burned_path = burned_path
+    if burn_revision is not None:
+        ass_path = _versioned_burn_path(base_ass_path, burn_revision)
+        burned_path = _versioned_burn_path(base_burned_path, burn_revision)
+    # A resumed render may read media from a historical run. Never let the
+    # derived sibling paths replace that run's accepted or failed artifacts.
+    # Callers must stage the media in their own fresh output directory first.
+    generated_ass = not (isinstance(prebuilt_ass_value, str) and prebuilt_ass_value)
+    existing_outputs = [
+        path
+        for path in (
+            burned_path,
+            *((ass_path,) if generated_ass or burn_revision is not None else ()),
+        )
+        if path.exists() or path.is_symlink()
+    ]
+    if existing_outputs:
+        record["burned_preview"] = {
+            "status": "FAILED",
+            "path": str(burned_path),
+            "ass_path": str(ass_path),
+            "reason_code": "BURN_OUTPUT_ALREADY_EXISTS_PRESERVE_BASELINE",
+            "existing_outputs": [str(path) for path in existing_outputs],
+            **({"burn_revision": burn_revision} if burn_revision is not None else {}),
+        }
+        return record
+    if not generated_ass:
         expected_ass_sha = (record.get("artifact_hashes") or {}).get("ass_sha256")
-        actual_ass_sha = "sha256:" + _sha256(ass_path) if ass_path.is_file() else None
+        actual_ass_sha = "sha256:" + _sha256(base_ass_path) if base_ass_path.is_file() else None
         if (
             actual_ass_sha is None
             or not isinstance(expected_ass_sha, str)
@@ -125,16 +181,21 @@ def _burn_preview_subtitles(
                 "path": str(burned_path),
                 "ass_path": str(ass_path),
                 "reason_code": "PREBUILT_ASS_MISSING_OR_HASH_MISMATCH",
+                **({"burn_revision": burn_revision} if burn_revision is not None else {}),
             }
             return record
+        if burn_revision is not None:
+            shutil.copyfile(base_ass_path, ass_path)
     else:
-        ass_path = media_path.with_suffix(".final-sapphire72.ass")
-        burned_path = media_path.with_suffix(".burned-final-sapphire72.mp4")
-        subtitle_style = f"{PROFILE_ID}-final-sapphire72"
         _write_sapphire_ass_from_srt(subtitle_path, ass_path)
     if not run_ffmpeg:
         burned_path.write_bytes(b"dry-run burned preview placeholder\n")
-        record["burned_preview"] = {"status": "DRY_RUN", "path": str(burned_path), "ass_path": str(ass_path)}
+        record["burned_preview"] = {
+            "status": "DRY_RUN",
+            "path": str(burned_path),
+            "ass_path": str(ass_path),
+            **({"burn_revision": burn_revision} if burn_revision is not None else {}),
+        }
         if branding_intro is not None:
             record["burned_preview"]["branding_intro"] = {
                 "status": "DRY_RUN_SKIPPED",
@@ -196,6 +257,7 @@ def _burn_preview_subtitles(
             "path": str(burned_path),
             "ass_path": str(ass_path),
             "stderr_tail": completed.stderr[-500:],
+            **({"burn_revision": burn_revision} if burn_revision is not None else {}),
         }
         return record
     branding_intro_binding: dict[str, object] | None = None
@@ -216,6 +278,7 @@ def _burn_preview_subtitles(
                 "ass_path": str(ass_path),
                 "reason_code": "BRANDING_INTRO_FAILED",
                 "error": f"{type(exc).__name__}: {exc}",
+                **({"burn_revision": burn_revision} if burn_revision is not None else {}),
             }
             return record
     burned_sha = "sha256:" + _sha256(burned_path)
@@ -229,6 +292,7 @@ def _burn_preview_subtitles(
         "command": command,
         "stream_contract": _song_stream_contract() if strict_song_output else None,
         "branding_intro": branding_intro_binding,
+        **({"burn_revision": burn_revision} if burn_revision is not None else {}),
     }
     hashes = dict(record.get("artifact_hashes") or {})
     hashes["burned_video_sha256"] = burned_sha
@@ -1053,12 +1117,7 @@ def _load_lyric_timeline(
     *,
     output_dir: Path,
 ) -> tuple[list[tuple[int, str]], int] | None:
-    """Load the proven external-LRC timeline + global shift for a song job.
-
-    The strict song process burns lyrics from ``lrc_time + offset``, never from
-    raw ASR cue timings (ASR onsets are systematically early/noisy).  Only a
-    verified lyrics-alignment proof may supply this timeline.
-    """
+    """Load LRC + shift, or recomputed section times from a known ASR report."""
 
     lyrics_alignment = _mapping(job_manifest.get("lyrics_alignment"))
     if _verify_lyrics_alignment_proof(lyrics_alignment, output_dir=output_dir) is not None:
@@ -1072,28 +1131,64 @@ def _load_lyric_timeline(
         return None
     if not isinstance(report, Mapping):
         return None
-
-    timeline: list[tuple[int, str]] = []
-    lyric_lines = report.get("lyric_lines")
-    if isinstance(lyric_lines, list):
-        for line in lyric_lines:
-            if isinstance(line, Mapping) and isinstance(line.get("lrc_time_ms"), int) and str(line.get("text") or "").strip():
-                timeline.append((int(line["lrc_time_ms"]), str(line["text"]).strip()))
-    if not timeline:
-        alignment = report.get("alignment")
-        if isinstance(alignment, list):
-            for entry in alignment:
-                if isinstance(entry, Mapping) and isinstance(entry.get("lrc_time_ms"), int) and str(entry.get("lrc_text") or "").strip():
-                    timeline.append((int(entry["lrc_time_ms"]), str(entry["lrc_text"]).strip()))
-    if not timeline:
-        return None
-    timeline.sort(key=lambda item: item[0])
+    section_timing = is_timing_model_report(report)
+    if any(key in report for key in ("timing_model", "asr_timing_input", "timing_sections")):
+        if not section_timing:
+            return None
+        if _verify_live_performance_observation(lyrics_alignment, output_dir=output_dir) is not None:
+            return None
 
     offset_value = lyrics_alignment.get("offset_ms")
     if not isinstance(offset_value, int) or isinstance(offset_value, bool):
         offset_value = report.get("offset_ms")
     if not isinstance(offset_value, int) or isinstance(offset_value, bool):
         return None
+    if section_timing and offset_value != report.get("offset_ms"):
+        return None
+
+    def effective_time(line: Mapping[str, object], key: str) -> int | None:
+        # ASR-anchored section-wise reports carry each line's live time (the
+        # reference LRC time plus its own section shift; repeated sections come
+        # back at their live times).  The renderer adds ``offset_value``, so the
+        # per-line live time is expressed relative to it.  Legacy single-shift
+        # reports have only the LRC time.
+        if section_timing:
+            live = line.get("live_time_ms")
+            return live - offset_value if isinstance(live, int) and not isinstance(live, bool) else None
+        value = line.get(key)
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    timeline: list[tuple[int, str]] = []
+    lyric_lines = report.get("lyric_lines")
+    if isinstance(lyric_lines, list):
+        for line in lyric_lines:
+            moment = effective_time(line, "lrc_time_ms") if isinstance(line, Mapping) else None
+            if (moment is not None and str(line.get("text") or "").strip()
+                    and not is_lrc_non_lyric_metadata(str(line["text"]))):
+                timeline.append((moment, str(line["text"]).strip()))
+    if not timeline:
+        alignment = report.get("alignment")
+        if isinstance(alignment, list):
+            for entry in alignment:
+                moment = effective_time(entry, "lrc_time_ms") if isinstance(entry, Mapping) else None
+                if (moment is not None and str(entry.get("lrc_text") or "").strip()
+                        and not is_lrc_non_lyric_metadata(str(entry["lrc_text"]))):
+                    timeline.append((moment, str(entry["lrc_text"]).strip()))
+    if not timeline:
+        return None
+    timeline.sort(key=lambda item: item[0])
+    completeness = report.get("arrangement_completeness")
+    if stored_shape_uses_source_cues(completeness):
+        if not section_timing:
+            # Legacy lyric-only reports have no bound source-cue consumer.
+            # Adding speech fields cannot grant them speech authority.
+            return None
+        # Speech in any hole (small skip, repeated section or spoken
+        # interlude) is subtitled by one rule. The ordinary proof reader above
+        # recomputed every hole's speech from the hash-bound source transcript.
+        speech = stored_shape_speech_cues(completeness)
+        if speech:
+            timeline = SongSubtitleTimeline(timeline, speech)
     return timeline, offset_value
 
 def _song_output_proof_binding(
@@ -1163,18 +1258,27 @@ def _write_lyric_timeline_srt(
     """
 
     duration_ms = max(0, end_ms - start_ms)
-    mapped = [(lrc_time_ms + offset_ms - start_ms, text) for lrc_time_ms, text in timeline]
+    mapped = [(lrc_time_ms + offset_ms - start_ms, text, None) for lrc_time_ms, text in timeline
+              if not is_lrc_non_lyric_metadata(text)]
+    if isinstance(timeline, SongSubtitleTimeline):
+        for cue in timeline.relative_speech(start_ms):
+            text = checked_interlude_text(cue.text)
+            mapped.append((cue.source_start_ms, f"[{CHANNEL_PROFILE.host_speaker_label}] {text}",
+                           cue.source_end_ms))
+        mapped.sort(key=lambda row: row[0])
     rows: list[str] = []
     index = 1
-    for position, (cue_start_ms, text) in enumerate(mapped):
+    for position, (cue_start_ms, text, speech_end_ms) in enumerate(mapped):
         if cue_start_ms < 0 or cue_start_ms >= duration_ms:
             continue
         next_start_ms = mapped[position + 1][0] if position + 1 < len(mapped) else None
-        if next_start_ms is None:
+        if speech_end_ms is not None:
+            cue_end_ms = min(speech_end_ms, next_start_ms) if next_start_ms is not None else speech_end_ms
+        elif next_start_ms is None:
             cue_end_ms = cue_start_ms + tail_pad_ms
         else:
             cue_end_ms = min(next_start_ms, cue_start_ms + max_duration_ms)
-        if cue_end_ms - cue_start_ms < min_duration_ms:
+        if speech_end_ms is None and cue_end_ms - cue_start_ms < min_duration_ms:
             cue_end_ms = cue_start_ms + min_duration_ms
             if next_start_ms is not None and cue_end_ms > next_start_ms:
                 cue_end_ms = max(cue_start_ms + 100, next_start_ms)

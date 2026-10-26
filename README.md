@@ -255,3 +255,11 @@ AGY CLI 与 Gemini API 是不同接入方式，模型名称、能力、配额与
 ## 友情链接
 
 - [沙按钮](https://lu-91015.github.io/shadowlee.github.io/)
+
+## 本版配置与 GC 接口
+
+本项目提供可复现的配置与验证流程。先从离线配置和快速自检开始，再由部署者验证真实输入与外部服务。
+运行时 GC 的完整配置说明继续保留。当前统一入口是
+`scripts/runtime_gc.py`，Linux service/timer 示例见 `config/runtime-gc/`；
+旧 `terminal_out_gc.py` 已由生命周期收集替代。执行前读
+[当前生命周期接口](docs/pipeline/10-source-recording.md#当前生命周期-gc-接口)。

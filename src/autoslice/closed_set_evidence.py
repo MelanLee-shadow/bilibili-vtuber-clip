@@ -16,6 +16,7 @@ DRAFT_FIDELITY_PROVENANCE_SCHEMA = "draft-fidelity-kept-candidate.v1"
 _HEX64 = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$")
 _HAN = re.compile(r"[\u3400-\u9fff]")
 _LEXICAL = re.compile(r"^[A-Za-z0-9_\-\u3400-\u9fff]+$")
+_SENDER_CONTEXT_SCHEMA = "structured-chat-sender-context.v1"
 
 
 def evidence_cue_ids(
@@ -183,6 +184,41 @@ def _validated_session_recurrence_provenance(
     }
 
 
+def _validated_witness_disagreement_provenance(
+    provenance: Mapping[str, Any], *, proposed_cue: str, current_cue: str,
+    current_srt_sha256: str,
+) -> dict[str, object] | None:
+    """Candidate-only: the independent witness nominates, audio + CPA decide."""
+
+    current_span = provenance.get("current_span")
+    witness_span = provenance.get("witness_span")
+    if not (
+        provenance.get("evidence_source") == "witness"
+        and provenance.get("current_srt_sha256") == current_srt_sha256
+        and _valid_digest(provenance.get("witness_srt_sha256"))
+        and re.fullmatch(r"[0-9a-f]{16}", str(provenance.get("nomination_id") or ""))
+        and isinstance(current_span, str) and isinstance(witness_span, str)
+        and (current_span or witness_span)
+        and (not proposed_cue or witness_span in proposed_cue)
+        and (not current_span or current_span in current_cue)
+        and type(provenance.get("intro_offset_ms")) is int
+    ):
+        return None
+    return {
+        "kind": "subtitle_audio_witness_disagreement",
+        "nomination_id": provenance["nomination_id"],
+        "evidence_source": "witness",
+        "current_srt_sha256": current_srt_sha256,
+        "witness_srt_sha256": provenance["witness_srt_sha256"],
+        "current_span": current_span,
+        "witness_span": witness_span,
+        "final_pinyin": provenance.get("final_pinyin"),
+        "witness_pinyin": provenance.get("witness_pinyin"),
+        "intro_offset_ms": provenance["intro_offset_ms"],
+        "mutation_authorized": False,
+    }
+
+
 def validated_priority_candidate_provenance(
     row: Mapping[str, Any], *, proposed_cue: str, current_cue: str, cue_index: int,
     current_srt_sha256: str, cue_count: int, trusted_priority: bool
@@ -200,6 +236,11 @@ def validated_priority_candidate_provenance(
             proposed_cue=proposed_cue,
             current_cue=current_cue,
             cue_index=cue_index,
+        )
+    if provenance.get("kind") == "subtitle_audio_witness_disagreement":
+        return _validated_witness_disagreement_provenance(
+            provenance, proposed_cue=proposed_cue, current_cue=current_cue,
+            current_srt_sha256=current_srt_sha256,
         )
     if provenance.get("kind") == "session_transcript_recurrence":
         return _validated_session_recurrence_provenance(
@@ -282,9 +323,98 @@ def _candidate_surfaces(
     return values
 
 
+def _source_bound_sender_context(
+    *,
+    clip_context: Mapping[str, object] | None,
+    cue_index: int,
+    cues: Sequence[Any],
+) -> dict[str, object]:
+    """Expose source-bound sender identity using normal chat retrieval windows.
+
+    A sender row is source-bound only when the platform event identity and the
+    source bytes digest are both present.  This context never proves that the
+    message was spoken and is intentionally excluded from literal candidate
+    extent calculations below.
+    """
+
+    from src.autoslice.producer_chat_input import (
+        DANMAKU_PRE_CONTEXT_MS, GIFT_PRE_CONTEXT_MS,
+        GUARD_PRE_CONTEXT_MS, SC_PRE_CONTEXT_MS,
+    )
+
+    pre_context_by_kind = {
+        "superchat": SC_PRE_CONTEXT_MS,
+        "gift": GIFT_PRE_CONTEXT_MS,
+        "guard": GUARD_PRE_CONTEXT_MS,
+    }
+
+    target = cues[cue_index - 1] if 1 <= cue_index <= len(cues) else None
+    target_start = int(target.start_ms) if target is not None else None
+    target_end = int(target.end_ms) if target is not None else None
+    # Negative clip-local offsets are legitimate prior source events. Clamping
+    # at zero discards delayed SC read-aloud evidence already validated by the
+    # normal context builder. Ordinary danmaku keeps its shorter lookback.
+    window_start = target_start - SC_PRE_CONTEXT_MS if target_start is not None else None
+    window_end = target_end + DANMAKU_PRE_CONTEXT_MS if target_end is not None else None
+    rows = clip_context.get("structured_chat") if isinstance(clip_context, Mapping) else None
+    bound_rows: list[dict[str, object]] = []
+    if isinstance(rows, list) and window_start is not None and window_end is not None:
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            sender = str(row.get("sender") or "").strip()
+            text = str(row.get("text") or row.get("message") or "").strip()
+            event_id = str(row.get("source_event_id") or "").strip()
+            source_sha256 = row.get("source_sha256")
+            offset = row.get("offset_ms")
+            kind = str(row.get("kind") or "chat")
+            row_window_start = target_start - pre_context_by_kind.get(
+                kind, DANMAKU_PRE_CONTEXT_MS
+            )
+            if not (
+                sender
+                and text
+                and event_id
+                and _valid_digest(source_sha256)
+                and isinstance(offset, (int, float))
+                and not isinstance(offset, bool)
+                and row_window_start <= float(offset) <= window_end
+            ):
+                continue
+            bound_rows.append(
+                {
+                    "sender": sender,
+                    "text": text,
+                    "offset_ms": offset,
+                    "kind": kind,
+                    "source_event_id": event_id,
+                    "source_sha256": str(source_sha256),
+                    "authority": "EVIDENCE_ONLY",
+                    "spoken_text_verified": False,
+                    "mutation_authorized": False,
+                }
+            )
+    return {
+        "schema_version": _SENDER_CONTEXT_SCHEMA,
+        "cue_index": cue_index,
+        "target_start_ms": target_start,
+        "target_end_ms": target_end,
+        "window_start_ms": window_start,
+        "window_end_ms": window_end,
+        "pre_context_ms_by_kind": {
+            **pre_context_by_kind, "default": DANMAKU_PRE_CONTEXT_MS,
+        },
+        "rows": bound_rows,
+        "authority": "EVIDENCE_ONLY",
+        "spoken_text_verified": False,
+        "mutation_authorized": False,
+    }
+
+
 def _bound_chat_support(
     *,
     clip_context: Mapping[str, object] | None,
+    sender_context: Mapping[str, object] | None,
     cues: Sequence[Any],
     surfaces: Sequence[str],
     candidate: str,
@@ -292,19 +422,48 @@ def _bound_chat_support(
     rows = clip_context.get("structured_chat") if isinstance(clip_context, Mapping) else None
     if not isinstance(rows, list):
         return None
-    matches: dict[str, list[Mapping[str, Any]]] = {}
+    matches: dict[str, dict[int, tuple[Mapping[str, Any], set[str]]]] = {}
+    sender_rows = (
+        sender_context.get("rows")
+        if isinstance(sender_context, Mapping)
+        else None
+    )
+    sender_by_event: dict[tuple[str, str], str] = {}
+    if isinstance(sender_rows, list):
+        for row in sender_rows:
+            if not isinstance(row, Mapping):
+                continue
+            sender = str(row.get("sender") or "").strip()
+            source_sha256 = row.get("source_sha256")
+            source_event_id = str(row.get("source_event_id") or "").strip()
+            if sender and _valid_digest(source_sha256) and source_event_id:
+                sender_by_event[(str(source_sha256), source_event_id)] = sender
     for row in rows:
         if not isinstance(row, Mapping) or not _valid_digest(row.get("source_sha256")):
             continue
         text = str(row.get("text") or row.get("message") or "")
         for surface in surfaces:
             if surface and surface.casefold() in text.casefold():
-                matches.setdefault(surface, []).append(row)
+                matched = matches.setdefault(surface, {}).setdefault(id(row), (row, set()))
+                matched[1].add("text")
+        source_event_id = str(row.get("source_event_id") or "").strip()
+        sender = sender_by_event.get((str(row.get("source_sha256")), source_event_id))
+        if sender:
+            for surface in surfaces:
+                if surface and surface == sender:
+                    matched = matches.setdefault(surface, {}).setdefault(
+                        id(row), (row, set())
+                    )
+                    matched[1].add("sender")
     if not matches:
         return None
-    surface, bound_rows = max(
+    surface, bound_records = max(
         matches.items(), key=lambda item: (len(item[1]), len(item[0]), item[0])
     )
+    bound_rows = [record[0] for record in bound_records.values()]
+    matched_fields = {
+        field for _row, fields in bound_records.values() for field in fields
+    }
     cue_ids: set[int] = set()
     for row in bound_rows:
         offset = row.get("offset_ms")
@@ -319,6 +478,9 @@ def _bound_chat_support(
         "candidate": candidate,
         "surface": surface,
         "bound_event_count": len(bound_rows),
+        "matched_field": (
+            next(iter(matched_fields)) if len(matched_fields) == 1 else "mixed"
+        ),
         "evidence_cue_ids": sorted(cue_ids),
         "evidence_cue_count": len(cue_ids),
         "source_sha256s": sorted(
@@ -344,6 +506,7 @@ def _structured_chat_candidate_extent(
     Existing bound_event_count counts occurrences of the selected surface, not
     the whole candidate. Match the same surface/source hashes against available
     event text; declared provenance without that text cannot prove a full cue.
+    A sender-only binding is identity context, never message literal support.
     """
     surface = str(binding.get("surface") or "")
     hashes = set(binding.get("source_sha256s") or [])
@@ -424,6 +587,11 @@ def closed_set_structured_evidence(
         else ""
     )
     evidence_candidate = kept_candidate or "PROPOSED"
+    sender_context = _source_bound_sender_context(
+        clip_context=clip_context,
+        cue_index=cue_index,
+        cues=cues,
+    )
     surfaces = _candidate_surfaces(
         current_cue=current_cue,
         proposed_cue=proposed_cue,
@@ -431,6 +599,7 @@ def closed_set_structured_evidence(
     )
     chat = _bound_chat_support(
         clip_context=clip_context,
+        sender_context=sender_context,
         cues=cues,
         surfaces=surfaces,
         candidate=evidence_candidate,
@@ -448,6 +617,7 @@ def closed_set_structured_evidence(
             "candidate": "PROPOSED",
             "surface": str(candidate_provenance.get("surface") or ""),
             "bound_event_count": 1 if _valid_digest(candidate_provenance.get("source_sha256")) else 0,
+            "matched_field": "text",
             "evidence_cue_ids": ids,
             "evidence_cue_count": len(ids),
             "source_sha256s": (
@@ -516,12 +686,14 @@ def closed_set_structured_evidence(
             "candidate": evidence_candidate,
             "surface": surface,
             "bound_event_count": 0,
+            "matched_field": None,
             "evidence_cue_ids": [],
             "evidence_cue_count": 0,
             "source_sha256s": [],
             "source_event_ids": [],
         },
     }
+    payload["structured_chat_sender_context"] = sender_context
     payload["structured_chat_candidate_extent"] = _structured_chat_candidate_extent(
         payload["structured_chat_binding"],
         candidate_text=current_cue if evidence_candidate == "CURRENT" else proposed_cue,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -10,6 +11,7 @@ from scripts.free_asr_client import to_srt
 from src.autoslice import final_subtitle_audio_gate as gate
 from src.autoslice import producer_delivery_prepare as delivery_prepare
 from src.autoslice import producer_package_finalization as finalization
+from src.autoslice import producer_text_pipeline as text_pipeline
 
 
 def _time(ms: int) -> str:
@@ -95,6 +97,75 @@ def _adapters(
         return to_srt(result)
 
     return gate.FinalSubtitleAudioGateAdapters(extract, transcribe, render)
+
+
+_LEGACY_COMPOSITE_POLICY_KEYS = (
+    "composite_enabled_when_single_coverage_insufficient",
+    "composite_max_cues_per_side",
+    "composite_gap_min_ms",
+    "composite_gap_max_ms",
+    "composite_match",
+    "composite_counts_as_one_anchor",
+    "composite_requires_unique_text",
+)
+
+
+_UNIQUENESS_POLICY_KEYS = ("anchor_uniqueness", "anchor_occurrence_match", "anchor_repeat_resolution")
+_UNIQUENESS_ANCHOR_KEYS = ("occurrence_resolution", "occurrences_before", "occurrences_after")
+
+
+def _strip_uniqueness_policy(receipt: dict) -> dict:
+    """Return the shape the same inputs had before the uniqueness policy key."""
+
+    legacy = copy.deepcopy(receipt)
+    for key in _UNIQUENESS_POLICY_KEYS:
+        legacy["anchor_policy"].pop(key)
+    for anchor in legacy["anchors"]:
+        for key in _UNIQUENESS_ANCHOR_KEYS:
+            anchor.pop(key)
+    return legacy
+
+
+def _bind_receipt(record: dict, receipt: dict) -> None:
+    evidence = record["subtitle_audio_correspondence"]
+    evidence["receipt"] = receipt
+    evidence["receipt_sha256"] = "sha256:" + hashlib.sha256(
+        (json.dumps(receipt, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+    ).hexdigest()
+    envelope_path = Path(evidence["correspondence_path"])
+    envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
+    envelope["receipt"] = copy.deepcopy(receipt)
+    envelope_path.write_text(
+        json.dumps(envelope, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _bind_legacy_single_anchor_receipt(record: dict) -> None:
+    """Rewrite only the synthetic envelope to the pre-composite receipt shape."""
+
+    evidence = record["subtitle_audio_correspondence"]
+    legacy = _strip_uniqueness_policy(evidence["receipt"])
+    legacy["anchor_coverage"].pop("cue_ids")
+    for key in _LEGACY_COMPOSITE_POLICY_KEYS:
+        legacy["anchor_policy"].pop(key)
+    for anchor in legacy["anchors"]:
+        for key in ("anchor_kind", "final_cue_indices", "witness_cue_indices"):
+            anchor.pop(key)
+
+    evidence["receipt"] = legacy
+    evidence["receipt_sha256"] = "sha256:" + hashlib.sha256(
+        (json.dumps(legacy, ensure_ascii=False, sort_keys=True) + "\n").encode(
+            "utf-8"
+        )
+    ).hexdigest()
+    envelope_path = Path(evidence["correspondence_path"])
+    envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
+    envelope["receipt"] = copy.deepcopy(legacy)
+    envelope_path.write_text(
+        json.dumps(envelope, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def test_capture_binds_actual_burn_and_reuses_exact_cache(tmp_path: Path) -> None:
@@ -229,6 +300,7 @@ def test_producer_refuses_to_return_before_stage_when_gate_blocks(
             timing_qa={},
             audit={},
             branding_intro=None,
+            delivery_lane="shadow",
             adapters=adapters,
             candidate_id="candidate",
         )
@@ -255,6 +327,249 @@ def test_validation_rejects_media_and_witness_drift(tmp_path: Path) -> None:
     witness.write_text(witness.read_text(encoding="utf-8") + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match="WITNESS_HASH_DRIFT"):
         gate.validate_final_subtitle_audio_check(captured, final_srt, media)
+
+
+def test_frozen_resume_accepts_only_known_receipt_metadata_growth(
+    tmp_path: Path,
+) -> None:
+    record, final_srt, media = _record(tmp_path, intro_offset_ms=0)
+    captured = gate.capture_final_subtitle_audio_check(
+        record,
+        final_srt,
+        tmp_path / "evidence",
+        "candidate",
+        adapters=_adapters(witness_rows=_ROWS, calls={}),
+    )
+    _bind_legacy_single_anchor_receipt(captured)
+
+    with pytest.raises(ValueError, match="RECEIPT_DRIFT"):
+        gate.validate_final_subtitle_audio_check(captured, final_srt, media)
+
+    receipt = gate.validate_final_subtitle_audio_check(
+        captured,
+        final_srt,
+        media,
+        allow_frozen_receipt_metadata_compatibility=True,
+    )
+    assert receipt["status"] == "PASS"
+
+
+def test_receipt_without_uniqueness_policy_replays_under_its_own_rule(tmp_path: Path) -> None:
+    record, final_srt, media = _record(tmp_path, intro_offset_ms=0)
+    captured = gate.capture_final_subtitle_audio_check(
+        record,
+        final_srt,
+        tmp_path / "evidence",
+        "candidate",
+        adapters=_adapters(witness_rows=_ROWS, calls={}),
+    )
+    current = captured["subtitle_audio_correspondence"]["receipt"]
+    assert current["anchor_policy"]["anchor_uniqueness"] == gate.ANCHOR_UNIQUENESS_POLICY
+    _bind_receipt(captured, _strip_uniqueness_policy(current))
+
+    # Ordinary validation (no frozen projection) accepts the pre-policy shape
+    # because it is recomputed under the legacy rule it declares by omission.
+    receipt = gate.validate_final_subtitle_audio_check(captured, final_srt, media)
+    assert receipt["status"] == "PASS"
+    assert "anchor_uniqueness" not in receipt["anchor_policy"]
+
+    # A legacy-shaped receipt cannot claim anchors the legacy rule never chose.
+    tampered = _strip_uniqueness_policy(current)
+    tampered["anchors"][0]["occurrence_resolution"] = "unique"
+    _bind_receipt(captured, tampered)
+    with pytest.raises(ValueError, match="RECEIPT_DRIFT"):
+        gate.validate_final_subtitle_audio_check(captured, final_srt, media)
+
+
+def test_receipt_declaring_unknown_uniqueness_policy_is_refused(tmp_path: Path) -> None:
+    record, final_srt, media = _record(tmp_path, intro_offset_ms=0)
+    captured = gate.capture_final_subtitle_audio_check(
+        record,
+        final_srt,
+        tmp_path / "evidence",
+        "candidate",
+        adapters=_adapters(witness_rows=_ROWS, calls={}),
+    )
+    receipt = copy.deepcopy(captured["subtitle_audio_correspondence"]["receipt"])
+    receipt["anchor_policy"]["anchor_uniqueness"] = "relaxed-anything-goes"
+    _bind_receipt(captured, receipt)
+
+    with pytest.raises(ValueError, match="ANCHOR_UNIQUENESS_POLICY_UNSUPPORTED"):
+        gate.validate_final_subtitle_audio_check(captured, final_srt, media)
+
+
+def test_capture_upgrades_cached_legacy_receipt_without_provider_call(tmp_path: Path) -> None:
+    record, final_srt, _media = _record(tmp_path, intro_offset_ms=0)
+    calls: dict[str, int] = {}
+    captured = gate.capture_final_subtitle_audio_check(
+        record,
+        final_srt,
+        tmp_path / "evidence",
+        "candidate",
+        adapters=_adapters(witness_rows=_ROWS, calls=calls),
+    )
+    current = captured["subtitle_audio_correspondence"]["receipt"]
+    _bind_receipt(captured, _strip_uniqueness_policy(current))
+
+    def unavailable(*_args):
+        raise AssertionError("a policy upgrade must reuse the cached BCUT observation")
+
+    upgraded = gate.capture_final_subtitle_audio_check(
+        captured,
+        final_srt,
+        tmp_path / "evidence",
+        "candidate",
+        adapters=gate.FinalSubtitleAudioGateAdapters(unavailable, unavailable, unavailable),
+    )["subtitle_audio_correspondence"]
+    assert calls == {"extract": 1, "transcribe": 1, "to_srt": 1}
+    assert upgraded["cache_reused"] is True
+    assert upgraded["receipt"] == current
+    envelope = json.loads(Path(upgraded["correspondence_path"]).read_text(encoding="utf-8"))
+    assert envelope["receipt_policy_upgrade"]["provider_calls"] == 0
+    assert envelope["receipt_policy_upgrade"]["from_anchor_uniqueness"] == (
+        gate.anchor_uniqueness_policy_of({"anchor_policy": {}})
+    )
+
+
+@pytest.mark.parametrize("semantic_drift", [False, True])
+def test_frozen_resume_validates_record_seal_with_relocatable_receipt_paths(
+    tmp_path: Path, semantic_drift: bool,
+) -> None:
+    record, final_srt, media = _record(tmp_path, intro_offset_ms=0)
+    captured = gate.capture_final_subtitle_audio_check(
+        record,
+        final_srt,
+        tmp_path / "evidence",
+        "candidate",
+        adapters=_adapters(witness_rows=_ROWS, calls={}),
+    )
+    _bind_legacy_single_anchor_receipt(captured)
+    evidence = captured["subtitle_audio_correspondence"]
+    evidence["receipt"]["inputs"]["final_srt"]["path"] = "/relocated/candidate.srt"
+    if semantic_drift:
+        evidence["receipt"]["timing_summary"]["median_start_delta_ms"] += 1
+    evidence["receipt_sha256"] = "sha256:" + hashlib.sha256(
+        (json.dumps(evidence["receipt"], ensure_ascii=False, sort_keys=True) + "\n").encode(
+            "utf-8"
+        )
+    ).hexdigest()
+
+    if semantic_drift:
+        with pytest.raises(ValueError, match="RECORD_RECEIPT_DRIFT"):
+            gate.validate_final_subtitle_audio_check(
+                captured, final_srt, media,
+                allow_frozen_receipt_metadata_compatibility=True,
+            )
+    else:
+        receipt = gate.validate_final_subtitle_audio_check(
+            captured, final_srt, media,
+            allow_frozen_receipt_metadata_compatibility=True,
+        )
+        assert receipt["status"] == "PASS"
+
+
+@pytest.mark.parametrize("mutation", ["timing", "source_index"])
+def test_frozen_resume_rejects_legacy_semantic_changes(
+    tmp_path: Path, mutation: str,
+) -> None:
+    record, final_srt, media = _record(tmp_path, intro_offset_ms=0)
+    captured = gate.capture_final_subtitle_audio_check(
+        record,
+        final_srt,
+        tmp_path / "evidence",
+        "candidate",
+        adapters=_adapters(witness_rows=_ROWS, calls={}),
+    )
+    _bind_legacy_single_anchor_receipt(captured)
+    receipt = captured["subtitle_audio_correspondence"]["receipt"]
+    if mutation == "timing":
+        receipt["timing_summary"]["median_start_delta_ms"] += 1
+    else:
+        receipt["anchors"][0]["final_cue_index"] = "changed"
+    captured["subtitle_audio_correspondence"]["receipt_sha256"] = "sha256:" + hashlib.sha256(
+        (json.dumps(receipt, ensure_ascii=False, sort_keys=True) + "\n").encode(
+            "utf-8"
+        )
+    ).hexdigest()
+    envelope_path = Path(captured["subtitle_audio_correspondence"]["correspondence_path"])
+    envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
+    envelope["receipt"] = copy.deepcopy(receipt)
+    envelope_path.write_text(
+        json.dumps(envelope, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="RECEIPT_DRIFT"):
+        gate.validate_final_subtitle_audio_check(
+            captured,
+            final_srt,
+            media,
+            allow_frozen_receipt_metadata_compatibility=True,
+        )
+
+
+def test_frozen_resume_does_not_weaken_media_or_receipt_hash_gates(
+    tmp_path: Path,
+) -> None:
+    record, final_srt, media = _record(tmp_path, intro_offset_ms=0)
+    captured = gate.capture_final_subtitle_audio_check(
+        record,
+        final_srt,
+        tmp_path / "evidence",
+        "candidate",
+        adapters=_adapters(witness_rows=_ROWS, calls={}),
+    )
+    _bind_legacy_single_anchor_receipt(captured)
+
+    other_media = tmp_path / "other.mp4"
+    other_media.write_bytes(b"different media")
+    with pytest.raises(ValueError, match="MEDIA_HASH_DRIFT"):
+        gate.validate_final_subtitle_audio_check(
+            captured,
+            final_srt,
+            other_media,
+            allow_frozen_receipt_metadata_compatibility=True,
+        )
+
+    captured["subtitle_audio_correspondence"]["receipt_sha256"] = "sha256:" + "0" * 64
+    with pytest.raises(ValueError, match="RECEIPT_HASH_DRIFT"):
+        gate.validate_final_subtitle_audio_check(
+            captured,
+            final_srt,
+            media,
+            allow_frozen_receipt_metadata_compatibility=True,
+        )
+
+
+def test_frozen_resume_rejects_composite_projection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record, final_srt, media = _record(tmp_path, intro_offset_ms=0)
+    captured = gate.capture_final_subtitle_audio_check(
+        record,
+        final_srt,
+        tmp_path / "evidence",
+        "candidate",
+        adapters=_adapters(witness_rows=_ROWS, calls={}),
+    )
+    current = copy.deepcopy(captured["subtitle_audio_correspondence"]["receipt"])
+    _bind_legacy_single_anchor_receipt(captured)
+    current["anchors"][0]["anchor_kind"] = "composite"
+    current["anchors"][0]["final_cue_indices"] = ["1", "2"]
+    current["anchors"][0]["witness_cue_indices"] = ["1", "2"]
+    monkeypatch.setattr(
+        gate,
+        "check_subtitle_audio_correspondence",
+        lambda *_args, **_kwargs: current,
+    )
+
+    with pytest.raises(ValueError, match="RECEIPT_DRIFT"):
+        gate.validate_final_subtitle_audio_check(
+            captured,
+            final_srt,
+            media,
+            allow_frozen_receipt_metadata_compatibility=True,
+        )
 
 
 def test_validation_requires_canonical_package_stem_and_supports_renames(
@@ -334,6 +649,56 @@ def test_validation_does_not_call_ffmpeg_or_provider(tmp_path: Path, monkeypatch
     assert gate.validate_final_subtitle_audio_check(captured, final_srt, media)["status"] == "PASS"
 
 
+def test_validated_witness_reuses_captured_receipt_after_srt_relocation(
+    tmp_path: Path,
+) -> None:
+    record, final_srt, media = _record(tmp_path, intro_offset_ms=0)
+    calls: dict[str, int] = {}
+    captured = gate.capture_final_subtitle_audio_check(
+        record, final_srt, tmp_path / "evidence", "candidate",
+        adapters=_adapters(witness_rows=_ROWS, calls=calls),
+    )
+    original = gate.load_validated_subtitle_audio_witness(
+        captured, final_srt, media, candidate_id="candidate"
+    )
+    relocated = tmp_path / "recovery" / "current.srt"
+    relocated.parent.mkdir()
+    relocated.write_bytes(final_srt.read_bytes())
+    recovered = gate.load_validated_subtitle_audio_witness(
+        captured, relocated, media, candidate_id="candidate"
+    )
+    assert recovered == original
+    assert calls == {"extract": 1, "transcribe": 1, "to_srt": 1}
+    relocated.write_bytes(relocated.read_bytes() + b"\n")
+    with pytest.raises(ValueError, match="FINAL_SRT_HASH_DRIFT"):
+        gate.load_validated_subtitle_audio_witness(
+            captured, relocated, media, candidate_id="candidate"
+        )
+
+
+@pytest.mark.parametrize("rebind_hash", [False, True])
+def test_validated_witness_rejects_altered_record_receipt(
+    tmp_path: Path, rebind_hash: bool,
+) -> None:
+    record, final_srt, media = _record(tmp_path, intro_offset_ms=0)
+    captured = gate.capture_final_subtitle_audio_check(
+        record, final_srt, tmp_path / "evidence", "candidate",
+        adapters=_adapters(witness_rows=_ROWS, calls={}),
+    )
+    evidence = captured["subtitle_audio_correspondence"]
+    evidence["receipt"]["timebase"]["intro_offset_ms"] = 1
+    if rebind_hash:
+        evidence["receipt_sha256"] = "sha256:" + hashlib.sha256(
+            (json.dumps(evidence["receipt"], ensure_ascii=False, sort_keys=True)
+             + "\n").encode("utf-8")
+        ).hexdigest()
+    expected = "RECORD_RECEIPT_DRIFT" if rebind_hash else "RECORD_RECEIPT_HASH_DRIFT"
+    with pytest.raises(ValueError, match=expected):
+        gate.load_validated_subtitle_audio_witness(
+            captured, final_srt, media, candidate_id="candidate"
+        )
+
+
 def test_validated_witness_rejects_final_srt_media_and_intro_drift(
     tmp_path: Path,
 ) -> None:
@@ -388,14 +753,22 @@ _POSTBURN_WITNESS_ROWS = [
     (start + 6_200, end + 6_200, text)
     for start, end, text in _POSTBURN_ROWS
 ]
+# Cue 4 reads 更正 in the witness but 乱码 in the final. The deterministic
+# witness-disagreement nomination now turns that into an exact-final question
+# (see tests/test_witness_disagreement.py); the scripted-CPA fixtures below use
+# a pinyin-equal witness so they keep exercising CPA-discovered findings only.
+_POSTBURN_DISAGREEING_WITNESS_ROWS = [
+    (start, end, "这里有更正需要审看" if index == 3 else text)
+    for index, (start, end, text) in enumerate(_POSTBURN_WITNESS_ROWS)
+]
 _POSTBURN_WITNESS_ROWS[3] = (
     _POSTBURN_WITNESS_ROWS[3][0],
     _POSTBURN_WITNESS_ROWS[3][1],
-    "这里有更正需要审看",
+    "这里有乱马需要审看",
 )
 
 
-def _postburn_record(tmp_path: Path) -> tuple[dict, Path, Path]:
+def _postburn_record(tmp_path: Path, *, disagreeing: bool = False) -> tuple[dict, Path, Path]:
     record, final_srt, media = _record(
         tmp_path,
         intro_offset_ms=6_200,
@@ -408,7 +781,9 @@ def _postburn_record(tmp_path: Path) -> tuple[dict, Path, Path]:
             tmp_path / "evidence",
             "candidate",
             adapters=_adapters(
-                witness_rows=_POSTBURN_WITNESS_ROWS,
+                witness_rows=(
+                    _POSTBURN_DISAGREEING_WITNESS_ROWS if disagreeing else _POSTBURN_WITNESS_ROWS
+                ),
                 calls={},
             ),
         ),
@@ -460,7 +835,8 @@ def test_postburn_witness_finding_blocks_without_mutating_final_srt(
         monkeypatch,
         '{"findings":[{"cue":4,"kind":"context","repair_class":"phonetic",'
         '"proposed_full_cue":"这里有更正需要审看","source_surface":"更正",'
-        '"why":"postburn witness disagreement"}]}',
+        '"why":"postburn witness disagreement","content_risk":"meaning_reversal",'
+        '"risk_basis":"This synthetic substitution changes the described text."}]}',
     )
     chat_audit = _postburn_chat_audit(final_srt)
     chat_path = tmp_path / "chat.json"
@@ -506,12 +882,310 @@ def test_postburn_witness_finding_blocks_without_mutating_final_srt(
     assert (tmp_path / "candidate.review-flags.json").is_file()
 
 
+def test_completed_postburn_finding_is_only_a_bound_priority_raw_row(
+    tmp_path: Path, monkeypatch
+) -> None:
+    record, final_srt, media = _postburn_record(tmp_path)
+    _postburn_adapters(
+        monkeypatch,
+        '{"findings":[{"cue":4,"kind":"context","repair_class":"phonetic",'
+        '"proposed_full_cue":"这里有更正需要审看","source_surface":"更正",'
+        '"why":"postburn witness disagreement","content_risk":"meaning_reversal",'
+        '"risk_basis":"This synthetic substitution changes the described text."}]}',
+    )
+    chat_audit = _postburn_chat_audit(final_srt)
+    chat_path = tmp_path / "chat.json"
+    chat_path.write_text("{}\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="POSTBURN_SUBTITLE_AUDIO_REVIEW_BLOCKED"):
+        finalization._run_postburn_subtitle_audio_review(
+            cid="candidate",
+            out_root=tmp_path,
+            recut=finalization.FinalRecutArtifacts(
+                recut_dir=tmp_path,
+                media_path=media,
+                subtitle_path=final_srt,
+                text_manifest_path=None,
+                text_manifest=None,
+            ),
+            record=record,
+            chat_authority_audit=chat_audit,
+            chat_authority_path=chat_path,
+        )
+
+    result = text_pipeline.validated_postburn_priority_findings(
+        final_srt_text=final_srt.read_text(encoding="utf-8"),
+        verified_authority_audit=chat_audit,
+        candidate_id="candidate",
+        clip_context=None,
+        expected_media_sha256=_sha(media),
+    )
+    assert result is not None
+    rows, request_sha = result
+    assert request_sha == chat_audit["postburn_subtitle_audio_review"][
+        "cpa_request"
+    ]["request_sha256"]
+    assert rows[0]["cue_index"] == 4
+    assert rows[0]["base_text_sha256"] == hashlib.sha256(
+        "这里有乱码需要审看".encode("utf-8")
+    ).hexdigest()
+    assert "exact_release_adjudication" not in rows[0]
+
+
+def test_postburn_priority_handoff_rejects_drift_or_incomplete_raw_receipts(
+    tmp_path: Path, monkeypatch
+) -> None:
+    record, final_srt, media = _postburn_record(tmp_path)
+    _postburn_adapters(
+        monkeypatch,
+        '{"findings":[{"cue":4,"kind":"context","repair_class":"phonetic",'
+        '"proposed_full_cue":"这里有更正需要审看","source_surface":"更正",'
+        '"why":"postburn witness disagreement","content_risk":"meaning_reversal",'
+        '"risk_basis":"This synthetic substitution changes the described text."}]}',
+    )
+    chat_audit = _postburn_chat_audit(final_srt)
+    chat_path = tmp_path / "chat.json"
+    chat_path.write_text("{}\n", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        finalization._run_postburn_subtitle_audio_review(
+            cid="candidate",
+            out_root=tmp_path,
+            recut=finalization.FinalRecutArtifacts(
+                recut_dir=tmp_path,
+                media_path=media,
+                subtitle_path=final_srt,
+                text_manifest_path=None,
+                text_manifest=None,
+            ),
+            record=record,
+            chat_authority_audit=chat_audit,
+            chat_authority_path=chat_path,
+        )
+    kwargs = {
+        "final_srt_text": final_srt.read_text(encoding="utf-8"),
+        "verified_authority_audit": chat_audit,
+        "candidate_id": "candidate",
+        "clip_context": None,
+        "expected_media_sha256": _sha(media),
+    }
+    assert text_pipeline.validated_postburn_priority_findings(**kwargs) is not None
+
+    chat_audit["postburn_subtitle_audio_review"]["cpa_request"][
+        "candidate_context_sha256"
+    ] = "sha256:" + "f" * 64
+    assert text_pipeline.validated_postburn_priority_findings(**kwargs) is None
+    chat_audit["postburn_subtitle_audio_review"]["cpa_request"][
+        "candidate_context_sha256"
+    ] = "sha256:" + hashlib.sha256(b"").hexdigest()
+    chat_audit["postburn_subtitle_audio_review"]["reviewed_srt_sha256"] = _sha(media)
+    assert text_pipeline.validated_postburn_priority_findings(**kwargs) is None
+    chat_audit["postburn_subtitle_audio_review"]["reviewed_srt_sha256"] = _sha(
+        final_srt
+    )
+    response_path = Path(
+        chat_audit["postburn_subtitle_audio_review"]["cpa_calls"][0][
+            "response_path"
+        ]
+    )
+    response_path.unlink()
+    assert text_pipeline.validated_postburn_priority_findings(**kwargs) is None
+
+
+@pytest.mark.parametrize("actionable", [False, True])
+@pytest.mark.parametrize("omit_descriptor", [False, True])
+@pytest.mark.parametrize("legacy_context", [False, True])
+@pytest.mark.parametrize("risk", ["noncritical_uncertainty", "meaning_reversal", "factual_error", "potential_harm"])
+def test_postburn_current_risk_discloses_only_noncritical_and_reuses_raw_response(tmp_path, monkeypatch, risk, legacy_context, omit_descriptor, actionable):
+    # Historical node ID retained; noncritical disclosure is no longer a
+    # release exit. A complete equivalence assessment must still be FLAGGED.
+    record, final_srt, media = _postburn_record(tmp_path)
+    before = (final_srt.read_bytes(), media.read_bytes())
+    calls = []
+    proposed = "这里有乱码要审看" if risk == "noncritical_uncertainty" else "这里有更正需要审看"
+    row = {
+        "cue": 4, "kind": "context", "repair_class": "phonetic",
+        "proposed_full_cue": proposed if actionable else None, "source_surface": "更正",
+        "why": "postburn witness uncertainty", "content_risk": risk,
+        "risk_basis": "This current synthetic review classifies the effect of the uncertainty.",
+    }
+    if risk == "noncritical_uncertainty":
+        row["meaning_equivalence"] = {
+            "status": "EQUIVALENT", "current_meaning": "此处文字需要审看。",
+            "alternative_meaning": "此处文字要审看。", "shared_meaning": "此处文字仍待审看。",
+            "uncertain_detail": "需要或要的原话差异。",
+            "context_basis": "本合成例第4句两种词面均提出审看，不改变对象及动作。",
+            "evidence_cue_ids": [4],
+        }
+    _postburn_adapters(monkeypatch, json.dumps({"findings": [row]}), calls)
+    audit = _postburn_chat_audit(final_srt)
+    preburn = copy.deepcopy(audit["final_review_audit"])
+    kwargs = dict(cid="candidate", out_root=tmp_path,
+        recut=finalization.FinalRecutArtifacts(tmp_path, media, final_srt, None, None),
+        record=record, chat_authority_audit=audit, chat_authority_path=tmp_path / "chat.json")
+    kwargs["typed_resolution_evidence"] = {"reviewed_srt_sha256": _sha(final_srt),
+        "resolved_findings": [{"cue_index": 4, "content_risk": "noncritical_uncertainty",
+            "risk_basis": "first explanation", "_candidate_pronoun_policy_audit": {"completion_sha256": "first"}}]}
+    if omit_descriptor:
+        kwargs["typed_resolution_evidence"]["resolved_findings"].append({
+            "cue_index": 1, "content_risk": "noncritical_uncertainty", "risk_basis": "ordinary old descriptor"})
+    canonical_progress = finalization._postburn_material_progress
+    if legacy_context:
+        monkeypatch.setattr(finalization, "_postburn_material_progress", lambda value: value)
+    with pytest.raises(SystemExit, match="POSTBURN_SUBTITLE_AUDIO_REVIEW_BLOCKED"):
+        finalization._run_postburn_subtitle_audio_review(**kwargs)
+    receipt = audit["postburn_subtitle_audio_review"]
+    assert receipt["status"] == "FLAGGED" and receipt["release_gate"] == "BLOCK"
+    assert receipt["unresolved_findings_disclosed"] == []
+    assert receipt["findings"][0]["content_risk"] == risk
+    first_calls = len(calls)
+    original_request_sha = receipt["cpa_request"]["request_sha256"]
+    monkeypatch.setattr(finalization, "_postburn_material_progress", canonical_progress)
+    kwargs["typed_resolution_evidence"]["resolved_findings"][0].update(
+        risk_basis="equivalent new explanation",
+        _candidate_pronoun_policy_audit={"completion_sha256": "fresh-response-hash"},
+    )
+    if omit_descriptor:
+        kwargs["typed_resolution_evidence"]["resolved_findings"].pop()
+    # Normal continuation restores the verified preburn input and retains the
+    # completed postburn raw response. This cannot sign a new release PASS.
+    audit["final_review_audit"] = {**preburn, "postburn_subtitle_audio_review": receipt}
+    with pytest.raises(SystemExit, match="POSTBURN_SUBTITLE_AUDIO_REVIEW_BLOCKED"):
+        finalization._run_postburn_subtitle_audio_review(**kwargs)
+    assert len(calls) == first_calls
+    assert audit["postburn_subtitle_audio_review"]["cache_reused"] is True
+    assert audit["postburn_subtitle_audio_review"]["release_gate"] == "BLOCK"
+    assert audit["postburn_subtitle_audio_review"]["cpa_request"]["request_sha256"] == original_request_sha
+    assert (final_srt.read_bytes(), media.read_bytes()) == before
+
+
+@pytest.mark.parametrize("cache_damage", [False, True])
+def test_postburn_observation_survives_restoring_preburn_input(tmp_path, monkeypatch, cache_damage):
+    record, final_srt, media = _postburn_record(tmp_path)
+    calls = []
+    _postburn_adapters(monkeypatch, '{"findings":[]}', calls)
+    kwargs = dict(cid="candidate", out_root=tmp_path,
+        recut=finalization.FinalRecutArtifacts(tmp_path, media, final_srt, None, None),
+        record=record, chat_authority_audit=_postburn_chat_audit(final_srt),
+        chat_authority_path=tmp_path / "candidate.chat-authority.json")
+    finalization._run_postburn_subtitle_audio_review(**kwargs)
+    kwargs["chat_authority_audit"] = _postburn_chat_audit(final_srt)
+    if cache_damage:
+        pointer = json.loads((tmp_path / '.candidate.postburn-cpa/observation.json').read_text())
+        Path(pointer['path']).write_text('{}')
+        with pytest.raises(ValueError, match="HASH_DRIFT"):
+            finalization._run_postburn_subtitle_audio_review(**kwargs)
+    else:
+        finalization._run_postburn_subtitle_audio_review(**kwargs)
+        assert kwargs['chat_authority_audit']['postburn_subtitle_audio_review']['cache_reused']
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("damage", [None, "latest_failed_pointer", "new_context", "exit", "prompt", "media", "execution_hash", "raw_json", "critical"])
+def test_completed_child_raw_requires_execution_binding_and_normal_parser(tmp_path, monkeypatch, damage):
+    record, final_srt, media = _postburn_record(tmp_path)
+    calls = []
+    response = ('{"findings":[{"cue":4,"kind":"context","repair_class":"phonetic",'
+        '"proposed_full_cue":"这里有更正需要审看","source_surface":"更正",'
+        '"why":"concrete critical conflict","content_risk":"meaning_reversal",'
+        '"risk_basis":"The stated subject reverses the current meaning."}]}') if damage == "critical" else '{"findings":[]}'
+    _postburn_adapters(monkeypatch, response, calls)
+    audit = _postburn_chat_audit(final_srt)
+    chat_path = tmp_path / 'candidate.chat-authority.json'
+    kwargs = dict(cid="candidate", out_root=tmp_path,
+        recut=finalization.FinalRecutArtifacts(tmp_path, media, final_srt, None, None),
+        record=record, chat_authority_audit=audit, chat_authority_path=chat_path)
+    try:
+        finalization._run_postburn_subtitle_audio_review(**kwargs)
+    except SystemExit:
+        assert damage == 'critical'
+    review = copy.deepcopy(audit['postburn_subtitle_audio_review'])
+    call = review['cpa_calls'][0]
+    files = []
+    for name, key in [('prompt.txt', 'prompt_path'), ('completion.txt', 'response_path')]:
+        raw_path = Path(call[key])
+        if name == 'prompt.txt' and damage == 'prompt':
+            raw_path = tmp_path / 'different-prompt.txt'
+            raw_path.write_text('different request')
+        if name == 'completion.txt' and damage == 'raw_json':
+            raw_path = tmp_path / 'invalid-completion.txt'
+            raw_path.write_text('invalid raw output')
+        files.append({'source': '/native/bridge/' + name, 'preserved': str(raw_path),
+            'sha256': hashlib.sha256(raw_path.read_bytes()).hexdigest(), 'bytes': raw_path.stat().st_size})
+    execution = {'status': 'INTERRUPTED', 'output_root': str(tmp_path),
+        'terminal_materials': {'srt': {'sha256': _sha(final_srt)[7:]},
+                              'video': {'sha256': ('0' * 64 if damage == 'media' else _sha(media)[7:])}},
+        'interruption': {'provider_child_completed_before_parent_stop': True,
+            'raw_completion_unconsumed': {'outcome': 'CHILD_COMPLETED_RAW_UNCONSUMED_PARENT_INTERRUPTED',
+                'raw_wait_exit_code': 1 if damage == 'exit' else 0,
+                'child_not_signalled': True, 'pidfd_exit_ready': True, 'files': files}}}
+    execution_path = tmp_path / 'execution.json'
+    execution_path.write_text(json.dumps(execution))
+    monkeypatch.setenv('AUTOSLICE_COMPLETED_CPA_EXECUTION', str(execution_path))
+    monkeypatch.setenv('AUTOSLICE_COMPLETED_CPA_EXECUTION_SHA256',
+        '0' * 64 if damage == 'execution_hash' else hashlib.sha256(execution_path.read_bytes()).hexdigest())
+    review.update(status='RUNNING', release_gate='BLOCK', findings=[], validated_finding_count=0)
+    for key in ['response_path', 'response_sha256']:
+        call.pop(key)
+    call['dispatch_status'] = 'RUNNING'
+    audit['postburn_subtitle_audio_review'] = review
+    chat_path.write_text(json.dumps(audit))
+    before = chat_path.read_bytes()
+    if damage in {'exit', 'prompt', 'media', 'execution_hash'}:
+        with pytest.raises(ValueError, match='(BINDING_INVALID|REQUEST_INVALID|HASH_DRIFT)'):
+            finalization.preserve_postburn_observation(tmp_path, 'candidate')
+    else:
+        finalization.preserve_postburn_observation(tmp_path, 'candidate')
+        assert chat_path.read_bytes() == before
+        if damage == 'latest_failed_pointer':
+            audit['postburn_subtitle_audio_review'] = {**review, 'status': 'AUDITOR_UNAVAILABLE',
+                'error_type': 'ValueError', 'cpa_calls': [], 'reason_codes': ['POSTBURN_COMPLETED_RAW_REQUIRES_ORIGINAL_INPUT']}
+            chat_path.write_text(json.dumps(audit))
+            finalization.preserve_postburn_observation(tmp_path, 'candidate')
+        pointer = tmp_path / '.candidate.postburn-cpa/observation.json'
+        pointer_bytes = pointer.read_bytes()
+        saved = finalization._load_postburn_observation(tmp_path, 'candidate')
+        assert pointer.read_bytes() == pointer_bytes
+        assert saved['status'] == 'RUNNING' and saved['release_gate'] == 'BLOCK'
+        kwargs['chat_authority_audit'] = _postburn_chat_audit(final_srt)
+        if damage == 'new_context':
+            kwargs['selection_hook'] = 'genuinely different source context'
+        if damage in {'raw_json', 'critical', 'new_context'}:
+            with pytest.raises(SystemExit, match='POSTBURN_SUBTITLE_AUDIO_REVIEW_BLOCKED'):
+                finalization._run_postburn_subtitle_audio_review(**kwargs)
+        else:
+            finalization._run_postburn_subtitle_audio_review(**kwargs)
+            assert kwargs['chat_authority_audit']['postburn_subtitle_audio_review']['cached_parser_recovery']
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize('change', ['critical', 'media', 'audio'])
+def test_postburn_metadata_carry_requires_ordinary_same_material_descriptor(tmp_path, monkeypatch, change):
+    record, final_srt, media = _postburn_record(tmp_path)
+    calls = []
+    _postburn_adapters(monkeypatch, '{"findings":[]}', calls)
+    row = {'cue_index': 1, 'content_risk': 'meaning_reversal' if change == 'critical' else 'noncritical_uncertainty',
+           'risk_basis': 'A concrete effect stated by the previous current review.'}
+    audit = _postburn_chat_audit(final_srt)
+    finalization._run_postburn_subtitle_audio_review(cid='candidate', out_root=tmp_path,
+        recut=finalization.FinalRecutArtifacts(tmp_path, media, final_srt, None, None),
+        record=record, chat_authority_audit=audit, chat_authority_path=tmp_path/'chat.json',
+        typed_resolution_evidence={'reviewed_srt_sha256': _sha(final_srt), 'resolved_findings': [row]})
+    previous = audit['postburn_subtitle_audio_review']
+    witness = dict(previous['cpa_request'])
+    if change != 'critical':
+        witness['actual_media_sha256' if change == 'media' else 'audio_sha256'] = 'sha256:' + 'f' * 64
+    current = {'reviewed_srt_sha256': _sha(final_srt), 'resolved_findings': []}
+    assert finalization._postburn_carry_disclosure_metadata(current, previous, _sha(final_srt), witness=witness) == current
+    assert len(calls) == 1
+
+
 def test_postburn_witness_clean_review_preserves_all_bindings(
     tmp_path: Path, monkeypatch
 ) -> None:
     record, final_srt, media = _postburn_record(tmp_path)
+    record["chat_authority_audit_path"] = str(tmp_path / "prior-chat.json")
     before_srt = final_srt.read_bytes()
-    _postburn_adapters(monkeypatch, '{"findings":[]}')
+    prompts: list[str] = []
+    _postburn_adapters(monkeypatch, '{"findings":[]}', prompts)
     chat_audit = _postburn_chat_audit(final_srt)
     chat_path = tmp_path / "chat.json"
     chat_path.write_text("{}\n", encoding="utf-8")
@@ -532,9 +1206,14 @@ def test_postburn_witness_clean_review_preserves_all_bindings(
     )
 
     assert result is record
+    assert Path(record["chat_authority_audit_path"]) == chat_path
+    assert record["artifact_hashes"]["chat_authority_audit_sha256"] == _sha(chat_path)
     assert final_srt.read_bytes() == before_srt
     review = record["postburn_subtitle_audio_review"]
     assert review["status"] == "CLEAN"
+    assert "当前候选相关的频道术语" in prompts[0]
+    assert "侄女" in prompts[0]
+    assert review["cpa_request"]["glossary_sha256"].startswith("sha256:")
     assert review["release_gate"] == "PASS"
     assert review["findings"] == []
     assert review["subtitle_audio_binding"]["actual_media_sha256"] == _sha(media)
@@ -555,6 +1234,56 @@ def test_postburn_witness_clean_review_preserves_all_bindings(
     assert review["provider_runtime_binding"]["provider_call_transport"] == "cpa_command"
     assert review["provider_runtime_binding"]["provider_model"] == ["gpt-6-sol"]
     assert review["provider_runtime_binding"]["provider_effort"] == "medium"
+
+
+@pytest.mark.parametrize("drift", [None, "audio", "source", "offset"])
+def test_postburn_replays_current_bound_source_context(tmp_path, monkeypatch, drift):
+    from tests.test_independent_context_adjudication import _native_range_artifacts
+    from src.autoslice.jingting_chunker import parse_srt_cues
+
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    text, _finding, context, _request, observation, paths = _native_range_artifacts(
+        source_dir, "moss",
+    )
+    # The current wording may differ from the saved observation. Keep its
+    # grid, and supply enough unique text for the real timing gate's anchors.
+    text = text.replace("第一句", "第一句开场完整介绍当前情景").replace(
+        "当前句", "当前句中段继续解释事件经过",
+    ).replace("第三句", "第三句最后说明完整事件结论")
+    rows = [(cue.start_ms, cue.end_ms, cue.text) for cue in parse_srt_cues(text)]
+    record, final_srt, media = _record(tmp_path, intro_offset_ms=6_200, rows=rows)
+    final_srt.write_text(text, encoding="utf-8")
+    record = gate.capture_final_subtitle_audio_check(
+        record, final_srt, tmp_path / "evidence", "candidate",
+        adapters=_adapters(
+            witness_rows=[(start + 6_200, end + 6_200, value) for start, end, value in rows],
+            calls={},
+        ),
+    )
+    if drift in {"audio", "source"}:
+        paths["audio_clip" if drift == "audio" else "source_media"].write_bytes(b"drift")
+    prompts = []
+    _postburn_adapters(monkeypatch, '{"findings":[]}', prompts)
+    monkeypatch.setattr(finalization, "clip_context_prompt_text", lambda _context: "scene")
+    audit = _postburn_chat_audit(final_srt)
+    before = final_srt.read_bytes(), media.read_bytes()
+    finalization._run_postburn_subtitle_audio_review(
+        cid="candidate", out_root=tmp_path,
+        recut=finalization.FinalRecutArtifacts(
+            recut_dir=tmp_path, media_path=media, subtitle_path=final_srt,
+            text_manifest_path=None, text_manifest=None,
+        ),
+        record=record, chat_authority_audit=audit, chat_authority_path=tmp_path / "chat.json",
+        clip_context=context, timeline_offset_ms=101 if drift == "offset" else 100,
+        source_evidence_spec={"prior_range_acoustic_observations": [observation, observation]},
+    )
+    projected = audit["postburn_subtitle_audio_review"]["source_context_discovery_audit"]
+    assert projected["range_count"] == (0 if drift else 1)
+    assert projected["current_srt_sha256"] == _sha(final_srt)
+    assert projected["provider_calls"] == 0 and projected["mutation_authorized"] is False
+    assert ("整句范围听写" in prompts[0]) == (drift is None)
+    assert (final_srt.read_bytes(), media.read_bytes()) == before
 
 
 def test_postburn_review_reuses_valid_private_cpa_response(
@@ -663,6 +1392,87 @@ def test_postburn_review_reuses_valid_private_cpa_response(
     assert len(changed_context_calls) == 1
     assert changed["prior_postburn_subtitle_audio_review"] == completed_postburn
 
+
+
+def test_postburn_parser_recovery_preserves_original_doubt_without_new_dispatch(
+    tmp_path: Path, monkeypatch, mode=None
+) -> None:
+    from src.autoslice.final_review_auditor import FinalReviewAuditError
+    from src.autoslice.final_review_discovery_prompt import (
+        FINAL_SUBTITLE_AUDIT_PROMPT, LEGACY_FINAL_SUBTITLE_AUDIT_PROMPT)
+    from src.autoslice.final_review_schema_retry import schema_repair_prompt
+    from src.autoslice.jingting_chunker import parse_srt_cues
+
+    if mode is None:
+        monkeypatch.delenv('AUTOSLICE_FINAL_REVIEW_MODE', raising=False)
+    else:
+        monkeypatch.setenv('AUTOSLICE_FINAL_REVIEW_MODE', mode)
+    prompt_template = (FINAL_SUBTITLE_AUDIT_PROMPT if mode == 'per_finding'
+                       else LEGACY_FINAL_SUBTITLE_AUDIT_PROMPT)
+    record, final_srt, media = _postburn_record(tmp_path)
+    original_bytes = final_srt.read_bytes()
+    calls = []
+    response = json.dumps({"findings": [{
+        "cue": 4, "kind": "context", "repair_class": "disclosure_only",
+        "proposed_full_cue": None, "why": "无安全候选，需补听",
+        "content_risk": "meaning_reversal",
+        "risk_basis": "The synthetic current phrase has unresolved meaning damage.",
+    }]}, ensure_ascii=False)
+    _postburn_adapters(monkeypatch, response, calls)
+    actual_auditor = finalization.audit_final_subtitles
+
+    def old_parser(srt_text, *, llm_call, **kwargs):
+        from src.autoslice.surface_canon import CHANNEL_PROFILE
+        prompt = prompt_template.format(
+            host_name=CHANNEL_PROFILE.display_name,
+            host_short=CHANNEL_PROFILE.short_name,
+            max_findings=24,
+            numbered="\n".join(f"{i}. {cue.text}" for i, cue in enumerate(parse_srt_cues(srt_text), 1)),
+            glossary=kwargs["glossary_text"].strip() or "（无）",
+            structured_context=kwargs["structured_context_text"].strip() or "（无）",
+            candidate_context=kwargs["candidate_context_text"].strip() or "（无）",
+        )
+        llm_call(prompt)
+        llm_call(schema_repair_prompt(prompt, '{"invalid_rows":[{"cue":4}]}'))
+        raise FinalReviewAuditError("FINAL_REVIEW_RESPONSE_FINDINGS_ALL_INVALID", "old parser rejected explicit null")
+
+    monkeypatch.setattr(finalization, "audit_final_subtitles", old_parser)
+    chat_audit = _postburn_chat_audit(final_srt)
+    kwargs = dict(
+        cid="candidate", out_root=tmp_path,
+        recut=finalization.FinalRecutArtifacts(tmp_path, media, final_srt, None, None),
+        record=record, chat_authority_audit=chat_audit,
+        chat_authority_path=tmp_path / "chat.json",
+    )
+    with pytest.raises(SystemExit, match="POSTBURN_SUBTITLE_AUDIO_REVIEW_BLOCKED"):
+        finalization._run_postburn_subtitle_audio_review(**kwargs)
+    failed = chat_audit["postburn_subtitle_audio_review"]
+    assert len(calls) == 2
+    assert failed["status"] == "AUDITOR_UNAVAILABLE"
+    # Preserve the actual ordinary exact-final input separately from the
+    # failed discovery envelope, as the normal continuation consumer does.
+    ordinary = _postburn_chat_audit(final_srt)["final_review_audit"]
+    ordinary["postburn_subtitle_audio_review"] = failed
+    chat_audit["final_review_audit"] = ordinary
+    monkeypatch.setattr(finalization, "audit_final_subtitles", actual_auditor)
+    with pytest.raises(SystemExit, match="POSTBURN_SUBTITLE_AUDIO_REVIEW_BLOCKED"):
+        finalization._run_postburn_subtitle_audio_review(**kwargs)
+    recovered = chat_audit["postburn_subtitle_audio_review"]
+    assert recovered["cached_parser_recovery"] is True
+    assert recovered["status"] == "FLAGGED"
+    assert recovered["release_gate"] == "BLOCK"
+    assert recovered["findings"][0]["suspect"] == "这里有乱码需要审看"
+    assert recovered["findings"][0]["suggestion"] is None
+    assert len(recovered["cpa_calls"]) == 1
+    assert recovered["prior_postburn_subtitle_audio_review"] == failed
+    assert len(recovered["prior_postburn_subtitle_audio_review"]["cpa_calls"]) == 2
+    assert len(calls) == 2
+    assert final_srt.read_bytes() == original_bytes
+
+
+def test_per_finding_postburn_parser_recovery_preserves_original_doubt_without_new_dispatch(tmp_path, monkeypatch):
+    test_postburn_parser_recovery_preserves_original_doubt_without_new_dispatch(
+        tmp_path, monkeypatch, mode='per_finding')
 
 def test_postburn_checkpoint_blocks_replay_after_process_death(
     tmp_path: Path, monkeypatch
@@ -995,3 +1805,67 @@ def test_prepared_delivery_declares_gate_artifacts_as_unique_roles(
         "发布标题.subtitle-audio-correspondence.json",
         "发布标题.subtitle-audio-bcut.raw.json",
     }
+
+
+def test_postburn_template_change_is_a_new_bound_question_and_then_reuses(tmp_path, monkeypatch):
+    from copy import deepcopy
+    from src.autoslice import final_review_auditor as auditor
+
+    record, srt, media = _postburn_record(tmp_path)
+    calls = []
+    _postburn_adapters(monkeypatch, '{"findings":[]}', calls)
+    audit = _postburn_chat_audit(srt)
+    kwargs = dict(cid='candidate', out_root=tmp_path,
+        recut=finalization.FinalRecutArtifacts(tmp_path, media, srt, None, None),
+        record=record, chat_authority_audit=audit, chat_authority_path=tmp_path/'chat.json')
+    finalization._run_postburn_subtitle_audio_review(**kwargs)
+    first = deepcopy(audit['postburn_subtitle_audio_review'])
+    files = {Path(row[key]): Path(row[key]).read_bytes()
+             for row in first['cpa_calls'] for key in ('prompt_path', 'response_path')}
+    monkeypatch.setattr(auditor, '_AUDIT_PROMPT', auditor._AUDIT_PROMPT + '\nIndependent discovery policy revision.\n')
+    finalization._run_postburn_subtitle_audio_review(**kwargs)
+    second = deepcopy(audit['postburn_subtitle_audio_review'])
+    assert len(calls) == 2 and not second['cache_reused']
+    assert second['cpa_request']['request_sha256'] != first['cpa_request']['request_sha256']
+    assert second['prior_postburn_subtitle_audio_review'] == first
+    finalization._run_postburn_subtitle_audio_review(**kwargs)
+    assert len(calls) == 2 and audit['postburn_subtitle_audio_review']['cache_reused']
+    assert all(path.read_bytes() == raw for path, raw in files.items())
+
+
+@pytest.mark.parametrize('damage', [None, 'request', 'dispatch', 'outcome', 'raw'])
+def test_zero_dispatch_parser_failure_retains_only_its_verified_completed_parent(tmp_path, monkeypatch, damage):
+    from copy import deepcopy
+
+    record, srt, media = _postburn_record(tmp_path)
+    calls = []
+    _postburn_adapters(monkeypatch, '{"findings":[]}', calls)
+    audit = _postburn_chat_audit(srt)
+    kwargs = dict(cid='candidate', out_root=tmp_path,
+        recut=finalization.FinalRecutArtifacts(tmp_path, media, srt, None, None),
+        record=record, chat_authority_audit=audit, chat_authority_path=tmp_path/'chat.json')
+    finalization._run_postburn_subtitle_audio_review(**kwargs)
+    parent = deepcopy(audit['postburn_subtitle_audio_review'])
+    failed = {**deepcopy(parent), 'status':'AUDITOR_UNAVAILABLE', 'release_gate':'BLOCK',
+        'reason_codes':['POSTBURN_SUBTITLE_AUDIO_CPA_AMBIGUOUS_REPLAY'],
+        'error_type':'ValueError', 'cpa_calls':[], 'prior_postburn_subtitle_audio_review':parent}
+    if damage == 'request':
+        failed['cpa_request']['candidate_id'] = 'other'
+    elif damage == 'dispatch':
+        failed['cpa_calls'] = [{'dispatch_status':'RUNNING'}]
+    elif damage == 'outcome':
+        failed['status'] = 'OUTCOME_UNKNOWN'
+    elif damage == 'raw':
+        Path(parent['cpa_calls'][0]['response_path']).write_text('changed')
+    selected = finalization._completed_postburn_before_parser_failure(failed)
+    assert (selected is parent) == (damage is None)
+    assert len(calls) == 1
+    if damage is None:
+        # The normal snapshot writer compacts the envelope, retaining its exact
+        # full authority. The reader recovers that parent with no inferred PASS.
+        audit['postburn_subtitle_audio_review'] = failed
+        (tmp_path/'candidate.chat-authority.json').write_text(json.dumps(audit))
+        finalization.preserve_postburn_observation(tmp_path, 'candidate')
+        restored = finalization._load_postburn_observation(tmp_path, 'candidate')
+        assert restored == failed
+        assert finalization._completed_postburn_before_parser_failure(restored) == parent

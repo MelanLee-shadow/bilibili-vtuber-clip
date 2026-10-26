@@ -8,6 +8,7 @@ exercises this module with in-memory fakes.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import fcntl
 import hashlib
 import json
@@ -102,11 +103,8 @@ def bytes_sha256(value: bytes) -> str:
 
 
 def file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(4 * 1024 * 1024), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return "sha256:" + digest
 
 
 def _regular_file(path: Path, *, label: str) -> Path:

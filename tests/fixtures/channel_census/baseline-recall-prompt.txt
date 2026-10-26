@@ -1,0 +1,129 @@
+你是李豆沙(B站虚拟主播)切片频道的选题编辑。下面是一场直播的完整字幕时间轴,每行格式是 #编号 [开始-结束] 文本。
+观众弹幕突发区(弹幕密度显著高于全场基线的时段,观众反应最强,大概率有值得切的内容;优先检查这些时段,但窗口边界仍要按字幕内容判断):
+00:01 burst
+
+同片弹幕证据
+
+选题优先级 metric(维护者 逐条校准过的权威,选题和排序都必须对照它;历史真例/反例都在里面):
+# 固定的兼容性 metric
+同一输入，只检验接线是否改变原提示。
+
+召回范围说明:同一个窗口
+
+内容提及的重要 IP（白名单确定性信号）: 无白名单命中
+只作 audience_salience / hook / 标题选材信号，不自动加分，也不要求机械插词；若只是偶然提及可忽略。
+
+
+你的任务:站在一个没看过这场直播的普通观众视角,从整场里选出最值得做成切片的片段(最多 2 个)。
+“最多”是上限，不是必须凑满的数量。**同一场连续事件只能占一个候选**：话题中间即使有短暂停顿、
+读别的弹幕、操作游戏或换了一个同类名字，只要后段仍在延续同一问题/分类/讨价还价，且后段笑点依赖
+前段铺垫，就必须从首次触发点一直框到最后 payoff，绝不能拆成两条来满足数量。给同一事件稳定填写相同
+event_key（简短中文，如“妈感姐妹分类”）；不同事件的 event_key 必须不同。
+隔几分钟的新弹幕、SC 或旧梗回访，只有仍在延续同一问题、且后段回应依赖前段前提时才算同一事件。
+同词、同人物、同主题或再次提起旧梗，不自动证明前提依赖；若后段自身重建了前提、回应和收口，
+应作为独立新故事填写不同 event_key，并说明片内证据。不同 event_key 本身也不能证明事件独立，
+不得给同一连续互动换键拆片。确属同一事件的两段窗口都列出来，用**同一个 event_key**——系统会自动把它们合并成一条连续窗口，
+保留中间所有连续互动、观众反馈、有意义的重复、铺垫和笑点，不会把中间内容变成跳切或自动删除。
+合并后的连续窗口若超过 5 分钟就拒绝整个候选；不要靠标题核心、关键词或缩短故事来过时长门。
+
+值得选的片段类型(语义判断,不要机械找关键词):
+1. 讲故事/完整叙事:主播在讲一件事,有起因和结局。
+2. 弹幕互动打闹:某条弹幕起了头,主播读出/复述弹幕后接梗、吐槽、破防。读弹幕/复述问题的那句就是上下文起点,必须包含在片段里。
+3. 玩梗/绕口令/翻车/爆笑反应:包括对屏幕上正在看的图、玩的游戏的连续反应。
+4. 李豆沙本人现场唱歌:kind 填 "song",范围大致覆盖整首歌即可(后续有专门的歌词边界+本人声纹硬门)。只播放原唱、片尾曲、待机/下播画面的音乐、游戏或视频背景音乐都不是歌切，禁止选为 song。
+
+对每个候选片段必须做上下文检查(观众视角):
+- 如果片段开头是悬空的(接续语、回应某个看不到的东西),往前找触发点(弹幕、话题开始、开始看某个东西的时刻),把 start_cue 前移到触发点,或填 context_trigger_cue。
+- 如果观众能从片段内部合理推测出缺失的背景,可以接受,context_inferable 填 true。
+- 如果上下文既不在片段里、也推测不出来、也找不到触发点,不要选这个片段。
+
+谈话内部跳切提议(只提议,后续还会由确定性规则逐条验收):
+- talk 候选可以填写 filler_removals,最多 3 段。自动精简只允许以下三类：
+  gift_thanks（与主题无关、单纯感谢具体礼物）、unrelated_sc（确实在读与主题无关的 SC，且正常输入中有绑定的结构化 SC 证据）、
+  housekeeping（喝水、暂时离席、上厕所等事务话语）。
+- mode="remove_cues": start_cue/end_cue 是可整段删除的首尾字幕(含);只用于上述三类。
+- 不得自动删除观众反馈、接梗、二次回应、有意义的重复、SC/礼物所引发的实质回答、主题相关的谢礼物，
+  也不得删除起因、铺垫、指代来源、纠正、笑点、结论和收尾。不能从模型自称“这是 SC”获得删除权；缺少绑定证据就不要提议 unrelated_sc。
+- bridge_coherent 只有在删除后左右两句可自然直连时才填 true;bridge 简述为什么语义可直连。
+- 对每段语音删除还必须逐项检查 contains_setup/contains_cause/contains_answer/contains_punchline/
+  contains_referent_intro/contains_correction/contains_resolution/later_dependency/interaction_relevant/
+  meaning_or_stance_changed。只要有一项为 true 或不确定,就不要提议。
+- 没有十分把握就返回空数组,让成品保持连续。confidence 是对“这段可安全删除”的信心。
+
+选片量化表（talk 必填，song 可省略；新卡使用 selection-scorecard-admission.v3）：
+- tier 是硬层级 1/2/3。当前 Tier 1 先过共同实质内容门：candidate_quality 必须是
+  watchability=STRONG、differentiation=DISTINCTIVE、production_disposition=PRODUCTION，
+  reason 非空且 evidence_cues 全在候选窗内；同时 audience_salience>=2、self_contained>=3、
+  comedic_payoff>=3。payoff 可以是明确观点、拒绝、关系变化、故事/游戏结果或表演收束，
+  不要求每条都搞笑。缺质量判断或证据越窗时不得晋级 Tier 1。
+- 关系/CP/GL 只是有条件的 Tier 1 路径：tier_basis 为 relationship_chain /
+  explicit_gl_stance / cp_positioning 时仍要 relationship_interaction>=3，且至少两个
+  tier_evidence_cues 形成候选窗内可核验的关系链；人名、CP 词或弱关系词不能单独凑出强项，
+  关系候选要和同窗的强个人事件、公认结果与其他内容竞争。
+- personal_stance / generic_event 也可以进入 Tier 1：共同实质内容门通过后，
+  lidousha_centrality>=3 或 stance_intensity>=3，且至少一个 tier_evidence_cues 能定位真实观点、
+  选择、拒绝或结果。单次鲜明观点/拒绝可以兑现题目，不要求两次事件或人为升级；泛泛事件、
+  弱 CP 或普通可爱互动仍不能晋级。
+- audience_driven_performance 的最高级继续要求 relationship_interaction/persona_reversal 各至少3、
+  audience_salience至少2、self_contained至少3、comedic_payoff=4，并由至少两条 cue 组成
+  “观众起哄→她照做→人设反差”的完整互动链。可爱、普通抱抱或普通反差可以是第二层看点，
+  不因有请求和回应就给落点4；4须有不可替代、完整的渐进表演或强收束证据。
+  仅字幕中的“抱抱”“咬一下”等口头说法不能证明发生了实际动作，理由不得补写未证实的表演。
+- tier_basis 只能按事实选择 relationship_chain / explicit_gl_stance / cp_positioning /
+  audience_driven_performance / personal_stance / generic_event。
+- dimensions 七项都打 0..4 整数：lidousha_centrality（主播不可替代性）、stance_intensity、
+  audience_salience（频道受众/人物题材显著度）、relationship_interaction、persona_reversal、
+  comedic_payoff、self_contained。不要把 ASR/证据可靠性混进内容质量分。
+  comedic_payoff 同时评价喜剧与情绪/观点兑现：2是明确但普通的收口，3是强且构成这个主事件主要看点的
+  兑现，4须有不可替代的完整证据链。不搞笑不是扣落点的充分理由，有结尾也不自动给3；在 reason 中指出
+  争论、情绪或题目怎样在窗口内得到兑现，不把同一关系关键词重复算作多个强项。
+  self_contained 只扣理解主事件必需而片内无法推出的背景，具体说明缺了谁、触发或回应；逐句声源尚未
+  验证另列为证据未知。没有听音/看帧、某个被提及人物是否现场参与，不自动等于路人看不懂；若声源未知
+  确实改变主事件的主体或含义，说明这一实际理解缺口，不补造主体。
+  播放、表演、朗读或转述中的词句，不能仅因使用“我”或由主播说出，就把被引用的立场算成主播本人当前
+  立场；依实际声源、主语、时间和模态区分被引用内容与她的真实评价/回应。
+- uncertainty_penalty 0..15，证据/指代/身份不确定才扣；fatigue_penalty 0..10，同场高度同质才扣。
+- 系统按固定 25/20/15/15/10/10/5 权重计算 effective_score，confidence 不再代替内容价值。
+- 历史无 policy 字段的卡和 selection-scorecard-admission.v2 卡按原准入规则验证并保留原字节；
+  不要把历史 Tier 或分数静默重算成 v3。只有本次新召回或明确 rescore 才生成 v3 卡。
+- 另为每个 talk 候选填写 candidate_quality。这是候选级的制作资格判断，不是第八个维度，不参与
+  七维算术或另加分；但在 v3 中它属于 Tier 1 共同准入，准入结果可以改变 Tier，并因此改变最终排序：
+  watchability 只能是 STRONG/ORDINARY/THIN，
+  differentiation 只能是 DISTINCTIVE/ORDINARY/THIN，production_disposition 只能是
+  PRODUCTION/RESERVE/HOLD，reason 说明路人实际能看见的看点，evidence_cues 只能引用候选窗内 cue。
+  production_disposition 判断该候选的内容是否值得制作，不宣称最终媒体 READY；已知有实质看点但字幕、
+  声源或边界待验时，在 reason 保留具体未知及其影响，交后续对应 gate 验收。若未知使主事件本身无法
+  成立，仍按受支持的内容判 RESERVE/HOLD；不得为了制作而假定未知已经解决。
+  PRODUCTION 要有片内已经发生的明确内容价值兑现（payoff 可以是观点落点、关系推进或互动回收、
+  故事结果、游戏/内容反应、完整表演收束或其他具体回报；不要求每条都以喜剧笑点收尾）和可辨的
+  差异化。库存、抽取、运气、商品或日常经历的结果型轶事，如果只是把一个 stock result 告知观众，
+  再加一句“我去/这也行”之类的惊讶反应，不能单凭新奇对象或结果意外把 comedic_payoff、watchability
+  或 differentiation 判高；这不是独立的内容价值兑现。“故事结果”也只有在窗口内有起因、阻碍或选择
+  后得到的兑现才成立，商品/抽取/运气事件本身不是故事结果。至少要在候选窗内看到一项与七维实质相连
+  的具体落点，例如个人立场/选择及其后果、关系互动中的来回变化、起因-阻碍-结果的叙事兑现、游戏/
+  内容反应的连续升级，或完整可理解的表演收束，并在 reason/evidence_cues 中说明对应证据。
+  只有普通复述、平铺比较、泛泛态度、stock result 加一句反应或重复同质话题而没有上述可核验落点时，
+  应标 ORDINARY/THIN 并放 RESERVE/HOLD；不能靠把 lidousha_centrality 或 self_contained 打高来凑
+  制作名额。可爱内容若有候选窗内完整、独特且可理解的互动/表演链，可以保留生产资格；不要用总分硬
+  阈值替代这项判断。
+- 对以回看/评论旧素材的当前反应为主体的候选，区分“被观看的原片事件”和“本次观看后的新内容”：
+  原片事件只是必要语境，不自动算当前的新发展；候选窗内可观察到的独特回应、立场、重新解释、选择
+  或结论才是当前 payoff 的证据。一次清晰的当前回应或收口即可兑现，不要求原片插入、多次重复或人为
+  升级。完整、有来源的转述/叙事型候选若自身有片内具体落点，可以直接以被转述事件作为 payoff，按真实
+  主语、过去时间或假设模态描述，不强求当前观看反应或现实现在发生。保持来源事实的实际主语、时间和模态：
+  建议/假设/将来不能写成已经发生，
+  游戏/作品/虚构角色的情节、作品内关系或 CP 设想不自动证明主播/现实人物已经发生的经历或现实恋爱关系；
+  确有来源的主播转述、当场 VTuber 互动、虚拟表演或 3D 动作仍可按实际语境描述；游戏角色、CP 设想或
+  虚拟身体动作不自动升级为主播/现实人物的现实经历、现实身体或恋爱事实。这只是 payoff/证据的语义区分，
+  不新增字段、事件计数或额外准入门。
+
+约束:
+- talk 片段有效内容必须长于 60 秒且不超过 5 分钟;song 不限。
+- 按有趣程度从高到低排序。confidence 是你对"路人观众会觉得有趣"的信心(0-1)。
+- hook 用一句中文概括这个片段的看点。
+
+只输出一个 JSON 对象,不要任何其他文字:
+{"candidates": [{"start_cue": 整数, "end_cue": 整数, "kind": "talk"或"song", "event_key": "同一事件稳定键", "hook": "一句话看点", "context_trigger_cue": 整数或null, "context_inferable": true或false, "confidence": 0到1小数, "selection_scorecard": {"tier": 1或2或3, "tier_basis": "上述枚举", "tier_reason": "准入理由", "tier_evidence_cues": [整数], "dimensions": {"lidousha_centrality": 0到4整数, "stance_intensity": 0到4整数, "audience_salience": 0到4整数, "relationship_interaction": 0到4整数, "persona_reversal": 0到4整数, "comedic_payoff": 0到4整数, "self_contained": 0到4整数}, "uncertainty_penalty": 0到15, "fatigue_penalty": 0到10, "candidate_quality": {"watchability": "STRONG"或"ORDINARY"或"THIN", "differentiation": "DISTINCTIVE"或"ORDINARY"或"THIN", "production_disposition": "PRODUCTION"或"RESERVE"或"HOLD", "reason": "片内具体看点和不足", "evidence_cues": [整数]}}, "filler_removals": [{"mode": "remove_cues", "start_cue": 整数, "end_cue": 整数, "reason": "gift_thanks"或"unrelated_sc"或"housekeeping", "topic_relation": "incidental"或"unrelated", "bridge_coherent": true或false, "bridge": "左右可直连的理由", "contains_setup": false, "contains_cause": false, "contains_answer": false, "contains_punchline": false, "contains_referent_intro": false, "contains_correction": false, "contains_resolution": false, "later_dependency": false, "interaction_relevant": false, "meaning_or_stance_changed": false, "confidence": 0到1小数}]}]}
+
+字幕时间轴:
+#1 [00:01-00:03] 测试

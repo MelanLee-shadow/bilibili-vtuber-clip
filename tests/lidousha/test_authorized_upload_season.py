@@ -91,7 +91,7 @@ class FakeBili:
         self._title: str | None = None
         self._aid = 111
         self._cid = 222
-        self._bvid = "BV1TEST"
+        self._bvid = "BV1Tst46ABcd"
         self.member_source = au.EXPECTED_SOURCE
 
     def build(self, cookie_json):
@@ -244,7 +244,11 @@ def _mk(
     season_args=(),
     *,
     video_bytes=b"fake-video-bytes",
+    clip_profile=None,
+    burn_intro=None,
 ):
+    """``clip_profile`` is the record's transcribed form; ``burn_intro`` says
+    whether the synthetic burn carried the intro (default: every non-song)."""
     video = tmp_path / "clip.mp4"
     cover = tmp_path / "clip.cover.png"
     video.write_bytes(video_bytes)
@@ -277,11 +281,19 @@ def _mk(
             "fallback_used": False,
         },
         "upload_tags": {"engine": "test", "status": "OK", "final_tags": TEST_TAGS},
+        **({"clip_profile": clip_profile} if clip_profile is not None else {}),
     }, ensure_ascii=False), encoding="utf-8")
     # Supply synthetic inputs to the real audio gate; do not mock it to PASS.
+    if burn_intro is None:
+        burn_intro = not title.startswith(au.SONG_TITLE_PREFIX)
     audio_bound = bind_synthetic_audio_evidence(
         json.loads(record.read_text(encoding="utf-8")), video=video, subtitle=subtitle,
+        **({} if burn_intro else {"intro_offset_ms": 0}),
     )
+    if not burn_intro:
+        # A real song (SONG-07) or non-protagonist burn records no intro
+        # binding; the package audit rejects one for those clip forms.
+        audio_bound["burned_preview"]["branding_intro"] = None
     record.write_text(json.dumps(audio_bound, ensure_ascii=False), encoding="utf-8")
     (tmp_path / "review_manifest.json").write_text(json.dumps({
         "items": [{
@@ -318,7 +330,7 @@ def _mk(
     return rc, manifest
 
 
-def _uploader(tmp_path, bvid="BV1TEST"):
+def _uploader(tmp_path, bvid="BV1Tst46ABcd"):
     stub = tmp_path / "stub_upload.sh"
     body = "#!/bin/bash\necho rc=0\n"
     if bvid:
@@ -371,7 +383,7 @@ def test_build_season_http_really_constructs_requests(
     http, csrf = au._build_season_http(cookie_json)
     assert csrf == "csrf-value"
 
-    assert http(au.VIEW_API.format(bvid="BV1X"))["code"] == 0
+    assert http(au.VIEW_API.format(bvid="BV1Xxx46ABcd"))["code"] == 0
     assert "sess-value" in seen[0].get_header("Cookie")
     assert seen[0].get_header("Referer") == "https://www.bilibili.com/"
     redirected = _urlreq.HTTPRedirectHandler().redirect_request(
@@ -497,7 +509,7 @@ def test_upload_finishes_season_add_and_public_verify(tmp_path, monkeypatch, cap
     sidecar = json.loads((tmp_path / "clip.season_verify.json").read_text())
     assert sidecar["status"] == "IN_SEASON_PUBLIC"
     assert sidecar["ugc_season_title"] == "小李切片"
-    assert sidecar["bvid"] == "BV1TEST"
+    assert sidecar["bvid"] == "BV1Tst46ABcd"
     assert json.loads((tmp_path / "clip.public_verify.json").read_text())["status"] == "VERIFIED_PUBLIC"
     assert json.loads((tmp_path / "clip.uploaded.json").read_text())["status"] == "VERIFIED_PUBLIC"
     assert any(
@@ -639,14 +651,17 @@ def test_queue_blocks_started_only_then_explicit_bvid_recovery_closes_it(
         repository_root=tmp_path,
         runtime_root=tmp_path,
         enabled=True,
-        graph_builder=must_not_act,
+        graph_builder=lambda **_kwargs: {
+            'graph_blockers': [], 'rows': [{'candidate_id': 'held',
+            'recording_date': '2026-10-13', 'category': 'READY_FOR_SERIAL_UPLOAD',
+            'package_dependencies': {'upload_manifest': str(manifest)}}]},
         upload_call=must_not_act,
         ledger_reader=au.read_ledger,
         ledger_guard=au.ledger_guard,
     )
-    assert blocked["status"] == "BLOCKED_LEDGER"
-    assert blocked["reason_codes"] == ["UPLOAD_ATTEMPT_OUTCOME_UNRESOLVED"]
-    assert blocked["attempt_id"] == started["attempt_id"]
+    assert blocked["status"] == "BLOCKED_CONTENT"
+    assert blocked["reason_codes"] == ["UPLOAD_CONTENT_HELD"]
+    assert blocked["skipped_content_holds"][0]["attempt_id"] == started["attempt_id"]
     assert blocked["side_effect_attempted"] is False
     before_recovery = ledger.read_bytes()
 
@@ -709,7 +724,7 @@ def test_queue_blocks_started_only_then_explicit_bvid_recovery_closes_it(
     "ledger_order",
     [("A_POSTED", "B_STARTED"), ("B_STARTED", "A_POSTED")],
 )
-def test_multicandidate_real_ledger_blocks_then_recovers_without_reupload(
+def test_multicandidate_real_ledger_recovers_independent_attempt_without_reupload(
     tmp_path,
     monkeypatch,
     ledger_order,
@@ -759,15 +774,15 @@ def test_multicandidate_real_ledger_blocks_then_recovers_without_reupload(
 
     def graph_forbidden(**_kwargs):
         callbacks["graph"] += 1
-        raise AssertionError("unresolved ledger must stop before readiness")
+        raise AssertionError("posted recovery must precede readiness")
 
     def action_forbidden(*_args, **_kwargs):
         callbacks["upload"] += 1
-        raise AssertionError("unresolved ledger must stop before action")
+        return 6  # Observe A's legal recovery entry; this fixture leaves its ledger unchanged.
 
     def prepare_forbidden(*_args, **_kwargs):
         callbacks["prepare"] += 1
-        raise AssertionError("unresolved ledger must stop before preparation")
+        raise AssertionError("posted recovery must precede preparation")
 
     blocked = consume_ready_publication_queue(
         repository_root=tmp_path,
@@ -779,11 +794,11 @@ def test_multicandidate_real_ledger_blocks_then_recovers_without_reupload(
         ledger_reader=au.read_ledger,
         ledger_guard=au.ledger_guard,
     )
-    assert blocked["status"] == "BLOCKED_LEDGER"
-    assert blocked["reason_codes"] == ["UPLOAD_ATTEMPT_OUTCOME_UNRESOLVED"]
-    assert blocked["attempt_id"] == started_b["attempt_id"]
-    assert blocked["side_effect_attempted"] is False
-    assert callbacks == {"graph": 0, "upload": 0, "prepare": 0}
+    assert blocked["status"] == "FOLLOWUP_PENDING"
+    assert blocked["action"]["attempt_id"] == "attempt-A"
+    assert blocked["quarantined_attempts"][0]["attempt_id"] == started_b["attempt_id"]
+    assert blocked["side_effect_attempted"] is True
+    assert callbacks == {"graph": 0, "upload": 1, "prepare": 0}
 
     def must_not_upload(*_args, **_kwargs):
         raise AssertionError("recovery must not call an uploader subprocess")
@@ -1011,21 +1026,21 @@ def test_normal_runner_restart_recovers_multicandidate_real_ledger_without_reupl
 
     def upload_forbidden(_argv):
         callbacks["upload"] += 1
-        raise AssertionError("unresolved ledger must not call an action")
+        return 6  # A may enter exact recovery while B remains held.
 
     def prepare_forbidden(*_args, **_kwargs):
         callbacks["prepare"] += 1
         raise AssertionError("ledger dependency must resolve before preparation")
 
-    # Fresh import 1: B's STARTED-only intent blocks globally before any graph
-    # or action, even when A's recoverable FINISHED row appears first.
+    # Fresh import 1: B is held, while A may enter its independent recovery.
+    # The observational callback leaves A uncommitted for the later real fixture.
     fresh = configure_fresh_runner(
         graph_builder=graph_forbidden,
         upload_call=upload_forbidden,
     )
     assert fresh.tick() == 0
-    assert callbacks == {"graph": 0, "upload": 0, "prepare": 0}
-    assert "publication_queue=BLOCKED_LEDGER" in heartbeats[-1]
+    assert callbacks == {"graph": 0, "upload": 1, "prepare": 0}
+    assert "publication_queue=FOLLOWUP_PENDING" in heartbeats[-1]
     ambiguity_logs = [
         row for row in logs if "UPLOAD_ATTEMPT_OUTCOME_UNRESOLVED" in row
     ]
@@ -1123,7 +1138,7 @@ def test_normal_runner_restart_recovers_multicandidate_real_ledger_without_reupl
     assert fresh.tick() == 0
     assert "publication_queue=NO_READY_ACTION" in heartbeats[-1]
     assert graph_calls == 1
-    assert callbacks == {"graph": 0, "upload": 0, "prepare": 0}
+    assert callbacks == {"graph": 0, "upload": 1, "prepare": 0}
 
     rows = [json.loads(line) for line in ledger.read_text().splitlines()]
     assert [row["event"] for row in rows].count("UPLOAD_ATTEMPT_STARTED") == 2
@@ -1250,15 +1265,17 @@ def test_upload_respects_explicit_none_and_skip_flag(tmp_path, monkeypatch, caps
     assert rc == 0
     assert not fake.added_sections  # opt-out 不触碰 season mutation API
 
-    rc, manifest2 = _mk(tmp_path)
+    skip_root = tmp_path / "skip-case"
+    skip_root.mkdir()
+    rc, manifest2 = _mk(skip_root)
     assert rc == 0
     rc = au.main([
         "upload", "--manifest", str(manifest2), "--ledger", str(tmp_path / "l2.jsonl"),
-        "--uploader", str(_uploader(tmp_path)), "--skip-season",
+        "--uploader", str(_uploader(skip_root)), "--skip-season",
         "--cookie-json", str(tmp_path / "unused.json"),
     ])
     assert rc == 6
-    assert json.loads((tmp_path / "clip.public_verify.json").read_text())["status"] == "SKIPPED_BY_EMERGENCY_FLAG"
+    assert json.loads((skip_root / "clip.public_verify.json").read_text())["status"] == "SKIPPED_BY_EMERGENCY_FLAG"
 
 
 def test_legacy_manifest_remains_verify_readable_but_cannot_new_upload(tmp_path):
@@ -1268,6 +1285,7 @@ def test_legacy_manifest_remains_verify_readable_but_cannot_new_upload(tmp_path)
     data["manifest_version"] = 2
     data.pop("schema_version")
     data.pop("package_attestation")
+    data.pop("content_identity", None)
     data.pop("description")
     data.pop("publish_policy")
     del data["season"]  # 之前的 manifest 没有 season 键

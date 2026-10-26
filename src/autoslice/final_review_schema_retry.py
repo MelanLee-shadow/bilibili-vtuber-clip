@@ -5,6 +5,31 @@ from __future__ import annotations
 import json
 from functools import wraps
 from typing import Any, Callable, Mapping, Sequence
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class FindingCueContract:
+    cue_count: int | None
+    field: str = "cue"
+    legacy_field: str = "cue_index"
+
+    @property
+    def prompt_fragment(self):
+        return f'"{self.field}": 编号'
+
+    @property
+    def response_schema(self):
+        return {"type": "integer", "minimum": 1, **(
+            {"maximum": self.cue_count} if self.cue_count is not None else {})}
+
+    def available(self, cue_index):
+        return 1 <= cue_index <= self.cue_count
+
+
+def finding_cue_contract(cue_count=None):
+    """The discovery field, legacy alias and current numbered-cue domain."""
+    return FindingCueContract(cue_count)
 
 
 _SCHEMA_REPAIR_INSTRUCTION = """
@@ -33,6 +58,15 @@ def schema_repair_prompt(prompt: str, diagnostics: str = "") -> str:
 
     detail = diagnostics.strip()[:4_000] or "（无可用诊断；重新严格检查合同）"
     return prompt + _SCHEMA_REPAIR_INSTRUCTION.format(diagnostics=detail)
+
+
+def is_schema_repair_prompt_for(prompt: str, original_prompt: str) -> bool:
+    """Recognize the one existing schema-repair suffix without rebinding it."""
+    prefix, suffix = _SCHEMA_REPAIR_INSTRUCTION.split("{diagnostics}")
+    prefix = original_prompt + prefix
+    # Rendering unescapes the literal JSON braces in the suffix.
+    suffix = suffix.format()
+    return prompt.startswith(prefix) and prompt.endswith(suffix)
 
 
 def schema_repair_allowed_cues(diagnostics: str) -> set[int]:
@@ -148,12 +182,13 @@ def normalize_finding_cue(
 ) -> tuple[int | None, str | None, dict[str, Any] | None]:
     """Normalize the cue field while retaining the exact rejection diagnostic."""
 
+    contract = finding_cue_contract(cue_count)
     if not isinstance(row, dict):
         return None, None, {"reason": "ROW_NOT_OBJECT"}
     normalization = None
-    raw_cue = row.get("cue")
-    if raw_cue is None and row.get("cue_index") is not None:
-        raw_cue = row.get("cue_index")
+    raw_cue = row.get(contract.field)
+    if raw_cue is None and row.get(contract.legacy_field) is not None:
+        raw_cue = row.get(contract.legacy_field)
         normalization = "cue_index_to_cue"
     try:
         cue_index = int(raw_cue)
@@ -162,7 +197,7 @@ def normalize_finding_cue(
             "reason": "CUE_MISSING_OR_INVALID",
             "keys": sorted(str(key) for key in row)[:24],
         }
-    if not 1 <= cue_index <= cue_count:
+    if not contract.available(cue_index):
         return None, normalization, {
             "reason": "CUE_OUT_OF_RANGE",
             "cue": cue_index,

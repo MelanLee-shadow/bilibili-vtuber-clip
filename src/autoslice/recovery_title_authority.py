@@ -19,6 +19,7 @@ from typing import Mapping
 from src.autoslice.title_policy import (
     canonicalize_publish_title,
     manual_title_override,
+    publish_title_lane,
     publish_title_policy_violations,
 )
 
@@ -255,9 +256,10 @@ def _validated_source_receipt(
     raw: bytes,
 ) -> tuple[str, str, int, int]:
     title, bvid, aid, cid = _validated_source_identity_receipt(raw)
+    lane = publish_title_lane(title)
     if (
-        canonicalize_publish_title(title, lane="talk") != title
-        or publish_title_policy_violations(title, lane="talk")
+        canonicalize_publish_title(title, lane=lane) != title
+        or publish_title_policy_violations(title, lane=lane)
     ):
         raise RecoveryTitleAuthorityError(
             "RECOVERY_PUBLIC_TITLE_POLICY_INVALID"
@@ -303,22 +305,23 @@ def _validated_publication_entry(
     _positive_int(entry.get("aid"))
     _positive_int(entry.get("cid"))
     manual = manual_title_override(candidate_id)
+    lane = publish_title_lane(observed_title)
     if title_mode == "verified_public_exact":
         if (
             manual is not None
-            or canonicalize_publish_title(observed_title, lane="talk")
+            or canonicalize_publish_title(observed_title, lane=lane)
             != observed_title
-            or publish_title_policy_violations(observed_title, lane="talk")
+            or publish_title_policy_violations(observed_title, lane=lane)
         ):
             raise RecoveryTitleAuthorityError(
                 "RECOVERY_PUBLICATION_TITLE_MODE_INVALID"
             )
     elif (
         manual is None
-        or observed_title not in {manual, canonicalize_publish_title(manual, lane="talk")}
+        or observed_title not in {manual, canonicalize_publish_title(manual, lane=lane)}
         or publish_title_policy_violations(
-            canonicalize_publish_title(manual, lane="talk"),
-            lane="talk",
+            canonicalize_publish_title(manual, lane=lane),
+            lane=lane,
         )
     ):
         raise RecoveryTitleAuthorityError(
@@ -483,7 +486,7 @@ def expected_recovery_publish_title(
 
     title = str(authority["observed_public_title"])
     if authority["title_mode"] == "reviewer_manual_override":
-        return canonicalize_publish_title(title, lane="talk")
+        return canonicalize_publish_title(title, lane=publish_title_lane(title))
     return title
 
 
@@ -810,7 +813,7 @@ def validate_recovery_title_authority(
     manual = manual_title_override(candidate_id)
     if (
         manual is not None
-        and canonicalize_publish_title(manual, lane="talk") != title
+        and canonicalize_publish_title(manual, lane=publish_title_lane(title)) != title
     ):
         raise RecoveryTitleAuthorityError(
             "RECOVERY_PUBLIC_TITLE_CONFLICTS_MANUAL_OVERRIDE"

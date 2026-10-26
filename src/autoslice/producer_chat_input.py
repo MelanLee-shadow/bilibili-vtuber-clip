@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import re
 from dataclasses import replace
 from pathlib import Path
 from typing import Mapping, Sequence
+import xml.etree.ElementTree as ElementTree
 
 from .chat_authority import ChatEvidence, load_chat_jsonl, recording_start_epoch_ms
 from .danmaku_evidence import load_danmaku_xml
@@ -119,6 +121,61 @@ def _load_superchats(jsonl_path: Path) -> list[tuple[int, str, str]]:
         for item in load_chat_jsonl(jsonl_path)
         if item.kind == "superchat"
     ]
+
+
+def _load_xml_superchats(
+    payload: bytes,
+    *,
+    source_path: Path,
+    source_sha256: str,
+) -> list[ChatEvidence]:
+    """Read only the source-bound Super Chats from a healthy blrec XML.
+
+    blrec stores ``<sc>`` events in the same XML as ordinary ``<d>`` rows.
+    The SC clock is a recording-relative second value, so it follows the same
+    source timeline as ``DanmakuItem.offset_ms``.  The recorder has no native
+    SC event id in this format; bind a deterministic digest to the immutable
+    source bytes and the event's document ordinal instead of consuming the
+    unrelated ``raw``/token/portrait attributes.
+    """
+
+    try:
+        root = ElementTree.fromstring(payload.decode("utf-8", errors="replace"))
+    except ElementTree.ParseError as exc:
+        raise StructuredChatEvidenceError(
+            "DANMAKU_XML_PARSE_FAILED",
+            evidence={"source_path": str(source_path)},
+        ) from exc
+
+    evidence: list[ChatEvidence] = []
+    for ordinal, node in enumerate(root.iter("sc")):
+        message = (node.text or "").strip()
+        if not message:
+            continue
+        try:
+            seconds = float(node.get("ts"))
+            if not math.isfinite(seconds) or seconds < 0:
+                continue
+            offset_ms = int(seconds * 1_000)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        sender = (node.get("user") or "").strip()
+        event_material = (
+            f"xml-superchat\0{source_sha256}\0{ordinal}\0{offset_ms}\0{sender}\0{message}"
+        ).encode("utf-8")
+        source_event_id = "xml-sc-" + hashlib.sha256(event_material).hexdigest()
+        evidence.append(
+            ChatEvidence(
+                "superchat",
+                offset_ms,
+                message,
+                sender,
+                str(source_path),
+                source_sha256,
+                source_event_id,
+            )
+        )
+    return evidence
 
 
 def _piece_chat_evidence(piece: dict) -> list[ChatEvidence]:
@@ -258,6 +315,14 @@ def _piece_chat_evidence(piece: dict) -> list[ChatEvidence]:
             )
             for item in xml_items
         )
+        if not any(item.kind == "superchat" for item in jsonl_items):
+            evidence.extend(
+                _load_xml_superchats(
+                    xml_payload,
+                    source_path=xml_path,
+                    source_sha256=xml_sha256,
+                )
+            )
     else:
         evidence.extend(item for item in jsonl_items if item.kind == "danmaku")
     evidence.extend(item for item in jsonl_items if item.kind in {"superchat", "gift", "guard"})

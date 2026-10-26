@@ -7,7 +7,7 @@ and package gates in force.
 
 from __future__ import annotations
 
-import hashlib
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import re
 from pathlib import Path
 from typing import Callable, Mapping
@@ -22,11 +22,8 @@ _SHA256 = re.compile(r"(?:sha256:)?([0-9a-f]{64})\Z")
 
 
 def _digest(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return "sha256:" + digest
 
 
 def _expected_sha(value: object, *, label: str) -> str:
@@ -126,6 +123,10 @@ def select_nonaggregate_transcriber_builder(
 
     def builder(_host: str, **_kwargs: object) -> Callable[..., str]:
         def transcribe(_media: Path, _spans: object) -> str:
+            # A later boundary supplement may ask this callable to transcribe
+            # different bytes. The seed surface has no authority for them.
+            if _digest(_regular_file(_media, label="requested media")) != receipt["source_media_sha256"]:
+                raise ValueError("existing subtitle requested media sha256 does not match")
             return text
 
         return transcribe

@@ -39,6 +39,7 @@ from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
     validate_recovery_publication_authority,
 )
+from src.autoslice.review_evidence_store import load_review
 from scripts.build_daily_review_manifest import (
     DailyManifestError,
     _rebuild_package_speaker_evidence,
@@ -59,7 +60,7 @@ class ManifestBuildError(ValueError):
 
 def _load_json(path: Path) -> dict[str, Any]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = load_review(path)
     except (OSError, ValueError) as exc:
         raise ManifestBuildError(f"unreadable JSON: {path}: {exc}") from exc
     if not isinstance(value, dict):

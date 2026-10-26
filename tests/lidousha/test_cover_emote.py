@@ -19,8 +19,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.autoslice import cover_emote, publish_staging  # noqa: E402
-from src.autoslice.cover_emote import (  # noqa: E402
+from src.autoslice import cover_emote, publish_staging
+from src.autoslice.cover_emote import (
     EMPTY_EMOTE_LIBRARY,
     EmoteEntry,
     EmoteLibrary,
@@ -30,7 +30,7 @@ from src.autoslice.cover_emote import (  # noqa: E402
     normalize_emote_choice,
     resolve_emote_reference,
 )
-from src.autoslice.cover_generation import (  # noqa: E402
+from src.autoslice.cover_generation import (
     _cover_art_direction,
     _cover_prompt,
 )
@@ -205,7 +205,7 @@ def test_load_emote_library_respects_enabled_false(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Strong-reason gating
+# Candidate eligibility (CPA still scores actual fit)
 # ---------------------------------------------------------------------------
 
 def test_normalize_emote_choice_accepts_strong_replace_pick():
@@ -223,12 +223,11 @@ def test_normalize_emote_choice_accepts_strong_replace_pick():
         ("09", False),                                                # not an object
         ({"id": "77", "mode": "replace", "reason": STRONG_REASON}, False),  # unknown id
         ({"id": "09", "mode": "overlay", "reason": STRONG_REASON}, False),  # bad mode
-        ({"id": "09", "mode": "replace", "reason": "好看"}, False),         # bare reason
         ({"id": "09", "mode": "replace"}, False),                           # no reason
         ({"id": "09", "mode": "replace", "reason": STRONG_REASON}, True),   # song cover
     ],
 )
-def test_normalize_emote_choice_falls_back_to_default_redraw(value, is_song):
+def test_normalize_emote_choice_rejects_invalid_or_song_pick(value, is_song):
     assert normalize_emote_choice(value, library=_library(), is_song=is_song) == ("", "", "")
 
 
@@ -253,7 +252,7 @@ def test_art_direction_baseline_never_picks_an_emote():
 def test_art_direction_judge_emote_pick_survives_normalization():
     def judge(prompt: str) -> str:
         # The catalog and the emote output field are offered on talk covers.
-        assert "表情包(可选,默认不用)" in prompt
+        assert "正式候选素材" in prompt
         assert '"emote"' in prompt
         return json.dumps(
             {"emote": {"id": "09", "mode": "replace", "reason": STRONG_REASON}},
@@ -274,7 +273,7 @@ def test_art_direction_judge_emote_pick_survives_normalization():
 
 def test_art_direction_song_prompt_offers_no_emotes_and_strips_picks():
     def judge(prompt: str) -> str:
-        assert "表情包(可选,默认不用)" not in prompt  # songs never see the catalog
+        assert "正式候选素材" not in prompt  # songs never see the catalog
         return json.dumps(
             {"emote": {"id": "09", "mode": "replace", "reason": STRONG_REASON}},
             ensure_ascii=False,
@@ -307,10 +306,11 @@ def test_art_direction_fail_open_keeps_no_emote():
 
 def test_emote_catalog_prompt_block_lists_policy_and_entries():
     block = emote_catalog_prompt_block(_library(_entry(), _entry(id="25", label="只是熊猫", subject="panda_creature")))
-    assert "默认必须用人物重绘" in block
+    assert "先列候选再按实际成品评分" in block
+    assert "近5张不得重复" in block
     assert "- 09 打call" in block
     assert "兽形熊猫本体" in block
-    assert "歌切封面永不使用表情包" in block
+    assert "歌切封面继续独立规则，不用表情包" in block
     assert emote_catalog_prompt_block(EMPTY_EMOTE_LIBRARY) == ""
 
 
@@ -497,15 +497,20 @@ def _fake_image_edit(captured: dict):
         Image.new("RGB", (1920, 1080), (30, 80, 140)).save(output_path)
         return {"status": "AI_BACKGROUND_READY", "output_path": str(output_path)}
 
+    image_edit.cpa_cache_identity = {"transport": "offline-fixture", "model": "solid-color-existing-image-fixture"}
     return image_edit
 
 
-def _judge_pick(emote_id: str = "09", mode: str = "replace"):
+def _judge_pick(emote_id: str = "09", mode: str = "replace", hook_color: str | None = None):
     def judge(_prompt: str) -> str:
+        payload = {"emote": {"id": emote_id, "mode": mode, "reason": STRONG_REASON}}
+        if hook_color is not None:
+            payload["hook_color"] = hook_color
         return json.dumps(
-            {"emote": {"id": emote_id, "mode": mode, "reason": STRONG_REASON}}, ensure_ascii=False
+            payload, ensure_ascii=False
         )
 
+    judge.cpa_cache_identity = {"transport": "offline-fixture", "emote_id": emote_id, "mode": mode, "hook_color": hook_color}
     return judge
 
 
@@ -534,13 +539,15 @@ def test_stage_cover_uses_verified_sticker_as_reference(tmp_path, monkeypatch):
     assert generation["emote"]["status"] == "EMOTE_REFERENCE_READY"
     assert generation["emote"]["mode"] == "replace"
     assert generation["art_direction"]["emote_id"] == "09"
+    assert "art_direction_style" not in generation
     # The CPA reference IS the sticker (subject swap), and evidence records it.
     assert captured["reference_path"].name == "09_李豆沙_打call.png"
     assert generation["reference_image"] == str(captured["reference_path"])
     assert "OFFICIAL chibi emote stickers" in captured["prompt"]
 
 
-def test_stage_cover_companion_composites_frame_plus_sticker(tmp_path, monkeypatch):
+@pytest.mark.parametrize("hook_color", ["pink", "yellow", "red", "purple", "blue", "orange"])
+def test_stage_cover_companion_composites_frame_plus_sticker(tmp_path, monkeypatch, hook_color):
     monkeypatch.setenv("CPA_BASE_URL", "https://cpa.example.test/v1")
     monkeypatch.setenv("CPA_API_KEY", "test-key")
     entry = _sticker_with_media(tmp_path, monkeypatch, id="25", label="只是熊猫", subject="panda_creature",
@@ -556,15 +563,26 @@ def test_stage_cover_companion_composites_frame_plus_sticker(tmp_path, monkeypat
         title=TALK_TITLE,
         cover_text=TALK_TEXT,
         run_ffmpeg=True,
-        art_direction_llm_call=_judge_pick("25", "companion"),
+        art_direction_llm_call=_judge_pick("25", "companion", hook_color),
         image_edit=_fake_image_edit(captured),
         full_text_cover_contract=_full_text_contract(),
     )
 
     assert result["status"] == "AI_COVER_READY"
+    generation = result["cover_generation"]
     assert captured["reference_path"].name == "emote-companion.cover-ref.with-emote.png"
     assert "COMPANION STICKER" in captured["prompt"]
     assert "PRESERVE THE EXACT OUTFIT" in captured["prompt"]
+    assert generation["art_direction_style"]["status"] == "READY"
+    assert generation["art_direction_style"]["text"] in captured["prompt"]
+    palette = generation["art_direction_style"]["text_palette"]
+    assert palette["primary"] == hook_color
+    assert palette["secondary"] in {"pink", "yellow"}
+    assert palette["secondary"] != palette["primary"]
+    assert generation["art_direction"]["hook_color"] == palette["primary"]
+    assert generation["art_direction"]["secondary_fill"] == palette["secondary"]
+    assert generation["text_palette"] == palette
+    assert generation["rendered_text_pixels"]["render_spec"]["text_palette"] == palette
 
 
 def test_stage_cover_blocks_selected_emote_on_sha_mismatch(tmp_path, monkeypatch):
@@ -596,3 +614,8 @@ def test_stage_cover_blocks_selected_emote_on_sha_mismatch(tmp_path, monkeypatch
     assert generation["art_direction"]["emote_id"] == "09"
     assert generation["route_decision"]["execution_status"] == "BLOCKED"
     assert "reference_path" not in captured
+
+def test_short_emote_reason_remains_a_candidate_for_actual_cpa_scoring():
+    assert normalize_emote_choice(
+        {"id": "09", "mode": "replace", "reason": "惊讶"}, library=_library(), is_song=False,
+    ) == ("09", "replace", "惊讶")

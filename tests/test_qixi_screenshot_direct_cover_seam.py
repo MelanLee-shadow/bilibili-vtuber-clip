@@ -59,6 +59,7 @@ def test_fixed_screenshot_direct_lane_never_demotes_to_images_edit(
         raise AssertionError("fixed screenshot lane attempted images.edit")
 
     monkeypatch.setattr(publish_staging, "_stage_cpa_redraw_cover", redraw_must_not_run)
+    (tmp_path / "clip.mp4").write_bytes(b"offline-media-fixture")
     result = publish_staging._stage_ai_cover(
         {"story_contract": {"selection_hook": "关系梗"}},
         media_path=tmp_path / "clip.mp4",
@@ -74,10 +75,11 @@ def test_fixed_screenshot_direct_lane_never_demotes_to_images_edit(
         ),
     )
 
-    assert result is blocked
+    assert result["status"] == blocked["status"]
+    assert result["reason_codes"] == blocked["reason_codes"]
 
 
 def test_default_stage_behavior_keeps_environment_route_compatibility(tmp_path: Path) -> None:
     """The new options are opt-in; this assertion pins their default values."""
 
-    assert publish_staging._stage_ai_cover.__kwdefaults__["fixed_options"] == FixedCoverStageOptions()
+    assert publish_staging._stage_ai_cover_unbound.__kwdefaults__["fixed_options"] == FixedCoverStageOptions()

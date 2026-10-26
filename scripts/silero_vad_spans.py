@@ -102,6 +102,11 @@ def main() -> int:
         end_ms = end_frame * frame_ms + PAD_MS
         if end_ms - start_ms < MIN_SPEECH_MS:
             continue
+        # Padding cannot describe speech beyond the decoded input window.
+        # Keep the existing short-span eligibility before bounding its tail.
+        end_ms = min(end_ms, len(audio) * 1000 // SR)
+        if end_ms <= start_ms:
+            continue
         if merged and start_ms <= merged[-1][1]:
             merged[-1][1] = max(merged[-1][1], end_ms)
         else:

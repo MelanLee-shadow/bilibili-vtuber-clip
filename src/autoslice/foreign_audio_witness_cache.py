@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import datetime as dt
 import hashlib
 import json
@@ -38,7 +39,7 @@ def witness_identity(
 
     identity = {
         "schema_version": CACHE_SCHEMA,
-        "audio_sha256": _sha256_bytes(audio_path.read_bytes()),
+        "audio_sha256": _evidence_file_sha256(audio_path, fresh=True),
         "prompt_sha256": _sha256_bytes(prompt.encode("utf-8")),
         "model": str(model),
         "algorithm_id": str(algorithm_id),

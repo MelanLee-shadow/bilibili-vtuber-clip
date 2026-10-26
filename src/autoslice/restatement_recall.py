@@ -29,7 +29,9 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Mapping
 
+from src.autoslice.channel_profile import LABEL_RE
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.nonsemantic_sound import hesitation_spelling, restatement_prefix_pattern, sound_only
 
 try:  # pragma: no cover - exercised via the pinyin-present path in tests
     from pypinyin import lazy_pinyin as _lazy_pinyin
@@ -43,18 +45,18 @@ except ImportError:  # pragma: no cover
 
 SCHEMA_VERSION = "restatement-candidates.v1"
 
-_LABEL_PREFIX_RE = re.compile(r"^\[([^\[\]]{1,20})\]\s*")
-
 _NON_LEXICAL_RE = re.compile(r"[^0-9A-Za-z一-鿿]+")
-_INTERJECTION_RE = re.compile(r"^[哈啊呃哦嗯呀哎唉噢喔诶欸]+$")
 # 她的 cue 开头高频语篇连接词/填充词。只影响配对打分的锚定，绝不参与改字：
 # 「然后我…」「但是我…」这类开场会制造大量假前缀锚（探针实测 8/7 五候选
 # sim>=0.45+prefix>=3 的 7 对里 4 对是纯连接词锚），剥掉后 prefix_run 只认
 # 内容音节。迭代剥离，直到开头不再命中。
 _LEADING_CONNECTOR_RE = re.compile(
-    r"^(?:然后呢?|但是|就是说?|所以说?|因为|反正|可是|而且|其实|我操|"
-    r"[呃嗯啊哦哎唉噢喔诶欸])"
+    r"^(?:但是|就是说|所以说?|因为|反正|可是|而且|其实|我操)"
 )
+# Definition + local lexical connectors above: these carry discourse meaning,
+# but cannot be prefix anchors for restatement scoring. They are not sounds.
+# 然后/就是 and vocal prefixes now read the shared policy-bound scoring roles;
+# this local semantic operation must not strip referential 那个 or 了 in 了不起.
 
 
 @dataclass(frozen=True)
@@ -80,11 +82,21 @@ def _lexical(text: str) -> str:
     return _NON_LEXICAL_RE.sub("", text)
 
 
+def is_nonlexical_interjection(text: str) -> bool:
+    """Exclude pure vocal fillers from lexical discovery, never from subtitles."""
+    return sound_only(text)
+
+
 def strip_leading_connectors(text: str) -> str:
     """Drop stacked discourse connectors/fillers from the front (scoring only)."""
-    lexical = _lexical(text)
+    lexical = _lexical(hesitation_spelling(text))
+    sounds = restatement_prefix_pattern()
     while True:
         stripped = _LEADING_CONNECTOR_RE.sub("", lexical, count=1)
+        if stripped == lexical:
+            # Prefix stripping is for scoring only, never a subtitle rewrite.
+            match = sounds.match(lexical)
+            stripped = lexical[match.end():] if match else lexical
         if stripped == lexical:
             return lexical
         lexical = stripped
@@ -114,21 +126,19 @@ def _prefix_run(early: list[str], late: list[str]) -> int:
 def score_pair(early_text: str, late_text: str) -> tuple[float, int] | None:
     """(similarity, prefix_run) on toneless pinyin; None when backend absent.
 
-    Similarity is measured on the full lexical content; the prefix anchor is
-    measured after connector stripping so ubiquitous openers (然后/但是/…)
-    cannot fake an interrupted-start anchor.
+    Both scores use content after connector/filler stripping. Ubiquitous
+    openers and laughter cannot create an anchor or dominate similarity.
+    Original cue text remains untouched for the acoustic adjudicator.
     """
-    early = pinyin_tokens(early_text)
-    late = pinyin_tokens(late_text)
+    early = pinyin_tokens(strip_leading_connectors(early_text))
+    late = pinyin_tokens(strip_leading_connectors(late_text))
     if early is None or late is None:
         return None
     if not early or not late:
         return (0.0, 0)
-    early_anchor = pinyin_tokens(strip_leading_connectors(early_text)) or []
-    late_anchor = pinyin_tokens(strip_leading_connectors(late_text)) or []
     return (
         SequenceMatcher(None, early, late).ratio(),
-        _prefix_run(early_anchor, late_anchor),
+        _prefix_run(early, late),
     )
 
 
@@ -164,7 +174,7 @@ def find_restatement_pairs(
     for late_pos, late in enumerate(cues):
         if len(_lexical(late.text)) < min_late_chars:
             continue
-        if _INTERJECTION_RE.match(_lexical(late.text)):
+        if is_nonlexical_interjection(late.text):
             continue
         if host_label is not None and late.label is not None and late.label != host_label:
             continue
@@ -177,7 +187,7 @@ def find_restatement_pairs(
             early_lexical = _lexical(early.text)
             if len(early_lexical) < min_early_chars:
                 continue
-            if _INTERJECTION_RE.match(early_lexical):
+            if is_nonlexical_interjection(early.text):
                 continue
             if early_lexical == _lexical(late.text):
                 continue
@@ -217,14 +227,14 @@ def _split_label_prefix(text: str) -> tuple[str, str | None, str]:
     a bracket (uniform-host period), label is ``None`` and the text is
     returned unchanged.
     """
-    match = _LABEL_PREFIX_RE.match(text)
+    match = LABEL_RE.match(text)
     if match is None:
         return "", None, text
-    return match.group(0).rstrip(), match.group(1), text[match.end():]
+    return text[:match.start(2)].rstrip(), text[1:text.index("]")], match.group(2)
 
 
 def discover_restatement_findings(
-    srt_text: str, *, host_label: str | None = "李豆沙"
+    srt_text: str, *, host_label: str | None = "李豆沙", max_gap_seconds: float = 90.0
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Proposal-carrying exact-final findings from in-session restatement pairs.
 
@@ -264,7 +274,12 @@ def discover_restatement_findings(
                     text=rest,
                 )
             )
-        pairs = find_restatement_pairs(cues, host_label=host_label)
+        pairs = find_restatement_pairs(cues, host_label=host_label, max_gap_seconds=max_gap_seconds)
+        from src.autoslice.refrain_detection import (detect_refrains, bind_refrain_occurrence,
+            is_restatement_from_refrain)
+        refrains = detect_refrains(raw_cues)
+        receipt['refrain_context'] = refrains
+        receipt['refrain_excluded_pairs'] = []
     except Exception as exc:  # defensive: detector itself is unit-tested
         receipt.update(
             status="ERROR",
@@ -277,6 +292,12 @@ def discover_restatement_findings(
     for pair in pairs:
         early_raw = raw_text_by_index[pair.early_index]
         late_raw = raw_text_by_index[pair.late_index]
+        if is_restatement_from_refrain(
+                bind_refrain_occurrence(pair.early_index, early_raw, refrains),
+                bind_refrain_occurrence(pair.late_index, late_raw, refrains)):
+            receipt['refrain_excluded_pairs'].append({'early_index': pair.early_index,
+                'late_index': pair.late_index, 'role': 'CONTEXT_SUPPORT_ONLY'})
+            continue
         early_prefix, _early_label, _early_rest = _split_label_prefix(early_raw)
         _late_prefix, _late_label, late_rest = _split_label_prefix(late_raw)
         proposed_full_cue = f"{early_prefix} {late_rest}" if early_prefix else late_rest

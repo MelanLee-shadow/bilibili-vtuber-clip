@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from src.autoslice.discovery_channels import batch_from_rows
+from tests.test_f16_f17_closed_set_evidence import _risk_complete
+
+
+import hashlib
 import json
 from types import SimpleNamespace
 
@@ -196,16 +201,66 @@ def test_f2_machine_gender_context_yields_bounded_single_and_plural_findings():
     assert all(row["repair_class"] == "phonetic" for row in findings)
     routed = audit_final_subtitles(
         source,
-        llm_call=lambda _prompt: json.dumps({"findings": []}),
+        llm_call=_risk_complete({"findings": []}),
         extract_json=json.loads,
-        extra_raw_findings=findings,
-        prioritize_extra_raw_findings=True,
+        discovery_batch=batch_from_rows(findings),
+
     )
     assert [row["proposed_full_cue"] for row in routed] == [
         "我也觉得她有问题",
         "确实，我觉得她也，她身份有问题",
         "看她们在干嘛",
     ]
+
+
+def test_pronoun_invalid_typed_row_uses_changed_contract_prompt_and_strict_gate():
+    prompts = []
+
+    def call(prompt):
+        prompts.append(prompt)
+        payload = json.loads(_keep_every_machine_occurrence(prompt))
+        if len(prompts) == 1:
+            payload["decisions"][0]["action"] = "REWRITE"  # Same token: invalid.
+        return json.dumps(payload, ensure_ascii=False)
+
+    source = _srt("她就买了两盒", "她们说了什么")
+    findings, audit = discover_candidate_pronoun_findings(
+        source, policy_text="policy", candidate_context_text="context",
+        llm_call=call, extract_json=json.loads,
+    )
+    assert findings == []
+    assert len(prompts) == 2
+    assert prompts[1].startswith(prompts[0])
+    assert "CANDIDATE_PRONOUN_DECISION_CONTRACT_INVALID" in prompts[1]
+    assert "cue-1-occurrence-1" in prompts[1]
+    assert audit["contract_repair"]["status"] == "VALIDATED"
+    assert audit["contract_repair"]["initial_response"]["decisions"][0]["action"] == "REWRITE"
+    assert audit["mutation_authorized"] is False
+    assert audit["reviewed_srt_sha256"] == "sha256:" + hashlib.sha256(source.encode()).hexdigest()
+
+
+def test_pronoun_contract_repair_cannot_accept_bad_binding_or_retry_forever():
+    prompts = []
+
+    def invalid_call(prompt):
+        prompts.append(prompt)
+        payload = json.loads(_keep_every_machine_occurrence(prompt))
+        row = payload["decisions"][0]
+        if len(prompts) == 1:
+            row["action"] = "REWRITE"
+        else:
+            row["current_token"] = "他"  # Doesn't match the machine candidate.
+        return json.dumps(payload, ensure_ascii=False)
+
+    with pytest.raises(CandidatePronounAuditError) as raised:
+        discover_candidate_pronoun_findings(
+            _srt("她就买了两盒"), policy_text="policy", candidate_context_text="context",
+            llm_call=invalid_call, extract_json=json.loads,
+        )
+    assert len(prompts) == 2
+    assert raised.value.reason_code == "CANDIDATE_PRONOUN_DECISION_CONTRACT_INVALID"
+    assert raised.value.contract_repair["status"] == "BLOCK"
+    assert raised.value.contract_repair["mutation_authorized"] is False
 
 
 def test_f2_exact_final_audit_records_candidate_pronoun_receipt(monkeypatch):

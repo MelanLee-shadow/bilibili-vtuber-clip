@@ -23,7 +23,7 @@ cd "$ROOT"
 remote_ssh() {
     local host=$1
     shift
-    if [ "$host" != runtime-host ]; then
+    if [ "$host" != oci3 ]; then
         ssh "$host" "$@"
         return $?
     fi
@@ -999,15 +999,26 @@ REMOTE_GUARD_RECOVERY
     exit $?
 fi
 
-if [ "$HOST" = runtime-host ]; then
-    echo "REFUSE: deploy_autoslice.sh is Free-only; use scripts/deploy_oci3_shadow_autoslice.sh for runtime-host." >&2
+if [ "$HOST" = oci3 ]; then
+    echo "REFUSE: deploy_autoslice.sh is Free-only; use scripts/deploy_oci3_shadow_autoslice.sh for oci3." >&2
     exit 2
 fi
 
+if [ "$#" -ne 2 ]; then
+    echo "usage: $0 <free-host|--check> <40-hex-commit>" >&2
+    exit 2
+fi
+source "$ROOT/scripts/lib/explicit_commit.sh"
+COMMIT=$(resolve_explicit_commit "$ROOT" "$2")
 if [ -n "$(git status --porcelain)" ]; then
     echo "REFUSE: working tree is dirty — commit first, production deploys are commit-only." >&2
     git status --short >&2
     exit 2
+fi
+
+if [ "$HOST" = --check ]; then
+    printf 'FREE_MAIN_SOURCE_OK %s\n' "$COMMIT"
+    exit 0
 fi
 
 # audit: no more red-suite deploys.
@@ -1045,9 +1056,19 @@ print(
 )
 LEDGER_REPORT
 
-COMMIT=$(git rev-parse HEAD)
 REMOTE_BASE=/opt/bilive/autoslice
-REMOTE_REPO=$REMOTE_BASE/repo
+DEPLOYED_ROOT_BOOTSTRAP="$(python3 "$ROOT/src/autoslice/deployed_code_root.py" --base "$REMOTE_BASE" --bootstrap)"
+printf -v deployed_root_command 'python3 -c %q' "$DEPLOYED_ROOT_BOOTSTRAP
+print(repo)"
+REMOTE_REPO="$(remote_ssh "$HOST" "$deployed_root_command")"
+# This legacy installer swaps components in place. It must not mutate an
+# immutable version published by the versioned deployment entrypoint.
+case "$REMOTE_REPO" in
+    "$REMOTE_BASE"/versions/*/repo)
+        echo "REFUSE: use the versioned deployment entrypoint for this runtime" >&2
+        exit 2
+        ;;
+esac
 STAGE=$REMOTE_BASE/repo.deploy-$COMMIT
 BACKUP=$REMOTE_BASE/repo.rollback-$COMMIT
 DISABLED=$REMOTE_BASE/DISABLED
@@ -2306,10 +2327,12 @@ REMOTE_SWITCH
 # Install external entrypoints only from the already-switched committed tree.
 # Temp + rename avoids exposing a truncated executable to cron/manual callers.
 remote_ssh "$HOST" /usr/bin/flock -w 7200 "$REMOTE_BASE/tick.lock" /usr/bin/flock -w 7200 "$REMOTE_BASE/runner.lock" bash -s -- \
-    "$BACKUP" "$COMMIT" <<'REMOTE_EXTERNAL_INSTALL'
+    "$BACKUP" "$COMMIT" "$REMOTE_REPO" <<'REMOTE_EXTERNAL_INSTALL'
 set -euo pipefail
 backup=$1
 commit=$2
+repo=$3
+printf -v cron_repo '%q' "$repo"
 tmp=
 cleanup_tmp() { [ -z "$tmp" ] || rm -f "$tmp"; }
 trap cleanup_tmp EXIT
@@ -2858,17 +2881,17 @@ PY_FRESH
     done
     return 1
 }
-new_adapter_source=/opt/bilive/autoslice/repo/ops/recording/bililive_recorder_adapter.py
+new_adapter_source="$repo/ops/recording/bililive_recorder_adapter.py"
 host_adapter_path=/opt/bilive/recording/bililive_recorder_adapter.py
 watchdog_cron='*/5 * * * * /usr/bin/flock -n /opt/bilive/autoslice/watchdog.lock /opt/bilive/autoslice/mount_watchdog.sh >> /opt/bilive/autoslice/logs/watchdog.log 2>&1'
-runner_cron='*/10 * * * * /usr/bin/flock -n /opt/bilive/autoslice/tick.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && AUTOSLICE_BASE=/opt/bilive/autoslice AUTOSLICE_SPEAKER_MODE=uniform_host /usr/bin/python3 scripts/session_autoslice.py --once'\'' >> /opt/bilive/autoslice/logs/runner.log 2>&1'
+runner_cron='*/10 * * * * /usr/bin/flock -n /opt/bilive/autoslice/tick.lock /bin/bash -lc '\''cd '"$cron_repo"' && AUTOSLICE_BASE=/opt/bilive/autoslice AUTOSLICE_SPEAKER_MODE=uniform_host /usr/bin/python3 scripts/session_autoslice.py --once'\'' >> /opt/bilive/autoslice/logs/runner.log 2>&1'
 upload_fatal_cron='*/5 * * * * /usr/bin/flock -n /opt/bilive/autoslice/upload-fatal-sentinel.lock /opt/bilive/autoslice/upload_fatal_sentinel.sh >> /opt/bilive/autoslice/logs/upload-fatal-sentinel.log 2>&1'
-timely_terms_cron='17 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/timely-terms.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_timely_terms.py --cache-dir /opt/bilive/autoslice/cache/timely-term-crawler --write /opt/bilive/autoslice/state/timely_terms.json'\'' >> /opt/bilive/autoslice/logs/timely-terms.log 2>&1'
-streamer_registry_cron='7 6 * * 0 /usr/bin/flock -n /opt/bilive/autoslice/streamer-registry.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_streamer_registry.py --cache-dir /opt/bilive/autoslice/cache/streamer-registry-crawler --write /opt/bilive/autoslice/state/streamer_registry.json'\'' >> /opt/bilive/autoslice/logs/streamer-registry.log 2>&1'
-psplive_roster_cron='12 6 * * 0 /usr/bin/flock -n /opt/bilive/autoslice/psplive-roster.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_psplive_roster.py --cache-dir /opt/bilive/autoslice/cache/psplive-roster-crawler --write /opt/bilive/autoslice/state/psplive_roster.json'\'' >> /opt/bilive/autoslice/logs/psplive-roster.log 2>&1'
-community_names_cron='27 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/community-names.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && set -a && source /opt/bilive/autoslice/cpa.env && set +a && python3 scripts/crawl_community_names.py --registry /opt/bilive/autoslice/state/streamer_registry.json --cache-dir /opt/bilive/autoslice/cache/community-name-crawler --state /opt/bilive/autoslice/state/community_name_state.json --write /opt/bilive/autoslice/state/community_names.json'\'' >> /opt/bilive/autoslice/logs/community-names.log 2>&1'
-topic_entity_cron='37 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/topic-entity.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_topic_entity_graph.py --timely-terms /opt/bilive/autoslice/state/timely_terms.json --cache-dir /opt/bilive/autoslice/cache/topic-entity-crawler --write /opt/bilive/autoslice/state/topic_entity_graph.json'\'' >> /opt/bilive/autoslice/logs/topic-entity.log 2>&1'
-streamer_dynamics_cron='47 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/streamer-dynamics.lock /bin/bash -lc '\''cd /opt/bilive/autoslice/repo && python3 scripts/crawl_streamer_dynamics.py --cache-dir /opt/bilive/autoslice/cache/streamer-dynamics-crawler --write /opt/bilive/autoslice/state/streamer_dynamics.json'\'' >> /opt/bilive/autoslice/logs/streamer-dynamics.log 2>&1'
+timely_terms_cron='17 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/timely-terms.lock /bin/bash -lc '\''cd '"$cron_repo"' && python3 scripts/crawl_timely_terms.py --cache-dir /opt/bilive/autoslice/cache/timely-term-crawler --write /opt/bilive/autoslice/state/timely_terms.json'\'' >> /opt/bilive/autoslice/logs/timely-terms.log 2>&1'
+streamer_registry_cron='7 6 * * 0 /usr/bin/flock -n /opt/bilive/autoslice/streamer-registry.lock /bin/bash -lc '\''cd '"$cron_repo"' && python3 scripts/crawl_streamer_registry.py --cache-dir /opt/bilive/autoslice/cache/streamer-registry-crawler --write /opt/bilive/autoslice/state/streamer_registry.json'\'' >> /opt/bilive/autoslice/logs/streamer-registry.log 2>&1'
+psplive_roster_cron='12 6 * * 0 /usr/bin/flock -n /opt/bilive/autoslice/psplive-roster.lock /bin/bash -lc '\''cd '"$cron_repo"' && python3 scripts/crawl_psplive_roster.py --cache-dir /opt/bilive/autoslice/cache/psplive-roster-crawler --write /opt/bilive/autoslice/state/psplive_roster.json'\'' >> /opt/bilive/autoslice/logs/psplive-roster.log 2>&1'
+community_names_cron='27 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/community-names.lock /bin/bash -lc '\''cd '"$cron_repo"' && set -a && source /opt/bilive/autoslice/cpa.env && set +a && python3 scripts/crawl_community_names.py --registry /opt/bilive/autoslice/state/streamer_registry.json --cache-dir /opt/bilive/autoslice/cache/community-name-crawler --state /opt/bilive/autoslice/state/community_name_state.json --write /opt/bilive/autoslice/state/community_names.json'\'' >> /opt/bilive/autoslice/logs/community-names.log 2>&1'
+topic_entity_cron='37 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/topic-entity.lock /bin/bash -lc '\''cd '"$cron_repo"' && python3 scripts/crawl_topic_entity_graph.py --timely-terms /opt/bilive/autoslice/state/timely_terms.json --cache-dir /opt/bilive/autoslice/cache/topic-entity-crawler --write /opt/bilive/autoslice/state/topic_entity_graph.json'\'' >> /opt/bilive/autoslice/logs/topic-entity.log 2>&1'
+streamer_dynamics_cron='47 6 * * * /usr/bin/flock -n /opt/bilive/autoslice/streamer-dynamics.lock /bin/bash -lc '\''cd '"$cron_repo"' && python3 scripts/crawl_streamer_dynamics.py --cache-dir /opt/bilive/autoslice/cache/streamer-dynamics-crawler --write /opt/bilive/autoslice/state/streamer_dynamics.json'\'' >> /opt/bilive/autoslice/logs/streamer-dynamics.log 2>&1'
 managed_crontab_exact() {
     existing_crontab=$(crontab -l) || return 1
     for entry in \
@@ -2908,13 +2931,13 @@ external_payload_exact() {
 external_payload_unchanged_safe() {
     expected_adapter_sha=$1
     external_payload_exact watchdog \
-        /opt/bilive/autoslice/repo/scripts/mount_watchdog.sh \
+        "$repo/scripts/mount_watchdog.sh" \
         /opt/bilive/autoslice/mount_watchdog.sh 755 755 || return 1
     external_payload_exact upload_sentinel \
-        /opt/bilive/autoslice/repo/scripts/clouddrive_upload_fatal_sentinel.sh \
+        "$repo/scripts/clouddrive_upload_fatal_sentinel.sh" \
         /opt/bilive/autoslice/upload_fatal_sentinel.sh 755 755 || return 1
     external_payload_exact uploader \
-        /opt/bilive/autoslice/repo/scripts/do_upload.sh \
+        "$repo/scripts/do_upload.sh" \
         /opt/bilive/app/tmp_manual_upload/do_upload.sh 755 700 || return 1
     external_payload_exact recorder_adapter \
         "$new_adapter_source" "$host_adapter_path" 644 755 || return 1
@@ -2971,15 +2994,15 @@ if [ "$external_payload_unchanged" -eq 0 ]; then
     printf '%s\n' external-mutation-started.v1 > "$backup/external/external-mutation-started"
     chmod 600 "$backup/external/external-mutation-started"
     install_atomic \
-        /opt/bilive/autoslice/repo/scripts/mount_watchdog.sh \
+        "$repo/scripts/mount_watchdog.sh" \
         /opt/bilive/autoslice/mount_watchdog.sh \
         755
     install_atomic \
-        /opt/bilive/autoslice/repo/scripts/clouddrive_upload_fatal_sentinel.sh \
+        "$repo/scripts/clouddrive_upload_fatal_sentinel.sh" \
         /opt/bilive/autoslice/upload_fatal_sentinel.sh \
         755
     install_atomic \
-        /opt/bilive/autoslice/repo/scripts/do_upload.sh \
+        "$repo/scripts/do_upload.sh" \
         /opt/bilive/app/tmp_manual_upload/do_upload.sh \
         700
     adapter_identity_rebind_hash_child_absent
@@ -3060,7 +3083,7 @@ REMOTE_EXTERNAL_INSTALL
 
 # verify: the deployed runner is byte-identical to the committed one
 LOCAL_MD5=$(md5 -q "$LOCAL_ARCHIVE_DIR/scripts/session_autoslice.py" 2>/dev/null || md5sum "$LOCAL_ARCHIVE_DIR/scripts/session_autoslice.py" | cut -d' ' -f1)
-REMOTE_MD5=$(remote_ssh "$HOST" "md5sum /opt/bilive/autoslice/repo/scripts/session_autoslice.py" | cut -d' ' -f1)
+REMOTE_MD5=$(remote_ssh "$HOST" "md5sum $(printf '%q' "$REMOTE_REPO/scripts/session_autoslice.py")" | cut -d' ' -f1)
 if [ "$LOCAL_MD5" != "$REMOTE_MD5" ]; then
     echo "DEPLOY VERIFY FAILED: runner md5 mismatch (local $LOCAL_MD5 remote $REMOTE_MD5)" >&2
     exit 3

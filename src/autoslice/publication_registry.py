@@ -30,6 +30,7 @@ from pathlib import Path
 
 from src.autoslice import fastlane_c2_authorized_upload as c2_upload
 from src.autoslice.channel_profile import load_channel_profile as _load_channel_profile
+from src.autoslice.publication_identity import publication_identity
 from src.autoslice.publication_reconciliation import (
     RUNTIME_REGISTRY_SCHEMA,
     validate_runtime_registry_entry,
@@ -302,28 +303,14 @@ def manifest_upload_block_reason(manifest: Mapping) -> str | None:
         )
     if not isinstance(record, dict):
         return None
-    story = record.get("story_contract")
-    candidate_id = (
-        str(story.get("candidate_id") or "") if isinstance(story, Mapping) else ""
-    )
-    # Verified Song delivery records deliberately have no Talk StoryContract.
-    # Their outer delivery candidate is the publication identity; require the
-    # paired selector candidate as well so an unrelated legacy Talk record
-    # cannot accidentally opt into this lane.
-    if not candidate_id:
-        delivery_candidate = record.get("delivery_candidate_id")
-        source_candidate = record.get("source_candidate_id")
-        if (
-            isinstance(delivery_candidate, str)
-            and delivery_candidate.strip()
-            and isinstance(source_candidate, str)
-            and source_candidate.strip()
-        ):
-            candidate_id = delivery_candidate.strip()
+    try:
+        candidate_id = publication_identity(record).registry_candidate_id
+    except ValueError:
+        return "publication registry candidate identity mismatch; refusing new upload fail-closed"
     # Legacy C2 has neither generic candidate field; let its exact resolver
     # validate the attested package before consulting the publication registry.
-    if not candidate_id and "delivery_candidate_id" not in record:
-        candidate_id = c2_upload.candidate_id_from_record(
+    if not candidate_id:
+        candidate_id = c2_upload.verified_c2_release_candidate_id(
             Path(str(attestation.get("package_root") or "")), record
         )
     if not candidate_id:

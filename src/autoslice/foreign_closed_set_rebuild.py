@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from src.autoslice.structured_output import call_json
+
 import hashlib
 import json
 import os
@@ -99,6 +101,9 @@ def rebuild_foreign_closed_set(
     prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     audit["prompt_sha256"] = "sha256:" + prompt_sha256
     cache_path = _cache_path(prompt_sha256)
+    if getattr(llm_call, 'cpa_cache_identity', None):
+        # Historical parsed-only bytes stay intact, without model promotion.
+        cache_path = None
     payload: Mapping[str, Any] | None = None
     completion_sha256: str | None = None
     served_from_cache = False
@@ -119,7 +124,7 @@ def rebuild_foreign_closed_set(
             pass
     if payload is None:
         try:
-            completion = llm_call(prompt)
+            completion = call_json(llm_call, prompt)
             completion_sha256 = hashlib.sha256(completion.encode("utf-8")).hexdigest()
             payload = extract_json_object(completion)
         except Exception as exc:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .review_errors import ContractRejection
+
 from typing import Any, Callable, Mapping
 
 from src.autoslice.exact_source_transcript_contract import (
@@ -139,7 +141,7 @@ def seal_exact_source_transcript_provider_failure(
         or not failures
         or not all(_valid_transient_failure_row(row) for row in failures)
     ):
-        raise ValueError("EXACT_SOURCE_TRANSCRIPT_PROVIDER_FAILURE_INVALID")
+        raise ContractRejection("EXACT_SOURCE_TRANSCRIPT_PROVIDER_FAILURE_INVALID")
     receipt: dict[str, Any] = {
         "schema_version": OBSERVATION_SCHEMA,
         "status": "UNCERTAIN",
@@ -217,7 +219,7 @@ def seal_exact_source_transcript_provider_unavailable_audit(
             canonical_witness_request
         )
     except (AttributeError, KeyError, TypeError, ValueError) as exc:
-        raise ValueError(
+        raise ContractRejection(
             "EXACT_SOURCE_TRANSCRIPT_PROVIDER_FAILURE_BINDING_INVALID"
         ) from exc
     context_binding = initial_check_request.get("clip_context_binding")
@@ -264,7 +266,7 @@ def seal_exact_source_transcript_provider_unavailable_audit(
             request_sha256=canonical_witness_request["request_sha256"],
         )
     ):
-        raise ValueError(
+        raise ContractRejection(
             "EXACT_SOURCE_TRANSCRIPT_PROVIDER_FAILURE_BINDING_INVALID"
         )
     binding: dict[str, Any] = {
@@ -372,7 +374,7 @@ def seal_exact_source_transcript_capability_unavailable(
     """Bind the absence of any configured/attempted transcript transport."""
 
     if not valid_exact_source_transcript_request(request):
-        raise ValueError("EXACT_SOURCE_TRANSCRIPT_REQUEST_INVALID")
+        raise ContractRejection("EXACT_SOURCE_TRANSCRIPT_REQUEST_INVALID")
     receipt: dict[str, Any] = {
         "schema_version": OBSERVATION_SCHEMA,
         "status": "NOT_CONFIGURED",

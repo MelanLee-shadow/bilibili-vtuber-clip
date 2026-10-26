@@ -7,6 +7,7 @@ replayed both when creating and when consuming a package.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import copy
 import hashlib
 import json
@@ -96,11 +97,8 @@ class QixiCoverSuccessorError(ValueError):
 
 
 def _sha(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return "sha256:" + digest
 
 
 def _canonical_sha(value: object) -> str:

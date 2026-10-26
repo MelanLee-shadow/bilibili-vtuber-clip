@@ -10,6 +10,12 @@ from src.autoslice.producer_text_finalization import (
     authorized_final_review_drop_windows,
     verify_chat_authority_final_surfaces,
 )
+from src.autoslice.legacy_final_surface_supersession import (
+    _canonical_repair_sha256,
+    _normal_history_display_replays,
+    _normal_history_display_retires_decision_row,
+)
+from src.autoslice.final_surface_summary import record_final_authority_summary
 from src.autoslice.acoustic_witness_adjudication import (
     INAUDIBLE_DECISION_CONTRACT,
     build_witness_request,
@@ -118,6 +124,33 @@ def test_authorized_drop_window_extractor_rejects_untyped_drop():
         {"entity_repairs": [typed, untyped]}
     ) == ((267_660, 268_900),)
     assert authorized_final_review_drop_windows({"entity_repairs": [untyped]}) == ()
+
+
+@pytest.mark.parametrize("literal", [False, True])
+def test_final_owner_replays_registered_name_identity_contract(literal):
+    before = "我等了两小室" if literal else "之前小室她在商场遇见"
+    after = "我等了两小时" if literal else "之前小四她在商场遇见"
+    judge = {"status": "JUDGED", "choice": "PROPOSED"}
+    if literal:
+        judge.update(registered_name_context_after="一百二十分钟", registered_name_decisions=[{
+            "name": "小室", "usage": "LITERAL_NONENTITY", "replacement": "小时",
+            "context_quote": "一百二十分钟", "reason": "这句在计量等待时长",
+        }])
+    row = {
+        "mode": "exact_final_cpa_self_heal", "decision_authority": "CPA_JUDGE",
+        "before": [before], "after": [after], "judge": judge,
+        "matched_start_ms": 1000, "matched_end_ms": 3000,
+        "structured_exact_text": after, "boundary_required": False,
+    }
+    audit = {"entity_repairs": [row]}
+    final = _srt((1000, 3000, after))
+    result = verify_chat_authority_final_surfaces(
+        audit, final_text_srt=final, final_speaker_srt=final,
+        delivery_start_ms=0, delivery_end_ms=4000,
+    )
+    assert result is literal
+    if not literal:
+        assert audit["final_verification_failure"] == "REGISTERED_NAME_REFERENT_DECISION_REQUIRED"
 
 
 def test_typed_drop_rejects_original_subtitle_overlap():
@@ -1317,3 +1350,430 @@ def test_release_grade_merge_owner_receipt_fails_closed(tamper: str) -> None:
     assert audit["final_verification_failure"] == (
         "REDELIVERY_BASELINE_FINAL_OWNER_NOT_VERIFIED"
     )
+
+
+def _normal_history_display_case(*, path: str) -> tuple[dict, dict, str, str, str]:
+    before, after = "旧文本", "新文本"
+    repair = {
+        "schema_version": "exact-final-cpa-self-heal.v1",
+        "cue_index": 1,
+        "before": before,
+        "after": after,
+        "before_sha256": "sha256:" + hashlib.sha256(before.encode()).hexdigest(),
+        "after_sha256": "sha256:" + hashlib.sha256(after.encode()).hexdigest(),
+        "finding_sha256": "sha256:" + "a" * 64,
+        "request_sha256": "sha256:" + "b" * 64,
+        "decision_authority": "CPA_JUDGE",
+        "timing_immutable": True,
+        "mutation_authority": {
+            "schema_version": "subtitle-correction-mutation-authority.v1",
+            "status": "PASS",
+        },
+        "matched_start_ms": 1_000,
+        "matched_end_ms": 2_000,
+    }
+    pass_input = _srt((1_000, 2_000, before))
+    pass_output = _srt((1_000, 2_000, after))
+    receipt = {
+        "status": "PASS",
+        "passes": [{
+            "schema_version": "exact-final-cpa-self-heal-pass.v1",
+            "pass_index": 1,
+            "input_srt_sha256": "sha256:" + hashlib.sha256(pass_input.encode()).hexdigest(),
+            "output_srt_sha256": "sha256:" + hashlib.sha256(pass_output.encode()).hexdigest(),
+            "repairs": [repair],
+        }],
+    }
+    owner = {
+        "mode": "exact_final_cpa_self_heal",
+        "decision_authority": "CPA_JUDGE",
+        "boundary_required": False,
+        "timing_immutable": True,
+        "exact_final_repair_sha256": _canonical_repair_sha256(repair),
+        "request_sha256": repair["request_sha256"],
+        "cue_indexes": [1],
+        "matched_start_ms": 1_000,
+        "matched_end_ms": 2_000,
+        "before": [before],
+        "after": [after],
+        "structured_exact_text": after,
+    }
+    return receipt, owner, pass_output, before, after
+
+
+def _typed_pass(
+    *, pass_index: int, input_text: str, output_text: str, repairs: list[dict]
+) -> dict:
+    return {
+        "schema_version": "exact-final-cpa-self-heal-pass.v1",
+        "pass_index": pass_index,
+        "input_srt_sha256": "sha256:" + hashlib.sha256(input_text.encode()).hexdigest(),
+        "output_srt_sha256": "sha256:" + hashlib.sha256(output_text.encode()).hexdigest(),
+        "repairs": repairs,
+    }
+
+
+def test_normal_display_history_replays_unrelated_typed_pass_before_successor():
+    receipt, owner, _pass_output, before, after = _normal_history_display_case(
+        path="cross-pass"
+    )
+    side_before, side_after = "旁句旧", "旁句新"
+    pass_one_input = _srt(
+        (1_000, 2_000, before),
+        (3_000, 4_000, side_before),
+    )
+    pass_one_output = _srt(
+        (1_000, 2_000, after),
+        (3_000, 4_000, side_before),
+    )
+    pass_two_repair = {
+        "schema_version": "exact-final-cpa-self-heal.v1",
+        "cue_index": 2,
+        "before": side_before,
+        "after": side_after,
+        "before_sha256": "sha256:" + hashlib.sha256(side_before.encode()).hexdigest(),
+        "after_sha256": "sha256:" + hashlib.sha256(side_after.encode()).hexdigest(),
+        "finding_sha256": "sha256:" + "c" * 64,
+        "request_sha256": "sha256:" + "d" * 64,
+        "decision_authority": "CPA_JUDGE",
+        "timing_immutable": True,
+        "mutation_authority": {
+            "schema_version": "subtitle-correction-mutation-authority.v1",
+            "status": "PASS",
+        },
+        "matched_start_ms": 3_000,
+        "matched_end_ms": 4_000,
+    }
+    pass_two_input = pass_one_output
+    pass_two_output = _srt(
+        (1_000, 2_000, after),
+        (3_000, 4_000, side_after),
+    )
+    final = _srt(
+        (1_000, 2_000, after + "！"),
+        (3_000, 4_000, side_after),
+    )
+    receipt["passes"] = [
+        _typed_pass(
+            pass_index=1,
+            input_text=pass_one_input,
+            output_text=pass_one_output,
+            repairs=receipt["passes"][0]["repairs"],
+        ),
+        _typed_pass(
+            pass_index=2,
+            input_text=pass_two_input,
+            output_text=pass_two_output,
+            repairs=[pass_two_repair],
+        ),
+    ]
+    successor = {
+        "schema_version": "exact-final-caption-display-successor.v1",
+        "after_pass_index": 2,
+        "input_srt_sha256": "sha256:" + hashlib.sha256(pass_two_output.encode()).hexdigest(),
+        "output_srt_sha256": "sha256:" + hashlib.sha256(final.encode()).hexdigest(),
+        "input_srt_text": pass_two_output,
+        "output_srt_text": final,
+        "normalization_audit": {"status": "APPLIED"},
+    }
+    replays = {
+        "receipt": receipt,
+        "final_sha256": successor["output_srt_sha256"],
+        "caption": {2: successor},
+        "source": {},
+        "nested": {},
+    }
+    assert _normal_history_display_retires_decision_row(
+        owner,
+        expected_text=after,
+        audit={},
+        final_text_srt=final,
+        final_speaker_srt=final,
+        delivery_start_ms=0,
+        replays=replays,
+    )
+
+
+def test_normal_display_history_canonical_path_is_separate_from_reconciliation():
+    receipt, owner, pass_output, _before, after = _normal_history_display_case(
+        path="canonical"
+    )
+    canonical = _srt((1_000, 2_000, after + "！"))
+    successor = {
+        "schema_version": "exact-final-caption-display-successor.v1",
+        "after_pass_index": 1,
+        "input_srt_sha256": "sha256:" + hashlib.sha256(pass_output.encode()).hexdigest(),
+        "output_srt_sha256": "sha256:" + hashlib.sha256(canonical.encode()).hexdigest(),
+        "input_srt_text": pass_output,
+        "output_srt_text": canonical,
+        "normalization_audit": {"status": "APPLIED"},
+    }
+    replays = {
+        "receipt": receipt,
+        "final_sha256": successor["output_srt_sha256"],
+        "caption": {1: successor},
+        "source": {},
+        "nested": {},
+    }
+    assert _normal_history_display_retires_decision_row(
+        owner,
+        expected_text=after,
+        audit={},
+        final_text_srt=canonical,
+        final_speaker_srt=canonical,
+        delivery_start_ms=0,
+        replays=replays,
+    )
+    assert owner["normal_history_display_reconciliation"]["display_path"] == (
+        "CANONICAL_NORMALIZATION"
+    )
+    assert "reconciliation" not in owner
+
+
+def _retained_display_case():
+    from src.autoslice.exact_final_cpa_history import (
+        build_run_audit,
+        retained_runs,
+        with_caption_successor,
+    )
+    from src.autoslice.surface_canon import normalize_caption_display_surfaces
+
+    receipt, owner, _output, _before, _after = _normal_history_display_case(path="retained")
+    repair = receipt["passes"][0]["repairs"][0]
+    repair["after"] = "谢谢 superchat"
+    repair["after_sha256"] = "sha256:" + hashlib.sha256(repair["after"].encode()).hexdigest()
+    owner.update(
+        after=[repair["after"]], structured_exact_text=repair["after"],
+        exact_final_repair_sha256=_canonical_repair_sha256(repair),
+    )
+    before = _srt((1_000, 2_000, repair["before"]), (3_000, 4_000, "旁句旧"))
+    after = _srt((1_000, 2_000, repair["after"]), (3_000, 4_000, "旁句旧"))
+    old = build_run_audit([_typed_pass(
+        pass_index=1, input_text=before, output_text=after, repairs=[repair],
+    )], [], final_srt_sha256="sha256:" + hashlib.sha256(after.encode()).hexdigest())
+    canonical, _ = normalize_caption_display_surfaces(after)
+    old = with_caption_successor(old, after, canonical)
+    old.update(status="PASS", final_srt_sha256="sha256:" + hashlib.sha256(canonical.encode()).hexdigest())
+    side = deepcopy(repair)
+    side.update(cue_index=2, before="旁句旧", after="旁句新", matched_start_ms=3_000,
+                matched_end_ms=4_000, request_sha256="sha256:" + "c" * 64)
+    for field in ("before", "after"):
+        side[field + "_sha256"] = "sha256:" + hashlib.sha256(side[field].encode()).hexdigest()
+    final = canonical.replace("旁句旧", "旁句新")
+    current = build_run_audit([_typed_pass(
+        pass_index=1, input_text=canonical, output_text=final, repairs=[side],
+    )], retained_runs(old), final_srt_sha256="sha256:" + hashlib.sha256(final.encode()).hexdigest())
+    audit = {"exact_final_cpa_self_heal": current, "final_review_audit": {
+        "status": "CLEAN", "release_gate": "PASS",
+        "reviewed_srt_sha256": current["final_srt_sha256"],
+    }}
+    return audit, owner, final
+
+
+def test_normal_display_history_replays_retained_run_into_current_exact_bytes():
+    audit, owner, final = _retained_display_case()
+    replays = _normal_history_display_replays(audit, final_text_srt=final)
+    assert replays is not None
+    assert _normal_history_display_retires_decision_row(
+        owner, expected_text=owner["structured_exact_text"], audit=audit,
+        final_text_srt=final, final_speaker_srt=final,
+        delivery_start_ms=0, replays=replays,
+    )
+    reconciliation = owner["normal_history_display_reconciliation"]
+    assert reconciliation["display_path"] == "CANONICAL_NORMALIZATION"
+    assert reconciliation["run_pass_index"] == 1
+    assert reconciliation["run_final_srt_sha256"] != replays["final_sha256"]
+
+
+def test_normal_display_history_rejects_rehashed_broken_retained_chain():
+    from src.autoslice.exact_final_cpa_history import _sha
+
+    audit, _owner, final = _retained_display_case()
+    retained = audit["exact_final_cpa_self_heal"]["retained_previous_runs"][0]
+    retained["audit"]["passes"][0]["output_srt_sha256"] = "sha256:" + "f" * 64
+    retained["audit_sha256"] = _sha(retained["audit"])
+    assert _normal_history_display_replays(audit, final_text_srt=final) is None
+
+
+def test_normal_display_history_rejects_unlinked_current_run_despite_clean():
+    from src.autoslice.exact_final_cpa_history import _sha
+
+    audit, owner, final = _retained_display_case()
+    retained = audit["exact_final_cpa_self_heal"]["retained_previous_runs"][0]
+    # A valid historical run may be unrelated to the current terminal chain.
+    # Its own contract remains valid, but current CLEAN cannot bridge the gap.
+    old = retained["audit"]
+    successor = old["caption_display_successors"][0]
+    changed = successor["input_srt_text"].replace("旁句旧", "无关旧")
+    from src.autoslice.surface_canon import normalize_caption_display_surfaces
+    canonical, normalization = normalize_caption_display_surfaces(changed)
+    old_pass = old["passes"][0]
+    old_pass["input_srt_sha256"] = "sha256:" + hashlib.sha256(
+        changed.replace("谢谢 superchat", "旧文本").encode()
+    ).hexdigest()
+    old_pass["output_srt_sha256"] = "sha256:" + hashlib.sha256(changed.encode()).hexdigest()
+    successor.update(input_srt_text=changed, input_srt_sha256=old_pass["output_srt_sha256"],
+                     output_srt_sha256="sha256:" + hashlib.sha256(canonical.encode()).hexdigest(),
+                     normalization_audit=normalization)
+    old["final_srt_sha256"] = successor["output_srt_sha256"]
+    retained["audit_sha256"] = _sha(old)
+    replays = _normal_history_display_replays(audit, final_text_srt=final)
+    assert replays is not None
+    assert not _normal_history_display_retires_decision_row(
+        owner, expected_text=owner["structured_exact_text"], audit=audit,
+        final_text_srt=final, final_speaker_srt=final,
+        delivery_start_ms=0, replays=replays,
+    )
+
+
+@pytest.mark.parametrize("speaker_present", [True, False])
+def test_normal_display_history_full_dedup_keeps_audio_owner_and_rejects_drift(
+    speaker_present: bool,
+):
+    receipt, owner, pass_output, _before, after = _normal_history_display_case(
+        path="nested"
+    )
+    successor = {
+        "schema_version": "exact-final-nested-caption-display-successor.v1",
+        "after_pass_index": 1,
+        "input_srt_sha256": "sha256:" + hashlib.sha256(pass_output.encode()).hexdigest(),
+        "output_srt_sha256": "sha256:" + hashlib.sha256(b"").hexdigest(),
+        "input_srt_text": pass_output,
+        "output_srt_text": "",
+        "dedup_audit": {
+            "status": "APPLIED_DISPLAY_DEDUP",
+            "dropped_input_cue_indexes": [1],
+            "matched_observations": {"1": ["obs-1"]},
+            "publication_authority": False,
+            "speaker_identity_proven": False,
+        },
+    }
+    replays = {
+        "receipt": receipt,
+        "final_sha256": successor["output_srt_sha256"],
+        "caption": {},
+        "source": {},
+        "nested": {1: [successor]},
+    }
+    speaker = pass_output if speaker_present else ""
+    assert _normal_history_display_retires_decision_row(
+        owner,
+        expected_text=after,
+        audit={},
+        final_text_srt="",
+        final_speaker_srt=speaker,
+        delivery_start_ms=0,
+        replays=replays,
+    )
+    assert owner["normal_history_display_reconciliation"]["display_path"] == (
+        "FULL_VISUAL_DEDUP"
+    )
+    owner["normal_history_display_reconciliation"]["status"] = "STALE"
+    successor["dedup_audit"]["matched_observations"] = {}
+    assert not _normal_history_display_retires_decision_row(
+        owner,
+        expected_text=after,
+        audit={},
+        final_text_srt="",
+        final_speaker_srt=speaker,
+        delivery_start_ms=0,
+        replays=replays,
+    )
+    assert "normal_history_display_reconciliation" not in owner
+
+
+def test_normal_display_history_follows_recycled_cue_index_after_full_dedup():
+    receipt, owner, _pass_output, before, after = _normal_history_display_case(path="nested")
+    original = _srt((1000, 2000, before), (3000, 4000, "旁句旧"))
+    repaired = _srt((1000, 2000, after), (3000, 4000, "旁句旧"))
+    displayed = _srt((3000, 4000, "旁句旧"))
+    final = _srt((3000, 4000, "旁句新"))
+    old_repair = receipt["passes"][0]["repairs"][0]
+    later = deepcopy(old_repair)
+    later.update(cue_index=1, matched_start_ms=3000, matched_end_ms=4000,
+                 before="旁句旧", after="旁句新", request_sha256="sha256:" + "c" * 64)
+    for field in ("before", "after"):
+        later[field + "_sha256"] = "sha256:" + hashlib.sha256(later[field].encode()).hexdigest()
+    receipt["passes"] = [
+        _typed_pass(pass_index=1, input_text=original, output_text=repaired, repairs=[old_repair]),
+        _typed_pass(pass_index=2, input_text=displayed, output_text=final, repairs=[later]),
+    ]
+    successor = {
+        "schema_version": "exact-final-nested-caption-display-successor.v1",
+        "after_pass_index": 1, "input_srt_text": repaired, "output_srt_text": displayed,
+        "input_srt_sha256": "sha256:" + hashlib.sha256(repaired.encode()).hexdigest(),
+        "output_srt_sha256": "sha256:" + hashlib.sha256(displayed.encode()).hexdigest(),
+        "dedup_audit": {
+            "status": "APPLIED_DISPLAY_DEDUP", "dropped_input_cue_indexes": [1],
+            "matched_observations": {"1": ["obs-1"]},
+            "publication_authority": False, "speaker_identity_proven": False,
+        },
+    }
+    replays = {
+        "receipt": receipt, "final_sha256": "sha256:" + hashlib.sha256(final.encode()).hexdigest(),
+        "caption": {}, "source": {}, "nested": {1: [successor]},
+    }
+    assert _normal_history_display_retires_decision_row(
+        owner, expected_text=after, audit={}, final_text_srt=final, final_speaker_srt=final,
+        delivery_start_ms=0, replays=replays,
+    )
+    assert owner["normal_history_display_reconciliation"]["display_path"] == "FULL_VISUAL_DEDUP"
+
+
+def test_final_summary_counts_normal_display_supersession_separately():
+    audit = {}
+    assert record_final_authority_summary(
+        audit,
+        required_rows=[],
+        decision_row_count=2,
+        source_owner_count=0,
+        baseline_owner_count=0,
+        superseded_by_truth=0,
+        superseded_by_redelivery=0,
+        superseded_by_exact_final_cpa=0,
+        superseded_by_expected_value_canon=0,
+        projected_by_parallel_subtitle=0,
+        superseded_by_parallel_subtitle=0,
+        superseded_by_caption_display=1,
+    )
+    assert audit["final_superseded_by_caption_display_count"] == 1
+    assert audit["final_outside_delivery_count"] == 1
+
+
+@pytest.mark.parametrize("drift", [None, "before", "timing", "mutation"])
+def test_normal_display_history_then_same_owner_typed_repair(drift):
+    from src.autoslice.exact_final_cpa_history import build_run_audit, caption_successors
+
+    audit, owner, _ = _retained_display_case()
+    receipt = audit["exact_final_cpa_self_heal"]
+    retained = receipt["retained_previous_runs"]
+    canonical = caption_successors(retained[0]["audit"])[1]["output_srt_text"]
+    old_repair = retained[0]["audit"]["passes"][0]["repairs"][0]
+    before_text = "谢谢 SC"
+    after_text = "谢谢 SC，朋友"
+    later = deepcopy(old_repair)
+    later.update(before=before_text, after=after_text, request_sha256="sha256:" + "e" * 64)
+    for field in ("before", "after"):
+        later[field + "_sha256"] = "sha256:" + hashlib.sha256(later[field].encode()).hexdigest()
+    final = canonical.replace(before_text, after_text)
+    current = build_run_audit([_typed_pass(
+        pass_index=1, input_text=canonical, output_text=final, repairs=[later],
+    )], retained, final_srt_sha256="sha256:" + hashlib.sha256(final.encode()).hexdigest())
+    audit["exact_final_cpa_self_heal"] = current
+    audit["final_review_audit"]["reviewed_srt_sha256"] = current["final_srt_sha256"]
+    replays = _normal_history_display_replays(audit, final_text_srt=final)
+    assert replays is not None
+    if drift == "before":
+        replays["passes"][-1]["repairs"][0]["before"] = "没有来源的文本"
+    elif drift == "timing":
+        replays["passes"][-1]["repairs"][0]["matched_end_ms"] += 1
+    elif drift == "mutation":
+        replays["passes"][-1]["repairs"][0]["mutation_authority"]["status"] = "BLOCK"
+    accepted = _normal_history_display_retires_decision_row(
+        owner, expected_text=owner["structured_exact_text"], audit=audit,
+        final_text_srt=final, final_speaker_srt=final,
+        delivery_start_ms=0, replays=replays,
+    )
+    assert accepted is (drift is None)
+    if accepted:
+        assert len(owner["normal_history_display_reconciliation"]["typed_owner_successors"]) == 1

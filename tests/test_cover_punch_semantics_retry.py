@@ -12,6 +12,7 @@
 
 import copy
 import json
+from pathlib import Path
 
 from src.autoslice.cover_punch_semantics import (
     SCHEMA_VERSION,
@@ -111,6 +112,47 @@ def test_cover_punch_semantic_review_stops_after_one_retry():
     assert proof["status"] == "FAILED"
     assert proof["attempt_count"] == 2
     assert calls == 2
+
+
+def test_frozen_background_review_rejects_long_valid_semantics_before_render():
+    from src.autoslice.cover_generation import _fit_cover_punch_lines
+
+    prompts = []
+    font = Path(__file__).resolve().parents[1] / "assets/lidousha/fonts/ZCOOLKuaiLe-Regular.ttf"
+
+    def fits_zone(value, text):
+        lines = _validated_extractive_punch(value, text)
+        if not lines:
+            return ()
+        fitted = _fit_cover_punch_lines(
+            lines, zone=(260, 66, 960, 1014), font_path=font,
+            hook_rgb=(255, 92, 138), base_fill=(255, 198, 41), max_size=360,
+        )
+        return lines if fitted[0]["size"] >= 120 else ()
+
+    def judge(prompt):
+        prompts.append(prompt)
+        assert "700px" in prompt and "120px" in prompt
+        short = len(prompts) == 2
+        return json.dumps({
+            "schema_version": SCHEMA_VERSION,
+            "status": "PASS" if short else "REVISE",
+            "final_punch": {"main": "游戏对白" if short else "游戏：抛下我结婚？", "sub": "别先结婚" if short else "小李：有点太暧昧"},
+            **{key: True for key in ("stranger_can_infer_event", "contains_concrete_subject", "contains_action_or_conflict", "no_fabricated_fact")},
+            "story_summary": "游戏对白担心对方先去结婚。",
+            "click_motivation": "想看游戏对白为何这么暧昧。",
+        }, ensure_ascii=False)
+
+    text = "游戏对白问对方会不会抛下自己先去结婚，小李评价有点太暧昧。"
+    lines, proof = review_cover_punch_semantics(
+        title=text, cover_text=text, story_hook=text,
+        punch=("游戏对白", "别先结婚"), llm_call=judge, punch_validator=fits_zone,
+        render_constraint="固定背景只有700px文字区；主字至少120px，不能换区或拆行。",
+    )
+    assert lines == ("游戏对白", "别先结婚")
+    assert [row["status"] for row in proof["attempts"]] == ["REJECTED", "ACCEPTED"]
+    assert "可以忠实抽取、缩写或改写" in prompts[-1]
+    assert validate_cover_punch_semantic_review(proof, rendered_lines=list(lines), cover_text=text, story_hook=text)
 
 
 def test_cover_punch_retry_rejects_candidate_inserted_whitespace():
@@ -297,3 +339,104 @@ def test_cover_punch_rejects_all_non_physical_line_separators_from_source():
         assert not _validated_extractive_punch(
             {"main": cover_text, "sub": None}, cover_text
         )
+
+
+def test_cover_punch_preserves_source_line_boundary_before_quoted_statement():
+    proposal = {"main": "播放自己的录音", "sub": "赞同又反对"}
+    for separator in ("\n", "\r\n", "\u2028", "\u2029"):
+        cover_text = f"播放自己的录音{separator}“赞同”和“反对”交替"
+        assert _validated_extractive_punch(proposal, cover_text) == (
+            "播放自己的录音", "赞同又反对",
+        )
+    # Whitespace on the same source line still cannot hide a cut object.
+    for separator in ("", " ", "\t"):
+        assert not _validated_extractive_punch(
+            {"main": "永久保留", "sub": None},
+            f"永久保留{separator}“完整表情”",
+        )
+
+
+def test_cover_punch_accepts_source_backed_stance_hook_without_action_flag():
+    cover_text = "主播称赞这套角色好看却声明自己完全不代入"
+    story_hook = "主播称赞这套角色好看，却声明自己完全不代入。"
+
+    def accept(_prompt: str) -> str:
+        return json.dumps(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "status": "PASS",
+                "final_punch": {"main": "角色好看", "sub": "完全不代入"},
+                "stranger_can_infer_event": True,
+                "contains_concrete_subject": True,
+                "contains_action_or_conflict": False,
+                "no_fabricated_fact": True,
+                "story_summary": "主播称赞角色好看，却声明自己不代入。",
+                "click_motivation": "这个偏好与立场的反差让人想点开。",
+            },
+            ensure_ascii=False,
+        )
+
+    reviewed, proof = review_cover_punch_semantics(
+        title="【李豆沙】" + cover_text,
+        cover_text=cover_text,
+        story_hook=story_hook,
+        punch=("角色好看", "完全不代入"),
+        llm_call=accept,
+    )
+
+    assert reviewed == ("角色好看", "完全不代入")
+    assert proof["contains_action_or_conflict"] is False
+    assert validate_cover_punch_semantic_review(
+        proof,
+        rendered_lines=list(reviewed),
+        cover_text=cover_text,
+        story_hook=story_hook,
+    )
+
+    missing_action = copy.deepcopy(proof)
+    missing_action.pop("contains_action_or_conflict")
+    assert not validate_cover_punch_semantic_review(
+        missing_action,
+        rendered_lines=list(reviewed),
+        cover_text=cover_text,
+        story_hook=story_hook,
+    )
+
+
+def test_cover_punch_accepts_colon_without_dropping_semantic_proof():
+    cover_text = "主播称赞这套角色好看却声明自己完全不代入"
+    punch = ("角色：好看", "完全:不代入")
+
+    def accept(_prompt: str) -> str:
+        return json.dumps(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "status": "PASS",
+                "final_punch": {"main": punch[0], "sub": punch[1]},
+                "stranger_can_infer_event": True,
+                "contains_concrete_subject": True,
+                "contains_action_or_conflict": False,
+                "no_fabricated_fact": True,
+                "story_summary": "主播称赞角色好看，却声明自己不代入。",
+                "click_motivation": "这个偏好与立场的反差让人想点开。",
+            },
+            ensure_ascii=False,
+        )
+
+    def permissive_shape(_value: object, _cover_text: str) -> tuple[str, ...]:
+        return punch
+
+    reviewed, proof = review_cover_punch_semantics(
+        title="【李豆沙】" + cover_text,
+        cover_text=cover_text,
+        story_hook=cover_text,
+        punch=punch,
+        llm_call=accept,
+        punch_validator=permissive_shape,
+    )
+
+    assert reviewed == punch
+    assert proof["status"] == "PASS"
+    assert validate_cover_punch_semantic_review(
+        proof, rendered_lines=list(punch), cover_text=cover_text, story_hook=cover_text,
+    )

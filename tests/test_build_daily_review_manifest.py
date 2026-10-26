@@ -667,6 +667,46 @@ def _build_daily_talk_package(
     return package_root, state_path, deployed_commit_file, candidate_id
 
 
+def test_build_keeps_cover_request_response_portable_after_source_relocation(
+    tmp_path: Path,
+) -> None:
+    package, state, deployed, cid = _build_daily_talk_package(tmp_path, speaker_finalized=False)
+    publish_path = next(package.glob("*.publish.json"))
+    publish = json.loads(publish_path.read_bytes())
+    generation = publish["cover_generation"]
+    originals = {}
+    for role in ("request", "response"):
+        source = tmp_path / f"provider-{role}.json"
+        raw = json.dumps({"role": role, "candidate": cid}).encode()
+        source.write_bytes(raw)
+        originals[role] = raw
+        generation[f"{role}_path"] = str(source)
+        generation[f"{role}_sha256"] = "sha256:" + _sha256(source)
+    publish_path.write_text(json.dumps(publish), encoding="utf-8")
+    raw_publish = publish_path.read_bytes()
+    item = build(package, state, deployed, cid)["items"][0]
+    for role, raw in originals.items():
+        key = f"cover_{role}"
+        assert (package / item[key]).read_bytes() == raw
+        assert item["sha256"][key] == hashlib.sha256(raw).hexdigest()
+        Path(generation[f"{role}_path"]).unlink()
+    assert build(package, state, deployed, cid)["items"][0] == item
+    assert publish_path.read_bytes() == raw_publish
+
+
+def test_build_refuses_drifted_cover_request_before_manifest_advances(tmp_path: Path) -> None:
+    package, state, deployed, cid = _build_daily_talk_package(tmp_path, speaker_finalized=False)
+    publish_path = next(package.glob("*.publish.json"))
+    publish = json.loads(publish_path.read_bytes())
+    source = tmp_path / "provider-request.json"
+    source.write_bytes(b"changed request")
+    publish["cover_generation"].update(request_path=str(source), request_sha256="sha256:" + "0" * 64)
+    publish_path.write_text(json.dumps(publish), encoding="utf-8")
+    with pytest.raises(DailyManifestError, match="cover request sha drift"):
+        build(package, state, deployed, cid)
+    assert not (package / "review_manifest.json").exists()
+
+
 def test_build_uniform_host_package_keeps_legacy_sapphire72_naming(
     tmp_path: Path,
 ) -> None:

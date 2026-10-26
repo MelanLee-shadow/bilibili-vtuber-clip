@@ -120,3 +120,9 @@
 |---|---|
 | `build_autoslice_eval_snapshot.py` | 从 git tree 构建不可变 eval 运行时 |
 | `run_eval_base_once.sh` | 在 eval 沙箱里安全跑一轮 runner |
+
+## GC 接口兼容
+
+当前版本只使用 `runtime_gc.py` 的生命周期计划与 `--scheduled` 策略入口。
+上文 `terminal_out_gc.py` 是旧版分离收集器的历史地图；该文件不在当前固定源码中。
+公开调度示例见 `config/runtime-gc/`，完整代码树和显式环境变量由部署者提供。

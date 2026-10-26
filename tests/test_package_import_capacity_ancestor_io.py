@@ -76,7 +76,7 @@ def test_missing_parents_still_find_the_actual_existing_directory(
     result = capacity.copy_capacity([_entry(tmp_path / "not-yet" / "created" / "item.bin")])
     assert probes == [tmp_path]
     assert result[0]["path"] == str(tmp_path)
-    assert result[0]["required_bytes"] == 16 * 1024**3 + 1024
+    assert result[0]["required_bytes"] == 2 * 1024**3 + 1024
     assert not (tmp_path / "not-yet").exists()
 
 
@@ -137,3 +137,25 @@ def test_missing_root_cannot_loop_forever(monkeypatch: pytest.MonkeyPatch) -> No
     assert error.value.code == "DISK_CAPACITY_UNAVAILABLE"
     assert error.value.__cause__.errno == errno.ENOENT
     assert count == 1 and probes == []
+
+
+def test_b2_capacity_adapter_preserves_ancestor_io_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.autoslice import b2_v7_recovery_successor as b2
+    def forbidden(*_a: object, **_k: object):
+        raise AssertionError("no E428 preflight, prepare, runtime or output operation")
+    for name in ("preflight", "prepare", "load_native", "new_file", "new_json"):
+        monkeypatch.setattr(b2, name, forbidden)
+    fields = ("record", "publish_json", "chat_authority", "clip_context")
+    frozen = {"item": {k: k + ".json" for k in fields},
+              "inventory": {k + ".json": {"bytes": 100} for k in fields}}
+    denied = tmp_path / "denied"
+    denied.mkdir()
+    probes = _probe_log(monkeypatch)
+    _stat_error(monkeypatch, denied, errno.EACCES)
+    with pytest.raises(PackageImportError) as error:
+        b2.preparation_capacity(frozen, denied / "release-v7-e428-a1")
+    assert error.value.code == "DISK_CAPACITY_UNAVAILABLE"
+    assert error.value.__cause__.errno == errno.EACCES
+    assert probes == []

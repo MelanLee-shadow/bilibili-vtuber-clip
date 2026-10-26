@@ -114,6 +114,21 @@ def test_cp_order_names_are_registered_peers_not_mechanical_respell_pairs():
     assert all(surface != "李默" for surface, _ in pairs)
 
 
+def test_doctor_nickname_candidates_are_peers_without_global_respell_pair():
+    terms = load_glossary_terms(GLOSSARY)
+    pairs = parse_glossary_expected_value_pairs(
+        GLOSSARY.read_text(encoding="utf-8")
+    )
+
+    assert {"露医生", "陆医生"} <= set(terms.canon)
+    assert not any(
+        surface == "陆医生" and canonical == "露医生"
+        for surface, canonical in pairs
+    )
+    assert not any("医生" in surface for surface, _ in pairs)
+    assert not ({"露医生", "陆医生"} & set(terms.mishear_blacklist))
+
+
 def test_exact_cue_markers_are_separate_from_registered_name_parsing():
     text = (
         "- 精确句真值：[exact-cue] 你磕礼豆沙的意思是说礼就是1\n"

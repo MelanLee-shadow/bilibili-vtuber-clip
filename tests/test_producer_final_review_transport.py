@@ -15,6 +15,27 @@ import shlex
 import pytest
 
 from src.autoslice import producer_final_review_transport as transport
+from src.autoslice.cpa_model_ladder import cpa_call_timeout_seconds
+
+
+@pytest.mark.parametrize('damage',[None,'foreign_runtime','relative','incomplete'])
+def test_native_review_uses_pinned_immutable_provider_script(tmp_path,monkeypatch,damage):
+    runtime=tmp_path/'runtime';repo=runtime/'versions'/('a'*40)/'repo';repo.mkdir(parents=True)
+    (repo/'DEPLOYED_COMMIT').write_text('a'*40);(repo/'DEPLOYED_MANIFEST.json').write_text('{}')
+    monkeypatch.setenv('AUTOSLICE_RUNTIME_VERSION_ROOT',str(repo))
+    if damage=='relative':monkeypatch.setenv('AUTOSLICE_RUNTIME_VERSION_ROOT','relative/repo')
+    elif damage=='incomplete':(repo/'DEPLOYED_MANIFEST.json').unlink()
+    elif damage=='foreign_runtime':runtime=tmp_path/'other-runtime'
+    monkeypatch.setattr(transport,'runtime_cpa_command_environment',lambda _: {'CPA_BASE_URL':'https://fixture.invalid/v1','CPA_API_KEY':'offline-fixture'})
+    captured=[]
+    monkeypatch.setattr(transport,'build_llm_call',lambda config:captured.append(config) or (lambda _: '{}'))
+    if damage:
+        with pytest.raises((ValueError,RuntimeError)):transport.build_final_review_llm_call(runtime_root=runtime)
+        assert captured==[]
+    else:
+        transport.build_final_review_llm_call(runtime_root=runtime)
+        assert shlex.split(captured[0].command_template)[1]==str(repo/'scripts/llm_via_cpa.sh')
+        assert captured[0].runtime_root==str(runtime.absolute())
 
 
 def _captured_config(monkeypatch, build_fn):
@@ -42,18 +63,18 @@ def test_final_review_builder_keeps_medium_effort(monkeypatch):
     config = _captured_config(monkeypatch, transport.build_final_review_llm_call)
 
     assert config.transport == "command"
-    assert "'gpt-6-sol'" in config.command_template
+    assert "'gpt-6.1-sol'" in config.command_template
     assert config.command_template.split()[-2] == "medium"
-    assert config.timeout_seconds == 600.0
+    assert config.timeout_seconds == cpa_call_timeout_seconds()
 
 
-def test_pronoun_audit_builder_uses_sol_head_and_low_effort(monkeypatch):
+def test_pronoun_audit_builder_uses_astra_head_and_low_effort(monkeypatch):
     config = _captured_config(monkeypatch, transport.build_pronoun_audit_llm_call)
 
     assert config.transport == "command"
-    assert "'gpt-6-sol'" in config.command_template
+    assert "'gpt-6.1-sol'" in config.command_template
     assert config.command_template.split()[-2] == "low"
-    assert config.timeout_seconds == 600.0
+    assert config.timeout_seconds == cpa_call_timeout_seconds()
 
 
 def test_pronoun_audit_differs_from_final_review_only_in_model_head_and_effort(monkeypatch):
@@ -140,11 +161,11 @@ def test_review_builder_exposes_actual_command_identity(
     assert call("fixture") == "{}"
     assert call.cpa_cache_identity == {
         "transport": "cpa_command",
-        "models": ["gpt-6-sol"],
+        "models": ["gpt-6.1-sol"],
         "effort": "medium",
     }
     assert call.provider_runtime_binding["provider_call_transport"] == "cpa_command"
-    assert call.provider_runtime_binding["provider_model"] == ["gpt-6-sol"]
+    assert call.provider_runtime_binding["provider_model"] == ["gpt-6.1-sol"]
     assert call.provider_runtime_binding["provider_effort"] == "medium"
 
 
@@ -210,7 +231,7 @@ def test_review_builder_remote_runtime_strips_stale_ambient(
 
     call = build_fn(
         runtime_root="/opt/bilive/autoslice",
-        runtime_ssh_host="runtime-host",
+        runtime_ssh_host="oci3",
     )
 
     assert call("fixture") == "{}"
@@ -219,7 +240,7 @@ def test_review_builder_remote_runtime_strips_stale_ambient(
     parts = shlex.split(config.command_template)
     assert parts[0] == "python3"
     assert Path(parts[1]).name == "llm_via_runtime_cpa_ssh.py"
-    assert parts[parts.index("--ssh-host") + 1] == "runtime-host"
+    assert parts[parts.index("--ssh-host") + 1] == "oci3"
     assert parts[parts.index("--runtime-root") + 1] == "/opt/bilive/autoslice"
     assert parts[parts.index("--effort") + 1] == effort
     assert config.command_child_env is not None
@@ -227,16 +248,16 @@ def test_review_builder_remote_runtime_strips_stale_ambient(
     assert "CPA_API_KEY" not in config.command_child_env
     assert config.command_diagnostic_context == {
         "provider_transport": "ssh_runtime_cpa",
-        "provider_runtime_host": "runtime-host",
+        "provider_runtime_host": "oci3",
         "provider_credential_source": "/opt/bilive/autoslice/cpa.env",
     }
     assert call.cpa_cache_identity == {
         "transport": "ssh_runtime_cpa",
-        "models": ["gpt-6-sol"],
+        "models": ["gpt-6.1-sol"],
         "effort": effort,
     }
     assert call.provider_runtime_binding["provider_call_transport"] == "ssh_runtime_cpa"
-    assert call.provider_runtime_binding["provider_model"] == ["gpt-6-sol"]
+    assert call.provider_runtime_binding["provider_model"] == ["gpt-6.1-sol"]
     assert call.provider_runtime_binding["provider_effort"] == effort
 
 

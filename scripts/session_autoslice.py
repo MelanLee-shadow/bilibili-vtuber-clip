@@ -3,9 +3,9 @@
 
 This runner discovers finalized recordings, selects talk and song candidates,
 and drives the canonical pipeline into review-ready delivery artifacts and
-status reports. Publication stays off by default. When the explicit authorized
-queue flag is enabled, the runner may prepare one manifest from a hash-bound
-project authority or consume one ``READY_FOR_SERIAL_UPLOAD`` manifest through
+status reports. Publication also runs in an independent scheduled queue. When
+the explicit runner queue flag is enabled, this runner may prepare one manifest
+from a hash-bound project authority or consume one ``READY_FOR_SERIAL_UPLOAD`` manifest through
 the canonical upload state machine; it never invents authorization or bypasses
 package/review gates.
 
@@ -29,15 +29,27 @@ import tempfile
 import time
 import urllib.request
 from collections.abc import Mapping
+from dataclasses import asdict
+from functools import partial
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+if __name__ == "__main__" and (REPO_ROOT / "DEPLOYED_COMMIT").is_file():
+    # Load the stable stdlib bootstrap before importing mutable repository code.
+    import runpy as _lease_runpy
+    _lease_bootstrap = REPO_ROOT.parent / "runtime-code-lease.py"
+    _lease_runpy.run_path(str(_lease_bootstrap))["ensure_cli_code_lease"](REPO_ROOT, Path(__file__))
+
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.suggest_upload_tags import generate_upload_tags
+
+from src.autoslice.cpa_model_ladder import TOP_CPA_MODEL
 from src.autoslice.candidate_truth_asset import candidate_truth_fingerprint, resolve_candidate_truth_asset_path
-from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.channel_profile import (
+    load_channel_profile, profile_environment, bind_profile_result,
+)
 from src.autoslice.runtime_candidate_asset import bind_runtime_candidate_asset
 from src.autoslice.game_context import bind_session_game_context
 from src.autoslice.streamer_dynamics import bind_session_theme_hints
@@ -71,6 +83,7 @@ from src.autoslice.producer_batch_transaction import (
 )
 from src.autoslice.producer_batch_runner_integration import (
     commit_projected_prefix,
+    cover_state_transition,
     dispatch_prepared_lane,
     finish_producer_date,
     initialize_date_state,
@@ -81,12 +94,24 @@ from src.autoslice.producer_batch_runner_integration import (
     reject_materialized_prepare_results,
     resume_prepared_batch_if_present,
 )
-from src.autoslice.runner_batch_dispatch import _parse_min_free_bytes, produce_batch as _dispatch_produce_batch
+from src.autoslice.runner_batch_dispatch import (
+    _parse_min_free_bytes,
+    _parse_operational_reserve_bytes,
+    _parse_peak_bytes_per_second,
+    produce_batch as _dispatch_produce_batch,
+)
+from src.autoslice import runtime_storage
 from src.autoslice.runner_heartbeat import write_heartbeat as _write_heartbeat
 from src.autoslice.runner_alerts import write_alert as _write_alert
 from src.autoslice.runner_pipeline_fingerprints import (
     pipeline_fingerprint as _pipeline_fingerprint,
     song_pipeline_fingerprint as _song_pipeline_fingerprint,
+    TALK_DEPENDENCY_FIELD,
+    TALK_STAGE_ROOTS,
+    talk_dependency_snapshot as _talk_dependency_snapshot,
+    dependency_fingerprint as _dependency_fingerprint,
+    failure_dependency_stages,
+    stage_consumer_paths,
 )
 from src.autoslice.qixi_transaction_core import exclusive_runner_commit
 from src.autoslice.historical_fastlane_authority import (
@@ -155,6 +180,7 @@ from src.autoslice.cpa_runtime import (
 )
 
 CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
+os.environ.update(profile_environment(CHANNEL_PROFILE))
 PROFILE_ID = CHANNEL_PROFILE.profile_id
 PROFILE_DISPLAY_NAME = CHANNEL_PROFILE.display_name
 PROFILE_OUTPUT_DIRECTORY = CHANNEL_PROFILE.output_directory
@@ -200,8 +226,11 @@ def profile_tool(key: str) -> Path:
     return CHANNEL_PROFILE.tool(key, repo_root=REPO_ROOT)
 
 
-BASE = Path(os.environ.get("AUTOSLICE_BASE", "/opt/bilive/autoslice"))
-os.environ.setdefault("AUTOSLICE_BASE", str(BASE))
+from src.autoslice.producer_request import resolve_runtime_base
+
+BASE = resolve_runtime_base(os.environ.get("AUTOSLICE_BASE", "/opt/bilive/autoslice"))
+_HISTORICAL_TICK_ACTIVE = False
+os.environ["AUTOSLICE_BASE"] = str(BASE)
 
 
 
@@ -328,7 +357,10 @@ TALK_ATTEMPT_CAP = 20  # reject unsafe content candidates and backfill, bounded
 # 冒烟同款 backfill（帽更小）：talk[0] 一票否决曾让整次冒烟颗粒无收，而它偏偏
 # 是文档推荐的"第一支切片"入口——单候选级 fail-closed 时换下一个候选再试。
 SMOKE_TALK_ATTEMPT_CAP = 3
-MAX_SONGS_PER_DATE = 1
+
+
+from src.autoslice.talk_quota_authority import resolve_quota_grant as _resolve_quota_grant
+MAX_SONGS_PER_DATE = _resolve_quota_grant(None, "song").cap
 MAX_SONGS_PER_SESSION = MAX_SONGS_PER_DATE  # legacy import alias; budget is per date
 MIN_TALK_EFFECTIVE_DURATION_MS = 60_000
 TALK_PER_SEGMENT_CAP = 2  # diversity guard on the GLOBAL confidence ranking; slack refills
@@ -350,28 +382,7 @@ SONG_TERMINAL_PERFORMER_REJECTION_CODES = frozenset(
         HOST_NOT_SINGING_REASON,
     }
 )
-SONG_INFRA_TRANSIENT_REASON_CODES = frozenset(
-    {
-        "AGY_SOURCE_CONTEXT_RUNNER_FAILED",
-        "AGY_QUOTA_EXHAUSTED",
-        "AGY_EMPTY_OUTPUT",
-        "AGY_FAILED_RC",
-        "AGY_TIMEOUT",
-        "AGY_AND_GEMINI_API_FAILED",
-        "JINGTING_PROVENANCE_MISSING",
-        "JINGTING_PROVIDER_NOT_AGY",
-        "JINGTING_AGY_FAILED",
-        "JINGTING_MODEL_MISSING",
-        "JINGTING_PROVIDER_FALLBACK_USED",
-        "JINGTING_PROVIDER_FALLBACK_UNKNOWN",
-        "SONG_WINDOW_CUT_FAILED",
-        "SONG_SOURCE_TRANSCRIPT_EMPTY",
-        "CPA_RATE_LIMITED",
-        "CPA_MODEL_DOWN",
-        "CPA_UPSTREAM_5XX",
-        "CPA_UPSTREAM_TIMEOUT",
-    }
-)
+from src.autoslice.infra_retry_policy import SONG_INFRA_TRANSIENT_REASON_CODES
 # Delivered-to-review talk statuses.  "ok" (pre-) and "quarantine"
 # (pre-2026-07-10 delivered-with-flags) are kept ONLY so old state files still
 # count as delivered; new records are always review_ready — boundary red flags
@@ -411,6 +422,8 @@ def _parse_max_parallel_produce(raw: str | None = None) -> int:
 # child can be started. ``main`` rechecks environments changed after import.
 MAX_PARALLEL_PRODUCE = _parse_max_parallel_produce()
 MIN_FREE_BYTES = _parse_min_free_bytes()
+OPERATIONAL_RESERVE_BYTES = _parse_operational_reserve_bytes()
+CAPACITY_PEAK_BYTES_PER_SECOND = _parse_peak_bytes_per_second()
 
 AUTOSLICE_START_DATE = _parse_start_date()
 # slices are independent; produce them concurrently (each is network-bound on
@@ -423,11 +436,13 @@ AUTOSLICE_START_DATE = _parse_start_date()
 # terminally recorded as not selected instead of living in the retry backlog.
 MIN_TALK_CONFIDENCE = 0.80
 PIECE_PRE_MS = 10_000
-# Post context must cover the deterministic source-review demand for the
-# common (origin == semantic end) case in one pass: initial repair cap 30s +
-# source witness reserve 15s + margin.  A short window is not cheaper — it
-# forces a widened-context retry that re-transcribes the whole padded window.
-PIECE_POST_MS = 48_000
+# Post context must cover, for the common (origin == semantic end) case, the
+# one bounded 60s retry as well as the first pass: retry cap 60s + source
+# witness reserve 15s + the fixed 3s retry headroom = 78s (30-boundary).  The
+# retry then keeps this window and resumes the first attempt's hash-bound text
+# checkpoint; a shorter window would have to widen, and a widened padded can
+# never resume that checkpoint (admin, plan A).
+PIECE_POST_MS = 78_000
 BOUNDARY_CONTEXT_RETRY_POST_MS = 90_000
 BOUNDARY_REPAIR_INITIAL_CAP_MS = 30_000
 BOUNDARY_REPAIR_RETRY_CAP_MS = 60_000
@@ -458,34 +473,29 @@ DATE_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 PIPELINE_FINGERPRINT_EXCLUSIONS = {
     "src/autoslice/reporting.py",
 }
-
-
-
-
-
-
-
-
-
-
-CPA_CMD_DEEP = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-sol' medium"
-CPA_CMD_TITLE = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-sol' high"
-CPA_CMD_STANDARD = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-sol' medium"
-CPA_CMD_STRUCTURED = "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} 'gpt-6-sol' medium"
-
-
-
-
-
-
-
-
-
-
+# Current quality lanes use GPT-6.1 Sol: semantic recall, title, standard, and
+# structured calls retain their existing medium/high effort assignments. Model
+# fallback follows the shared CPA ladder. The routing
+# experiments remain historical context only; they do not change these current
+# defaults.
+CPA_CMD_DEEP = f"bash scripts/llm_via_cpa.sh {{prompt_file}} {{completion_file}} '{TOP_CPA_MODEL}' medium"
+CPA_CMD_TITLE = f"bash scripts/llm_via_cpa.sh {{prompt_file}} {{completion_file}} '{TOP_CPA_MODEL}' high"
+CPA_CMD_STANDARD = f"bash scripts/llm_via_cpa.sh {{prompt_file}} {{completion_file}} '{TOP_CPA_MODEL}' medium"
+CPA_CMD_STRUCTURED = f"bash scripts/llm_via_cpa.sh {{prompt_file}} {{completion_file}} '{TOP_CPA_MODEL}' medium"
+# The selector's --cpa-command is the semantic-QA JUDGE lane (request/response
+# JSON contract), NOT a prompt/completion LLM template — canonical validated
+# command per the retired live-e2e runbook.  The selector
+# does NOT run it through a shell, so the api-base must be substituted here
+# (the key stays off the command line via --api-key-env).
+# The judge follows the current direct semantic-QA default in cpa_runtime.py;
+# gpt-6-luna remains health-only and no GPT-5/Astra fallback is implicit.
+# max-tokens 16000 keeps headroom for reasoning burn; --retries 3 absorbs the
+# upstream empty-completion quirk.  Judge failure stays fail-closed (BLOCK,
+# advisory-only for delivery since the song contract).
 
 
 def pipeline_fingerprint() -> str:
-    """Proof-closure fingerprint used to retry old recoverable BLOCKs."""
+    """Deployment provenance; automatic retry compares dependency snapshots."""
 
     return _pipeline_fingerprint(
         repo_root=REPO_ROOT, profile_tool=profile_tool, channel_profile=CHANNEL_PROFILE,
@@ -499,12 +509,6 @@ def song_pipeline_fingerprint() -> str:
     """Hash only surfaces that can change Song proof or Song delivery."""
 
     policy = {
-        "max_songs_per_date": MAX_SONGS_PER_DATE,
-        "song_attempt_cap": SONG_ATTEMPT_CAP,
-        "song_lifetime_attempt_cap": SONG_LIFETIME_ATTEMPT_CAP,
-        "song_infra_retry_cap": SONG_INFRA_RETRY_CAP,
-        "song_infra_retry_base_seconds": SONG_INFRA_RETRY_BASE_SECONDS,
-        "song_infra_retry_max_seconds": SONG_INFRA_RETRY_MAX_SECONDS,
         "song_window_pre_ms": SONG_WINDOW_PRE_MS,
         "song_window_post_ms": SONG_WINDOW_POST_MS,
         "song_proof_retry_pre_ms": SONG_PROOF_RETRY_PRE_MS,
@@ -514,7 +518,6 @@ def song_pipeline_fingerprint() -> str:
         "session_outro_bgm_max_remaining_ms": SESSION_OUTRO_BGM_MAX_REMAINING_MS,
         "song_anchor_trim_min_ms": SONG_ANCHOR_TRIM_MIN_MS,
         "song_terminal_performer_rejection_codes": sorted(SONG_TERMINAL_PERFORMER_REJECTION_CODES),
-        "song_infra_transient_reason_codes": sorted(SONG_INFRA_TRANSIENT_REASON_CODES),
         "cpa_deep_command": CPA_CMD_DEEP,
         "cpa_title_command": CPA_CMD_TITLE,
         "cpa_standard_command": CPA_CMD_STANDARD,
@@ -693,7 +696,7 @@ from src.autoslice.song_lane import (
     scheduled_song_retry_epoch,
     scheduled_talk_retry_epoch,
     scheduled_retry_epoch,
-    produce_song,
+    produce_song as _produce_song_unbound,
 )
 from src.autoslice.published_song_history import (
     PublishedSongHistoryError,
@@ -711,8 +714,46 @@ from src.autoslice.talk_lane import (
     read_speaker_review_meta,
     _speaker_evidence_insufficient_failure,
     classify_talk_failure,
-    produce_talk,
+    produce_talk as _produce_talk_unbound,
 )
+
+def produce_talk(date: str, item: dict, **kwargs) -> dict:
+    os.environ.update(profile_environment(CHANNEL_PROFILE))
+    cid = str(item.get("cid") or item.get("candidate_id") or "")
+    trace = BASE / "out" / date / cid / f"{cid}.cpa-usage.jsonl"
+    if item.get("prepared_recovery") is not None:
+        from src.autoslice.producer_prepared_recovery import canonical_prepared_resume_output_root
+        recovery = item["prepared_recovery"]
+        trace = canonical_prepared_resume_output_root(
+            Path(recovery["spec_path"]), recovery["spec_sha256"], Path(recovery["prepared_path"]),
+        ) / cid / f"{cid}.cpa-usage.jsonl"
+    from src.autoslice.production_attempts import observed_production_attempt, record_production_result
+    with observed_production_attempt(runtime_root=BASE,date=date,candidate_id=cid,lane='talk',trace=trace):
+        result = _produce_talk_unbound(date, item, **kwargs)
+        record_production_result(result)
+    return bind_profile_result(result, CHANNEL_PROFILE)
+
+
+def produce_song(date: str, item: dict, **kwargs) -> dict:
+    os.environ.update(profile_environment(CHANNEL_PROFILE))
+    cid = str(item.get("cid") or item.get("candidate_id") or "")
+    from src.autoslice.song_lane import _song_run_paths
+    paths = _song_run_paths(
+        date, cid, prepare_only=kwargs.get("prepare_only", False),
+        output_root=kwargs.get("output_root"), source_srt=kwargs.get("source_srt"),
+        runtime_report_root=kwargs.get("runtime_report_root"),
+    )
+    if kwargs.get("output_root") is not None or kwargs.get("runtime_report_root") is not None:
+        paths.runtime_report_root.mkdir(parents=True, exist_ok=True)
+        kwargs["runtime_report_root"] = paths.runtime_report_root
+    from src.autoslice.production_attempts import observed_production_attempt, record_production_result
+    with observed_production_attempt(runtime_root=paths.runtime_report_root,date=date,candidate_id=cid,
+                                     lane='song',trace=paths.usage_file):
+        result = _produce_song_unbound(date, item, **kwargs)
+        record_production_result(result)
+    return bind_profile_result(result, CHANNEL_PROFILE)
+
+
 from src.autoslice.talk_failure_recovery_policy import (
     subtitle_authority_recovery_relatives,
 )
@@ -912,7 +953,14 @@ def talk_failure_recovery_fingerprint(failure_kind: str | None, candidate_id: st
         "subtitle_authority",
     }
     if failure_kind not in scoped_failure_kinds:
-        return talk_pipeline_fingerprint(candidate_id)
+        stages = failure_dependency_stages(failure_kind)
+        roots = [path for stage in stages for path in stage_consumer_paths(REPO_ROOT, stage)]
+        # Unknown failures have no demonstrated repair dependency.  They retain
+        # their bounded transient route and diagnostics, never a deploy replay.
+        return _dependency_fingerprint(
+            repo_root=REPO_ROOT, roots=roots,
+            config={"failure_kind": failure_kind, "candidate_id": candidate_id},
+        )
     if failure_kind == "content_boundary":
         relatives = CONTENT_BOUNDARY_RECOVERY_RELATIVES
     elif failure_kind == "subtitle_authority":
@@ -954,9 +1002,134 @@ def talk_failure_recovery_fingerprint(failure_kind: str | None, candidate_id: st
     return "sha256:" + hasher.hexdigest()
 
 
+stage_asset_keys = {
+    "source": ("subtitle_truth_ledger",),
+    "boundary": ("subtitle_truth_ledger",),
+    "speaker": ("voiceprint_profile", "streamer_registry"),
+    "text": ("glossary", "game_glossary", "community_names", "entity_confusables",
+             "gift_names", "known_songs", "subtitle_correction_principles",
+             "subtitle_truth_ledger", "topic_entity_graph", "speech_memory_ledger"),
+    "title": ("title_policy", "title_style", "manual_title_overrides", "persona"),
+    "cover": ("cover_art_direction", "cover_identity_prompt", "cover_reference_overrides", "emote_library"),
+    "package": ("branding_intro_manifest", "final_media_review_contracts"),
+}
+
+
+def capture_talk_dependency_snapshot(date: str, record: dict) -> dict:
+    """Ordinary dispatch captures this before work and persists it on results.
+
+    Requeue also uses it to compare real proof dependencies without comparing
+    the broad deployment provenance in ``pipeline_fingerprint``.
+    """
+    cid = str(record.get("candidate_id") or record.get("cid") or "")
+    assets = {stage: [profile_asset_file(key) for key in keys if key in CHANNEL_PROFILE.asset_files]
+              for stage, keys in stage_asset_keys.items()}
+    # External command templates are not Python imports, but changing their
+    # transport changes the corresponding proof. Do not hash credential files.
+    for stage, relatives in {
+        "source": ("scripts/free_asr_client.py",),
+        "boundary": ("scripts/llm_via_cpa.sh",),
+        "text": ("scripts/llm_via_cpa.sh", "scripts/cpa_semantic_qa_llm.py", "scripts/apply_subtitle_text_overrides.py"),
+        "title": ("scripts/llm_via_cpa.sh",),
+        "cover": ("scripts/llm_via_cpa.sh",),
+    }.items():
+        assets[stage].extend(REPO_ROOT / relative for relative in relatives)
+    assets["cover"].append(profile_tool("cover_regenerator"))
+    fonts = profile_asset_directory("fonts")
+    font_files = [path for path in fonts.rglob("*") if path.is_file()] if fonts.is_dir() else [fonts]
+    for stage in ("cover", "package"):
+        assets[stage].extend(font_files)
+    for lookup, stages in (
+        (candidate_text_override_path, ("text", "title", "cover", "package")),
+        (candidate_subtitle_regression_path, ("text", "package")),
+        (candidate_speaker_override_path, ("speaker", "text", "package")),
+        (candidate_entity_projection_path, ("text", "title", "cover", "package")),
+        (candidate_public_text_surface_authority_path, ("title", "cover", "package")),
+    ):
+        path = lookup(cid)
+        if path is not None:
+            for stage in stages:
+                assets[stage].append(path)
+    baseline = candidate_reviewed_subtitle_baseline(cid)
+    if baseline is not None:
+        for stage in ("text", "title", "cover", "package"):
+            assets[stage].extend(baseline.fingerprint_paths)
+    # A final SRT is an output verified by its byte receipt, not a new input to
+    # the result cache.  The source transcript is canonical even on pick rows
+    # whose dispatcher did not copy bcut_srt_path back from the work item.
+    segment_name = Path(str(record.get("segment_path") or record.get("segment") or "")).name
+    source_transcript = record.get("bcut_srt_path")
+    if not source_transcript and segment_name:
+        source_transcript = str(BASE / "cache" / date / f"{Path(segment_name).stem}.bcut.srt")
+    if isinstance(source_transcript, str) and source_transcript:
+        for stage in ("text", "title", "cover", "package"):
+            assets[stage].append(Path(source_transcript))
+    config = {stage: {"human_truth": human_truth_mode()} for stage in TALK_STAGE_ROOTS}
+    for stage in ("text", "title", "cover", "package"):
+        config[stage]["canonical_surface_rules"] = [asdict(rule) for rule in CHANNEL_PROFILE.canonical_surface_rules]
+    config["speaker"]["speaker_profile"] = {
+        key: getattr(CHANNEL_PROFILE, key) for key in (
+            "host_speaker_label", "guest_speaker_label", "self_reference_aliases", "speaker_identity_aliases")
+    }
+    config["speaker"]["speaker_mode"] = SPEAKER_MODE
+    config["title"]["talk_title_prefix"] = CHANNEL_PROFILE.talk_title_prefix
+    config["cover"]["cover_identity"] = asdict(CHANNEL_PROFILE.cover_identity)
+    for stage in ("boundary", "text", "cover"):
+        config[stage]["cpa_command"] = CPA_CMD_STANDARD
+    config["title"]["cpa_command"] = CPA_CMD_TITLE
+    text_env = ("AUTOSLICE_CORRECTION_MODE", "AUTOSLICE_LOCAL_AUDIO_WITNESS_PROVIDER",
+                "AUTOSLICE_LOCAL_AUDIO_WITNESS_MAX_WINDOWS", "AUTOSLICE_LOCAL_AUDIO_WITNESS_MAX_AUDIO_MS")
+    config["text"].update({key: os.environ.get(key, "") for key in text_env})
+    config["speaker"].update({key: os.environ.get(key, "") for key in (
+        "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_COMMAND_JSON", "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_NAME",
+        "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_ALGORITHM_ID", "AUTOSLICE_SPEAKER_ROUTING_PROVIDER_ARTIFACTS_JSON")})
+    try:
+        config["speaker"]["provider_authority"] = _speaker_routing_provider_authority()
+    except (OSError, TypeError, ValueError, SpeakerRoutingError) as exc:
+        config["speaker"]["provider_authority"] = {"unavailable": type(exc).__name__}
+    source = record.get("segment_path")
+    if not source:
+        name = Path(str(record.get("segment") or "")).name
+        source = str(REC_ROOT / date / name) if name else None
+    return _talk_dependency_snapshot(
+        repo_root=REPO_ROOT, candidate_id=cid, stage_assets=assets, stage_config=config,
+        source_path=Path(source) if source else None, record=record,
+    )
+
+
+def capture_song_dependency_fingerprint(date: str, record: dict, *, proof_fingerprint: str | None = None) -> str:
+    """Song's scoped proof plus its actual source interval, without deploy ID."""
+    source = record.get("segment_path")
+    if not source:
+        name = Path(str(record.get("segment") or "")).name
+        source = str(REC_ROOT / date / name) if name else None
+    identity = None
+    if source:
+        path = Path(source)
+        try:
+            stat = path.stat()
+            identity = [path.name, stat.st_size, stat.st_mtime_ns]
+        except OSError:
+            identity = [path.name, "UNAVAILABLE"]
+    payload = {"proof": proof_fingerprint or song_pipeline_fingerprint(), "source": identity,
+               **{key: record.get(key) for key in ("start_ms", "end_ms", "anchor_start_ms", "anchor_end_ms", "source_sha256")}}
+    return "sha256:" + hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def prepared_result_dependency_fingerprint(date: str, item: dict, lane: str) -> str:
+    """Stable completed-result key; deployment authority remains a separate gate."""
+    if lane == "song":
+        return capture_song_dependency_fingerprint(date, item)
+    if lane != "talk":
+        raise ValueError("prepared result lane must be talk or song")
+    snapshot = capture_talk_dependency_snapshot(date, item)
+    return "sha256:" + hashlib.sha256(json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
 def song_selector_env(date: str) -> dict[str, str]:
     env = child_env_for_date(date)
-    env["AGY_MODEL"] = os.environ.get("SONG_AGY_MODEL", "Gemini 3.6 Flash (High)")
+    from src.autoslice.agy_gemini_client import DEFAULT_AGY_FLASH_HIGH
+    env["AGY_MODEL"] = os.environ.get("SONG_AGY_MODEL", DEFAULT_AGY_FLASH_HIGH)
     # Full-song source-context inspection is materially heavier than ordinary
     # talk windows.  A 269 s real 《怎么办》 run wrote its valid output.srt only
     # near the generic 15 minute deadline and was killed while finalizing.
@@ -1000,15 +1173,18 @@ PAID_CAP = "GEMINI_PAID_BACKUP_DAILY_CAP"
 
 
 def load_gemini_credentials() -> dict[str, str]:
+    from src.autoslice.cpa_gemini_client import enabled
+    if enabled():
+        return {"GEMINI_API_KEY": "CPA_MANAGED"}
     bilive_env = load_env_file(BILIVE_ENV, GEMINI_ENV_NAMES)
     return {key: bilive_env[key] for key in GEMINI_ENV_NAMES if bilive_env.get(key)}
 
 
 def child_env() -> dict[str, str]:
     env = os.environ.copy()
-    env.setdefault("AUTOSLICE_PROFILE", PROFILE_ID)
+    from src.autoslice.cpa_runtime import observation_environment
     # judge/声学缓存根：主树固定 BASE；V15 恢复树由其 launcher 覆写。
-    env.setdefault("AUTOSLICE_BASE", str(BASE))
+    env["AUTOSLICE_BASE"] = str(BASE)
     # 产线子进程的 stdout 进日志 sink（非 TTY）：不关缓冲的话 libc 全缓冲，
     # 每候选日志十几分钟 0 字节、退出才 dump——观察者只能猜死没死。
     env.setdefault("PYTHONUNBUFFERED", "1")
@@ -1071,7 +1247,8 @@ def child_env() -> dict[str, str]:
         env["LIDOUSHA_DISABLE_TOPIC_ENTITY_GRAPH"] = "1"
         env.pop("LIDOUSHA_TOPIC_ENTITY_GRAPH", None)
         env.pop("LIDOUSHA_TOPIC_ENTITY_GRAPH_SHA256", None)
-    return env
+    env.update(observation_environment())
+    return profile_environment(CHANNEL_PROFILE, env)
 
 
 def child_env_for_date(recording_date: str) -> dict[str, str]:
@@ -1309,6 +1486,22 @@ def source_health_error() -> str | None:
     return None
 
 
+def runtime_tool_health_error(lane: str = "talk") -> str | None:
+    """Check selected executable prerequisites without starting a producer."""
+    from src.autoslice.producer_request import (
+        ProducerRuntimePrerequisiteError, validate_producer_runtime_prerequisites,
+    )
+    try:
+        validate_producer_runtime_prerequisites(
+            lane=lane, speaker_mode=SPEAKER_MODE,
+            speaker_python=Path(os.environ.get("AUTOSLICE_SPEAKER_PYTHON", str(BASE / "venv-diar/bin/python"))),
+            host_vocal_python=HOST_VOCAL_PYTHON,
+        )
+    except ProducerRuntimePrerequisiteError as exc:
+        return str(exc)
+    return None
+
+
 def runtime_health_error() -> str | None:
     """Reject an incomplete code snapshot before it consumes candidate work.
 
@@ -1341,7 +1534,7 @@ def runtime_health_error() -> str | None:
         load_selected_selection_calibration_policy()
     except SelectionCalibrationPolicyError as exc:
         return f"SELECTION_CALIBRATION_POLICY_INVALID: {exc.reason_code}: {exc.path}"
-    return None
+    return runtime_tool_health_error()
 
 
 def list_dates() -> list[str]:
@@ -1378,7 +1571,10 @@ def list_dates() -> list[str]:
             log(f"list_dates: {date}: {admission.log_line}")
         if state.get("status") == "source_incomplete" or recovery_in_progress or admission.admitted:
             selected.add(date)
-    return sorted(selected)
+    # Normal production serves the newest recording day before historical
+    # recovery. Explicit start-date backlog mode keeps its own oldest-first
+    # contract above; no Mac wall-clock date enters candidate selection.
+    return sorted(selected, reverse=True)
 
 
 def list_segments(date: str) -> list[Path]:
@@ -1497,11 +1693,26 @@ _TRAILING_PUNCT_RX = re.compile(r"[\s,.!?~～，。！？、·…\-_]+$")
 _SRT_TS_RX = re.compile(r"(\d\d):(\d\d):(\d\d),(\d\d\d)\s*-->\s*(\d\d):(\d\d):(\d\d),(\d\d\d)")
 
 
+def producer_stop_requested() -> bool:
+    # Only the already-validated sealed historical entry may work while the
+    # global production pause remains present.
+    return not _HISTORICAL_TICK_ACTIVE and (BASE / "DISABLED").exists()
+
+
 def produce_batch(
     date: str, items: list[dict], produce_fn, *, prepare_only: bool = False,
     on_result=None,
 ) -> list[dict]:
     """Windowed concurrent production with deploy-yield (src.autoslice.produce_dispatch)."""
+    os.environ.update(profile_environment(CHANNEL_PROFILE))
+    # Reclaim only paths explicitly registered by completed consumers before a
+    # new lane starts.  Pressure admission performs the same hook again after
+    # measuring free space; this stage hook keeps housekeeping useful between
+    # talk/song phases even when the threshold has not yet been crossed.
+    try:
+        runtime_storage.collect_ephemeral(BASE, reason="stage-start")
+    except runtime_storage.RuntimeStorageError as exc:
+        log(f"runtime ephemeral GC deferred at stage start: {exc}")
     return _dispatch_produce_batch(
         date, items, produce_fn, globals(), prepare_only=prepare_only,
         on_result=on_result,
@@ -1730,25 +1941,16 @@ def process_date(date: str) -> None:
         recoverable_failure = talk_checkpoint.recoverable_failure
         # deploy-yield 只返回已开工项（输入序前缀）；未派发的尾巴必须留在
         # 队列里等下个 tick，否则候选无声蒸发。
-        deferred_tail = talk_items[len(results) :] + rescore_blocked_items
-        if retry:  # some title lanes flaky → back off, resume the rest next tick
-            state["status"] = "paused_cpa_down"
-            persist_state()
-            write_reports(date, state)
-            log(f"{date}: {len(retry)} title(s) failed — will retry on a later tick")
-            queue_collab_evidence_capture(
-                date,
-                state,
-                capture_candidates,
-                routing_claim=routing_claim,
-            )
-            persist_state()
-            write_reports(date, state)
-            return
+        deferred_tail = talk_items[len(results) :]
         if deferred_tail:
             # 让位部署：本 tick 收官，尾巴已持久化在 pending_talk 等新代码。
             log(f"{date}: {len(deferred_tail)} talk item(s) deferred for deploy — resuming next tick")
             return
+        if retry:
+            # This lane has drained its admitted tail. Retain the title retry
+            # for the next tick and let the independent Song lane progress.
+            log(f"{date}: {len(retry)} title(s) held for a later tick; continuing Song")
+            break
         if recoverable_failure:
             # The selected item is waiting on infrastructure.  Do not spend a
             # second candidate merely to hide the outage or exceed top-5 when
@@ -1761,10 +1963,22 @@ def process_date(date: str) -> None:
         break
     if frozen_talk_candidate_ids is None:
         suppress_exact_talk_recovery_song_work(state, phase="before_song_lane")
+    if producer_stop_requested():
+        log(f"{date}: operator stop after Talk checkpoint; pending work retained")
+        return
     # Song lane with bounded backfill: a gate-BLOCKED song frees its slot for
     # the next backlog song (danmaku-desc) until the delivery budget is met,
     # the backlog runs dry, or SONG_ATTEMPT_CAP is hit.
     while frozen_talk_candidate_ids is None and state["pending_song"]:
+        # Check the Song-only interpreter when this lane actually has work.
+        # Existing private batch handles were already resumed at date entry.
+        runtime_err = runtime_tool_health_error("song")
+        if runtime_err:
+            state["status"] = "paused_runtime_invalid"
+            state["runtime_error"] = runtime_err
+            persist_state()
+            log(f"{date}: Song runtime invalid; pending work retained: {runtime_err}")
+            return
         song_items = list(state["pending_song"])
         with exclusive_runner_commit(BASE):
             checkpoint_before = runner_state_writeback.read_exact_state_preimage(
@@ -1813,13 +2027,23 @@ def process_date(date: str) -> None:
             return
         refill_songs(state)
         persist_state()
+    if producer_stop_requested():
+        log(f"{date}: operator stop before cover maintenance; pending work retained")
+        return
     finish_producer_date(
         runtime_root=BASE, date=date, state=state, mutate_songs=frozen_talk_candidate_ids is None,
-        repair_covers=historical_failed_talk_scope.repair_covers,
+        repair_covers=partial(
+            historical_failed_talk_scope.repair_covers,
+            state_transition=partial(
+                cover_state_transition, runtime_root=BASE, date=date, state=state,
+                persist_state=persist_state,
+            ),
+        ),
         automatic_maintenance=automatic_maintenance, candidate_ids=frozen_talk_candidate_ids,
         project_terminal=_project_terminal_batch_state, persist_state=persist_state,
         write_reports=write_reports, log=log, capture_candidates=capture_candidates,
         routing_claim=routing_claim, queue_collab=queue_collab_evidence_capture,
+        repair_covers_uses_short_leases=True,
     )
 
 
@@ -1876,6 +2100,19 @@ def tick(*, historical_date: str | None = None) -> int:
         log(report["log"])
         return 0
     historical_date is None and review_package_poststage.backfill_terminal_review_packages(sys.modules[__name__])
+    # Drain one already-ready action before a potentially long producer batch.
+    # The queue itself replays PUBLISH_PAUSED/deploy.guard/AUTO_UPLOAD and all release
+    # gates. At most one action per tick; new packages are picked up next tick.
+    publication_suffix = runner_publication_queue.consume_tick(
+        publication_queue,
+        enabled=historical_date is None
+        and os.environ.get("AUTOSLICE_AUTHORIZED_UPLOAD_QUEUE_ENABLED", "0") == "1",
+        blocked=(historical_date is None
+                 and os.environ.get("AUTOSLICE_AUTHORIZED_UPLOAD_QUEUE_ENABLED", "0") == "1"
+                 and live_hold_recheck()),
+        repository_root=REPO_ROOT,
+        runtime_root=BASE,
+        log=log)
     checked = []
     deferred: list[str] = []
     deploy_deferred: list[str] = []
@@ -1907,14 +2144,7 @@ def tick(*, historical_date: str | None = None) -> int:
     suffix = f" live_yield_deferred={' '.join(deferred)}" if deferred else ""
     if deploy_deferred:
         suffix += f" deploy_yield_deferred={' '.join(deploy_deferred)}"
-    suffix += runner_publication_queue.consume_tick(
-        publication_queue,
-        enabled=historical_date is None
-        and os.environ.get("AUTOSLICE_AUTHORIZED_UPLOAD_QUEUE_ENABLED", "0") == "1",
-        blocked=bool(deferred or deploy_deferred),
-        repository_root=REPO_ROOT,
-        runtime_root=BASE,
-        log=log)
+    suffix += publication_suffix
     write_heartbeat(f"live={live} source=ok dates={' '.join(checked) or '(none)'}{suffix}")
     log(f"tick done: live={live} dates={' '.join(checked) or '(none)'}{suffix}")
     return 0
@@ -1941,11 +2171,21 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     global AUTOSLICE_START_DATE, MAX_PARALLEL_PRODUCE, MIN_FREE_BYTES
+    global OPERATIONAL_RESERVE_BYTES, CAPACITY_PEAK_BYTES_PER_SECOND
+    global _HISTORICAL_TICK_ACTIVE
     # Keep this before BASE creation, credential loading, and provider branches.
     try:
         MAX_PARALLEL_PRODUCE = _parse_max_parallel_produce()
         MIN_FREE_BYTES = _parse_min_free_bytes()
+        OPERATIONAL_RESERVE_BYTES = _parse_operational_reserve_bytes()
+        CAPACITY_PEAK_BYTES_PER_SECOND = _parse_peak_bytes_per_second()
         AUTOSLICE_START_DATE = _parse_start_date()
+        smoke_date = None
+        if args.smoke_segment:
+            source_date = re.search(r"_(\d{8})-\d{2}-\d{2}-\d{2}", args.smoke_segment.name)
+            if source_date is None:
+                raise ValueError("smoke source filename must contain its actual recording date")
+            smoke_date = time.strftime("%Y-%m-%d", time.strptime(source_date[1], "%Y%m%d"))
     except ValueError as exc:
         parser.error(str(exc))
     BASE.mkdir(parents=True, exist_ok=True)
@@ -1971,11 +2211,15 @@ def main(argv: list[str] | None = None) -> int:
                     room_id=normalize_historical_room_id(ROOM),
                     recorder_endpoint=HISTORICAL_RECORDER_ENDPOINT, recorder_env=HISTORICAL_RECORDER_ENV,
                 )
+                previous_historical_tick = _HISTORICAL_TICK_ACTIVE
                 try:
+                    _HISTORICAL_TICK_ACTIVE = True
                     result = tick(historical_date=str(started["recording_date"]))
                 except BaseException:
                     finish_historical_run(authority_path=args.historical_authority, runtime_root=BASE, failed=True)
                     raise
+                finally:
+                    _HISTORICAL_TICK_ACTIVE = previous_historical_tick
                 finish_historical_run(authority_path=args.historical_authority, runtime_root=BASE, failed=result != 0)
                 return result
         except HistoricalFastlaneAuthorityError as exc:
@@ -1994,7 +2238,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.smoke_segment:
         segment = args.smoke_segment
-        date = "smoke"
+        date = smoke_date
         srt = bcut_transcribe(segment, date)
         if srt is None:
             return 1

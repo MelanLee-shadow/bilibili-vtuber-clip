@@ -8,6 +8,9 @@ runner patch seam in module and cron script execution modes.
 from __future__ import annotations
 
 import json
+from copy import deepcopy
+from collections.abc import Callable
+from dataclasses import dataclass
 import os
 import re
 import shutil
@@ -22,6 +25,7 @@ from src.autoslice.cover_host_identity_gate import (
 )
 from src.autoslice.publication_registry import cover_maintenance_block_reason
 from src.autoslice.runner_proxy import RunnerProxy
+from src.autoslice.runner_state_writeback import RunnerStateWritebackError
 
 
 _runner = RunnerProxy()
@@ -304,6 +308,12 @@ def _cover_repair_todo_ids(
         for record in records
         if _runner.cover_repair_needed(date, record)
     }
+    resumable_ids = {
+        candidate_id for candidate_id in record_ids
+        if candidate_id in needed_ids
+        and not _runner._cover_repair_eligible(_live_cover_record(state, candidate_id))
+        and _resume_cover_attempt(date, _live_cover_record(state, candidate_id), _runner.pipeline_fingerprint()) is not None
+    }
     cleared_stale_preflight_error = False
     for record in records:
         if (
@@ -319,6 +329,7 @@ def _cover_repair_todo_ids(
         candidate_id
         for candidate_id in record_ids
         if candidate_id in needed_ids
+        and candidate_id not in resumable_ids
         and not _runner._cover_repair_eligible(_live_cover_record(state, candidate_id))
     ]
     for candidate_id in exhausted_ids:
@@ -334,7 +345,7 @@ def _cover_repair_todo_ids(
         candidate_id
         for candidate_id in record_ids
         if candidate_id in needed_ids
-        and _runner._cover_repair_eligible(_live_cover_record(state, candidate_id))
+        and (candidate_id in resumable_ids or _runner._cover_repair_eligible(_live_cover_record(state, candidate_id)))
     ]
 
 
@@ -344,6 +355,7 @@ def repair_covers(
     *,
     candidate_ids: set[str] | frozenset[str] | None = None,
     expected_cover_texts: dict[str, str] | None = None,
+    state_transition: Callable[..., dict] | None = None,
 ) -> None:
     """Phase D: delivered clips whose REAL-AI cover was blocked (CPA image lane
     hiccups: gateway 400s, provider outages) get a bounded cover-only retry —
@@ -408,6 +420,12 @@ def repair_covers(
     if not records:
         return
     record_ids = [str(record.get("candidate_id") or "") for record in records]
+    if state_transition is not None:
+        _repair_covers_with_short_leases(
+            date, state, record_ids, expected_cover_texts=expected_cover_texts,
+            state_transition=state_transition,
+        )
+        return
     recovered = False
     for record in records:
         paths = _runner.delivered_paths(date, record)
@@ -432,190 +450,377 @@ def repair_covers(
     if not todo_ids:
         return
     for candidate_id in todo_ids:
+        attempt = _prepare_cover_attempt(
+            date, _live_cover_record(state, candidate_id), fingerprint=fingerprint,
+            expected_cover_texts=expected_cover_texts,
+        )
+        # Legacy callers retain their outer lease and the same precharge.
+        _runner.write_state(date, state)
+        if attempt is None:
+            continue
         rec = _live_cover_record(state, candidate_id)
-        mp4, cover = _runner.delivered_paths(date, rec)
-        generation = rec.get("cover_generation")
-        if (
-            rec.get("status") == _runner.TALK_COVER_PENDING_STATUS
-            and isinstance(generation, dict)
-            and final_host_identity_witness_unavailable(generation)
-        ):
-            # Reuse the already-bound failure receipt. Do not spend another
-            # image request merely to rediscover that the verifier is down.
-            _queue_identity_witness_route_regeneration(rec)
-            _runner.write_state(date, state)
-            continue
-        if _handle_screenshot_route_repair(rec, fingerprint):
-            _runner.write_state(date, state)
-            continue
         try:
-            _runner._cover_authority_preflight(date, rec, mp4)
+            if str(rec.get("title") or "") != attempt.title:
+                raise ValueError("COVER_REPAIR_CURRENT_TITLE_DRIFT")
+            rc = _run_cover_attempt(date, attempt)
+            _finish_cover_attempt(
+                date, rec, attempt, rc, expected_cover_text=expected_cover_texts.get(candidate_id),
+            )
         except (OSError, ValueError) as exc:
-            rec["cover_integrity_status"] = "INVALID_AUTHORITY_PREFLIGHT"
-            title_authority_blocked = str(exc).startswith(
-                "COVER_TITLE_AUTHORITY_UNRESOLVED:"
-            )
-            rec["cover_status"] = (
-                "BLOCKED_TITLE_AUTHORITY_REGENERATION_REQUIRED"
-                if title_authority_blocked
-                else "BLOCKED_COVER_AUTHORITY_PREFLIGHT"
-            )
-            rec["cover_authority_preflight_error"] = f"{type(exc).__name__}: {exc}"
-            if title_authority_blocked and not rec.get("delivered"):
-                rec.update(
-                    {
-                        "status": "failed",
-                        "failure_kind": "title_authority",
-                        "failure_stage": "cover_authority_preflight",
-                        "failure_recoverable": True,
-                    }
-                )
-            _runner.log(
-                f"cover repair {rec.get('candidate_id', '?')}: authority preflight "
-                f"blocked before image request: {type(exc).__name__}: {exc}"
-            )
-            _runner.write_state(date, state)
+            _runner.log(f"cover repair {candidate_id}: result refused: {exc}")
             continue
-        rec.pop("cover_authority_preflight_error", None)
-        rec["cover_repair_attempts"] = rec.get("cover_repair_attempts", 0) + 1
-        rec["cover_repair_lifetime_attempts"] = rec.get("cover_repair_lifetime_attempts", 0) + 1
-        cid = rec.get("candidate_id", "?")
-        _runner.log(f"cover repair {cid} (attempt {rec['cover_repair_attempts']}/{_runner.COVER_REPAIR_MAX_ATTEMPTS})")
-        log_path = _runner.BASE / "logs" / f"{date}_{cid}_cover.log"
-        ref = _runner.cover_ref_for(date, cid)
-        src_args = ["--ref", str(ref)] if ref else ["--media", str(mp4)]
-        style_args: list[str] = []
-        diversity_slot = rec.get("cover_diversity_slot")
-        if (
-            isinstance(diversity_slot, int)
-            and not isinstance(diversity_slot, bool)
-            and diversity_slot >= 0
-        ):
-            style_args.extend(["--diversity-slot", str(diversity_slot)])
-        generation_story_contract = (
-            generation.get("story_contract")
-            if isinstance(generation, dict)
-            else None
-        )
-        story_hook = (
-            str(generation_story_contract.get("selection_hook") or "").strip()
-            if isinstance(generation_story_contract, dict)
-            else ""
-        )
-        if not story_hook:
-            story_hook = str(rec.get("hook") or "").strip()
-        if story_hook:
-            # Cover-only maintenance must carry the same full-story authority
-            # as normal production.  Without it, the punch semantic reviewer
-            # can only see the title and its proof will not bind to the
-            # package StoryContract audited at delivery time.
-            style_args.extend(["--story-hook", story_hook])
-        if (
-            str(cid) not in expected_cover_texts
-            and rec.get("title_authority_status") != "RESOLVED_MANUAL"
-        ):
-            style_args.append("--allow-punch")
-        reviewed_cover_text = expected_cover_texts.get(str(cid))
-        if reviewed_cover_text is not None:
-            style_args.extend(["--cover-text", reviewed_cover_text])
-        repair_root = _runner.BASE / "out" / date / str(cid) / "cover_repair"
-        attempt_id = (
-            f"{fingerprint.removeprefix('sha256:')[:12]}-"
-            f"{rec['cover_repair_attempts']:02d}-{time.time_ns()}"
-        )
-        generation_root = repair_root / "generations" / attempt_id
-        generated_cover = generation_root / "final.cover.png"
-        ai_background = generation_root / "ai-background.png"
-        rec["cover_repair_last_generation_dir"] = str(generation_root)
-        rec["cover_integrity_status"] = "REPAIR_ATTEMPT_IN_PROGRESS"
-        rec["cover_repair_exhausted"] = False
-        if cover.is_file():
-            stale_sha = _runner._sha256_regular_file(cover)
-            stale_path = repair_root / "stale_covers" / f"{cover.name}.{stale_sha}.png"
-            if not stale_path.is_file():
-                stale_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(cover, stale_path)
-        # Charge and persist the bounded attempt before the external image
-        # request.  A process/host crash after provider spend cannot evade the
-        # lifetime cap or replay the same budget slot forever.
         _runner.write_state(date, state)
-        try:
-            rec = _live_cover_record(state, str(cid))
-            live_paths = _runner.delivered_paths(date, rec)
-            if live_paths is None:
-                raise ValueError("cover repair delivery disappeared after writeback")
-            mp4, cover = live_paths
-        except ValueError as exc:
-            _runner.log(f"cover repair {cid}: refused stale post-writeback bind: {exc}")
-            continue
-        try:
-            with open(log_path, "a", encoding="utf-8") as sink:
-                completed = subprocess.run(
-                    [sys.executable, str(_runner.profile_tool("cover_regenerator")),
-                     "--title", str(rec["title"]), *src_args,
-                     "--candidate-id", str(cid), "--ai-bg", str(ai_background),
-                     "--out", str(generated_cover), *style_args],
-                    check=False, stdout=sink, stderr=subprocess.STDOUT, timeout=1200,
-                    cwd=str(_runner.REPO_ROOT), env=_runner.child_env_for_date(date),
-                )
-            rc = completed.returncode
-        except subprocess.TimeoutExpired:
-            rc = -1
-        identity_witness_unavailable = (
-            _generation_receipt_has_unavailable_identity_witness(generated_cover)
-        )
-        bound = False
-        if rc == 0 and generated_cover.is_file():
-            try:
-                expected_cover_text = expected_cover_texts.get(str(cid))
-                if expected_cover_text is not None:
-                    generation, _generation_path = _runner._validate_repaired_cover_generation(
-                        cover=generated_cover,
-                        title=str(rec["title"]),
-                        candidate_id=str(cid),
-                    )
-                    rendered_lines = generation.get("rendered_lines")
-                    def canonical(value: object) -> str:
-                        return re.sub(r"\s+", "", str(value))
 
-                    if (
-                        generation.get("cover_text") != expected_cover_text
-                        or not isinstance(rendered_lines, list)
-                        or not rendered_lines
-                        or any(not isinstance(value, str) for value in rendered_lines)
-                        or canonical("".join(rendered_lines))
-                        != canonical(expected_cover_text)
-                    ):
-                        raise ValueError(
-                            "generated cover did not preserve the reviewed text/punctuation"
-                        )
-                _runner._bind_repaired_cover(date, rec, mp4, cover, generated_cover)
-            except (OSError, ValueError, _runner.SongDeliveryError) as exc:
-                with open(log_path, "a", encoding="utf-8") as sink:
-                    sink.write(f"\nCOVER_BINDING_FAILED: {type(exc).__name__}: {exc}\n")
-                rc = -2
-            else:
-                bound = True
-                rec["cover_integrity_status"] = "VALID_BOUND"
-                if rec.get("status") == _runner.TALK_COVER_PENDING_STATUS:
-                    rec["status"] = "review_ready"
-                    rec["bundle_lifecycle"] = "CURRENT"
-                    rec["bundle_compliance"] = "COMPLIANT"
-                _runner.log(f"cover repaired and hash-bound → {cover.name}")
-        if not bound:
-            if (
-                identity_witness_unavailable
-                and rec.get("status") == _runner.TALK_COVER_PENDING_STATUS
-            ):
-                _queue_identity_witness_route_regeneration(rec)
-            elif (
-                rec["cover_repair_attempts"] >= _runner.COVER_REPAIR_MAX_ATTEMPTS
-                or rec["cover_repair_lifetime_attempts"] >= _runner.COVER_REPAIR_LIFETIME_ATTEMPT_CAP
-            ):
-                rec["cover_status"] = f"{rec.get('cover_status') or 'BLOCKED_AI_COVER_REQUIRED'}(repair_failed_x{rec['cover_repair_attempts']})"
-                rec["cover_integrity_status"] = "INVALID_REPAIR_BUDGET_EXHAUSTED"
-                rec["cover_repair_exhausted"] = True
-                _runner.log(f"cover repair failed {rec['cover_repair_attempts']}x — left for human review (see {log_path.name})")
-            else:
-                rec["cover_integrity_status"] = "INVALID_REPAIR_PENDING"
-        _runner.write_state(date, state)
+@dataclass(frozen=True)
+class _CoverRepairAttempt:
+    candidate_id: str
+    title: str
+    mp4: Path
+    cover: Path
+    generated_cover: Path
+    log_path: Path
+    input_snapshot: dict[str, str | None]
+    command: list[str]
+    provider_required: bool = True
+
+
+def _resume_cover_attempt(date: str, rec: dict, fingerprint: str) -> _CoverRepairAttempt | None:
+    """Consume the saved successful generation after a crash before binding."""
+    from src.autoslice.cover_repair import snapshot_cover_repair_inputs, validate_cover_repair_inputs
+
+    raw_root = rec.get("cover_repair_last_generation_dir")
+    expected = rec.get("cover_repair_input_binding_sha256")
+    if not raw_root or not expected:
+        return None
+    root = Path(str(raw_root))
+    owned = _runner.BASE / "out" / date / str(rec["candidate_id"]) / "cover_repair" / "generations"
+    try:
+        if not root.resolve(strict=True).is_relative_to(owned.resolve(strict=True)):
+            return None
+        binding_path = root / "input-binding.json"
+        if snapshot_cover_repair_inputs([binding_path])[str(binding_path.absolute())] != expected:
+            return None
+        binding = json.loads(binding_path.read_bytes())
+        if (binding.get("candidate_id") != rec["candidate_id"] or binding.get("title") != rec["title"]
+                or binding.get("pipeline_fingerprint") != fingerprint or binding.get("upload_enabled") is not False
+                or not isinstance(binding.get("files"), dict)):
+            return None
+        validate_cover_repair_inputs(binding["files"])
+        generated_cover = root / "final.cover.png"
+        _runner._validate_repaired_cover_generation(
+            cover=generated_cover, title=str(rec["title"]), candidate_id=str(rec["candidate_id"]),
+        )
+        mp4, cover = _runner.delivered_paths(date, rec)
+        if any(str(path.absolute()) not in binding["files"] for path in (mp4, cover)):
+            return None
+        current_snapshot = _runner._cover_authority_preflight(date, rec, mp4)
+        if current_snapshot and any(binding["files"].get(key) != value for key, value in current_snapshot.items()):
+            return None
+    except (OSError, ValueError):
+        return None
+    return _CoverRepairAttempt(
+        candidate_id=str(rec["candidate_id"]), title=str(rec["title"]), mp4=mp4, cover=cover,
+        generated_cover=generated_cover, log_path=_runner.BASE / "logs" / f"{date}_{rec['candidate_id']}_cover.log",
+        input_snapshot=binding["files"], command=[], provider_required=False,
+    )
+
+
+def _prepare_cover_attempt(
+    date: str, rec: dict, *, fingerprint: str, expected_cover_texts: dict[str, str],
+) -> _CoverRepairAttempt | None:
+    mp4, cover = _runner.delivered_paths(date, rec)
+    generation = rec.get("cover_generation")
+    if (
+        rec.get("status") == _runner.TALK_COVER_PENDING_STATUS
+        and isinstance(generation, dict)
+        and final_host_identity_witness_unavailable(generation)
+    ):
+        # Reuse the already-bound failure receipt. Do not spend another
+        # image request merely to rediscover that the verifier is down.
+        _queue_identity_witness_route_regeneration(rec)
+        return None
+    if _handle_screenshot_route_repair(rec, fingerprint):
+        return None
+    try:
+        authority_snapshot = _runner._cover_authority_preflight(date, rec, mp4)
+    except (OSError, ValueError) as exc:
+        rec["cover_integrity_status"] = "INVALID_AUTHORITY_PREFLIGHT"
+        title_authority_blocked = str(exc).startswith(
+            "COVER_TITLE_AUTHORITY_UNRESOLVED:"
+        )
+        rec["cover_status"] = (
+            "BLOCKED_TITLE_AUTHORITY_REGENERATION_REQUIRED"
+            if title_authority_blocked
+            else "BLOCKED_COVER_AUTHORITY_PREFLIGHT"
+        )
+        rec["cover_authority_preflight_error"] = f"{type(exc).__name__}: {exc}"
+        if title_authority_blocked and not rec.get("delivered"):
+            rec.update(
+                {
+                    "status": "failed",
+                    "failure_kind": "title_authority",
+                    "failure_stage": "cover_authority_preflight",
+                    "failure_recoverable": True,
+                }
+            )
+        _runner.log(
+            f"cover repair {rec.get('candidate_id', '?')}: authority preflight "
+            f"blocked before image request: {type(exc).__name__}: {exc}"
+        )
+        return None
+    rec.pop("cover_authority_preflight_error", None)
+    resumed = _resume_cover_attempt(date, rec, fingerprint)
+    if resumed is not None:
+        _runner.log(f"cover repair {rec['candidate_id']}: resumed saved generation without provider spend")
+        return resumed
+    rec["cover_repair_attempts"] = rec.get("cover_repair_attempts", 0) + 1
+    rec["cover_repair_lifetime_attempts"] = rec.get("cover_repair_lifetime_attempts", 0) + 1
+    cid = rec.get("candidate_id", "?")
+    _runner.log(f"cover repair {cid} (attempt {rec['cover_repair_attempts']}/{_runner.COVER_REPAIR_MAX_ATTEMPTS})")
+    log_path = _runner.BASE / "logs" / f"{date}_{cid}_cover.log"
+    ref = _runner.cover_ref_for(date, cid)
+    src_args = ["--ref", str(ref)] if ref else ["--media", str(mp4)]
+    style_args: list[str] = []
+    diversity_slot = rec.get("cover_diversity_slot")
+    if (
+        isinstance(diversity_slot, int)
+        and not isinstance(diversity_slot, bool)
+        and diversity_slot >= 0
+    ):
+        style_args.extend(["--diversity-slot", str(diversity_slot)])
+    generation_story_contract = (
+        generation.get("story_contract")
+        if isinstance(generation, dict)
+        else None
+    )
+    story_hook = (
+        str(generation_story_contract.get("selection_hook") or "").strip()
+        if isinstance(generation_story_contract, dict)
+        else ""
+    )
+    if not story_hook:
+        story_hook = str(rec.get("hook") or "").strip()
+    if story_hook:
+        # Cover-only maintenance must carry the same full-story authority
+        # as normal production.  Without it, the punch semantic reviewer
+        # can only see the title and its proof will not bind to the
+        # package StoryContract audited at delivery time.
+        style_args.extend(["--story-hook", story_hook])
+    if (
+        str(cid) not in expected_cover_texts
+        and rec.get("title_authority_status") != "RESOLVED_MANUAL"
+    ):
+        style_args.append("--allow-punch")
+    reviewed_cover_text = expected_cover_texts.get(str(cid))
+    if reviewed_cover_text is not None:
+        style_args.extend(["--cover-text", reviewed_cover_text])
+    repair_root = _runner.BASE / "out" / date / str(cid) / "cover_repair"
+    attempt_id = (
+        f"{fingerprint.removeprefix('sha256:')[:12]}-"
+        f"{rec['cover_repair_attempts']:02d}-{time.time_ns()}"
+    )
+    generation_root = repair_root / "generations" / attempt_id
+    generated_cover = generation_root / "final.cover.png"
+    ai_background = generation_root / "ai-background.png"
+    from src.autoslice.cover_repair import snapshot_cover_repair_inputs, current_cover_editorial_inputs
+    input_snapshot = dict(authority_snapshot or {})
+    input_snapshot.update(snapshot_cover_repair_inputs([mp4, cover, *([ref] if ref else [])]))
+    frozen_title = str(rec["title"])
+    if authority_snapshot:
+        current = current_cover_editorial_inputs(date, rec, mp4)
+        if current["subtitle_path"] is not None:
+            frozen_srt = generation_root / "final-input.srt"
+            _atomic_write_bytes_file(frozen_srt, current["subtitle_path"].read_bytes())
+            style_args.extend(["--final-srt", str(frozen_srt)])
+            input_snapshot.update(snapshot_cover_repair_inputs([current["subtitle_path"], frozen_srt]))
+        for key, flag in (("story_contract", "--story-contract"), ("editorial_research", "--editorial-research")):
+            if current[key] is not None:
+                frozen_json = generation_root / (key + ".json")
+                _atomic_write_json_file(frozen_json, current[key])
+                style_args.extend([flag, str(frozen_json)])
+                input_snapshot.update(snapshot_cover_repair_inputs([frozen_json]))
+    _atomic_write_json_file(generation_root / "input-binding.json", {
+        "candidate_id": str(cid), "title": frozen_title,
+        "pipeline_fingerprint": fingerprint,
+        "files": input_snapshot, "upload_enabled": False,
+    })
+    rec["cover_repair_input_binding_sha256"] = snapshot_cover_repair_inputs([generation_root / "input-binding.json"])[str((generation_root / "input-binding.json").absolute())]
+    rec["cover_repair_last_generation_dir"] = str(generation_root)
+    rec["cover_integrity_status"] = "REPAIR_ATTEMPT_IN_PROGRESS"
+    rec["cover_repair_exhausted"] = False
+    if cover.is_file():
+        stale_sha = _runner._sha256_regular_file(cover)
+        stale_path = repair_root / "stale_covers" / f"{cover.name}.{stale_sha}.png"
+        if not stale_path.is_file():
+            stale_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(cover, stale_path)
+    return _CoverRepairAttempt(
+        candidate_id=str(cid), title=frozen_title, mp4=mp4, cover=cover,
+        generated_cover=generated_cover, log_path=log_path, input_snapshot=input_snapshot,
+        command=[sys.executable, str(_runner.profile_tool("cover_regenerator")),
+                 "--title", frozen_title, *src_args, "--candidate-id", str(cid),
+                 "--ai-bg", str(ai_background), "--out", str(generated_cover), *style_args],
+    )
+
+
+def _run_cover_attempt(date: str, attempt: _CoverRepairAttempt) -> int:
+    from src.autoslice.cover_repair import validate_cover_repair_inputs
+
+    validate_cover_repair_inputs(attempt.input_snapshot)
+    if cover_maintenance_block_reason(attempt.candidate_id, recording_date=date) is not None:
+        raise ValueError("COVER_REPAIR_PUBLICATION_AUTHORITY_CHANGED")
+    if not attempt.provider_required:
+        return 0
+    try:
+        with attempt.log_path.open("a", encoding="utf-8") as sink:
+            completed = subprocess.run(
+                attempt.command, check=False, stdout=sink, stderr=subprocess.STDOUT,
+                timeout=1200, cwd=str(_runner.REPO_ROOT), env=_runner.child_env_for_date(date),
+            )
+        return completed.returncode
+    except subprocess.TimeoutExpired:
+        return -1
+
+
+def _finish_cover_attempt(
+    date: str, rec: dict, attempt: _CoverRepairAttempt, rc: int,
+    *, expected_cover_text: str | None,
+) -> None:
+    from src.autoslice.cover_repair import validate_cover_repair_inputs
+
+    cid, mp4, cover = attempt.candidate_id, attempt.mp4, attempt.cover
+    generated_cover, log_path = attempt.generated_cover, attempt.log_path
+    input_snapshot = attempt.input_snapshot
+    if str(rec.get("title") or "") != attempt.title or _runner.delivered_paths(date, rec) != (mp4, cover):
+        raise ValueError("COVER_REPAIR_CURRENT_IDENTITY_DRIFT")
+    identity_witness_unavailable = (
+        _generation_receipt_has_unavailable_identity_witness(generated_cover)
+    )
+    bound = False
+    if rc == 0 and generated_cover.is_file():
+        try:
+            if expected_cover_text is not None:
+                generation, _generation_path = _runner._validate_repaired_cover_generation(
+                    cover=generated_cover,
+                    title=str(rec["title"]),
+                    candidate_id=str(cid),
+                )
+                rendered_lines = generation.get("rendered_lines")
+                def canonical(value: object) -> str:
+                    return re.sub(r"\s+", "", str(value))
+
+                if (
+                    generation.get("cover_text") != expected_cover_text
+                    or not isinstance(rendered_lines, list)
+                    or not rendered_lines
+                    or any(not isinstance(value, str) for value in rendered_lines)
+                    or canonical("".join(rendered_lines))
+                    != canonical(expected_cover_text)
+                ):
+                    raise ValueError(
+                        "generated cover did not preserve the reviewed text/punctuation"
+                    )
+            validate_cover_repair_inputs(input_snapshot)
+            if cover_maintenance_block_reason(str(cid), recording_date=date) is not None:
+                raise ValueError("COVER_REPAIR_PUBLICATION_AUTHORITY_CHANGED")
+            _runner._bind_repaired_cover(date, rec, mp4, cover, generated_cover)
+        except (OSError, ValueError, _runner.SongDeliveryError) as exc:
+            with open(log_path, "a", encoding="utf-8") as sink:
+                sink.write(f"\nCOVER_BINDING_FAILED: {type(exc).__name__}: {exc}\n")
+            rc = -2
+        else:
+            bound = True
+            rec["cover_integrity_status"] = "VALID_BOUND"
+            if rec.get("status") == _runner.TALK_COVER_PENDING_STATUS:
+                rec["status"] = "review_ready"
+                rec["bundle_lifecycle"] = "CURRENT"
+                rec["bundle_compliance"] = "COMPLIANT"
+            _runner.log(f"cover repaired and hash-bound → {cover.name}")
+    if not bound:
+        if (
+            identity_witness_unavailable
+            and rec.get("status") == _runner.TALK_COVER_PENDING_STATUS
+        ):
+            _queue_identity_witness_route_regeneration(rec)
+        elif (
+            rec["cover_repair_attempts"] >= _runner.COVER_REPAIR_MAX_ATTEMPTS
+            or rec["cover_repair_lifetime_attempts"] >= _runner.COVER_REPAIR_LIFETIME_ATTEMPT_CAP
+        ):
+            rec["cover_status"] = f"{rec.get('cover_status') or 'BLOCKED_AI_COVER_REQUIRED'}(repair_failed_x{rec['cover_repair_attempts']})"
+            rec["cover_integrity_status"] = "INVALID_REPAIR_BUDGET_EXHAUSTED"
+            rec["cover_repair_exhausted"] = True
+            _runner.log(f"cover repair failed {rec['cover_repair_attempts']}x — left for human review (see {log_path.name})")
+        else:
+            rec["cover_integrity_status"] = "INVALID_REPAIR_PENDING"
+
+
+def _repair_covers_with_short_leases(
+    date: str, state: dict, record_ids: list[str], *, expected_cover_texts: dict[str, str],
+    state_transition: Callable[..., dict],
+) -> None:
+    """Persist charge under the canonical CAS lease, generate outside, then bind."""
+    for candidate_id in record_ids:
+        stop_requested = getattr(_runner, "producer_stop_requested", None)
+        if callable(stop_requested) and stop_requested():
+            _runner.log(f"cover repair {candidate_id}: operator stop; undispatched tail retained")
+            break
+        prepared: list[_CoverRepairAttempt] = []
+
+        def charge(live: dict) -> None:
+            if callable(stop_requested) and stop_requested():
+                return
+            if cover_maintenance_block_reason(candidate_id, recording_date=date) is not None:
+                return
+            paths = _runner.delivered_paths(date, live)
+            if paths is None:
+                return
+            _runner._roll_forward_prepared_cover_transactions(date, live, *paths)
+            _runner._recover_committed_cover_binding(date, live, *paths)
+            fingerprint = _runner.pipeline_fingerprint()
+            if live.get("title") and (live.get("status") in _runner.DELIVERED_TALK_STATUSES
+                    or live.get("status") == _runner.TALK_COVER_PENDING_STATUS or live.get("delivered")):
+                _runner._refresh_cover_repair_budget(live, fingerprint)
+            if not _runner.cover_repair_needed(date, live):
+                if live.get("cover_integrity_status") in {"VALID_BOUND", "VALID_BOUND_RECOVERED"}:
+                    live.pop("cover_authority_preflight_error", None)
+                return
+            if not _runner._cover_repair_eligible(live):
+                resumed = _resume_cover_attempt(date, live, fingerprint)
+                if resumed is not None:
+                    prepared.append(resumed)
+                    return
+                live["cover_integrity_status"] = "INVALID_REPAIR_BUDGET_EXHAUSTED"
+                live["cover_repair_exhausted"] = True
+                status = str(live.get("cover_status") or "BLOCKED_AI_COVER_REQUIRED")
+                if "repair_budget_exhausted" not in status:
+                    live["cover_status"] = f"{status}(repair_budget_exhausted)"
+                return
+            attempt = _prepare_cover_attempt(
+                date, live, fingerprint=fingerprint, expected_cover_texts=expected_cover_texts,
+            )
+            if attempt is not None:
+                prepared.append(attempt)
+
+        try:
+            charged = state_transition(
+                candidate_id=candidate_id, expected_record=deepcopy(_live_cover_record(state, candidate_id)),
+                transition=charge,
+            )
+        except (OSError, ValueError, RunnerStateWritebackError) as exc:
+            _runner.log(f"cover repair {candidate_id}: charge refused: {exc}")
+            continue
+        if not prepared:
+            continue
+        attempt = prepared[0]
+        try:
+            rc = _run_cover_attempt(date, attempt)
+            state_transition(
+                candidate_id=candidate_id, expected_record=charged,
+                transition=lambda live: _finish_cover_attempt(
+                    date, live, attempt, rc, expected_cover_text=expected_cover_texts.get(candidate_id),
+                ),
+            )
+        except (OSError, ValueError, RunnerStateWritebackError) as exc:
+            # Keep the charged slot and isolated output. A stale result cannot
+            # overwrite the current candidate or a neighboring writer's state.
+            _runner.log(f"cover repair {candidate_id}: result refused: {exc}")

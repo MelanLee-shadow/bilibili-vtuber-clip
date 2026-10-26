@@ -67,8 +67,9 @@ def stage_unreadable_cue_drop_pass(
     ``FINAL_REVIEW_RELEASE_BLOCKED``。
     """
 
+    from .finding_lifecycle import is_finding_failure
     if (
-        reason_code != "FINAL_REVIEW_UNRESOLVED_FINDINGS"
+        not is_finding_failure(reason_code)
         # CPA 判官真做得动就先走那条：本路只在判官改不动时才轮到。
         or cpa_repairs
         or not pass_budget_left

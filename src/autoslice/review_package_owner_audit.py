@@ -44,10 +44,6 @@ from src.autoslice.source_subtitle_truth import (
     BOUNDARY_OWNER_LEAD_TOLERANCE_MS,
     source_truth_owner_windows,
 )
-from src.autoslice.source_language_preservation_supersession import (
-    receipt_routes_to_source_language_supersession,
-    reconciled_boundary_owner_valid as source_language_reconciled_boundary_owner_valid,
-)
 from src.autoslice.reviewed_exact_source_interval import (
     FROZEN_CONTRACT_KEY as EXACT_INTERVAL_FROZEN_CONTRACT_KEY,
     RUNTIME_CONFIG_KEY as EXACT_INTERVAL_RUNTIME_CONFIG_KEY,
@@ -199,124 +195,6 @@ def _context_only_row_valid(
     )
 
 
-def _package_source_pieces(provenance: object) -> list[tuple[str, int, int]]:
-    """(recording_basename, source_start_ms, source_end_ms) per source piece.
-
-    When the provenance carries the final recut's absolute source interval,
-    that DELIVERED window is the truth-applicability surface: a ledger entry
-    landing only in the padded context (1475 case — 1573's chair
-    truths at 1576-1582s inside 1475's pad) cannot make the delivered text
-    stale. Padded pieces remain the conservative fallback.
-    """
-
-    if not isinstance(provenance, Mapping):
-        return []
-    final_recut = provenance.get("final_recut")
-    raw = provenance.get("source_piece")
-    if isinstance(final_recut, Mapping):
-        start = final_recut.get("absolute_source_start_ms")
-        end = final_recut.get("absolute_source_end_ms")
-        rows = raw if isinstance(raw, list) else [raw]
-        first = rows[0] if rows else None
-        source_path = first.get("source_path") if isinstance(first, Mapping) else None
-        if (
-            _strict_int(start)
-            and _strict_int(end)
-            and int(end) > int(start)
-            and isinstance(source_path, str)
-            and source_path
-        ):
-            return [(Path(source_path).name, int(start), int(end))]
-    rows = raw if isinstance(raw, list) else [raw]
-    pieces: list[tuple[str, int, int]] = []
-    for row in rows:
-        if not isinstance(row, Mapping):
-            return []
-        source_path = row.get("source_path")
-        start_ms = row.get("start_ms")
-        end_ms = row.get("end_ms")
-        if (
-            not isinstance(source_path, str)
-            or not source_path
-            or not _strict_int(start_ms)
-            or not _strict_int(end_ms)
-            or int(end_ms) <= int(start_ms)
-        ):
-            return []
-        pieces.append((Path(source_path).name, int(start_ms), int(end_ms)))
-    return pieces
-
-
-def _ledger_progression_equivalent(
-    truth_audit: Mapping[str, Any],
-    *,
-    provenance: object,
-) -> bool:
-    """True when the current ledger adds no truth applicable to this package.
-
-    The frozen audit pinned the ledger bytes at production time; the ledger
-    legitimately keeps growing afterwards. Byte drift only matters if a new
-    (or revised) active entry overlaps this package's source interval and the
-    package has never seen its truth_id — that means the final text was
-    finalized without knowledge the current ledger considers applicable, so
-    the package must be reproduced. Anything short of that is equivalent.
-    Any parse/shape uncertainty returns False (fail toward reproduction).
-    """
-
-    pieces = _package_source_pieces(provenance)
-    if not pieces:
-        return False
-    known: set[str] = set()
-    for key in ("applied", "satisfied"):
-        for row in truth_audit.get(key) or []:
-            if isinstance(row, Mapping) and isinstance(row.get("truth_id"), str):
-                known.add(str(row["truth_id"]))
-    try:
-        import json as _json
-
-        document = _json.loads(SOURCE_TRUTH_LEDGER_PATH.read_text(encoding="utf-8"))
-        entries = document.get("entries")
-        aliases_raw = document.get("source_aliases") or []
-        if not isinstance(entries, list) or not isinstance(aliases_raw, list):
-            return False
-        # basename-level alias map; the sha-bound binding check lives in the
-        # producer, and matching more names here only makes this stricter.
-        alias_to_canonical = {
-            str(alias.get("alias_recording_basename") or ""): str(
-                alias.get("canonical_recording_basename") or ""
-            )
-            for alias in aliases_raw
-            if isinstance(alias, Mapping)
-        }
-        for entry in entries:
-            if not isinstance(entry, Mapping):
-                return False
-            state = entry.get("assertion_state")
-            if state is not None and str(state) in {
-                "PROPOSED",
-                "REJECTED",
-                "SUPERSEDED",
-            }:
-                continue
-            entry_name = str(entry.get("recording_basename") or "")
-            entry_start = entry.get("source_start_ms")
-            entry_end = entry.get("source_end_ms")
-            if not _strict_int(entry_start) or not _strict_int(entry_end):
-                return False
-            for piece_name, piece_start, piece_end in pieces:
-                canonical_piece = alias_to_canonical.get(piece_name, piece_name)
-                if entry_name not in (piece_name, canonical_piece):
-                    continue
-                if (
-                    max(int(entry_start), piece_start) < min(int(entry_end), piece_end)
-                    and str(entry.get("truth_id") or "") not in known
-                ):
-                    return False
-    except (OSError, ValueError, RuntimeError):
-        return False
-    return True
-
-
 def _source_truth_audit_valid(
     truth_audit: object,
     *,
@@ -340,24 +218,6 @@ def _source_truth_audit_valid(
     satisfied = truth_audit.get("satisfied")
     failures = truth_audit.get("failures")
     status = truth_audit.get("status")
-    try:
-        ledger_sha256 = (
-            "sha256:" + hashlib.sha256(SOURCE_TRUTH_LEDGER_PATH.read_bytes()).hexdigest()
-        )
-    except OSError:
-        return False
-    ledger_current = truth_audit.get("ledger_sha256") == ledger_sha256
-    if not ledger_current:
-        # The ledger moved on after this package was produced. That is only
-        # disqualifying when the progression added truth applicable to this
-        # package that the frozen audit never saw.
-        recorded = truth_audit.get("ledger_sha256")
-        if not (
-            isinstance(recorded, str)
-            and recorded.startswith("sha256:")
-            and _ledger_progression_equivalent(truth_audit, provenance=provenance)
-        ):
-            return False
     if not (
         truth_audit.get("schema_version") == SOURCE_TRUTH_AUDIT_SCHEMA
         and status in SOURCE_TRUTH_SUCCESS_STATUSES
@@ -365,7 +225,18 @@ def _source_truth_audit_valid(
         and isinstance(satisfied, list)
         and failures == []
         and isinstance(truth_audit.get("ledger_path"), str)
-        and Path(str(truth_audit["ledger_path"])).name == SOURCE_TRUTH_LEDGER_PATH.name
+    ):
+        return False
+    from .package_truth_artifact import source_truth_artifact_valid
+
+    if not source_truth_artifact_valid(
+        truth_audit,
+        canonical=SOURCE_TRUTH_LEDGER_PATH,
+        repo_root=Path(__file__).resolve().parents[2],
+        provenance=provenance,
+        authority=chat_authority or {},
+        record=record or {},
+        record_path=record_path,
     ):
         return False
     if not all(
@@ -690,23 +561,6 @@ def _story_owner_set_valid(
                             delivery_start_ms=qixi_delivery_start_ms,
                         )
                     )
-                elif (
-                    owner_kind == "entity_repair"
-                    and isinstance(reconciliation, Mapping)
-                    and receipt_routes_to_source_language_supersession(reconciliation)
-                ):
-                    if not source_language_reconciled_boundary_owner_valid(
-                        row=row,
-                        row_index=ordinal - 1,
-                        chat_authority=chat_authority,
-                        chat_authority_path=chat_authority_path,
-                    ):
-                        return False
-                    if row.get("boundary_required") is not True:
-                        continue
-                    # The repository-sealed language guard retires only the
-                    # rejected text surface.  Continue through ordinary owner
-                    # identity/window checks for the surviving media owner.
                 elif (
                     owner_kind == "entity_repair"
                     and isinstance(reconciliation, Mapping)
@@ -1160,6 +1014,37 @@ def _retry_verification_valid(
     )
 
 
+def _human_sequence_owner_set_valid(*, frozen: Mapping, chat_authority: Mapping,
+        record: Mapping, provenance: object, subtitle_path: Path | None) -> bool:
+    from src.autoslice.human_sequence_alignment import validate_records, required_owners, verify_surfaces
+    alignment = chat_authority.get('human_sequence_alignment') or {}
+    if not isinstance(alignment, Mapping):
+        return False
+    owners = [row for row in frozen.get('owners', [])
+              if isinstance(row, Mapping) and row.get('owner_kind') == 'human_sequence_alignment']
+    if not owners and not alignment.get('records'):
+        return True
+    if (not isinstance(provenance, Mapping) or subtitle_path is None
+            or alignment.get('status') not in {'APPLIED', 'SATISFIED'}
+            or alignment.get('audio_modified') is not False):
+        return False
+    try:
+        rows = provenance['source_piece']
+        rows = rows if isinstance(rows, list) else [rows]
+        pieces = [{'remote_media': row['source_path'], 'start_ms': row['start_ms'], 'end_ms': row['end_ms'],
+                   'source_media_sha256': 'sha256:' + str(row.get('source_media_binding') or row['source_sha256']).removeprefix('sha256:')}
+                  for row in rows]
+        validate_records(alignment, ledger_path=SOURCE_TRUTH_LEDGER_PATH, spec={'pieces': pieces},
+                         durations=[row['end_ms']-row['start_ms'] for row in pieces])
+        boundary = record['boundary_audit']
+        text = subtitle_path.read_text(encoding='utf-8')
+        return (owners == required_owners(alignment)
+            and verify_surfaces(alignment, text=text, speaker=text,
+                delivery_start_ms=boundary['final_start_ms'], delivery_end_ms=boundary['final_end_ms']))
+    except (KeyError, OSError, TypeError, ValueError, RuntimeError):
+        return False
+
+
 def _frozen_owner_contract_valid(
     *,
     frozen: object,
@@ -1169,6 +1054,8 @@ def _frozen_owner_contract_valid(
     record: Mapping[str, object],
     superseded_truth_ids: frozenset[str] | None = None,
     qixi_terminal_projection_authority: Mapping[str, object] | None = None,
+    provenance: object = None,
+    subtitle_path: Path | None = None,
 ) -> tuple[bool, list[object] | None]:
     owners = frozen.get("owners") if isinstance(frozen, Mapping) else None
     owner_keys = [
@@ -1197,6 +1084,7 @@ def _frozen_owner_contract_valid(
         integrity_valid = False
     allowed_kinds = {
         "source_subtitle_truth",
+        "human_sequence_alignment",
         *(kind for kind, _ in STORY_OWNER_GROUPS),
     }
     owners_shape_valid = bool(
@@ -1234,6 +1122,8 @@ def _frozen_owner_contract_valid(
             and scope_valid
             and owners_shape_valid
             and source_valid
+            and _human_sequence_owner_set_valid(frozen=frozen, chat_authority=chat_authority,
+                record=record, provenance=provenance, subtitle_path=subtitle_path)
             and _story_owner_set_valid(
                 chat_authority=chat_authority,
                 chat_authority_path=chat_authority_path,
@@ -1662,6 +1552,8 @@ def audit_source_truth_owner_attestations(
         record=record,
         superseded_truth_ids=c12_superseded_truth_ids,
         qixi_terminal_projection_authority=qixi_terminal_projection_authority,
+        provenance=provenance,
+        subtitle_path=subtitle_path,
     )
     if not frozen_valid:
         issue_adder(

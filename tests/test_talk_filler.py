@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from src.autoslice.talk_filler import (
     bind_final_filler_audit_to_burn,
     build_piece_specs,
@@ -18,6 +20,175 @@ def cue(position: int, start_ms: int, end_ms: int, text: str):
         source_end_ms=end_ms,
         text=text,
     )
+
+
+@pytest.fixture
+def terminal_filler_input(tmp_path: Path):
+    import hashlib
+
+    srt = tmp_path / "current.srt"
+    srt.write_text("主题回答和回扣已讲完\n谢谢甲乙的钢镚\n", encoding="utf-8")
+    proposal = {
+        "start_cue": 2,
+        "end_cue": 2,
+        "mode": "remove_cues",
+        "reason": "gift_thanks",
+        "confidence": 0.95,
+        "bridge_coherent": True,
+        "bridge": "保留主题完整回答，末句仅为无关谢礼物",
+        "topic_relation": "unrelated",
+        **{
+            field: False
+            for field in (
+                "contains_setup", "contains_cause", "contains_answer",
+                "contains_punchline", "contains_referent_intro",
+                "contains_correction", "contains_resolution", "later_dependency",
+                "interaction_relevant", "meaning_or_stance_changed",
+            )
+        },
+    }
+    return {
+        "start_ms": 0,
+        "end_ms": 70_000,
+        "cues": [
+            cue(1, 0, 66_500, "主题回答和观众回扣已讲完"),
+            cue(2, 66_550, 70_000, "谢谢甲乙的钢镚"),
+        ],
+        "proposals": [proposal],
+        "proposal_srt_sha256": "sha256:" + hashlib.sha256(srt.read_bytes()).hexdigest(),
+        "source_srt_path": srt,
+    }
+
+
+def test_terminal_gift_keeps_pause_and_has_no_invented_right_piece(terminal_filler_input):
+    plan = build_talk_filler_plan(**terminal_filler_input)
+    assert plan["status"] == "active"
+    assert plan["effective_duration_ms"] == 66_550
+    assert plan["retained_intervals"] == [{"start_ms": 0, "end_ms": 66_550}]
+    removal = plan["removals"][0]
+    assert removal["placement"] == "terminal"
+    assert removal["left_retained_context"]["text"] == "主题回答和观众回扣已讲完"
+    assert removal["right_retained_context"] is None
+    pieces = build_piece_specs(
+        item={"segment_path": "source.mp4", "seg_dur_ms": 80_000},
+        plan=plan, pre_ms=0, post_ms=4_000,
+    )
+    assert pieces == [{"remote_media": "source.mp4", "start_ms": 0, "end_ms": 66_550}]
+
+
+@pytest.mark.parametrize("field", ["interaction_relevant", "contains_resolution", "later_dependency"])
+def test_terminal_gift_cannot_remove_protected_interaction(terminal_filler_input, field):
+    terminal_filler_input["proposals"][0][field] = True
+    plan = build_talk_filler_plan(**terminal_filler_input)
+    assert plan["status"] == "contiguous_fallback"
+    assert plan["removals"] == []
+    assert plan["rejected_proposals"][0]["reason_code"] == "semantic_protected_role_or_dependency_not_denied"
+
+
+def test_terminal_gift_does_not_absorb_unobserved_trailing_time(terminal_filler_input):
+    terminal_filler_input["end_ms"] = 70_500
+    plan = build_talk_filler_plan(**terminal_filler_input)
+    assert plan["removals"] == []
+    assert plan["rejected_proposals"][0]["reason_code"] == "terminal_removal_must_end_at_candidate_bound"
+
+
+def test_terminal_means_candidate_end_not_end_of_full_source(terminal_filler_input):
+    terminal_filler_input["cues"].append(cue(3, 71_000, 80_000, "下一话题"))
+    plan = build_talk_filler_plan(**terminal_filler_input)
+    assert plan["status"] == "active"
+    assert plan["removals"][0]["placement"] == "terminal"
+    assert plan["removals"][0]["right_retained_context"] is None
+    assert plan["retained_intervals"] == [{"start_ms": 0, "end_ms": 66_550}]
+
+
+def test_terminal_gift_cannot_hide_an_overlapping_followup(terminal_filler_input):
+    terminal_filler_input["cues"].append(cue(3, 69_900, 80_000, "等等，这个礼物还有个梗"))
+    plan = build_talk_filler_plan(**terminal_filler_input)
+    assert plan["removals"] == []
+
+
+def test_terminal_gift_cannot_make_body_under_one_minute(terminal_filler_input):
+    terminal_filler_input["cues"][0].source_end_ms = 59_900
+    terminal_filler_input["cues"][1].source_start_ms = 60_000
+    terminal_filler_input["cues"][1].source_end_ms = 63_500
+    terminal_filler_input["end_ms"] = 63_500
+    plan = build_talk_filler_plan(**terminal_filler_input)
+    assert plan["removals"] == []
+    assert plan["rejected_proposals"][0]["reason_code"] == "EFFECTIVE_DURATION_NOT_OVER_60S"
+
+
+def test_terminal_removal_still_requires_whole_plan_closure_veto(terminal_filler_input):
+    plan = build_talk_filler_plan(**terminal_filler_input)
+    prompts = []
+    verdict = verify_automatic_filler_plan(
+        cues=terminal_filler_input["cues"], plan=plan,
+        llm_call=lambda prompt: prompts.append(prompt) or json.dumps({
+            "pass": False, "closing_resolution_preserved": False,
+            "reason": "删除会失去自然收束",
+        }),
+    )
+    assert verdict["status"] == "FAIL"
+    assert "谢谢甲乙的钢镚" in prompts[0]
+    assert "<SOURCE 0-70000ms>" in prompts[0]
+
+
+def test_terminal_filler_final_audit_records_end_without_a_jump(tmp_path, terminal_filler_input):
+    plan = build_talk_filler_plan(**terminal_filler_input)
+    spec = {
+        "candidate_id": "talk",
+        "talk_filler_plan": plan,
+        "pieces": [{"remote_media": "source.mp4", "start_ms": 0, "end_ms": 66_550}],
+    }
+    path = write_final_filler_audit(
+        spec=spec, durations=[66_550], final_start_ms=0, final_end_ms=66_550,
+        piece_provenance_rows=[{"output_sha256": "kept"}], branding_intro=None,
+        output_path=tmp_path / "final.json",
+    )
+    audit = json.loads(path.read_text())
+    assert audit["removals"][0]["left_piece_output_sha256"] == "kept"
+    assert audit["removals"][0]["right_piece_output_sha256"] is None
+    assert audit["removals"][0]["delivered_output_jump_ms"] is None
+    assert audit["removals"][0]["survives_final_boundary"] is False
+    plan["removals"][0]["source_end_ms"] -= 1
+    with pytest.raises(RuntimeError, match="TALK_FILLER_AUDIT_PIECE_MAPPING_INVALID"):
+        write_final_filler_audit(
+            spec=spec, durations=[66_550], final_start_ms=0, final_end_ms=66_550,
+            piece_provenance_rows=[{"output_sha256": "kept"}], branding_intro=None,
+            output_path=tmp_path / "invalid.json",
+        )
+
+
+def test_interior_then_terminal_removal_keeps_real_join_mapping(tmp_path, terminal_filler_input):
+    terminal_filler_input["cues"] = [
+        cue(1, 0, 30_000, "主题铺垫"),
+        cue(2, 30_500, 32_000, "谢谢甲的灯牌"),
+        cue(3, 33_000, 100_000, "观众反馈和完整收束"),
+        cue(4, 100_100, 104_000, "谢谢乙的钢镚"),
+    ]
+    interior = dict(terminal_filler_input["proposals"][0])
+    terminal = dict(interior, start_cue=4, end_cue=4)
+    terminal_filler_input.update(end_ms=104_000, proposals=[interior, terminal])
+    plan = build_talk_filler_plan(**terminal_filler_input)
+    assert plan["retained_intervals"] == [
+        {"start_ms": 0, "end_ms": 30_500},
+        {"start_ms": 32_000, "end_ms": 100_100},
+    ]
+    pieces = build_piece_specs(
+        item={"segment_path": "source.mp4", "seg_dur_ms": 120_000},
+        plan=plan, pre_ms=0, post_ms=1_000,
+    )
+    path = write_final_filler_audit(
+        spec={"candidate_id": "talk", "talk_filler_plan": plan, "pieces": pieces},
+        durations=[30_500, 68_100], final_start_ms=0, final_end_ms=98_600,
+        piece_provenance_rows=[{"output_sha256": "left"}, {"output_sha256": "right"}],
+        branding_intro={"video": {"duration_ms": 6_200}},
+        output_path=tmp_path / "mixed.json",
+    )
+    audit = json.loads(path.read_text())
+    assert audit["removals"][0]["delivered_output_jump_ms"] == 36_700
+    assert audit["removals"][0]["right_piece_output_sha256"] == "right"
+    assert audit["removals"][1]["actual_concat_jump_ms"] == 98_600
+    assert audit["removals"][1]["delivered_output_jump_ms"] is None
 
 
 def test_reviewed_three_approved_jumps_plan_reproduces_all_three_jumps():
@@ -84,7 +255,8 @@ def test_reviewed_removal_requires_explicit_nondefault_authority():
         )
 
 
-def test_automatic_gift_thanks_requires_bound_srt_and_safe_bridge(tmp_path: Path):
+@pytest.mark.parametrize("gift", ["粉丝灯牌", "灯牌", "奶喵爪印"])
+def test_automatic_gift_thanks_requires_bound_srt_and_safe_bridge(tmp_path: Path, gift):
     srt = tmp_path / "source.srt"
     srt.write_text("bound transcript\n", encoding="utf-8")
     import hashlib
@@ -92,7 +264,7 @@ def test_automatic_gift_thanks_requires_bound_srt_and_safe_bridge(tmp_path: Path
     digest = "sha256:" + hashlib.sha256(srt.read_bytes()).hexdigest()
     cues = [
         cue(1, 0, 10_000, "前面的话题"),
-        cue(2, 10_500, 12_000, "谢谢阿甲的粉丝灯牌"),
+        cue(2, 10_500, 12_000, f"谢谢阿甲的{gift}"),
         cue(3, 12_000, 14_000, "谢谢你呀"),
         cue(4, 16_000, 20_000, "继续刚才的话题"),
         cue(5, 20_500, 70_000, "把同一件事讲完"),

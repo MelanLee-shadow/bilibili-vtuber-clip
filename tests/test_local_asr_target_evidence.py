@@ -57,6 +57,16 @@ def test_no_speech_does_not_authorize_drop():
     assert "target_audible" not in result
 
 
+def test_long_complete_semantic_block_keeps_exact_physical_geometry():
+    result = exact_target_evidence(
+        metadata(), audio=b"audio", source_sha256="a" * 64,
+        start_ms=65_480, end_ms=96_750,
+    )
+    assert result["target_start_ms"] == 65_480
+    assert result["target_end_ms"] == 96_750
+    assert result["mutation_authorized"] is False
+
+
 def test_overlap_and_order_are_preserved_not_sorted_or_retimed():
     rows = [
         {"start_ms": 300, "end_ms": 900, "text": "甲"},

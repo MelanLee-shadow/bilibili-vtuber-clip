@@ -142,11 +142,20 @@ def _piece_source_binding(
     *,
     canonical_name: str,
     source_aliases: Sequence[Mapping[str, object]],
+    canonical_source_sha256: object = None,
 ) -> tuple[int, Mapping[str, object] | None] | None:
     """Return alias-minus-canonical offset plus its evidence row, if bound."""
 
     piece_name = _piece_media_basename(piece)
     if piece_name == canonical_name:
+        # Newly declared identity must match the full canonical source, not a
+        # listening excerpt. Legacy rows without a declaration keep their scope.
+        if canonical_source_sha256 is not None and (
+            not isinstance(canonical_source_sha256, str)
+            or _SOURCE_SHA256_RX.fullmatch(canonical_source_sha256) is None
+            or piece.get("source_media_sha256") != canonical_source_sha256
+        ):
+            return None
         return 0, None
     candidates = [
         alias
@@ -189,6 +198,7 @@ def _entry_local_windows(
             piece,
             canonical_name=source_name,
             source_aliases=source_aliases,
+            canonical_source_sha256=entry.get("source_media_sha256"),
         )
         if binding is not None:
             # alias_timeline = canonical_timeline + offset
@@ -1477,6 +1487,8 @@ def apply_source_subtitle_truth(
     spec: Mapping[str, object],
     durations: Sequence[int],
     ledger_path: Path | None,
+    satisfaction_reviews: Sequence[Mapping[str, object]] = (),
+    local_term_reviews: Sequence[Mapping[str, object]] = (),
 ) -> tuple[str, dict[str, Any]]:
     """Apply every reviewed source interval included by this candidate."""
 
@@ -1491,6 +1503,12 @@ def apply_source_subtitle_truth(
     }
     if ledger_path is None:
         return srt_text, audit
+    if satisfaction_reviews:
+        from copy import deepcopy
+        audit["meaning_reviews"] = deepcopy(list(satisfaction_reviews))
+    if local_term_reviews:
+        from copy import deepcopy
+        audit["local_term_reviews"] = deepcopy(list(local_term_reviews))
     if not ledger_path.is_file() or ledger_path.is_symlink():
         raise RuntimeError(f"SOURCE_SUBTITLE_TRUTH_LEDGER_INVALID: {ledger_path}")
 
@@ -1699,6 +1717,31 @@ def apply_source_subtitle_truth(
         }
         row["before"] = before
         row["after"] = [texts[index] for index in target_indexes]
+        if (not changed and not satisfied and action == 'replace_substring'
+                and row.get('reason_code') is None and local_term_reviews):
+            from .source_truth_term_alignment import aligned_term_replacement
+            row['reason_code'] = 'REQUIRED_SOURCE_TRUTH_NOT_SATISFIED'
+            for proof in local_term_reviews:
+                replacement = aligned_term_replacement(proof,row,raw_entry,
+                    ledger_sha256=audit['ledger_sha256'],srt_text=srt_text,spec=spec,durations=durations)
+                if replacement is None:
+                    continue
+                surface, canonical, proposal = replacement
+                owner = projection_cues[0]
+                index = owner['cue_index']-1
+                output, replacements = _replace_substrings(texts[index],[{'surface':surface,'canonical':canonical}])
+                if output != proposal:
+                    continue
+                texts[index] = output
+                owner['after_text'] = output
+                row['after'] = [texts[i] for i in target_indexes]
+                row['local_term_alignment'] = proof
+                row['replacements'] = replacements
+                row.pop('reason_code')
+                changed = satisfied = True
+                break
+            if not changed:
+                row.pop('reason_code')
         failures = _source_truth_postcondition_failures(
             raw_entry, pieces, durations, source_aliases, cues, texts,
             target_indexes, row,
@@ -1706,6 +1749,15 @@ def apply_source_subtitle_truth(
         if failures:
             audit["failures"].extend(failures)
             continue
+        if (not changed and not satisfied and action == "replace_substring"
+                and row.get("reason_code") is None):
+            from src.autoslice.source_truth_satisfaction import valid_satisfaction
+            for proof in satisfaction_reviews:
+                if valid_satisfaction(proof, row, ledger_sha256=audit["ledger_sha256"],
+                                      srt_text=srt_text, spec=spec, durations=durations):
+                    row["meaning_equivalence"] = proof
+                    satisfied = True
+                    break
         if changed:
             audit["applied"].append(row)
         elif satisfied:
@@ -1801,7 +1853,10 @@ def candidate_boundary_owner_scope(
     last_piece_start_ms = pieces[content_index].get("start_ms")
     semantic_start_ms = spec.get("semantic_start_ms", first_piece_start_ms)
     semantic_end_ms = spec.get("semantic_end_ms")
-    given_end_ms = spec.get("given_end_ms")
+    # A previous public endpoint is a search anchor, not a newly reviewed
+    # story interval. It must not annex adjacent truth or alter owner identity.
+    given_end_ms = (None if spec.get("given_end_mode") == "published_recall_anchor"
+                    else spec.get("given_end_ms"))
     for value in (
         first_piece_start_ms,
         last_piece_start_ms,

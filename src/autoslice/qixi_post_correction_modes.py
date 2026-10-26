@@ -872,6 +872,9 @@ def run(mode: Mode, *, repo_root: Path, runtime_root: Path,
         result = source_fact_llm_call(prompt)
         return result
 
+    from .completed_review_checkpoint import inherit_ruling_context
+    if source_fact_llm_call is not None:
+        inherit_ruling_context(tracked_source_fact, source_fact_llm_call)
     outcome: dict[str, object] | None = None
     stage_manifest: list[dict[str, object]] = []
     stage_manifest_status = "AVAILABLE"

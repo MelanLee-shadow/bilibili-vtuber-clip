@@ -31,5 +31,58 @@
       "minimum_announcements": 8,
       "minimum_members": 20
     }
+  ],
+  "reviewed_accounts": [
+    {
+      "canonical": "奈奈莉娅",
+      "account_name": "奈奈莉娅Channel",
+      "official_mid": 489146840,
+      "homepage": "https://space.bilibili.com/489146840",
+      "affiliation": "psplive",
+      "verified_at": "2026-10-23T05:21:18.723859+00:00",
+      "profile_evidence": {
+        "source_bvid": "BV1CjH962EWj",
+        "page_state_sha256": "7d3aee468f5c371af34e834b24c9cce3882f7a004a0461edafe2f698d917620c",
+        "affiliation_excerpt": "psplive所属吸血鬼小偶像"
+      },
+      "historical_events": [
+        {
+          "event_id": "01-kiss",
+          "relationship": "watching_and_commenting_on_recorded_clips",
+          "not_a_live_collaboration": true,
+          "recording_date": "2026-10-10",
+          "source_bvid": "BV111pG6zESs",
+          "start_ms": 1114700,
+          "end_ms": 1304650,
+          "reference_bvid": "BV1KyEhzbEvQ",
+          "source_info_sha256": "61b98f0ec901bd46ebf6bd6c87818ded6be72f66aa42208c0c800f8994ad8a0b",
+          "reference_subject": "李豆沙"
+        },
+        {
+          "event_id": "02-ranking",
+          "relationship": "watching_and_commenting_on_recorded_clips",
+          "not_a_live_collaboration": true,
+          "recording_date": "2026-10-10",
+          "source_bvid": "BV111pG6zESs",
+          "start_ms": 1505550,
+          "end_ms": 1901000,
+          "reference_bvid": "BV17v4wzHE8C",
+          "source_info_sha256": "61b98f0ec901bd46ebf6bd6c87818ded6be72f66aa42208c0c800f8994ad8a0b",
+          "reference_subject": "李豆沙"
+        },
+        {
+          "event_id": "03-dinner",
+          "relationship": "watching_and_commenting_on_recorded_clips",
+          "not_a_live_collaboration": true,
+          "recording_date": "2026-10-08",
+          "source_bvid": "BV1CjH962EWj",
+          "start_ms": 4121650,
+          "end_ms": 4178800,
+          "reference_bvid": "BV1iJ4m1x7Vp",
+          "source_info_sha256": "b9184b6f6d3fd69bfc6ff6cf47c0a2767323c12dcba5d982f97c974ccf75a740",
+          "reference_subject": "李豆沙"
+        }
+      ]
+    }
   ]
 }

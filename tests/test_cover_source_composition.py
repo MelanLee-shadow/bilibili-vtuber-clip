@@ -59,6 +59,33 @@ def _safe_verification(reference: Path) -> dict[str, object]:
     )
 
 
+@pytest.mark.parametrize("score", [3.4, 9.0])
+def test_talk_auto_redraws_story_even_with_bound_face_safe_high_score(tmp_path, score):
+    from src.autoslice import publish_staging
+    from src.autoslice.cover_generation import LidoushaCoverArtDirection
+
+    reference = tmp_path / "reference.png"
+    Image.new("RGB", (1920, 1080), (15, 25, 35)).save(reference)
+    verification = _safe_verification(reference)
+    generation = {"reference_frame_size": [1920, 1080]}
+    treatment, route = publish_staging._build_lidousha_cover_route(
+        cover_generation=generation, story_contract=None,
+        title="【主播】话音刚落小主暴毙", cover_text="话音刚落，小主暴毙",
+        cover_mode="auto", punch_allowed=True,
+        art_direction=LidoushaCoverArtDirection(
+            role="shocked", expression_en="shocked", background_style="cyan-paper",
+            layout="banner", hook_color="yellow", is_song=False, hook_word="暴毙",
+        ),
+        frame_selection={"candidates": [{"score": score, "emotion": 1.0}],
+                         "subject_confident": True},
+        reference_authority=None, source_composition_verification=verification,
+    )
+    assert treatment == "cpa_redraw"
+    assert route["image_generation_planned"] is True
+    assert "story" in route["selected_rationale"]
+    assert route["source_composition_status"] == "PASS"
+
+
 @pytest.mark.parametrize("treatment,mode", [
     ("screenshot_direct", "screenshot"),
     ("screenshot_polish", "polish"),
@@ -262,7 +289,9 @@ def test_invalid_bbox_or_unavailable_witness_fails_before_image_generation(
         calls += 1
         raise AssertionError("source witness failure must precede generation")
 
-    result = publish_staging._stage_ai_cover(
+    forbidden_image_edit.cpa_cache_identity = {"transport": "offline-fixture", "purpose": "generation-must-not-run"}
+    # Replay the retained song/frozen-repair implementation directly.
+    result = publish_staging._stage_legacy_lidousha_ai_cover_unbound(
         {"status": "MATERIALIZED", "media_path": str(media)},
         media_path=media,
         candidate_id="source-composition-unavailable",

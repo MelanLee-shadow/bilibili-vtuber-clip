@@ -8,7 +8,7 @@ title, cover, and reporting only after an exact date/recording binding.
 
 from __future__ import annotations
 
-import hashlib
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import json
 from pathlib import Path
 from typing import Mapping
@@ -24,7 +24,7 @@ class SessionRelationAuthorityError(ValueError):
 
 
 def _sha256(path: Path) -> str:
-    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    return "sha256:" + _evidence_file_sha256(path)
 
 
 def resolve_session_relation(

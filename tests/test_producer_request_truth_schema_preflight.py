@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from src.autoslice.channel_profile import binding_for_profile, load_channel_profile
+
 from src.autoslice import producer_request
 from src.autoslice.subtitle_regression import SCHEMA_VERSION as REGRESSION_SCHEMA_VERSION
 
@@ -72,6 +74,7 @@ def _load(
         ),
         repo_root=ROOT,
         profile_asset_file=lambda _name: tmp_path / "unused.json",
+        trusted_parent_profile_binding=binding_for_profile(load_channel_profile(ROOT, environ={})),
     )
 
 

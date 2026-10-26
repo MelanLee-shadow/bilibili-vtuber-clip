@@ -15,6 +15,30 @@ class _Completed:
         self.stderr = stderr
 
 
+def test_gemini_dispatch_reservation_failure_cannot_try_another_key(tmp_path, monkeypatch):
+    audio = tmp_path / "audio.mp3"
+    audio.write_bytes(b"audio")
+    calls = []
+    def reserve(provider, model):
+        calls.append((provider, model))
+        raise RuntimeError("receipt persistence failed")
+    def ladder(**kwargs):
+        for key in ("first", "second"):
+            try:
+                kwargs["observe"](key)
+            except Exception:
+                continue
+        pytest.fail("local reservation failure must escape the key ladder")
+    monkeypatch.setattr(verifier_module.agy_gemini_client, "run_gemini_key_ladder", ladder)
+    monkeypatch.setattr(verifier_module, "_gemini_api_observe_witness",
+                        lambda **_: pytest.fail("no HTTP without persisted reservation"))
+    with pytest.raises(RuntimeError, match="receipt persistence failed"):
+        verifier_module._run_gemini_api_fallback(
+            audio_path=audio, prompt="blind", response_path=tmp_path / "response.json",
+            model="frozen-api-model", provider_failures=[], on_provider_dispatch=reserve)
+    assert calls == [("gemini_api", "frozen-api-model")]
+
+
 def _request():
     return {
         "schema_version": "chat-entity-verification-request.v1",
@@ -98,6 +122,42 @@ def _clear_gemini_keys(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
+def test_entity_gemini_consumer_sends_low_level_without_sampling(tmp_path, monkeypatch):
+    audio = tmp_path / "witness.mp3"
+    audio.write_bytes(b"audio")
+    captured: dict[str, object] = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {"candidates": [{"content": {"parts": [{"text": "{}"}]}}]}
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout=None):
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        captured["timeout"] = timeout
+        return _Response()
+
+    monkeypatch.delenv("ENTITY_GEMINI_THINKING_LEVEL", raising=False)
+    monkeypatch.setattr(verifier_module.urllib.request, "urlopen", fake_urlopen)
+    assert verifier_module._gemini_api_observe_witness(
+        audio_path=audio,
+        prompt="witness",
+        key="secret",
+        model="gemini-3.6-flash",
+    ) == "{}"
+
+    generation_config = captured["body"]["generationConfig"]
+    assert generation_config["thinkingConfig"] == {"thinkingLevel": "LOW"}
+    assert "temperature" not in generation_config
+
+
 def test_exact_source_transcript_uses_target_markers_and_read_only_cache(
     tmp_path, monkeypatch
 ):
@@ -176,8 +236,47 @@ def test_exact_source_transcript_uses_target_markers_and_read_only_cache(
     assert cached["audio_clip_sha256"] == observed["audio_clip_sha256"]
     assert verify.exact_source_transcript(request)["served_from_cache"] is True
 
+    # CPA's logical context changes; the listener's source, target markers,
+    # attachment, prompt and model remain identical.  No old receipt is edited.
+    manifest = next(job_dir.glob("verdict.agy.*.manifest.json"))
+    original_manifest = manifest.read_bytes()
+    widened = _seal_request({**request, "context_start_ms": 0, "context_end_ms": 8_000})
+    replayed = verify.probe_exact_source_transcript_cache(widened)
+    from src.autoslice.exact_source_transcript_contract import (
+        valid_exact_source_transcript_observation,
+    )
+    assert valid_exact_source_transcript_observation(replayed, request=widened)
+    assert replayed["exact_transcript"] == observed["exact_transcript"]
+    assert replayed["mutation_authorized"] is False
+    assert replayed["timeline_binding"]["delivery_local"]["context_end_ms"] == 8_000
+    assert replayed["cache_replay"]["original_request_sha256"] == request["request_sha256"]
+    assert replayed["cache_replay"]["original_observation_sha256"] == observed["observation_sha256"]
+    assert replayed["cache_replay"]["provider_dispatch_count"] == 0
+    assert verify.exact_source_transcript(widened) == replayed
+    assert manifest.read_bytes() == original_manifest
+    assert len(commands) == 2  # initial ffmpeg + initial listener only
+    assert verify.probe_exact_source_transcript_cache(_seal_request({
+        **widened, "matched_start_ms": 2_100,
+    })) is None
+    assert verify.probe_exact_source_transcript_cache(_seal_request({
+        **widened, "cue_indexes": [2],
+    })) is None
+    from dataclasses import replace
+    assert replace(verify, model="different listener").probe_exact_source_transcript_cache(widened) is None
+    prompt_path = job_dir / "prompt.md"
+    original_prompt = prompt_path.read_bytes()
+    prompt_path.write_bytes(b"different prompt")
+    assert verify.probe_exact_source_transcript_cache(widened) is None
+    prompt_path.write_bytes(original_prompt)
+    response_path = job_dir / json.loads(original_manifest)["response_artifact"]
+    original_response = response_path.read_bytes()
+    response_path.write_bytes(b"tampered provider response")
+    assert verify.probe_exact_source_transcript_cache(widened) is None
+    response_path.write_bytes(original_response)
+
     (job_dir / "input.mp4").write_bytes(b"tampered audio")
     assert verify.probe_exact_source_transcript_cache(request) is None
+    assert verify.probe_exact_source_transcript_cache(widened) is None
     (job_dir / "input.mp4").write_bytes(b"deterministic exact target audio")
     source.write_bytes(b"stat drift after verifier construction")
     assert verify.probe_exact_source_transcript_cache(request) is None

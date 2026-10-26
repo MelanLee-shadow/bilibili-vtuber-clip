@@ -57,6 +57,55 @@ def record_asr_boundary_origin(result: dict, media_path: Path) -> tuple[str, dic
     }
 
 
+def load_recorded_asr_boundary_origin(media_path: Path) -> str | None:
+    """Replay a saved ordinary BCUT observation, never issue another ASR call.
+
+    The original audio/cache identity and raw utterance rendering must agree;
+    an adjacent SRT filename alone is not a source-language witness.
+    """
+    from scripts.free_asr_client import extract_audio_mp3, to_srt
+    from src.autoslice.transcription_stage_cache import SCHEMA, _read, _digest, _no_links
+
+    origin = media_path.with_suffix('.asr-source.json')
+    if not origin.exists():
+        return None
+    for path in (media_path, origin, media_path.with_suffix('.asr_draft.srt')):
+        _no_links(path)
+        if not path.is_file():
+            raise ValueError('RECORDED_ASR_WITNESS_MISSING')
+    metadata = json.loads(origin.read_bytes())
+    if metadata.get('provider') != 'bcut':
+        return None
+    raw_path = Path(str(metadata.get('raw_result_path') or ''))
+    _no_links(raw_path)
+    raw_bytes = raw_path.read_bytes()
+    if hashlib.sha256(raw_bytes).hexdigest() != metadata.get('raw_result_sha256'):
+        raise ValueError('RECORDED_ASR_RAW_DRIFT')
+    raw = json.loads(raw_bytes)
+    reuse = _read(media_path.with_suffix('.transcription-reuse.json'))
+    audio_sha = hashlib.sha256(extract_audio_mp3(media_path)).hexdigest()
+    binding = reuse.get('bcut') or {}
+    key = binding.get('cache_key')
+    if not isinstance(key, str) or len(key) != 64 or any(c not in '0123456789abcdef' for c in key):
+        raise ValueError('RECORDED_ASR_CACHE_BINDING_INVALID')
+    cached = _read(media_path.parent / '.transcription-stage-cache/bcut' / (key + '.json'))
+    identity = cached.get('identity') or {}
+    payload = cached.get('payload')
+    if (reuse.get('schema_version') != SCHEMA or reuse.get('audio_sha256') != audio_sha
+            or cached.get('schema_version') != SCHEMA or cached.get('status') != 'SUCCESS'
+            or identity.get('stage') != 'bcut' or identity.get('audio_sha256') != audio_sha
+            or _digest(identity) != key or _digest(payload) != cached.get('payload_sha256')
+            or cached.get('payload_sha256') != binding.get('payload_sha256')
+            or not isinstance(payload, dict)
+            or {k:payload[k] for k in ('provider','elapsed_s','utterances') if k in payload} != raw):
+        raise ValueError('RECORDED_ASR_SOURCE_BINDING_DRIFT')
+    text = to_srt(raw)
+    text = text if text.endswith('\n') else text + '\n'
+    if media_path.with_suffix('.asr_draft.srt').read_bytes() != text.encode():
+        raise ValueError('RECORDED_ASR_SRT_DRIFT')
+    return text
+
+
 def _rebase_mmss(mmss: str, offset_ms: int) -> str:
     """Shift a probe-relative MM:SS to clip-relative; times before clip start
     come out negative ('-00:05') so the pairing rule still applies to titles
@@ -103,10 +152,12 @@ def _required_cpa_cues(prompt: str, cpa_llm_call, cue_count: int, *, resume=None
         return corrected
 
     try:
-        if resume is not None:
-            return resume.review(prompt=prompt, source_srt=source_srt, cue_count=cue_count,
-                                 llm_call=cpa_llm_call, validate=validate)
-        return validate(cpa_llm_call(prompt))
+        from src.autoslice.structured_output import response_contract
+        with response_contract():
+            if resume is not None:
+                return resume.review(prompt=prompt, source_srt=source_srt, cue_count=cue_count,
+                                     llm_call=cpa_llm_call, validate=validate)
+            return validate(cpa_llm_call(prompt))
     except (LlmCallError, ValueError, KeyError, TypeError) as exc:
         raise AgyRunnerError(
             "CPA_CORRECTION_UNAVAILABLE"

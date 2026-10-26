@@ -85,6 +85,9 @@ def _acoustic(
     source_media_speech: str,
     host_speech: str,
     overlap_speech: str = "ABSENT",
+    interval: list[int] | None = None,
+    target_interval: list[int] | None = None,
+    target_cue_indexes: list[int | str] | None = None,
 ) -> dict[str, object]:
     media, srt = _fixture(tmp_path)
     frame = tmp_path / f"{observation_id}.png"
@@ -94,7 +97,7 @@ def _acoustic(
         "status": "PASS",
         "observation_id": observation_id,
         "candidate_id": "candidate",
-        "interval_ms": [0, 1000],
+        "interval_ms": interval or [0, 1000],
         "source_media_speech": source_media_speech,
         "host_speech": host_speech,
         "overlap_speech": overlap_speech,
@@ -107,6 +110,11 @@ def _acoustic(
             "caption_frame_sha256": _sha(frame),
         },
     }
+    if target_interval is not None or target_cue_indexes is not None:
+        payload["target_interval_ms"] = target_interval
+        payload["target_cue_indexes"] = target_cue_indexes
+        payload["bindings"]["target_interval_ms"] = target_interval
+        payload["bindings"]["target_cue_indexes"] = target_cue_indexes
     receipt.write_text(
         json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -160,7 +168,8 @@ def test_no_caption_does_not_default_to_host(tmp_path: Path):
     assert "NO_CAPTION_IS_NOT_HOST_EVIDENCE" in row["reason_codes"]
 
 
-def test_source_and_host_present_is_overlap_and_kept(tmp_path: Path):
+@pytest.mark.parametrize("overlap_state,label", [("PRESENT", "overlap"), ("ABSENT", "unknown")])
+def test_source_and_host_need_simultaneous_evidence_for_overlap(tmp_path: Path, overlap_state, label):
     observation = _observation(
         tmp_path,
         observation_id="overlap",
@@ -176,12 +185,13 @@ def test_source_and_host_present_is_overlap_and_kept(tmp_path: Path):
                 observation_id="overlap",
                 source_media_speech="PRESENT",
                 host_speech="PRESENT",
+                overlap_speech=overlap_state,
             )
         ],
     )
 
     row = result["rows"][0]
-    assert row["label"] == "overlap"
+    assert row["label"] == label
     assert row["action"] == "KEEP"
     assert result["safe_to_drop_cue_indexes"] == []
 
@@ -218,6 +228,94 @@ def test_only_hash_bound_source_without_host_can_drop(tmp_path: Path):
     assert result["safe_to_drop_cue_indexes"] == [1]
     assert "我打嗝跟打雷似的" not in output.read_text(encoding="utf-8")
     assert receipt["status"] == "PRIVATE_DIAGNOSTIC_HOST_TRACK_CANDIDATE"
+
+
+def test_focused_target_scope_can_classify_matching_caption_span(tmp_path: Path):
+    observation = _observation(
+        tmp_path,
+        observation_id="focused",
+        frame_ms=500,
+        text="我打嗝跟打雷似的",
+    )
+    result, _ = _build(
+        tmp_path,
+        [observation],
+        acoustic=[
+            _acoustic(
+                tmp_path,
+                observation_id="focused",
+                source_media_speech="PRESENT",
+                host_speech="ABSENT",
+                interval=[0, 2000],
+                target_interval=[0, 1000],
+                target_cue_indexes=[1],
+            )
+        ],
+    )
+
+    row = result["rows"][0]
+    assert row["label"] == "source_media"
+    assert row["action"] == "DROP_SOURCE_MEDIA"
+
+
+def test_legacy_wide_context_receipt_is_preserved_but_kept_unknown(tmp_path: Path):
+    observation = _observation(
+        tmp_path,
+        observation_id="legacy-wide",
+        frame_ms=500,
+        text="我打嗝跟打雷似的",
+    )
+    result, _ = _build(
+        tmp_path,
+        [observation],
+        acoustic=[
+            _acoustic(
+                tmp_path,
+                observation_id="legacy-wide",
+                source_media_speech="PRESENT",
+                host_speech="ABSENT",
+                interval=[0, 2000],
+            )
+        ],
+    )
+
+    row = result["rows"][0]
+    assert row["label"] == "unknown"
+    assert row["action"] == "KEEP"
+    assert row["reason_codes"] == ["ACOUSTIC_CONTEXT_ONLY_KEEP"]
+    assert row["acoustic_receipt"]["interval_ms"] == [0, 2000]
+    assert result["safe_to_drop_cue_indexes"] == []
+
+
+def test_focused_target_mismatch_is_kept_and_receipt_is_retained(tmp_path: Path):
+    observation = _observation(
+        tmp_path,
+        observation_id="focused-mismatch",
+        frame_ms=500,
+        text="我打嗝跟打雷似的",
+    )
+    result, _ = _build(
+        tmp_path,
+        [observation],
+        acoustic=[
+            _acoustic(
+                tmp_path,
+                observation_id="focused-mismatch",
+                source_media_speech="PRESENT",
+                host_speech="ABSENT",
+                interval=[0, 2000],
+                target_interval=[0, 900],
+                target_cue_indexes=[2],
+            )
+        ],
+    )
+
+    row = result["rows"][0]
+    assert row["label"] == "unknown"
+    assert row["action"] == "KEEP"
+    assert row["reason_codes"] == ["ACOUSTIC_TARGET_BINDING_MISMATCH"]
+    assert row["acoustic_receipt"]["target_cue_indexes"] == [2]
+    assert result["safe_to_drop_cue_indexes"] == []
 
 
 

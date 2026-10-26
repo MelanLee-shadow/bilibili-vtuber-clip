@@ -42,6 +42,8 @@ def _file_bytes(path: Path, expected: object, code: str) -> bytes:
         raise CaptionDedupError(code + "_CHANGED_DURING_READ")
     if not isinstance(expected, str) or _sha(data) != expected.removeprefix("sha256:"):
         raise CaptionDedupError(code + "_HASH_MISMATCH")
+    from .validation_memo import note_hashed_file
+    note_hashed_file(path, _sha(data))
     return data
 
 

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
+from src.autoslice.boundary_endpoint_binding import bind_final_semantic_endpoint
+from src.autoslice.boundary_semantic_projection import project_correlated_source_boundary_pass
 from src.autoslice.boundary_semantic_review import (
     BoundarySemanticReviewError,
     boundary_search_scope_is_valid,
@@ -13,14 +16,16 @@ from src.autoslice.boundary_semantic_review import (
 from src.autoslice.boundary_source_context_coverage import (
     source_context_coverage_block,
 )
-from src.autoslice.boundary_review_failure_evidence import (
-    review_unavailable_evidence as _review_unavailable_evidence,
+from src.autoslice.c6_exhaustive_boundary_authority import apply_content_anchor_override
+from src.autoslice.frozen_boundary_receipt import (
+    FrozenBoundaryReceipt,
+    FrozenBoundaryReview,
+    matching_final_delivery_review,
 )
-from src.autoslice.producer_exact_delivery_boundary import (
-    exact_delivery_correction_audit as _exact_delivery_correction_audit,
-    review_exact_delivery_boundary_semantics as _review_exact_delivery_boundary_semantics,
-)
-from src.autoslice.frozen_boundary_receipt import FrozenBoundaryReview
+from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.llm_client import LlmCallError
+from src.autoslice import provider_failure
+from src.autoslice.reviewed_exact_source_interval import prepare_exact_delivery_review
 
 
 def review_final_boundary_semantics(
@@ -43,6 +48,7 @@ def review_final_boundary_semantics(
     available_local_source_context_end_ms: int | None = None,
     frozen_review: FrozenBoundaryReview | None = None,
     replay_audit: dict[str, object] | None = None,
+    source_full_window_end_ms: int | None = None,
 ) -> dict[str, object]:
     """Review the exact post-authority cue grid used by the resolver."""
 
@@ -105,13 +111,31 @@ def review_final_boundary_semantics(
             boundary_search_scope=boundary_search_scope,
             frozen_review=frozen_review,
             replay_audit=replay_audit,
+            **({"source_full_window_end_ms": source_full_window_end_ms}
+               if source_full_window_end_ms is not None else {}),
         )
     except BoundarySemanticReviewError as exc:
         reason = str(exc)
-        unavailable_evidence = _review_unavailable_evidence(exc)
+        failure = exc
     except Exception as exc:
         reason = "BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:" + type(exc).__name__
-        unavailable_evidence = _review_unavailable_evidence(exc)
+        failure = exc
+    # The semantic wrapper preserves the transport exception as its cause.
+    # Retain the existing closed diagnostics without widening reason codes or
+    # turning a missing provider verdict into a content judgement.
+    diagnostics = {}
+    seen = set()
+    cause = failure
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        if isinstance(cause, LlmCallError):
+            diagnostics = provider_failure.auditor_unavailable_discovery(
+                cause.safe_reason or type(cause).__name__,
+                provider_failure.provider_failure_detail(cause),
+                provider_diagnostics=cause.provider_diagnostics,
+            )
+            break
+        cause = cause.__cause__
     return {
         "schema_version": "talk-boundary-semantic-review.v1",
         "status": "BLOCK",
@@ -122,31 +146,131 @@ def review_final_boundary_semantics(
             else {}
         ),
         "reason_codes": [reason],
-        **(
-            {"unavailable_evidence": unavailable_evidence}
-            if unavailable_evidence
-            else {}
-        ),
+        **({"provider_failure": diagnostics} if diagnostics else {}),
     }
 
 
 def review_exact_delivery_boundary_semantics(
-    **kwargs: object,
+    *,
+    cues: Sequence[object],
+    source_boundary_review: Mapping[str, object] | None,
+    source_final_start_ms: int,
+    source_final_end_ms: int,
+    candidate_id: str,
+    selection_hook: str,
+    selection_scorecard: object,
+    structured_context: str,
+    candidate_context: str,
+    boundary_max_forward_ms: int,
+    llm_call: Callable[[str], str],
+    extract_json: Callable[[str], Any],
+    disabled: bool = False,
+    frozen_review: FrozenBoundaryReview | None = None,
+    replay_audit: dict[str, object] | None = None,
+    delivery_srt_sha256: str | None = None,
+    recording_date: str | None = None,
 ) -> dict[str, object]:
-    """Compatibility seam using this module's patchable source reviewer."""
+    """Re-review and bind the exact delivery grid after every text mutation."""
 
-    return _review_exact_delivery_boundary_semantics(
-        review_final_boundary_semantics=review_final_boundary_semantics,
-        **kwargs,
+    final_cues, exact_review = prepare_exact_delivery_review(
+        cues=cues,
+        source_boundary_review=source_boundary_review,
+        source_final_start_ms=source_final_start_ms,
+        source_final_end_ms=source_final_end_ms,
+        candidate_id=candidate_id,
+        selection_scorecard=selection_scorecard,
     )
+    if exact_review is not None:
+        return exact_review
+    review = review_final_boundary_semantics(
+        cues=final_cues,
+        boundary_target_ms=int(getattr(final_cues[-1], "end_ms")),
+        candidate_id=candidate_id,
+        selection_hook=selection_hook,
+        selection_scorecard=selection_scorecard,
+        structured_context=structured_context,
+        candidate_context=candidate_context,
+        boundary_max_forward_ms=boundary_max_forward_ms,
+        llm_call=llm_call,
+        extract_json=extract_json,
+        disabled=disabled,
+        terminal_source_review=source_boundary_review,
+        source_final_start_ms=source_final_start_ms,
+        source_final_end_ms=source_final_end_ms,
+        frozen_review=frozen_review,
+        replay_audit=replay_audit,
+    )
+    review = project_correlated_source_boundary_pass(
+        review,
+        source_review=source_boundary_review,
+        closure_cue=final_cues[-1],
+        final_cue_count=len(final_cues),
+        source_final_start_ms=source_final_start_ms,
+        source_final_end_ms=source_final_end_ms,
+    )
+    review = apply_content_anchor_override(review, candidate_id, recording_date, (source_final_start_ms, source_final_end_ms), delivery_srt_sha256)
+    review, _ = bind_final_semantic_endpoint(
+        semantic_review=review,
+        cues=final_cues,
+        closure_cue=final_cues[-1],
+        snapped_end_ms=int(getattr(final_cues[-1], "end_ms")),
+        final_start_ms=0,
+        final_end_ms=source_final_end_ms - source_final_start_ms,
+    )
+    return review
 
 
 def exact_delivery_correction_audit(
-    **kwargs: object,
+    *,
+    final_srt_text: str,
+    correction_audit: Mapping[str, object],
+    source_final_start_ms: int,
+    source_final_end_ms: int,
+    candidate_id: str,
+    selection_hook: str,
+    selection_scorecard: object,
+    structured_context: str,
+    candidate_context: str,
+    boundary_max_forward_ms: int,
+    llm_call: Callable[[str], str],
+    extract_json: Callable[[str], Any],
+    disabled: bool = False,
+    frozen_boundary_receipt: FrozenBoundaryReceipt | None = None,
+    frozen_source_review: FrozenBoundaryReview | None = None,
+    recording_date: str | None = None,
 ) -> dict[str, object]:
-    """Compatibility seam using this module's patchable delivery reviewer."""
+    """Replace the source review with an exact post-mutation delivery review."""
 
-    return _exact_delivery_correction_audit(
-        review_exact_delivery=review_exact_delivery_boundary_semantics,
-        **kwargs,
+    source_review = correction_audit.get("boundary_semantic_review")
+    delivery_replay_audit: dict[str, object] = {}
+    delivery_review = review_exact_delivery_boundary_semantics(
+        cues=parse_srt_cues(final_srt_text),
+        source_boundary_review=(source_review if isinstance(source_review, Mapping) else None),
+        source_final_start_ms=source_final_start_ms,
+        source_final_end_ms=source_final_end_ms,
+        candidate_id=candidate_id,
+        recording_date=recording_date,
+        selection_hook=selection_hook,
+        selection_scorecard=selection_scorecard,
+        structured_context=structured_context,
+        candidate_context=candidate_context,
+        boundary_max_forward_ms=boundary_max_forward_ms,
+        llm_call=llm_call,
+        extract_json=extract_json,
+        disabled=disabled,
+        frozen_review=(
+            matching_final_delivery_review(frozen_boundary_receipt, final_srt_text)
+            if frozen_boundary_receipt is not None
+            else frozen_source_review
+        ),
+        replay_audit=delivery_replay_audit,
+        delivery_srt_sha256="sha256:" + hashlib.sha256(final_srt_text.encode("utf-8")).hexdigest(),
     )
+    result = dict(correction_audit)
+    result["boundary_semantic_review"] = delivery_review
+    if delivery_replay_audit:
+        existing_replay = result.get("boundary_receipt_replay")
+        replay = dict(existing_replay) if isinstance(existing_replay, Mapping) else {}
+        replay["final_delivery"] = delivery_replay_audit
+        result["boundary_receipt_replay"] = replay
+    return result

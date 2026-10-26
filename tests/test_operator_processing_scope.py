@@ -1,8 +1,7 @@
 """运维范围通道：显式点名某天进处理窗口，出处缺一不生效，干完自动出圈。
 
 背景：`list_dates()` 只取最新三个录制日期，加两个例外（`source_incomplete`、
-`historical_source_recovery_in_progress`）。公开规则：**把 tier1 的 4
-条做了**「**87 现在需要纳入处理范围**」，但 早已滑出窗口，且它的
+`historical_source_recovery_in_progress`）。合成测试显式指定四个候选与一个处理日期，但 早已滑出窗口，且它的
 `source_recoveries` 是空的——两个例外一个都不成立，仓里此前没有第三条路。伪造
 `source_recoveries` 骗它进窗口是编造证据，绝不允许。
 
@@ -54,7 +53,7 @@ RECORDING_DATE = "2026-08-07"
 SESSION_ID = "live-20260807T190000+0800"
 NOW = datetime(2026, 8, 10, 16, 0, tzinfo=timezone.utc)
 
-REVIEWER_QUOTE = "把 tier1 的 4 条做了；87 现在需要纳入处理范围"
+SYNTHETIC_SCOPE_TEXT = '合成样例：将测试日期中明确列出的四个候选加入处理范围；完成后退出，不改变其余候选或并发席位。'
 # 8/7 talk_backlog 里真实排在最前的四条 tier-1。
 TIER1_IDS = (
     "auto_210739_1695_1804",
@@ -133,7 +132,7 @@ def _grant(**overrides) -> dict:
         "reason": "8/7 滑出最新三天窗口，tier-1 四条尚未产出；本次只放这一天进范围。",
         "candidate_ids": list(TIER1_IDS),
         "user_authorization": {
-            "quote": REVIEWER_QUOTE,
+            "quote": SYNTHETIC_SCOPE_TEXT,
             "timestamp": "2026-08-10T15:40:00Z",
         },
         "expires_at": "2026-08-13T00:00:00Z",
@@ -409,17 +408,17 @@ def test_aged_out_date_stays_out_without_a_grant(tmp_path, monkeypatch):
     assert state.get("source_recoveries") is None
     _window(tmp_path, monkeypatch, state)
 
-    assert runner.list_dates() == ["2026-08-08", "2026-08-09", "2026-08-10"]
+    assert runner.list_dates() == ["2026-08-10", "2026-08-09", "2026-08-08"]
 
 
 def test_grant_with_full_provenance_admits_only_that_date(tmp_path, monkeypatch):
     _window(tmp_path, monkeypatch, _state_with_backlog(_grant()))
 
     assert runner.list_dates() == [
-        RECORDING_DATE,
-        "2026-08-08",
-        "2026-08-09",
         "2026-08-10",
+        "2026-08-09",
+        "2026-08-08",
+        RECORDING_DATE,
     ]
 
 
@@ -435,16 +434,16 @@ def test_grant_with_full_provenance_admits_only_that_date(tmp_path, monkeypatch)
             "quote_is_a_rubber_stamp",
             {"user_authorization": {"quote": "ok", "timestamp": "2026-08-10T15:40:00Z"}},
         ),
-        ("timestamp_missing", {"user_authorization": {"quote": REVIEWER_QUOTE}}),
+        ("timestamp_missing", {"user_authorization": {"quote": SYNTHETIC_SCOPE_TEXT}}),
         (
             "timestamp_has_no_timezone",
-            {"user_authorization": {"quote": REVIEWER_QUOTE, "timestamp": "2026-08-10 15:40"}},
+            {"user_authorization": {"quote": SYNTHETIC_SCOPE_TEXT, "timestamp": "2026-08-10 15:40"}},
         ),
         (
             "extra_authorization_field",
             {
                 "user_authorization": {
-                    "quote": REVIEWER_QUOTE,
+                    "quote": SYNTHETIC_SCOPE_TEXT,
                     "timestamp": "2026-08-10T15:40:00Z",
                     "approved_by_agent": True,
                 }
@@ -641,10 +640,10 @@ def test_failed_pick_recovery_intent_admits_aged_out_date_to_list_dates(tmp_path
     _window(tmp_path, monkeypatch, state)
 
     assert runner.list_dates() == [
-        RECORDING_DATE,
-        "2026-08-08",
-        "2026-08-09",
         "2026-08-10",
+        "2026-08-09",
+        "2026-08-08",
+        RECORDING_DATE,
     ]
 
 
@@ -675,7 +674,7 @@ def test_held_current_rerender_intent_admits_exactly_one_no_upload_candidate(
         "recording_date": RECORDING_DATE,
         "candidate_ids": [TIER1_IDS[0]],
         "outstanding_candidate_ids": [TIER1_IDS[0]],
-        "quote": REVIEWER_QUOTE,
+        "quote": SYNTHETIC_SCOPE_TEXT,
         "intent": HELD_CURRENT_RERENDER_INTENT,
         "upload_allowed": False,
     }
@@ -786,7 +785,7 @@ def test_v4_admits_only_one_strict_speaker_hold_after_recovery_fingerprint_chang
         "recording_date": RECORDING_DATE,
         "candidate_ids": [TIER1_IDS[0]],
         "outstanding_candidate_ids": [TIER1_IDS[0]],
-        "quote": REVIEWER_QUOTE,
+        "quote": SYNTHETIC_SCOPE_TEXT,
         "intent": SPEAKER_HOLD_RECOVERY_INTENT,
         "upload_allowed": False,
     }
@@ -987,7 +986,7 @@ def test_v5_admits_one_resolved_nested_topic_hold_without_mutating_state(monkeyp
         "recording_date": RECORDING_DATE,
         "candidate_ids": [TIER1_IDS[0]],
         "outstanding_candidate_ids": [TIER1_IDS[0]],
-        "quote": REVIEWER_QUOTE,
+        "quote": SYNTHETIC_SCOPE_TEXT,
         "intent": TOPIC_HOLD_RECOVERY_INTENT,
         "upload_allowed": False,
     }
@@ -1279,7 +1278,7 @@ def test_v6_admits_only_exact_changed_selected_source_fact_rejection(monkeypatch
         "recording_date": RECORDING_DATE,
         "candidate_ids": [TIER1_IDS[0]],
         "outstanding_candidate_ids": [TIER1_IDS[0]],
-        "quote": REVIEWER_QUOTE,
+        "quote": SYNTHETIC_SCOPE_TEXT,
         "intent": SOURCE_FACT_RECOVERY_INTENT,
         "upload_allowed": False,
     }
@@ -1458,7 +1457,7 @@ def test_v7_admits_only_exact_changed_selected_final_review_rejection(monkeypatc
         "recording_date": RECORDING_DATE,
         "candidate_ids": [TIER1_IDS[0]],
         "outstanding_candidate_ids": [TIER1_IDS[0]],
-        "quote": REVIEWER_QUOTE,
+        "quote": SYNTHETIC_SCOPE_TEXT,
         "intent": FINAL_REVIEW_RECOVERY_INTENT,
         "upload_allowed": False,
     }
@@ -1689,10 +1688,10 @@ def test_grant_does_not_pull_any_other_aged_out_date_in(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "BASE", tmp_path / "autoslice")
 
     assert runner.list_dates() == [
-        RECORDING_DATE,
-        "2026-08-08",
-        "2026-08-09",
         "2026-08-10",
+        "2026-08-09",
+        "2026-08-08",
+        RECORDING_DATE,
     ]
 
 
@@ -1755,7 +1754,7 @@ def test_grant_seats_only_the_named_candidates(hermetic_quota):
     assert sorted(disclosure["held_candidate_ids"]) == sorted(
         f"auto_tier2_{index}" for index in range(4)
     )
-    assert disclosure["quote"] == REVIEWER_QUOTE
+    assert disclosure["quote"] == SYNTHETIC_SCOPE_TEXT
 
 
 def test_grant_never_widens_the_seat_cap(hermetic_quota):

@@ -23,6 +23,7 @@ from collections.abc import Callable, Collection
 from pathlib import Path
 from typing import Mapping
 
+from src.autoslice.cpa_model_ladder import TOP_CPA_MODEL, cpa_call_timeout_seconds
 from src.autoslice.runner_proxy import RunnerProxy
 
 
@@ -126,6 +127,15 @@ def write_pending_rescore_sidecar(
     }
     path = _sidecar_path(recut_dir, candidate_id)
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() or path.is_symlink():
+        if path.is_symlink():
+            raise ValueError('SOURCE_FACT_RESCORE_SIDECAR_INVALID')
+        old = json.loads(path.read_bytes())
+        if all(old.get(k) == v for k,v in receipt.items() if k not in {'status','attempts'}):
+            return path
+        from src.autoslice.producer_text_checkpoint import _frozen_binding
+        _frozen_binding(recut_dir/'.source-fact-rescore-history','sidecar',path)
+        receipt['producer_consumed_hooks'] = list(old.get('producer_consumed_hooks') or [])
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     temporary.write_text(
         json.dumps(receipt, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
@@ -133,6 +143,11 @@ def write_pending_rescore_sidecar(
     )
     os.replace(temporary, path)
     return path
+
+
+def consume_producer_rescore(**kwargs):
+    from src.autoslice.producer_selection_rescore import consume_producer_rescore as consume
+    return consume(**kwargs)
 
 
 def _read_sidecar(work_dir: Path, *, candidate_id: str) -> dict[str, object] | None:
@@ -255,9 +270,9 @@ def build_rescore_llm_call() -> Callable[[str], str]:
             transport="command",
             command_template=(
                 "bash scripts/llm_via_cpa.sh {prompt_file} {completion_file} "
-                "'gpt-6-sol' medium"
+                f"'{TOP_CPA_MODEL}' medium"
             ),
-            timeout_seconds=180.0,
+            timeout_seconds=cpa_call_timeout_seconds(),
         )
     )
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 from src.autoslice.acoustic_witness_adjudication import (
@@ -45,6 +46,9 @@ def _request(**overrides: object) -> dict[str, object]:
         "context_after": "下一句",
     }
     request.update(overrides)
+    request["request_sha256"] = hashlib.sha256(json.dumps(
+        request, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
     return request
 
 
@@ -61,7 +65,13 @@ def _srt(*texts: str) -> str:
 
 
 def _review(findings: list[dict[str, object]]):
-    return lambda _prompt: json.dumps({"findings": findings}, ensure_ascii=False)
+    def complete(prompt):
+        if "本次只补齐上一轮漏报" in prompt:
+            agenda = json.loads(prompt.rsplit('\n', 1)[1])
+            return json.dumps({'findings': [{'cue': row['cue'], 'content_risk': 'meaning_reversal',
+                'risk_basis': '合成当前语义冲突，交由声学闭集裁决。'} for row in agenda]}, ensure_ascii=False)
+        return json.dumps({"findings": findings}, ensure_ascii=False)
+    return complete
 
 
 def test_f3_cue2_pattern_discloses_conflict_without_vetoing_final_cpa_choice():
@@ -117,7 +127,7 @@ def test_f3_session_restatement_is_structured_support():
     assert audit["witness_conflict_diagnostic"]["effect"] == "DISCLOSURE_ONLY"
 
 
-def test_f3_prompt_states_reviewer_pinyin_first_evidence_fallback_duty():
+def test_f3_prompt_keeps_pinyin_as_fallible_evidence():
     prompts: list[str] = []
 
     judge_word_choice(
@@ -126,9 +136,9 @@ def test_f3_prompt_states_reviewer_pinyin_first_evidence_fallback_duty():
         llm_call=lambda prompt: prompts.append(prompt) or json.dumps({"choice": "CURRENT"}),
     )
 
-    assert "优先在与证人听写拼音相容的候选内选择" in prompts[0]
-    assert "PROPOSED 与听写明显不相容且无独立结构化证据时选择 CURRENT" in prompts[0]
-    assert '公开规则' in prompts[0]
+    assert "模型记录的拼音也是可能误听" in prompts[0]
+    assert "先比较合理的原始 BCUT/ASR 候选与有证据的简单校正" in prompts[0]
+    assert "不将拼音相容当作候选准入门" in prompts[0]
 
 
 def test_f1_nantian_transcript_repeat_is_marked_as_suspected_echo():

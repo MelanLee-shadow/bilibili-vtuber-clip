@@ -22,20 +22,21 @@ def _write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _fixture(tmp_path: Path, *, passes: tuple[bool, ...] = (True, False, True, True, False, True, True)):
+def _fixture(tmp_path: Path, *, passes: tuple[bool, ...] = (True, False, True, True, False, True, True), short_contiguous: bool = False):
     assert len(passes) == 7
     candidate_id = "song-voice-proof"
     source = tmp_path / "candidate.mp4"
     source.write_bytes(b"source-media-bound-to-proof")
     alignment = tmp_path / "lyrics-alignment-report.json"
-    lyric_lines = [{"lrc_time_ms": index * 12_000, "text": f"lyric-{index}"} for index in range(8)]
+    row_count, row_step, row_duration = (48, 1_000, 1_000) if short_contiguous else (8, 12_000, 5_000)
+    lyric_lines = [{"lrc_time_ms": index * row_step, "text": f"lyric-{index}"} for index in range(row_count)]
     alignment_rows = [
         {
             "lrc_time_ms": row["lrc_time_ms"],
             "lrc_text": row["text"],
             "matched_cue_id": f"cue-{index}",
-            "cue_start_ms": 10_000 + index * 12_000,
-            "cue_end_ms": 15_000 + index * 12_000,
+            "cue_start_ms": 10_000 + index * row_step,
+            "cue_end_ms": 10_000 + index * row_step + row_duration,
             **host_vocal.READY_SINGING_ASSERTIONS,
         }
         for index, row in enumerate(lyric_lines)
@@ -124,6 +125,7 @@ def _fixture(tmp_path: Path, *, passes: tuple[bool, ...] = (True, False, True, T
                 "lrc_text": lyric_row["lrc_text"],
                 "lyric_cue_start_ms": lyric_row["cue_start_ms"],
                 "lyric_cue_end_ms": lyric_row["cue_end_ms"],
+                **({"lyric_members": lyric_row["lyric_members"]} if "lyric_members" in lyric_row else {}),
                 **{
                     key: lyric_row[key]
                     for key in host_vocal.READY_SINGING_ASSERTIONS
@@ -210,6 +212,16 @@ def _verify(bundle, **overrides):
 def _rewrite_proof_and_rebind_claim(bundle) -> None:
     _write_json(bundle["proof_path"], bundle["proof"])
     bundle["claim"]["proof_sha256"] = _sha(bundle["proof_path"])
+
+
+@pytest.mark.parametrize("role", ["source", "alignment", "profile"])
+def test_m30_proof_accepts_relocated_binding_but_rejects_bytes(tmp_path, role):
+    bundle = _fixture(tmp_path)
+    moved = tmp_path / ("moved-" + bundle[role].name)
+    moved.write_bytes(bundle[role].read_bytes())
+    assert _verify(bundle, **{role: moved}) is None
+    moved.write_bytes(b"changed bytes")
+    assert "sha256 mismatch" in _verify(bundle, **{role: moved})
 
 
 def test_valid_hash_bound_ready_claim(tmp_path):
@@ -491,6 +503,50 @@ def test_checkpoint_singing_role_binding_is_reverified(tmp_path):
 
     error = _verify(bundle)
 
+    assert error is not None and "not bound to its selected lyric row" in error
+
+
+def test_short_contiguous_singing_retains_all_members_and_existing_identity_gate(tmp_path):
+    bundle = _fixture(tmp_path, short_contiguous=True)
+    checkpoints = bundle["proof"]["checkpoints"]
+    assert len(checkpoints) == 7
+    assert {row["bucket"] for row in checkpoints} == {"head", "middle", "tail"}
+    for checkpoint in checkpoints:
+        members = checkpoint["lyric_members"]
+        assert len(members) == 3
+        assert checkpoint["window_ms"] == 3_000
+        assert checkpoint["lyric_cue_start_ms"] == members[0]["cue_start_ms"]
+        assert checkpoint["lyric_cue_end_ms"] == members[-1]["cue_end_ms"]
+        assert all(a["cue_end_ms"] == b["cue_start_ms"] for a, b in zip(members, members[1:]))
+    assert bundle["proof"]["distribution"]["passed_count"] == 5
+    assert _verify(bundle) is None
+
+
+@pytest.mark.parametrize("break_kind", ["gap", "spoken", "unmatched", "overlap"])
+def test_short_singing_never_bridges_unverified_intervals(tmp_path, break_kind):
+    bundle = _fixture(tmp_path, short_contiguous=True)
+    alignment = json.loads(bundle["alignment"].read_text(encoding="utf-8"))
+    rows = alignment["alignment"] if break_kind in {"gap", "overlap"} else alignment["alignment"][2::3]
+    for row in rows:
+        if break_kind == "gap":
+            row["cue_end_ms"] -= 1
+        elif break_kind == "spoken":
+            row.update(host_vocal.READY_SPOKEN_ASSERTIONS)
+        elif break_kind == "unmatched":
+            row["matched_cue_id"] = None
+        else:
+            row["cue_end_ms"] += 1
+    if break_kind == "overlap":
+        alignment["last_lyric_end_ms"] += 1
+    with pytest.raises(host_vocal.HostVocalProofError, match="at least 7 matched singing intervals"):
+        host_vocal._selected_lyric_rows(alignment)
+
+
+def test_multi_lyric_checkpoint_member_tampering_is_rejected(tmp_path):
+    bundle = _fixture(tmp_path, short_contiguous=True)
+    bundle["proof"]["checkpoints"][0]["lyric_members"][1]["matched_cue_id"] = "unrelated-cue"
+    _rewrite_proof_and_rebind_claim(bundle)
+    error = _verify(bundle)
     assert error is not None and "not bound to its selected lyric row" in error
 
 

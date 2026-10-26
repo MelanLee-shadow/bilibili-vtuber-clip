@@ -34,12 +34,15 @@ from src.autoslice.package_relocation_contract import (
     get_value as _get,
     is_mutable_pointer as _is_mutable_pointer,
     parse_pointer as _parse_pointer,
+    SKILL_CANDIDATE_COVER_POINTERS,
+    pointer_applies,
     pointer_text as _pointer_text,
     reject_unknown_wsl_paths as _reject_unknown_wsl_paths,
     set_value as _set,
     validate_document_root_roles as _validate_document_root_roles,
     validate_path_root_role as _validate_path_root_role,
 )
+from src.autoslice.review_evidence_store import review_from_bytes
 
 
 SCHEMA_VERSION = "slice-package-relocation.v2"
@@ -157,8 +160,12 @@ def _changed_pointers(before: object, after: object, pointer: JsonPointer = ()) 
     return set() if before == after else {pointer}
 
 
-def _allowed_changed_pointer(kind: str, pointer: JsonPointer) -> bool:
-    if _is_mutable_pointer(kind, pointer):
+def _allowed_changed_pointer(
+    kind: str, pointer: JsonPointer, document: Mapping[str, Any] | None = None
+) -> bool:
+    # ``document`` is the original (pre-relocation) document; skill-candidate
+    # cover locators are only mutable when it is a skill.candidates cover.
+    if _is_mutable_pointer(kind, pointer, document):
         return True
     if kind == "record" and pointer in {
         ("speaker_finalization_manifest_sha256",),
@@ -208,7 +215,7 @@ def _transform_publish(
 ) -> dict[str, Any]:
     result = copy.deepcopy(dict(source))
     for pointer in _PUBLISH_PATH_POINTERS:
-        if _get(result, pointer) is None:
+        if _get(result, pointer) is None or not pointer_applies("publish", pointer, result):
             continue
         _set(
             result,
@@ -222,7 +229,7 @@ def _transform_publish(
             ),
         )
     changed = _changed_pointers(source, result)
-    if any(not _allowed_changed_pointer("publish", pointer) for pointer in changed):
+    if any(not _allowed_changed_pointer("publish", pointer, source) for pointer in changed):
         raise PackageRelocationError("publish: immutable evidence changed")
     _reject_unknown_wsl_paths(
         result,
@@ -246,7 +253,7 @@ def _transform_record(
 ) -> dict[str, Any]:
     result = copy.deepcopy(dict(source))
     for pointer in _RECORD_PATH_POINTERS:
-        if _get(result, pointer) is None:
+        if _get(result, pointer) is None or not pointer_applies("record", pointer, result):
             continue
         if pointer == ("chat_authority_audit_path",):
             replacement: object = chat_target
@@ -282,11 +289,11 @@ def _transform_record(
         publish_staging[key] = copy.deepcopy(publish[key])
 
     changed = _changed_pointers(source, result)
-    if any(not _allowed_changed_pointer("record", pointer) for pointer in changed):
+    if any(not _allowed_changed_pointer("record", pointer, source) for pointer in changed):
         bad = sorted(
             _pointer_text(pointer)
             for pointer in changed
-            if not _allowed_changed_pointer("record", pointer)
+            if not _allowed_changed_pointer("record", pointer, source)
         )
         raise PackageRelocationError(
             "record: immutable evidence changed: " + ",".join(bad)
@@ -343,22 +350,34 @@ def _assert_destination_projection(
         )
 
 
-def _load_json_document(path: Path, *, label: str) -> tuple[dict[str, Any], bytes]:
+def _load_json_document(
+    path: Path, *, label: str, review: bool = False
+) -> tuple[dict[str, Any], bytes]:
     _require_regular_path(path, trusted_roots=(path.parent,), label=label)
     try:
         payload = path.read_bytes()
-        value = json.loads(payload)
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        value = (
+            review_from_bytes(payload, directory=path.parent)
+            if review
+            else json.loads(payload)
+        )
+    except (OSError, TypeError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
         raise PackageRelocationError(f"{label}: unreadable JSON") from exc
     if not isinstance(value, dict):
         raise PackageRelocationError(f"{label}: JSON root is not an object")
     return value, payload
 
 
-def _decode_json_document(payload: bytes, *, label: str) -> dict[str, Any]:
+def _decode_json_document(
+    payload: bytes, *, label: str, review: bool = False, directory: Path | None = None
+) -> dict[str, Any]:
     try:
-        value = json.loads(payload)
-    except (UnicodeError, json.JSONDecodeError) as exc:
+        value = (
+            review_from_bytes(payload, directory=directory or Path.cwd())
+            if review
+            else json.loads(payload)
+        )
+    except (OSError, TypeError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
         raise PackageRelocationError(f"{label}: unreadable JSON") from exc
     if not isinstance(value, dict):
         raise PackageRelocationError(f"{label}: JSON root is not an object")
@@ -883,10 +902,12 @@ def _preimage_payload(
     return current_payload, True
 
 
-def _chat_speaker_manifest_digest(payload: bytes) -> str:
+def _chat_speaker_manifest_digest(
+    payload: bytes, *, directory: Path | None = None
+) -> str:
     try:
-        document = json.loads(payload)
-    except (UnicodeError, json.JSONDecodeError) as exc:
+        document = review_from_bytes(payload, directory=directory or Path.cwd())
+    except (OSError, TypeError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
         raise PackageRelocationError("chat authority: unreadable JSON") from exc
     if not isinstance(document, Mapping):
         raise PackageRelocationError("chat authority: JSON root is not an object")
@@ -1002,7 +1023,14 @@ def _validate_journal_contract(
             pointer = _parse_pointer(
                 raw_pointer, label=f"journal {label} changed_pointers"
             )
-            if not _allowed_changed_pointer(label, pointer):
+            # Shape check only: skill-candidate cover locators are admitted
+            # structurally here because the journal is later required to equal
+            # the projection recomputed from the preimages, whose guard binds
+            # them to the original skill.candidates document.
+            if not (
+                _allowed_changed_pointer(label, pointer)
+                or pointer in SKILL_CANDIDATE_COVER_POINTERS.get(label, frozenset())
+            ):
                 raise PackageRelocationError(
                     f"journal: {label} changed pointer not allowed"
                 )
@@ -1181,13 +1209,13 @@ def _commit_relocation_graph(
             temporary.unlink(missing_ok=True)
 
     final_record, final_record_payload = _load_json_document(
-        document_paths["record"], label="record"
+        document_paths["record"], label="record", review=True
     )
     final_speaker, final_speaker_payload = _load_json_document(
         document_paths["speaker"], label="speaker"
     )
     final_publish, final_publish_payload = _load_json_document(
-        document_paths["publish"], label="publish"
+        document_paths["publish"], label="publish", review=True
     )
     final_payloads = {
         "record": final_record_payload,
@@ -1340,7 +1368,9 @@ def _load_relocation_evidence(
         trusted_roots=trusted_roots,
         label="clip context",
     )
-    chat_speaker_sha256 = _chat_speaker_manifest_digest(chat_payload)
+    chat_speaker_sha256 = _chat_speaker_manifest_digest(
+        chat_payload, directory=chat_target.parent
+    )
     before_digests: dict[str, str] = {}
     if journal is None:
         before_digests = {
@@ -1515,9 +1545,13 @@ def relocate_slice_package(
     publish_path = package_root / f"{candidate_id}.recut.publish.json"
     journal_path = package_root / f".{candidate_id}.package-relocation.json"
     with _transaction_lock(package_root, candidate_id):
-        record, record_payload = _load_json_document(record_path, label="record")
+        record, record_payload = _load_json_document(
+            record_path, label="record", review=True
+        )
         speaker, speaker_payload = _load_json_document(speaker_path, label="speaker")
-        publish, publish_payload = _load_json_document(publish_path, label="publish")
+        publish, publish_payload = _load_json_document(
+            publish_path, label="publish", review=True
+        )
         if publish.get("candidate_id") != candidate_id:
             raise PackageRelocationError("publish: candidate_id mismatch")
         journal: dict[str, Any] | None = None
@@ -1548,7 +1582,10 @@ def relocate_slice_package(
         }
         preimage_docs = {
             label: _decode_json_document(
-                payload, label=f"pre-relocation {label}"
+                payload,
+                label=f"pre-relocation {label}",
+                review=label in {"record", "publish"},
+                directory=package_root,
             )
             for label, payload in preimage_payloads.items()
         }

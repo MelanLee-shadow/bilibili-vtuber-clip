@@ -10,6 +10,7 @@ import pytest
 
 from src.autoslice import package_import as pi
 from src.autoslice.package_import_cover import project_preserved_cover_locators
+from src.autoslice.cover_host_identity_gate import HOST_ONLY_SCHEMA_VERSION
 from tests.test_host_only_identity_card_successor import _run, _inventory
 from tests.test_host_only_identity_card_successor import ready_input as ready_input  # noqa: F401
 
@@ -200,7 +201,7 @@ def test_v4_flat_cover_is_contained_and_hash_bound(tmp_path):
         "final_cover": "/producer/pixel-bridge/final.cover.png",
         "final_cover_sha256": "sha256:" + pi.sha256_file(cover),
         "final_host_identity_verification": {
-            "schema_version": "lidousha-cover-final-host-identity-verification.v4",
+            "schema_version": HOST_ONLY_SCHEMA_VERSION,
             "final_cover_path": cover.name,
         },
     }
@@ -258,7 +259,7 @@ def test_projected_v4_source_namespace_resolves_flat_package_alias(tmp_path):
         ),
         "final_cover_sha256": "sha256:" + pi.sha256_file(cover),
         "final_host_identity_verification": {
-            "schema_version": "lidousha-cover-final-host-identity-verification.v4",
+            "schema_version": HOST_ONLY_SCHEMA_VERSION,
             "final_cover_path": "/producer/design/B2-cover.png",
         },
     }

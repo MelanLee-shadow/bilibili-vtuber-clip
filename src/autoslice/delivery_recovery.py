@@ -39,6 +39,9 @@ from src.autoslice.batch_terminal_state import (
     song_infra_transient_is_active,
 )
 from src.autoslice.runner_proxy import RunnerProxy
+from src.autoslice.runner_pipeline_fingerprints import (
+    TALK_DEPENDENCY_FIELD, changed_dependency_stages, failure_dependency_stages,
+)
 from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
     expected_recovery_publish_title,
@@ -70,6 +73,7 @@ from src.autoslice.speaker_manual_review import (
 from src.autoslice import song_name_authority
 from src.autoslice.song_lane import _resume_song_full_source_proof
 from src.autoslice.talk_quota_freeze import carry_frozen_admission
+from src.autoslice.talk_quota_authority import resolve_quota_grant
 from src.autoslice.talk_recovery_record_policy import (
     cover_route_retry_is_eligible,
     supplemental_recovery_candidate,
@@ -210,15 +214,18 @@ def _talk_retry_decision(
     existing_pending: set[str],
     current_recovery: str,
     provider_budget_history: Collection[object] = (),
+    dependency_changed: bool | None = None,
 ) -> _TalkRetryDecision | None:
     """Return the bounded retry route, or ``None`` when this tick must keep it."""
 
-    retry_count = int(record.get("talk_repair_retry_count") or 0)
-    transient_count = int(record.get("talk_transient_retry_count") or 0)
+    retry_count, transient_count = preserved_talk_retry_counts(
+        record, candidate_id=cid, history_records=provider_budget_history,
+    )
     recorded_recovery = record.get(
         "failure_recovery_fingerprint"
     ) or record.get("pipeline_fingerprint")
-    changed = recorded_recovery != current_recovery
+    changed = (recorded_recovery != current_recovery
+               if dependency_changed is None else dependency_changed)
     next_retry_at = record.get("next_retry_at_epoch")
     infrastructure_waiting = bool(
         record.get("failure_recoverable") is True
@@ -339,6 +346,63 @@ def _talk_retry_decision(
         rescore_retry,
     )
 
+
+def preserved_talk_retry_counts(
+    record: Mapping[str, object], *, candidate_id: str,
+    history_records: Collection[object] = (),
+) -> tuple[int, int]:
+    """A stale row or restart cannot erase already consumed candidate counters."""
+    rows = [record, *(row for row in history_records if isinstance(row, Mapping)
+                      and _candidate_id(row) == candidate_id)]
+    counts = []
+    for field in ("talk_repair_retry_count", "talk_transient_retry_count"):
+        values = []
+        for row in rows:
+            value = row.get(field, 0)
+            if value is None:
+                value = 0
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"invalid consumed retry counter: {field}")
+            values.append(value)
+        counts.append(max(values))
+    return counts[0], counts[1]
+
+
+def talk_recovery_dependency_change(
+    date: str, record: dict, *, candidate_id: str, completed: bool = False,
+) -> tuple[bool, dict, tuple[str, ...]]:
+    """Migrate provenance-only rows without granting a deployment replay.
+
+    An absent snapshot cannot prove which historical bytes changed.  Adopt a
+    comparison baseline while leaving every old failure/PASS receipt intact.
+    This is neither an attempt nor permission to reuse a stale media proof.
+    """
+    current = _runner.capture_talk_dependency_snapshot(date, record)
+    changes = changed_dependency_stages(record.get(TALK_DEPENDENCY_FIELD), current)
+    if changes is None:
+        from src.autoslice.selected_final_review_terminal_regrant import (
+            RECOVERY_RECEIPT_FIELD as terminal_receipt_field,
+        )
+        frozen_fields = (
+            SELECTED_SOURCE_FACT_RECOVERY_RECEIPT_FIELD,
+            SELECTED_FINAL_REVIEW_RECOVERY_RECEIPT_FIELD,
+            terminal_receipt_field,
+        )
+        if not any(record.get(field) is not None for field in frozen_fields):
+            # A typed receipt freezes the whole current row. Its existing
+            # authorized transition binds the new snapshot into the queue;
+            # a zero-requeue migration cannot silently alter that preimage.
+            record[TALK_DEPENDENCY_FIELD] = current
+            record["recovery_dependency_status"] = "LEGACY_BASELINE_ADOPTED_NO_REPLAY"
+        return False, current, ()
+    scope = tuple(current["stages"]) if completed else failure_dependency_stages(
+        record.get("failure_kind"), record.get("failure_stage"),
+    )
+    relevant = tuple(stage for stage in changes if stage in scope)
+    if not scope and not completed:
+        record["recovery_dependency_status"] = "UNCLASSIFIED_FAILURE_REQUIRES_DIAGNOSIS"
+    return bool(relevant), current, relevant
+
 def _repair_budget_charge(
     decision: _TalkRetryDecision, *, provider_budget_retry: bool = False
 ) -> int:
@@ -349,14 +413,9 @@ def _repair_budget_charge(
  能把额度烧光，等真修复部署下来时预算已经被噪声吃完（A1，公开规则逐字
  「就按 A1 走吧」「A1 要做」）。
 
- 判据照抄写回处 ``talk_transient_retry_count`` 已有的那串路线判据（同一组标志
- 位），只把 ``transient`` 换成 ``infrastructure_retry``——等价于"当且仅当本次
- ``retry_reason`` 解析成 ``transient_infrastructure_failure`` 才不收费"。
-
- 两个刻意保留的性质：``changed`` 在 ``retry_reason`` 阶梯上压着
- ``infrastructure_retry``，所以"infra 失败 + 相关部署落地"那一次仍算真修复、
- 照常收费；``talk_transient_retry_count`` 一字未动，infra 退避曲线
- （``infra_retry_policy``）读的仍是它。存量计数不追溯重算，单调不回退。
+ 只有基础设施到期唤醒且无相关行为变化时不收修复费。相关依赖变化仍算一次
+ 真修复；基础设施退避次数独立递增，不因这个修复路由漏记。存量计数不追溯
+ 重算，单调不回退。显式 provider-budget 路由继续使用自己的耐久账本。
  """
     if (
         decision.infrastructure_retry
@@ -732,7 +791,9 @@ def _recovery_queue_item(
         record,
         candidate_id=candidate_id,
     )
-    retry_count = int(record.get("talk_repair_retry_count") or 0)
+    retry_count, transient_count = preserved_talk_retry_counts(
+        record, candidate_id=candidate_id, history_records=provider_budget_history,
+    )
     item = {
         "cid": candidate_id,
         "segment_path": str(segment),
@@ -752,7 +813,9 @@ def _recovery_queue_item(
         "preview": record.get("preview", ""),
         "selected_repair": selected_repair,
         "talk_repair_retry_count": retry_count + (1 if selected_repair else 0),
-        "talk_transient_retry_count": 0,
+        # This explicit content rerun has no separate authorized infrastructure
+        # budget generation.  Keep its outage/backoff history and provider ledger.
+        "talk_transient_retry_count": transient_count,
         "retry_reason": retry_reason,
         "bcut_srt_path": str(bcut_srt),
         "session_id": _recording_session_id(record),
@@ -765,6 +828,8 @@ def _recovery_queue_item(
         **_cover_route_regeneration_receipt(record),
         **copied_refresh_receipt(record),
         "recovery_source_record_sha256": _canonical_object_sha256(record),
+        **({TALK_DEPENDENCY_FIELD: copy.deepcopy(record[TALK_DEPENDENCY_FIELD])}
+           if TALK_DEPENDENCY_FIELD in record else {}),
     }
     if given_end_ms is not None:
         item["given_end_ms"] = given_end_ms
@@ -1327,7 +1392,23 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
             record["song_pipeline_fingerprint"] = current
             recorded_song_fingerprint = current
             migrated_legacy_fingerprint = True
-        changed = recorded_song_fingerprint != current
+        try:
+            current_dependency = _runner.capture_song_dependency_fingerprint(date, record, proof_fingerprint=current)
+        except (OSError, ValueError, SyntaxError) as exc:
+            record["recovery_dependency_error"] = f"{type(exc).__name__}: {exc}"
+            kept.append(record)
+            continue
+        previous_dependency = record.get("song_dependency_fingerprint")
+        if previous_dependency is None:
+            record["song_dependency_fingerprint"] = current_dependency
+            record["recovery_dependency_status"] = "LEGACY_BASELINE_ADOPTED_NO_REPLAY"
+            changed = False
+        elif not isinstance(previous_dependency, str) or _PIPELINE_FINGERPRINT_RX.fullmatch(previous_dependency) is None:
+            record["recovery_dependency_error"] = "invalid song dependency fingerprint"
+            kept.append(record)
+            continue
+        else:
+            changed = previous_dependency != current_dependency
         retry_count = int(record.get("transient_retry_count") or 0)
         # Prefer the explicitly classified transient emitted by song_lane, but
         # past SONG_INFRA_RETRY_CAP stop letting it outrank a deterministic
@@ -1406,6 +1487,7 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
             "lane": record.get("discovery_lane") or record.get("lane"),
             **song_name_authority.carry_song_identity_evidence(record),
             "transient_retry_count": retry_count + (1 if transient else 0),
+            "song_dependency_fingerprint": current_dependency,
             "selected_repair": True,
             "retry_reason": (
                 "pipeline_fingerprint_changed"
@@ -1428,6 +1510,7 @@ def requeue_recoverable_songs(date: str, state: dict) -> int:
                 "reason_codes": list(record.get("reason_codes") or []),
                 "pipeline_fingerprint": record.get("pipeline_fingerprint"),
                 "song_pipeline_fingerprint": recorded_song_fingerprint,
+                "song_dependency_fingerprint": previous_dependency,
                 "superseded_by": current,
                 "retry_reason": item["retry_reason"],
                 "session_id": session_id,
@@ -1501,7 +1584,7 @@ def recover_bound_song_deliveries(date: str, state: dict) -> int:
             not in {str(code) for code in record.get("reason_codes", [])}
         ):
             continue
-        if delivered_count >= _runner.MAX_SONGS_PER_DATE:
+        if delivered_count >= resolve_quota_grant(date, "song").cap:
             continue
         cid = str(record.get("candidate_id") or "")
         summary_value = record.get("selector_summary_path")
@@ -1907,7 +1990,14 @@ def requeue_stale_current_recovery_talks(date: str, state: dict) -> int:
                 f"RECOVERY_REVIEW_TALK_FINGERPRINT_INVALID:{cid}"
             ) from exc
         recorded = str(record.get("pipeline_fingerprint") or "")
-        if recorded == current:
+        try:
+            dependencies_changed, dependency_snapshot, changed_stages = (
+                talk_recovery_dependency_change(date, record, candidate_id=cid, completed=True)
+            )
+        except (OSError, ValueError, SyntaxError) as exc:
+            record["recovery_dependency_error"] = f"{type(exc).__name__}: {exc}"
+            continue
+        if not dependencies_changed:
             continue
         try:
             item = _recovery_queue_item(
@@ -1948,6 +2038,8 @@ def requeue_stale_current_recovery_talks(date: str, state: dict) -> int:
             )
             continue
         archived = copy.deepcopy(record)
+        item[TALK_DEPENDENCY_FIELD] = dependency_snapshot
+        item["retry_changed_stages"] = list(changed_stages)
         archived["bundle_lifecycle"] = "SUPERSEDED"
         archived["bundle_compliance"] = "STALE_PIPELINE"
         archived["superseded_by"] = current

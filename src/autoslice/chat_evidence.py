@@ -20,7 +20,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 from src.autoslice.acoustic_witness_adjudication import (
     valid_cpa_witness_adjudication,
 )
-from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.channel_profile import LABEL_RE, load_channel_profile
 from src.autoslice.chat_event_timing import (
     danmaku_text as _danmaku_text,
     event_epoch_ms,
@@ -28,6 +28,7 @@ from src.autoslice.chat_event_timing import (
     send_time_ms as _send_time_ms,
 )
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.text_scripts import character_script, script_profile
 from src.autoslice import subtitle_text_override_schema as text_override_schema
 from src.autoslice.surface_canon import (
     canonicalize_expected_value_surfaces as canonicalize_expected_value_surfaces,
@@ -42,7 +43,9 @@ from src.autoslice.surface_canon import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
 PROFILE_ID = CHANNEL_PROFILE.profile_id
-_NON_TEXT = re.compile(r"[^0-9a-z\u3040-\u30ff\u3400-\u9fff]+", re.IGNORECASE)
+# Preserve the former re.IGNORECASE ASCII range's four Unicode fold surfaces.
+# This is normalization compatibility, not another script inventory.
+_CHAT_CASEFOLD_SURFACES = frozenset("İıſK")
 _QUESTION_TAIL = frozenset("吗呢吧嘛呀啊？?")
 _CANONICAL_SURFACE_RULES = CHANNEL_PROFILE.canonical_surface_rules
 
@@ -127,20 +130,20 @@ _event_epoch_ms = event_epoch_ms
 
 
 def normalize_chat_text(text: str) -> str:
-    return _NON_TEXT.sub("", str(text)).lower()
+    return "".join(char for char in str(text)
+        if character_script(char) in {"latin", "kana", "han"}
+        or "0" <= char <= "9" or char in _CHAT_CASEFOLD_SURFACES).lower()
 
 
-_SPEAKER_LABEL = re.compile(
-    r"^\[(?:"
-    + "|".join(
-        re.escape(value)
-        for value in (
-            CHANNEL_PROFILE.host_speaker_label,
-            CHANNEL_PROFILE.guest_speaker_label,
-        )
-    )
-    + r")\]\s*"
-)
+def _strip_speaker_label(text: str) -> str:
+    match = LABEL_RE.match(text)
+    # Evidence normalization strips only the original exact profile labels;
+    # confidence-bearing and unknown labels remain part of the payload.
+    if match is not None and text[1:text.index("]")] in {
+        CHANNEL_PROFILE.host_speaker_label, CHANNEL_PROFILE.guest_speaker_label,
+    }:
+        return match.group(2)
+    return text
 
 
 def normalize_srt_payload_text(srt_text: str, *, strip_speaker_labels: bool = False) -> str:
@@ -148,7 +151,7 @@ def normalize_srt_payload_text(srt_text: str, *, strip_speaker_labels: bool = Fa
 
     return normalize_chat_text(
         "".join(
-            _SPEAKER_LABEL.sub("", cue.text) if strip_speaker_labels else cue.text
+            _strip_speaker_label(cue.text) if strip_speaker_labels else cue.text
             for cue in parse_srt_cues(srt_text)
             if cue.text.strip()
         )
@@ -175,7 +178,7 @@ def normalize_srt_payload_window(
     for cue in parse_srt_cues(srt_text):
         if cue.end_ms < start_ms - tolerance_ms or cue.start_ms > end_ms + tolerance_ms:
             continue
-        text = _SPEAKER_LABEL.sub("", cue.text) if strip_speaker_labels else cue.text
+        text = _strip_speaker_label(cue.text) if strip_speaker_labels else cue.text
         if text.strip():
             texts.append(text)
     return normalize_chat_text("".join(texts))
@@ -220,7 +223,7 @@ def normalize_srt_owner_payload_window(
             basis = min(max(1, cue.end_ms - cue.start_ms), max(1, end_ms - start_ms))
             if overlap_ms < basis * majority_ratio:
                 continue
-        text = _SPEAKER_LABEL.sub("", cue.text) if strip_speaker_labels else cue.text
+        text = _strip_speaker_label(cue.text) if strip_speaker_labels else cue.text
         if text.strip():
             texts.append(text)
     return normalize_chat_text("".join(texts))
@@ -276,6 +279,24 @@ def sanitize_chat_display_text(text: str, *, max_chars: int = 500) -> str:
     )
     value = value.replace("-->", "→").replace("{", "｛").replace("}", "｝")
     return value[:max_chars].strip()
+
+
+def prepare_chat_evidence(evidence: Iterable[ChatEvidence]) -> list[ChatEvidence]:
+    """One content view for chat application and its continuation readers.
+
+    Keep source bytes/hash, event identity and clock intact. The existing
+    display sanitization and hard spelling rules affect both exact_text and
+    evidence_id, so every consumer must use the writer's same view.
+    """
+    return [
+        ChatEvidence(
+            item.kind, item.offset_ms,
+            canonicalize_hard_surfaces(sanitize_chat_display_text(item.text)),
+            sanitize_chat_display_text(item.sender, max_chars=100),
+            item.source, item.source_sha256, item.source_event_id,
+        )
+        for item in evidence if sanitize_chat_display_text(item.text)
+    ]
 
 
 def load_referent_groups(
@@ -481,9 +502,6 @@ def clip_opening_address_group(
     )
 
 
-_CJK_ONLY = re.compile(r"^[一-鿿]+$")
-
-
 def repetition_divergence_groups(
     srt_text: str,
     *,
@@ -528,7 +546,10 @@ def repetition_divergence_groups(
             span_a, span_b = a[a1:a2], b[b1:b2]
             if not (span_min <= len(span_a) <= span_max and span_min <= len(span_b) <= span_max):
                 continue
-            if not _CJK_ONLY.match(span_a) or not _CJK_ONLY.match(span_b):
+            # This lexical repetition lane historically excludes Extension A;
+            # keep that local scope while sharing script classification.
+            if any(script_profile(span)["han"] != len(span)
+                    or any(char < "一" for char in span) for span in (span_a, span_b)):
                 continue
             if span_a in span_b or span_b in span_a:
                 continue

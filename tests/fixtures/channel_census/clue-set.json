@@ -1,0 +1,187 @@
+{
+  "schema_version": "channel-census-clues.v1",
+  "profile_id": "lidousha",
+  "provenance": {
+    "census_id": "lidousha-census-20261021",
+    "census_date": "2026-10-24",
+    "input_sha256": "3110ca9a780c8e28a1c826605277565013bc9e01acf0690dcc014a24a06178c7",
+    "generator_version": "channel-census-clues.v1",
+    "label_prompt_sha256": "07d5b85d8f5e92b2e0e43100f55408da28aaa2b67c813f627bcb8af1c21c342b",
+    "window_count": 2360,
+    "valid_window_count": 2254
+  },
+  "preamble_zh": "以下只是去哪找、怎样认出看点的线索，不进入评分算术，不按活动或题材加减分、排除或限额；普查频率不能代替本次候选的片内证据。",
+  "clues": [
+    {
+      "clue_id": "cross_activity_embedded",
+      "kind": "CROSS_ACTIVITY_EMBEDDED",
+      "dimension_pointers": [
+        "relationship_interaction",
+        "audience_salience"
+      ],
+      "host_activities": [
+        "SINGING",
+        "GAMEPLAY",
+        "MEDIA",
+        "VIEWER_QA",
+        "FREE_TALK",
+        "STREAM_OPERATIONS"
+      ],
+      "observation_question": "在唱歌、游戏、看作品或聊作品、读弹幕问答、日常闲聊、直播事务中，人物互动、受众关心的题材和反差这类信号多半不是该段的主内容：留意什么触发了主播转入自己的故事或互动、主播怎样回应、片内怎样兑现，沿这一事件找完整上下文。活动名称和关系词只帮助定位，不决定价值；同一段里的其他独立事件也照常比较，普查窗口不是候选边界。",
+      "recognition_cues": [],
+      "evidence": {
+        "numerator": 497,
+        "denominator": 589,
+        "definition_zh": "有兑现且带互动/兴趣信号的窗中，该信号只是次要（档=2、不是窗口主内容）的窗"
+      },
+      "example_window_ids": [
+        "2026-07-12:0040",
+        "2026-07-22:0010",
+        "2026-07-25:0016"
+      ],
+      "measurement_basis": "LEGACY_LABEL_PROXY"
+    },
+    {
+      "clue_id": "lookfor_stance_intensity",
+      "kind": "DIMENSION_LOOKFOR",
+      "dimension_pointers": [
+        "stance_intensity"
+      ],
+      "host_activities": [
+        "SINGING",
+        "GAMEPLAY",
+        "MEDIA",
+        "VIEWER_QA",
+        "FREE_TALK",
+        "STREAM_OPERATIONS"
+      ],
+      "observation_question": "主播讲经历、做选择或评论作品时，找主播明确喜欢、拒绝、坚持或改口的地方，并说清具体对象、理由或后果；一次清晰观点也可以兑现题目。情绪强或出现“我”不等于本人立场，朗读、引述和角色台词按原主语区分。",
+      "recognition_cues": [],
+      "evidence": {
+        "numerator": 832,
+        "denominator": 993,
+        "definition_zh": "stance_intensity>=2 的窗中有兑现的窗"
+      },
+      "example_window_ids": [
+        "2026-07-09:0030",
+        "2026-07-12:0040",
+        "2026-07-19:0005"
+      ],
+      "measurement_basis": "LEGACY_LABEL_PROXY"
+    },
+    {
+      "clue_id": "lookfor_audience_salience",
+      "kind": "DIMENSION_LOOKFOR",
+      "dimension_pointers": [
+        "audience_salience"
+      ],
+      "host_activities": [
+        "SINGING",
+        "GAMEPLAY",
+        "MEDIA",
+        "VIEWER_QA",
+        "FREE_TALK",
+        "STREAM_OPERATIONS"
+      ],
+      "observation_question": "遇到百合/GL相关内容时，找主播偏爱什么、为什么这样解释、怎样回应观众或当场对象，并分清看点来自作品设定、主播的观点还是本次互动；作品里的关系、假设的配对和亲昵称呼保持原语境，不写成现实中已经发生的事。",
+      "recognition_cues": [
+        "百合/GL"
+      ],
+      "evidence": {
+        "numerator": 272,
+        "denominator": 329,
+        "definition_zh": "audience_salience>=2 的窗中有兑现的窗"
+      },
+      "example_window_ids": [
+        "2026-07-12:0040",
+        "2026-07-19:0005",
+        "2026-07-22:0010"
+      ],
+      "measurement_basis": "LEGACY_LABEL_PROXY"
+    },
+    {
+      "clue_id": "entity_recognition",
+      "kind": "ENTITY_RECOGNITION",
+      "dimension_pointers": [
+        "relationship_interaction"
+      ],
+      "host_activities": [],
+      "observation_question": "用当前输入里实际出现的人名和称呼辨认谁在对谁说什么，找具体的相处事件、误会、选择和回应；只读到名字或谢礼物不能补出关系链，同名、近音或称呼对应的身份未定就保留未知，理解主事件所需的身份和规则要在片内交代。",
+      "recognition_cues": [],
+      "evidence": {
+        "numerator": 662,
+        "denominator": 1137,
+        "definition_zh": "含人物字符串的窗中有兑现的窗"
+      },
+      "example_window_ids": [
+        "2026-07-12:0040",
+        "2026-07-22:0010",
+        "2026-07-25:0016"
+      ],
+      "measurement_basis": "LEGACY_LABEL_PROXY"
+    },
+    {
+      "clue_id": "lookfor_relationship_interaction",
+      "kind": "DIMENSION_LOOKFOR",
+      "dimension_pointers": [
+        "relationship_interaction"
+      ],
+      "host_activities": [
+        "SINGING",
+        "GAMEPLAY",
+        "MEDIA",
+        "VIEWER_QA",
+        "FREE_TALK",
+        "STREAM_OPERATIONS"
+      ],
+      "observation_question": "出现「妈妈、姐姐、宝宝、家人们、老公」等称呼或来回互动时，看是谁提出、主播怎样接住或拒绝、之后有没有新的回应与收束；单个称呼、普通撒娇和只有口头动作不替代完整证据；若有反差，指出片内前后的依据。",
+      "recognition_cues": [
+        "妈妈",
+        "姐姐",
+        "宝宝",
+        "家人们",
+        "老公"
+      ],
+      "evidence": {
+        "numerator": 431,
+        "denominator": 576,
+        "definition_zh": "relationship_interaction>=2 的窗中有兑现的窗"
+      },
+      "example_window_ids": [
+        "2026-07-12:0040",
+        "2026-07-19:0005",
+        "2026-08-08:0007"
+      ],
+      "measurement_basis": "LEGACY_LABEL_PROXY"
+    },
+    {
+      "clue_id": "activity_coverage",
+      "kind": "ACTIVITY_COVERAGE",
+      "dimension_pointers": [
+        "comedic_payoff"
+      ],
+      "host_activities": [
+        "SINGING",
+        "GAMEPLAY",
+        "MEDIA",
+        "VIEWER_QA",
+        "FREE_TALK",
+        "COLLAB",
+        "STREAM_OPERATIONS",
+        "OTHER"
+      ],
+      "observation_question": "唱歌、游戏、看作品或聊作品、读弹幕问答、日常闲聊、联动、直播事务、其他活动里都出现过有兑现的段落：设备、排期、答谢、上下播等直播事务和日常里若有误会、立场、完整故事或有收束的互动，按实际事件判断；游戏里的失败、协作和结果同样看主播的具体选择与反应；没有人物、关系或题材信号的段落也有完整故事。活动类别本身不给价值结论。",
+      "recognition_cues": [],
+      "evidence": {
+        "numerator": 9,
+        "denominator": 9,
+        "definition_zh": "窗数达到下限的活动中出现过兑现窗的活动"
+      },
+      "example_window_ids": [
+        "2026-07-22:0010",
+        "2026-08-14:0026"
+      ],
+      "measurement_basis": "LEGACY_LABEL_PROXY"
+    }
+  ]
+}

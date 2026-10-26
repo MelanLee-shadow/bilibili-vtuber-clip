@@ -1,0 +1,18 @@
+[Unit]
+Description=Start OCI3 recording consumers on local disk
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+PartOf=docker.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/opt/bilive/ops/start_local_recording.sh
+TimeoutStartSec=300
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

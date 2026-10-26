@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Mapping
 
+from src.autoslice.cpa_model_ladder import RAW_AV_UNSUPPORTED_MODELS
 from src.autoslice.final_media_review_model_capability_seal import (
     FinalMediaReviewModelCapabilitySealError,
     MODEL_CAPABILITY_ATTESTATION_SCHEMA_VERSION,
@@ -26,14 +27,7 @@ from src.autoslice.final_media_review_model_capability_seal import (
 )
 
 
-KNOWN_UNSUPPORTED_DUAL_RAW_AV_MODELS = frozenset(
-    {
-        "gpt-6-sol",
-        "gpt-6.1-sol",
-        "gpt-6-astra",
-        "gpt-6.1-astra",
-    }
-)
+KNOWN_UNSUPPORTED_DUAL_RAW_AV_MODELS = RAW_AV_UNSUPPORTED_MODELS
 
 
 class FinalMediaReviewModelCapabilityError(ValueError):

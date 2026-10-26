@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from src.autoslice.discovery_channels import batch_from_rows
+
+
 import ast
 import hashlib
 import inspect
@@ -113,14 +116,25 @@ def _normalize(
 ) -> dict[str, object]:
     findings = audit_final_subtitles(
         srt_text,
-        llm_call=lambda _prompt: json.dumps({"findings": []}),
+        llm_call=_risk_complete({"findings": []}),
         extract_json=json.loads,
         candidate_context=clip_context,
-        extra_raw_findings=[candidate],
-        prioritize_extra_raw_findings=True,
+        discovery_batch=batch_from_rows([candidate], context=clip_context),
+
     )
     assert len(findings) == 1
     return findings[0]
+
+
+def _risk_complete(initial):
+    """Controlled current-risk judgments, independent of the acoustic decision."""
+    def answer(prompt):
+        if "本次只补齐上一轮漏报" in prompt:
+            agenda = json.loads(prompt.rsplit('\n', 1)[1])
+            return json.dumps({'findings': [{'cue': row['cue'], 'content_risk': 'meaning_reversal',
+                'risk_basis': '合成候选改变目标动作含义，仍须声学裁决。'} for row in agenda]}, ensure_ascii=False)
+        return json.dumps(initial, ensure_ascii=False)
+    return answer
 
 
 def _observed(request: dict[str, object], heard_pinyin: str) -> dict[str, object]:
@@ -180,11 +194,18 @@ def test_multi_edit_fidelity_context_reaches_fresh_judge_without_extra_candidate
             "cue": 2, "kind": "context", "suspect": "谢绝", "replacement": "谢谢",
             "proposed_full_cue": proposed, "repair_class": "phonetic",
             "why": "邻句正在致谢", "evidence_cue_ids": [1],
+            "content_risk": "meaning_reversal", "risk_basis": "合成致谢与谢绝动作相反。",
         }]}, ensure_ascii=False),
         extract_json=json.loads, draft_fidelity_contexts=contexts,
     )
-    assert len(findings) == 1
-    request = build_context_adjudication_request(srt, findings[0])
+    # The gift-name lane independently nominates the unheard gift tail. It
+    # must retain that question; fidelity must not introduce the multi-edit
+    # proposal as another context candidate or silently replace the gift name.
+    context_findings = [row for row in findings if row["kind"] == "context"]
+    assert len(context_findings) == 1
+    assert all(row.get("suggestion") != "十元SC" for row in findings)
+    finding = context_findings[0]
+    request = build_context_adjudication_request(srt, finding)
     evidence = request["closed_set_structured_evidence"]
     assert evidence["draft_fidelity"]["draft_fidelity_kept"] is True
     assert evidence["draft_fidelity"]["favored_candidate"] == "CURRENT"
@@ -199,7 +220,7 @@ def test_multi_edit_fidelity_context_reaches_fresh_judge_without_extra_candidate
         return json.dumps({"choice": choice, "needs_audio": False})
 
     output, receipt = adjudicate_context_finding(
-        srt, findings[0], judge_llm_call=judge,
+        srt, finding, judge_llm_call=judge,
         entity_verifier=lambda _: pytest.fail("text-first did not request audio"),
     )
     assert len(calls) == 1
@@ -311,6 +332,7 @@ def test_f16_kept_current_signal_is_inherited_by_fresh_same_cue_proposal(tmp_pat
                         "proposed_full_cue": fresh_hallucination,
                         "repair_class": "phonetic",
                         "why": "合成 fresh 常识化候选",
+                        "content_risk": "meaning_reversal", "risk_basis": "合成候选改变动作和对象。",
                     }
                 ]
             },
@@ -318,8 +340,8 @@ def test_f16_kept_current_signal_is_inherited_by_fresh_same_cue_proposal(tmp_pat
         ),
         extract_json=json.loads,
         candidate_context=clip_context,
-        extra_raw_findings=[candidate],
-        prioritize_extra_raw_findings=True,
+        discovery_batch=batch_from_rows([candidate], context=clip_context),
+
     )
     fresh = next(
         finding
@@ -509,6 +531,13 @@ def test_f17_each_target_requires_observed_audio_then_closed_set_judge():
         candidate["candidate_provenance"]["occurrence_positions"]
     )
     assert receipt["witness_judge"]["session_transcript_recurrence_acoustic_gate"]["status"] == "PASS"
+
+
+def test_f17_pure_vocal_fillers_cannot_nominate_lexical_candidates():
+    assert session_transcript_recurrence_candidates(
+        raw_draft_srt=_srt("哼" * 12, "哼" * 9),
+        current_srt=_srt("哼" * 11, "哼" * 8),
+    ) == []
 
 
 def test_f17_receipt_compactor_keeps_occurrence_positions():

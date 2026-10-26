@@ -19,11 +19,14 @@ gates.  The semantic contract per candidate:
 
 from __future__ import annotations
 
+from src.autoslice.structured_output import call_json
+
 import hashlib
 import json
 import os
 import re
 import unicodedata
+from dataclasses import asdict
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -33,6 +36,12 @@ from src.autoslice.boundary_payoff_extension import (
 )
 from src.autoslice.boundary_resolver import AnchorCandidate, BoundaryResolution
 from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.channel_census import (
+    CENSUS_CLUES_ASSET_KEY,
+    RecallClueProvenance,
+    load_census_recall_input,
+    render_census_clue_block,
+)
 from src.autoslice.content_ip_signal import detect_important_content_ips
 from src.autoslice.danmaku_evidence import DanmakuItem, parse_blrec_danmaku_xml
 
@@ -486,24 +495,93 @@ def _slice_selection_metric() -> str:
     return ""
 
 
+def _census_recall_input() -> tuple[str, RecallClueProvenance]:
+    clues, status, digest = load_census_recall_input(
+        CHANNEL_PROFILE.asset_files.get(CENSUS_CLUES_ASSET_KEY), profile_id=CHANNEL_PROFILE.profile_id,
+    )
+    return (
+        render_census_clue_block(clues) if clues is not None else "",
+        RecallClueProvenance(
+            clues.schema_version if clues is not None else "",
+            clues.provenance.census_id if clues is not None else "", digest, status,
+        ),
+    )
+
+
+def _census_recall_diagnostics(provenance: RecallClueProvenance) -> dict[str, str | dict[str, str]]:
+    return {"census_clues_status": provenance.status,
+            "semantic_recall_census_clues": asdict(provenance)}
+
+
 # 共用评分卡量化规则段：既是整场召回 prompt 的一部分，也是狍哥案有界重
 # 评分车道（``rescore_candidate_scorecard``）单候选提卡 prompt 的核心——
 # 两处必须逐字同一份规则，不许各自维护一份漂移的拷贝（design §3.5「复用」）。
-_SCORECARD_RUBRIC_BLOCK = """选片量化表（talk 必填，song 可省略）：
-- tier 是硬层级 1/2/3；Tier 1 不是“出现了人名”就算，必须由至少两个本候选 cue 组成可核验的
-  关系/CP/GL 立场链，或“观众起哄→她照做→人设反差”的完整互动链。把证据 cue 编号放入
-  tier_evidence_cues；系统会拒绝候选窗外编号并确定性复算分数。
-- audience_driven_performance 的最高级还要求 relationship_interaction/persona_reversal 各至少3、
-  audience_salience至少2、self_contained至少3、comedic_payoff=4。可爱、普通抱抱或普通反差可以是
-  第二层看点，不因有请求和回应就给落点4；4须有不可替代、完整的渐进表演或强收束证据。
+_SCORECARD_RUBRIC_BLOCK = """选片量化表（talk 必填，song 可省略；新卡使用 selection-scorecard-admission.v3）：
+- tier 是硬层级 1/2/3。当前 Tier 1 先过共同实质内容门：candidate_quality 必须是
+  watchability=STRONG、differentiation=DISTINCTIVE、production_disposition=PRODUCTION，
+  reason 非空且 evidence_cues 全在候选窗内；同时 audience_salience>=2、self_contained>=3、
+  comedic_payoff>=3。payoff 可以是明确观点、拒绝、关系变化、故事/游戏结果或表演收束，
+  不要求每条都搞笑。缺质量判断或证据越窗时不得晋级 Tier 1。
+- 关系/CP/GL 只是有条件的 Tier 1 路径：tier_basis 为 relationship_chain /
+  explicit_gl_stance / cp_positioning 时仍要 relationship_interaction>=3，且至少两个
+  tier_evidence_cues 形成候选窗内可核验的关系链；人名、CP 词或弱关系词不能单独凑出强项，
+  关系候选要和同窗的强个人事件、公认结果与其他内容竞争。
+- personal_stance / generic_event 也可以进入 Tier 1：共同实质内容门通过后，
+  lidousha_centrality>=3 或 stance_intensity>=3，且至少一个 tier_evidence_cues 能定位真实观点、
+  选择、拒绝或结果。单次鲜明观点/拒绝可以兑现题目，不要求两次事件或人为升级；泛泛事件、
+  弱 CP 或普通可爱互动仍不能晋级。
+- audience_driven_performance 的最高级继续要求 relationship_interaction/persona_reversal 各至少3、
+  audience_salience至少2、self_contained至少3、comedic_payoff=4，并由至少两条 cue 组成
+  “观众起哄→她照做→人设反差”的完整互动链。可爱、普通抱抱或普通反差可以是第二层看点，
+  不因有请求和回应就给落点4；4须有不可替代、完整的渐进表演或强收束证据。
   仅字幕中的“抱抱”“咬一下”等口头说法不能证明发生了实际动作，理由不得补写未证实的表演。
 - tier_basis 只能按事实选择 relationship_chain / explicit_gl_stance / cp_positioning /
   audience_driven_performance / personal_stance / generic_event。
-- dimensions 七项都打 0..4 整数：lidousha_centrality（{CHANNEL_PROFILE.display_name}不可替代性）、stance_intensity、
+- dimensions 七项都打 0..4 整数：lidousha_centrality（主播不可替代性）、stance_intensity、
   audience_salience（频道受众/人物题材显著度）、relationship_interaction、persona_reversal、
   comedic_payoff、self_contained。不要把 ASR/证据可靠性混进内容质量分。
+  comedic_payoff 同时评价喜剧与情绪/观点兑现：2是明确但普通的收口，3是强且构成这个主事件主要看点的
+  兑现，4须有不可替代的完整证据链。不搞笑不是扣落点的充分理由，有结尾也不自动给3；在 reason 中指出
+  争论、情绪或题目怎样在窗口内得到兑现，不把同一关系关键词重复算作多个强项。
+  self_contained 只扣理解主事件必需而片内无法推出的背景，具体说明缺了谁、触发或回应；逐句声源尚未
+  验证另列为证据未知。没有听音/看帧、某个被提及人物是否现场参与，不自动等于路人看不懂；若声源未知
+  确实改变主事件的主体或含义，说明这一实际理解缺口，不补造主体。
+  播放、表演、朗读或转述中的词句，不能仅因使用“我”或由主播说出，就把被引用的立场算成主播本人当前
+  立场；依实际声源、主语、时间和模态区分被引用内容与她的真实评价/回应。
 - uncertainty_penalty 0..15，证据/指代/身份不确定才扣；fatigue_penalty 0..10，同场高度同质才扣。
 - 系统按固定 25/20/15/15/10/10/5 权重计算 effective_score，confidence 不再代替内容价值。
+- 历史无 policy 字段的卡和 selection-scorecard-admission.v2 卡按原准入规则验证并保留原字节；
+  不要把历史 Tier 或分数静默重算成 v3。只有本次新召回或明确 rescore 才生成 v3 卡。
+- 另为每个 talk 候选填写 candidate_quality。这是候选级的制作资格判断，不是第八个维度，不参与
+  七维算术或另加分；但在 v3 中它属于 Tier 1 共同准入，准入结果可以改变 Tier，并因此改变最终排序：
+  watchability 只能是 STRONG/ORDINARY/THIN，
+  differentiation 只能是 DISTINCTIVE/ORDINARY/THIN，production_disposition 只能是
+  PRODUCTION/RESERVE/HOLD，reason 说明路人实际能看见的看点，evidence_cues 只能引用候选窗内 cue。
+  production_disposition 判断该候选的内容是否值得制作，不宣称最终媒体 READY；已知有实质看点但字幕、
+  声源或边界待验时，在 reason 保留具体未知及其影响，交后续对应 gate 验收。若未知使主事件本身无法
+  成立，仍按受支持的内容判 RESERVE/HOLD；不得为了制作而假定未知已经解决。
+  PRODUCTION 要有片内已经发生的明确内容价值兑现（payoff 可以是观点落点、关系推进或互动回收、
+  故事结果、游戏/内容反应、完整表演收束或其他具体回报；不要求每条都以喜剧笑点收尾）和可辨的
+  差异化。库存、抽取、运气、商品或日常经历的结果型轶事，如果只是把一个 stock result 告知观众，
+  再加一句“我去/这也行”之类的惊讶反应，不能单凭新奇对象或结果意外把 comedic_payoff、watchability
+  或 differentiation 判高；这不是独立的内容价值兑现。“故事结果”也只有在窗口内有起因、阻碍或选择
+  后得到的兑现才成立，商品/抽取/运气事件本身不是故事结果。至少要在候选窗内看到一项与七维实质相连
+  的具体落点，例如个人立场/选择及其后果、关系互动中的来回变化、起因-阻碍-结果的叙事兑现、游戏/
+  内容反应的连续升级，或完整可理解的表演收束，并在 reason/evidence_cues 中说明对应证据。
+  只有普通复述、平铺比较、泛泛态度、stock result 加一句反应或重复同质话题而没有上述可核验落点时，
+  应标 ORDINARY/THIN 并放 RESERVE/HOLD；不能靠把 lidousha_centrality 或 self_contained 打高来凑
+  制作名额。可爱内容若有候选窗内完整、独特且可理解的互动/表演链，可以保留生产资格；不要用总分硬
+  阈值替代这项判断。
+- 对以回看/评论旧素材的当前反应为主体的候选，区分“被观看的原片事件”和“本次观看后的新内容”：
+  原片事件只是必要语境，不自动算当前的新发展；候选窗内可观察到的独特回应、立场、重新解释、选择
+  或结论才是当前 payoff 的证据。一次清晰的当前回应或收口即可兑现，不要求原片插入、多次重复或人为
+  升级。完整、有来源的转述/叙事型候选若自身有片内具体落点，可以直接以被转述事件作为 payoff，按真实
+  主语、过去时间或假设模态描述，不强求当前观看反应或现实现在发生。保持来源事实的实际主语、时间和模态：
+  建议/假设/将来不能写成已经发生，
+  游戏/作品/虚构角色的情节、作品内关系或 CP 设想不自动证明主播/现实人物已经发生的经历或现实恋爱关系；
+  确有来源的主播转述、当场 VTuber 互动、虚拟表演或 3D 动作仍可按实际语境描述；游戏角色、CP 设想或
+  虚拟身体动作不自动升级为主播/现实人物的现实经历、现实身体或恋爱事实。这只是 payoff/证据的语义区分，
+  不新增字段、事件计数或额外准入门。
 """
 
 
@@ -514,6 +592,7 @@ def build_semantic_recall_prompt(
     danmaku_hints: str | None = None,
     semantic_chat_evidence_block: str | None = None,
     scope_note: str | None = None,
+    _census_clue_block: str | None = None,
 ) -> str:
     lines = []
     for position, cue in enumerate(cues, start=1):
@@ -536,16 +615,20 @@ def build_semantic_recall_prompt(
         if metric
         else ""
     )
+    clue_text = _census_recall_input()[0] if _census_clue_block is None else _census_clue_block
+    clue_block = f"\n{clue_text}\n" if clue_text else ""
     scope_block = f"\n召回范围说明:{scope_note}\n" if scope_note else ""
-    return f"""你是{CHANNEL_PROFILE.display_name}(B站虚拟主播)切片频道的选题编辑。下面是一场直播的完整字幕时间轴,每行格式是 #编号 [开始-结束] 文本。{danmaku_block}{semantic_chat_block}{metric_block}{scope_block}{important_ip_block}
+    return f"""你是{CHANNEL_PROFILE.display_name}(B站虚拟主播)切片频道的选题编辑。下面是一场直播的完整字幕时间轴,每行格式是 #编号 [开始-结束] 文本。{danmaku_block}{semantic_chat_block}{metric_block}{clue_block}{scope_block}{important_ip_block}
 
 你的任务:站在一个没看过这场直播的普通观众视角,从整场里选出最值得做成切片的片段(最多 {max_candidates} 个)。
 “最多”是上限，不是必须凑满的数量。**同一场连续事件只能占一个候选**：话题中间即使有短暂停顿、
 读别的弹幕、操作游戏或换了一个同类名字，只要后段仍在延续同一问题/分类/讨价还价，且后段笑点依赖
 前段铺垫，就必须从首次触发点一直框到最后 payoff，绝不能拆成两条来满足数量。给同一事件稳定填写相同
 event_key（简短中文，如“妈感姐妹分类”）；不同事件的 event_key 必须不同。
-**同一个梗/称呼/话题隔几分钟被再次触发（比如新弹幕或 SC 又提起同一件事、主播回访之前的梗）也算
-同一事件**：两段窗口都列出来，但用**同一个 event_key**——系统会自动把它们合并成一条连续窗口，
+隔几分钟的新弹幕、SC 或旧梗回访，只有仍在延续同一问题、且后段回应依赖前段前提时才算同一事件。
+同词、同人物、同主题或再次提起旧梗，不自动证明前提依赖；若后段自身重建了前提、回应和收口，
+应作为独立新故事填写不同 event_key，并说明片内证据。不同 event_key 本身也不能证明事件独立，
+不得给同一连续互动换键拆片。确属同一事件的两段窗口都列出来，用**同一个 event_key**——系统会自动把它们合并成一条连续窗口，
 保留中间所有连续互动、观众反馈、有意义的重复、铺垫和笑点，不会把中间内容变成跳切或自动删除。
 合并后的连续窗口若超过 5 分钟就拒绝整个候选；不要靠标题核心、关键词或缩短故事来过时长门。
 
@@ -580,7 +663,7 @@ event_key（简短中文，如“妈感姐妹分类”）；不同事件的 even
 - hook 用一句中文概括这个片段的看点。
 
 只输出一个 JSON 对象,不要任何其他文字:
-{{"candidates": [{{"start_cue": 整数, "end_cue": 整数, "kind": "talk"或"song", "event_key": "同一事件稳定键", "hook": "一句话看点", "context_trigger_cue": 整数或null, "context_inferable": true或false, "confidence": 0到1小数, "selection_scorecard": {{"tier": 1或2或3, "tier_basis": "上述枚举", "tier_reason": "准入理由", "tier_evidence_cues": [整数], "dimensions": {{"lidousha_centrality": 0到4整数, "stance_intensity": 0到4整数, "audience_salience": 0到4整数, "relationship_interaction": 0到4整数, "persona_reversal": 0到4整数, "comedic_payoff": 0到4整数, "self_contained": 0到4整数}}, "uncertainty_penalty": 0到15, "fatigue_penalty": 0到10}}, "filler_removals": [{{"mode": "remove_cues", "start_cue": 整数, "end_cue": 整数, "reason": "gift_thanks"或"unrelated_sc"或"housekeeping", "topic_relation": "incidental"或"unrelated", "bridge_coherent": true或false, "bridge": "左右可直连的理由", "contains_setup": false, "contains_cause": false, "contains_answer": false, "contains_punchline": false, "contains_referent_intro": false, "contains_correction": false, "contains_resolution": false, "later_dependency": false, "interaction_relevant": false, "meaning_or_stance_changed": false, "confidence": 0到1小数}}]}}]}}
+{{"candidates": [{{"start_cue": 整数, "end_cue": 整数, "kind": "talk"或"song", "event_key": "同一事件稳定键", "hook": "一句话看点", "context_trigger_cue": 整数或null, "context_inferable": true或false, "confidence": 0到1小数, "selection_scorecard": {{"tier": 1或2或3, "tier_basis": "上述枚举", "tier_reason": "准入理由", "tier_evidence_cues": [整数], "dimensions": {{"lidousha_centrality": 0到4整数, "stance_intensity": 0到4整数, "audience_salience": 0到4整数, "relationship_interaction": 0到4整数, "persona_reversal": 0到4整数, "comedic_payoff": 0到4整数, "self_contained": 0到4整数}}, "uncertainty_penalty": 0到15, "fatigue_penalty": 0到10, "candidate_quality": {{"watchability": "STRONG"或"ORDINARY"或"THIN", "differentiation": "DISTINCTIVE"或"ORDINARY"或"THIN", "production_disposition": "PRODUCTION"或"RESERVE"或"HOLD", "reason": "片内具体看点和不足", "evidence_cues": [整数]}}}}, "filler_removals": [{{"mode": "remove_cues", "start_cue": 整数, "end_cue": 整数, "reason": "gift_thanks"或"unrelated_sc"或"housekeeping", "topic_relation": "incidental"或"unrelated", "bridge_coherent": true或false, "bridge": "左右可直连的理由", "contains_setup": false, "contains_cause": false, "contains_answer": false, "contains_punchline": false, "contains_referent_intro": false, "contains_correction": false, "contains_resolution": false, "later_dependency": false, "interaction_relevant": false, "meaning_or_stance_changed": false, "confidence": 0到1小数}}]}}]}}
 
 字幕时间轴:
 {transcript}
@@ -642,6 +725,7 @@ def select_semantic_session_candidates(
     semantic_chat_evidence_block: str | None = None,
     semantic_chat_evidence_receipt: Mapping[str, object] | None = None,
     scope_note: str | None = None,
+    _census_input: tuple[str, RecallClueProvenance] | None = None,
 ) -> tuple[list[FullSessionCandidate], dict[str, object]]:
     """Semantic recall over the full session; returns (candidates, diagnostics).
 
@@ -650,17 +734,20 @@ def select_semantic_session_candidates(
     silently happens because the LLM was down).
     """
 
+    clue_block, clue_provenance = _census_recall_input() if _census_input is None else _census_input
     ordered = sorted(cues, key=lambda cue: (cue.source_start_ms, cue.source_end_ms, cue.cue_id))
     if not ordered:
-        return [], {"skipped": [], "raw_candidates": 0, "error": "no cues"}
+        return [], {"skipped": [], "raw_candidates": 0, "error": "no cues",
+                    **_census_recall_diagnostics(clue_provenance)}
     prompt = build_semantic_recall_prompt(
         ordered,
         max_candidates=max_candidates,
         danmaku_hints=danmaku_hints,
         semantic_chat_evidence_block=semantic_chat_evidence_block,
         scope_note=scope_note,
+        _census_clue_block=clue_block,
     )
-    completion = llm_call(prompt)
+    completion = call_json(llm_call, prompt, reuse=False)
     payload = extract_json_object(completion)
     raw_candidates = payload.get("candidates")
     if not isinstance(raw_candidates, list):
@@ -863,6 +950,12 @@ def select_semantic_session_candidates(
                 end_cue=int(spec["end_cue"]),
                 receipt=semantic_chat_evidence_receipt,
             )
+            if clue_provenance.status == "VALID":
+                scorecards[anchor.candidate_id]["semantic_recall_census_clues"] = {
+                    "schema_version": clue_provenance.schema_version,
+                    "census_id": clue_provenance.census_id,
+                    "asset_sha256": clue_provenance.asset_sha256,
+                }
         raw_filler_proposals = spec.get("filler_removals")
         if isinstance(raw_filler_proposals, list) and raw_filler_proposals:
             filler_proposals[anchor.candidate_id] = [
@@ -880,6 +973,7 @@ def select_semantic_session_candidates(
         "filler_proposals": filler_proposals,
         "merge_gaps": merge_gap_plans,
         "skipped": skipped,
+        **_census_recall_diagnostics(clue_provenance),
     }
     if semantic_chat_evidence_receipt is not None:
         diagnostics["semantic_chat_evidence"] = dict(semantic_chat_evidence_receipt)
@@ -973,6 +1067,7 @@ def select_semantic_session_candidates_covered(
     全场弹幕。详见 ``boundary_payoff_extension``。
     """
 
+    census_input = _census_recall_input()
     shards = plan_semantic_recall_shards(cues)
     if not shards:
         return [], {
@@ -986,6 +1081,7 @@ def select_semantic_session_candidates_covered(
             "filler_proposals": {},
             "merge_gaps": {},
             "skipped": [],
+            **_census_recall_diagnostics(census_input[1]),
         }
     coverage_end_ms = max(cue.source_end_ms for cue in cues)
     danmaku_items, semantic_chat_load_receipt = _load_hash_bound_semantic_chat(danmaku_xml)
@@ -1009,6 +1105,7 @@ def select_semantic_session_candidates_covered(
             danmaku_hints=danmaku_hints,
             semantic_chat_evidence_block=semantic_chat_block,
             semantic_chat_evidence_receipt=semantic_chat_receipt,
+            _census_input=census_input,
         )
         diagnostics = dict(diagnostics)
         selected, payoff_extensions = extend_candidates_for_audience_payoff(
@@ -1081,6 +1178,7 @@ def select_semantic_session_candidates_covered(
             semantic_chat_evidence_block=semantic_chat_block,
             semantic_chat_evidence_receipt=semantic_chat_receipt,
             scope_note=scope_note,
+            _census_input=census_input,
         )
         recalled.extend(shard_selected)
         hooks.update({str(key): str(value) for key, value in (diagnostics.get("hooks") or {}).items()})
@@ -1108,6 +1206,7 @@ def select_semantic_session_candidates_covered(
         }
         receipt = dict(semantic_chat_receipt)
         shard_diagnostic["semantic_chat_evidence"] = receipt
+        shard_diagnostic.update(_census_recall_diagnostics(census_input[1]))
         semantic_chat_receipts.append(receipt)
         shard_diagnostics.append(shard_diagnostic)
 
@@ -1155,6 +1254,7 @@ def select_semantic_session_candidates_covered(
         "filler_proposals": {key: value for key, value in filler_proposals.items() if key in selected_ids},
         "merge_gaps": {key: value for key, value in merge_gaps.items() if key in selected_ids},
         "skipped": skipped,
+        **_census_recall_diagnostics(census_input[1]),
     }
     result_diagnostics["semantic_chat_evidence"] = {
         "schema_version": SEMANTIC_CHAT_EVIDENCE_SCHEMA,
@@ -1214,7 +1314,7 @@ selection_scorecard 可留空对象。
 
 {_SCORECARD_RUBRIC_BLOCK}
 只输出一个 JSON 对象,不要任何其他文字:
-{{"status": "SUPPORTED"或"UNSUPPORTED", "selection_scorecard": {{"tier": 1或2或3, "tier_basis": "上述枚举", "tier_reason": "准入理由", "tier_evidence_cues": [整数], "dimensions": {{"lidousha_centrality": 0到4整数, "stance_intensity": 0到4整数, "audience_salience": 0到4整数, "relationship_interaction": 0到4整数, "persona_reversal": 0到4整数, "comedic_payoff": 0到4整数, "self_contained": 0到4整数}}, "uncertainty_penalty": 0到15, "fatigue_penalty": 0到10}}}}
+{{"status": "SUPPORTED"或"UNSUPPORTED", "selection_scorecard": {{"tier": 1或2或3, "tier_basis": "上述枚举", "tier_reason": "准入理由", "tier_evidence_cues": [整数], "dimensions": {{"lidousha_centrality": 0到4整数, "stance_intensity": 0到4整数, "audience_salience": 0到4整数, "relationship_interaction": 0到4整数, "persona_reversal": 0到4整数, "comedic_payoff": 0到4整数, "self_contained": 0到4整数}}, "uncertainty_penalty": 0到15, "fatigue_penalty": 0到10, "candidate_quality": {{"watchability": "STRONG"或"ORDINARY"或"THIN", "differentiation": "DISTINCTIVE"或"ORDINARY"或"THIN", "production_disposition": "PRODUCTION"或"RESERVE"或"HOLD", "reason": "片内具体看点和不足", "evidence_cues": [整数]}}}}}}
 """
 
 
@@ -1274,7 +1374,7 @@ def rescore_candidate_scorecard(
         }
     prompt = _rescore_prompt(cues=ordered, repaired_hook=repaired_hook, clip_context_prompt=clip_context_prompt)
     try:
-        raw = llm_call(prompt)
+        raw = call_json(llm_call, prompt)
         payload = extract_json_object(raw)
     except (LlmCallError, Exception):  # noqa: BLE001
         return {

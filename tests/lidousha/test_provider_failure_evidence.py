@@ -228,19 +228,57 @@ def test_auditor_unavailable_discovery_keeps_closed_transport_reason():
     }
 
 
-def test_final_review_retries_only_a_typed_json_parse_failure():
+def test_typed_pronoun_transport_keeps_sanitized_structured_diagnostics():
+    def failing_call(_prompt: str) -> str:
+        raise LlmCallError(
+            "LLM_COMMAND_FAILED", safe_reason="LLM_COMMAND_FAILED",
+            provider_diagnostics={
+                "provider_http_status": 503,
+                "provider_endpoint_host": "example.com",
+                "provider_error_code": "service_unavailable",
+                "authorization": "Bearer private-token",
+            },
+        )
+
+    with pytest.raises(CandidatePronounAuditError) as raised:
+        discover_candidate_pronoun_findings(
+            "1\n00:00:00,000 --> 00:00:02,000\n她说她来了\n",
+            policy_text="（无）", candidate_context_text="（无）",
+            llm_call=failing_call, extract_json=json.loads,
+        )
+    error = raised.value
+    discovery = _auditor_unavailable_discovery(
+        error.detail, pf.provider_failure_detail_from_cause(error),
+        provider_diagnostics=getattr(error.__cause__, "provider_diagnostics", None),
+    )
+    assert discovery["provider_error_code"] == "LLM_COMMAND_FAILED"
+    assert discovery["provider_diagnostics"] == {
+        "provider_http_status": 503,
+        "provider_endpoint_host": "example.com",
+        "provider_error_code": "service_unavailable",
+    }
+    assert "private-token" not in json.dumps(discovery)
+    assert "provider_diagnostics" in pf.DISCOVERY_EVIDENCE_FIELDS
+    assert "provider_diagnostics" in pf.FINGERPRINT_VOLATILE_KEYS
+
+
+def test_final_review_typed_json_failure_is_contract_error_without_reasking():
     prompts: list[str] = []
     replies = iter(["provider completion with no object", '{"findings":[]}'])
 
-    assert _request_final_review_findings(
-        "exact prompt",
-        llm_call=lambda prompt: prompts.append(prompt) or next(replies),
-        extract_json=extract_json_object,
-    ) == []
-    assert prompts == ["exact prompt", "exact prompt"]
+    with pytest.raises(FinalReviewAuditError) as raised:
+        _request_final_review_findings(
+            "exact prompt",
+            llm_call=lambda prompt: prompts.append(prompt) or next(replies),
+            extract_json=extract_json_object,
+        )
+    assert prompts == ["exact prompt"]
+    assert raised.value.failure_layer == "CONTRACT_ERROR"
+    assert raised.value.reason_code == "FINAL_REVIEW_PROVIDER_OR_JSON_UNAVAILABLE"
+    assert next(replies) == '{"findings":[]}'  # No lottery over returned answers.
 
 
-def test_parse_retry_exhaustion_is_closed_and_never_preserves_completion_text():
+def test_parse_contract_error_is_closed_and_never_exposes_completion_text():
     secret = "completion-token=/private/prompt"
     prompts: list[str] = []
 
@@ -251,7 +289,8 @@ def test_parse_retry_exhaustion_is_closed_and_never_preserves_completion_text():
             extract_json=extract_json_object,
         )
 
-    assert prompts == ["exact prompt", "exact prompt"]
+    assert prompts == ["exact prompt"]
+    assert raised.value.failure_layer == "CONTRACT_ERROR"
     assert raised.value.reason_code == "FINAL_REVIEW_PROVIDER_OR_JSON_UNAVAILABLE"
     assert raised.value.detail == "LLM_JSON_NO_OBJECT"
     assert secret not in str(raised.value)

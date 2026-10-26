@@ -29,6 +29,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from src.autoslice.final_media_review_gemini_api_runtime import (
     ENDPOINT_FAMILY,
+    selected_endpoint_family,
     MODEL_ENV,
     PROVIDER,
     VIDEO_FPS,
@@ -55,7 +56,7 @@ RAW_AV_REQUEST_SCHEMA = "final-media-review-raw-av-request.v3"
 RAW_AV_RESPONSE_SCHEMA = "final-media-review-raw-av-adapter-response.v3"
 RAW_AV_RECEIPT_SCHEMA = "final-media-review-raw-av-adapter-receipt.v3"
 RESULT_SCHEMA = "final-media-perceptual-review-result.v1"
-GEMINI_FILE_HELPER_SHA256 = "7b19bbd4fd24bdf7dd0913a3a685318d23377b619bd3d7e96d2f6dfcde73344f"
+GEMINI_FILE_HELPER_SHA256 = "8bcac1336ea05c2771d6ef1d174343ebd57698b8a6ea5204bdbf86638679adc0"
 _REQUEST_TIMEOUT_ENV = "AUTOSLICE_FINAL_MEDIA_GEMINI_API_TIMEOUT_SECONDS"
 _POLL_TIMEOUT_ENV = "AUTOSLICE_FINAL_MEDIA_GEMINI_API_POLL_TIMEOUT_SECONDS"
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
@@ -312,6 +313,14 @@ def _verify_adapter_identity(
         raise AdapterError(
             "GEMINI_API_RUNTIME_MISMATCH", "runtime adapter bytes differ"
         )
+    from src.autoslice.final_media_review_code_binding import validate_code_binding
+    try:
+        physical_repo = validate_code_binding(root, manifest.get("code_binding"),
+            adapter=raw_adapter, runner=manifest.get("runner"))
+        if physical_repo is not None and physical_repo != REPO_ROOT:
+            raise ValueError("FINAL_MEDIA_CODE_EXECUTING_VERSION_DRIFT")
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise AdapterError("GEMINI_API_RUNTIME_MISMATCH", str(exc)) from exc
     return manifest
 
 
@@ -380,6 +389,37 @@ def _write_text(path: Path, text: str) -> None:
         os.fsync(handle.fileno())
 
 
+def _save_provider_outcome(
+    evidence_root: Path,
+    *,
+    label: str,
+    request_sha256: str,
+    outcome: GeminiFileCallOutcome,
+) -> Path:
+    """Durably keep the raw provider text and usage before any parsing.
+
+    41:1648: an outcome that later fails strict parsing is still a completed,
+    consumed provider call. Its raw response and provider usage are written
+    create-only first; a parse failure then changes only the verdict.
+    """
+    path = evidence_root / f"{label}-provider-outcome.json"
+    _write_create_only(
+        path,
+        {
+            "schema_version": "final-media-review-gemini-api-provider-outcome.v1",
+            "label": label,
+            "request_sha256": request_sha256,
+            "raw_response_text": outcome.text,
+            "raw_response_text_sha256": hashlib.sha256(
+                outcome.text.encode("utf-8")
+            ).hexdigest(),
+            "provider_usage": dict(outcome.evidence),
+            "saved_before_parse": True,
+        },
+    )
+    return path
+
+
 def _provider_error(exc: GeminiFileApiError) -> AdapterError:
     return AdapterError(
         exc.reason_code,
@@ -388,6 +428,63 @@ def _provider_error(exc: GeminiFileApiError) -> AdapterError:
         exit_code=75 if exc.http_status == 429 else 2,
         ambiguous=exc.ambiguous,
     )
+
+
+_LOCAL_PHASES = frozenset({"key_selection", "local_request", "local_file"})
+
+
+def _utc_now() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _bounded_value(value: object, *, limit: int = 1_000_000) -> object:
+    """Keep a provider payload verbatim when it fits, else its bounded text."""
+
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False)
+    except (TypeError, ValueError):
+        encoded = repr(value)
+        return {"unencodable_repr": encoded[:limit]}
+    if len(encoded.encode("utf-8")) <= limit:
+        return value
+    return {"truncated_json_text": encoded[:limit], "original_chars": len(encoded)}
+
+
+def _record_or_report(path: Path, value: Mapping[str, object]) -> Path | None:
+    """Create-only evidence write that never replaces the original outcome.
+
+    A local write fault is reported on stderr and the caller re-raises the
+    provider outcome unchanged, so a disk error cannot change ambiguity.
+    """
+
+    try:
+        _write_create_only(path, value)
+    except (AdapterError, OSError) as exc:
+        print(
+            f"GEMINI_API_EVIDENCE_WRITE_FAILED: {path.name}: {type(exc).__name__}",
+            file=sys.stderr,
+        )
+        return None
+    return path
+
+
+def _dispatch_outcome(exc: GeminiFileApiError) -> str:
+    """UNKNOWN unless the record itself proves a response or no dispatch.
+
+    41:1648: an outcome that cannot prove whether it was dispatched stays
+    UNKNOWN. Only a local rejection on the first key, before any request, is
+    NOT_DISPATCHED; an earlier key's explicit 401/403/429 or an answered
+    upload of the same key already dispatched.
+    """
+
+    if exc.ambiguous:
+        return "UNKNOWN"
+    answered = getattr(exc, "http_requests_completed", None) or 0
+    if exc.phase in _LOCAL_PHASES and len(exc.failures) <= 1 and answered == 0:
+        return "NOT_DISPATCHED"
+    return "PROVIDER_RESPONDED"
 
 
 def _provider_call(
@@ -400,9 +497,43 @@ def _provider_call(
     config: ApiConfig,
     environment: Mapping[str, str],
     runner: Callable[..., GeminiFileCallOutcome],
+    evidence_root: Path,
+    label: str,
+    request_sha256: str,
 ) -> GeminiFileCallOutcome:
+    """Dispatch once and leave an auditable record for every ending.
+
+    A create-only dispatch record precedes the call (it survives a kill), and
+    every ending writes a create-only outcome or error record before any
+    judgement: a returned outcome is saved before its binding is checked,
+    a typed provider failure keeps its phase, HTTP status, per-key failures
+    and returned payload, and any other exception stays ambiguous.
+    """
+
+    video_fps = config.video_fps if mime_type.startswith("video/") else None
+    _record_or_report(
+        evidence_root / f"{label}-dispatch.json",
+        {
+            "schema_version": "final-media-review-gemini-api-dispatch.v1",
+            "label": label,
+            "request_sha256": request_sha256,
+            "provider": PROVIDER,
+            "model": config.model,
+            "media_sha256": media_sha256,
+            "media_bytes": media_bytes,
+            "mime_type": mime_type,
+            "video_fps": video_fps,
+            "timeout_seconds": config.timeout_seconds,
+            "poll_timeout_seconds": config.poll_timeout_seconds,
+            "pid": os.getpid(),
+            "started_at": _utc_now(),
+            "status": "DISPATCH_STARTED",
+        },
+    )
+    error_path = evidence_root / f"{label}-provider-error.json"
     try:
-        free_key_environment = {
+        from src.autoslice.cpa_gemini_client import enabled
+        free_key_environment = environment if enabled(environment) else {
             name: value
             for name in ("GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3")
             if isinstance((value := environment.get(name)), str) and value
@@ -414,17 +545,91 @@ def _provider_call(
             mime_type=mime_type,
             prompt=prompt,
             model=config.model,
-            video_fps=(config.video_fps if mime_type.startswith("video/") else None),
+            video_fps=video_fps,
             environment=free_key_environment,
             timeout_seconds=config.timeout_seconds,
             poll_timeout_seconds=config.poll_timeout_seconds,
         )
     except GeminiFileApiError as exc:
+        _record_or_report(
+            error_path,
+            {
+                "schema_version": "final-media-review-gemini-api-provider-error.v1",
+                "label": label,
+                "request_sha256": request_sha256,
+                "error_type": type(exc).__name__,
+                "reason_code": exc.reason_code,
+                "phase": exc.phase,
+                "http_status": exc.http_status,
+                "ambiguous": exc.ambiguous,
+                "dispatch_outcome": _dispatch_outcome(exc),
+                "detail": exc.detail[:4000],
+                "failures": [dict(row) for row in exc.failures],
+                "cleanup_status": exc.cleanup_status,
+                "http_requests_completed": getattr(exc, "http_requests_completed", None),
+                "raw_error_body": getattr(exc, "raw_body", None),
+                "raw_response_payload": _bounded_value(
+                    getattr(exc, "response_payload", None)
+                ),
+                "finished_at": _utc_now(),
+            },
+        )
         raise _provider_error(exc) from exc
+    except Exception as exc:
+        _record_or_report(
+            error_path,
+            {
+                "schema_version": "final-media-review-gemini-api-provider-error.v1",
+                "label": label,
+                "request_sha256": request_sha256,
+                "error_type": type(exc).__name__,
+                "reason_code": "GEMINI_API_ADAPTER_EXCEPTION",
+                "phase": None,
+                "http_status": None,
+                "ambiguous": True,
+                "dispatch_outcome": "UNKNOWN",
+                "detail": str(exc)[:4000],
+                "failures": [],
+                "cleanup_status": None,
+                "http_requests_completed": None,
+                "raw_error_body": None,
+                "raw_response_payload": None,
+                "finished_at": _utc_now(),
+            },
+        )
+        raise AdapterError(
+            "GEMINI_API_ADAPTER_EXCEPTION",
+            f"provider call ended with {type(exc).__name__}",
+            ambiguous=True,
+        ) from exc
     if not isinstance(outcome, GeminiFileCallOutcome):
+        _record_or_report(
+            error_path,
+            {
+                "schema_version": "final-media-review-gemini-api-provider-error.v1",
+                "label": label,
+                "request_sha256": request_sha256,
+                "error_type": type(outcome).__name__,
+                "reason_code": "GEMINI_API_RESPONSE_INVALID",
+                "phase": None,
+                "http_status": None,
+                "ambiguous": False,
+                "dispatch_outcome": "UNKNOWN",
+                "detail": "provider returned no typed outcome",
+                "failures": [],
+                "cleanup_status": None,
+                "http_requests_completed": None,
+                "raw_error_body": None,
+                "raw_response_payload": _bounded_value(outcome),
+                "finished_at": _utc_now(),
+            },
+        )
         raise AdapterError(
             "GEMINI_API_RESPONSE_INVALID", "provider returned no typed outcome"
         )
+    _save_provider_outcome(
+        evidence_root, label=label, request_sha256=request_sha256, outcome=outcome
+    )
     if (
         outcome.evidence.get("provider") != PROVIDER
         or outcome.evidence.get("model") != config.model
@@ -433,7 +638,11 @@ def _provider_call(
         or outcome.evidence.get("mime_type") != mime_type
         or outcome.evidence.get("video_fps")
         != (config.video_fps if mime_type.startswith("video/") else None)
-        or outcome.evidence.get("paid_backup_used") is not False
+        or (outcome.evidence.get("paid_backup_used") is not False
+            and not (outcome.evidence.get('transport') == 'cpa_gemini_native'
+                     and isinstance(outcome.evidence.get('cpa_transport_receipt'), Mapping)
+                     and outcome.evidence['cpa_transport_receipt'].get('status') == 'RESPONDED'
+                     and outcome.evidence['cpa_transport_receipt'].get('identity_model') == config.model))
     ):
         raise AdapterError(
             "GEMINI_API_RESPONSE_INVALID",
@@ -446,6 +655,7 @@ def _sentinel_request(
     *,
     input_path: Path,
     prompt_path: Path,
+    environment: Mapping[str, str] | None = None,
 ) -> tuple[dict[str, object], str]:
     request_bytes = _regular_file(
         request_path, label="sentinel request", maximum=_MAX_JSON_BYTES
@@ -467,7 +677,7 @@ def _sentinel_request(
         set(request) != expected
         or request.get("schema_version") != SENTINEL_REQUEST_SCHEMA
         or request.get("provider") != PROVIDER
-        or request.get("endpoint_family") != ENDPOINT_FAMILY
+        or request.get("endpoint_family") != selected_endpoint_family(environment)
         or not isinstance(request.get("challenge_id"), str)
         or not isinstance(request.get("model"), str)
         or request.get("answer_disclosed_to_adapter") is not False
@@ -494,13 +704,28 @@ def _sentinel_mime(coverage: object) -> str:
     )
 
 
+def _sentinel_answer(raw: str) -> str:
+    """Decode only a JSON-string representation of the whole answer.
+
+    The challenge asks for exactly eight digits; ``"73194628"`` is that same
+    answer JSON-encoded. Any other value (number, array, object, extra text,
+    several values) stays as the original text and must itself be the digits.
+    """
+    stripped = raw.strip()
+    try:
+        decoded = json.loads(stripped)
+    except (json.JSONDecodeError, RecursionError):
+        return stripped
+    return decoded if isinstance(decoded, str) else stripped
+
+
 def _sentinel_response(
     *,
     request: Mapping[str, object],
     request_sha: str,
     raw: str,
 ) -> dict[str, object]:
-    observed = raw.strip()
+    observed = _sentinel_answer(raw)
     if re.fullmatch(r"[0-9]{8}", observed) is None:
         raise AdapterError(
             "GEMINI_API_SENTINEL_RESPONSE_INVALID",
@@ -533,7 +758,7 @@ def run_sentinel(
         prompt_path, label="sentinel prompt", maximum=1_000_000
     )
     request, request_sha = _sentinel_request(
-        request_path, input_path=media, prompt_path=prompt_path
+        request_path, input_path=media, prompt_path=prompt_path, environment=environment
     )
     _verify_adapter_identity(
         root=root,
@@ -569,6 +794,9 @@ def run_sentinel(
         config=config,
         environment=environment,
         runner=file_runner,
+        evidence_root=evidence_root,
+        label="sentinel",
+        request_sha256=request_sha,
     )
     response = _sentinel_response(
         request=request, request_sha=request_sha, raw=outcome.text
@@ -593,7 +821,8 @@ def run_sentinel(
 def _strict_json_object(raw: str, *, modality: str) -> dict[str, object]:
     stripped = raw.strip()
     if stripped.startswith("```"):
-        match = re.fullmatch(r"```(?:json)?\s*(\{.*\})\s*```", stripped, re.S)
+        # The fence language tag is representation; its case carries nothing.
+        match = re.fullmatch(r"```(?i:json)?\s*(\{.*\})\s*```", stripped, re.S)
         if match is None:
             raise AdapterError(
                 "GEMINI_API_RESPONSE_INVALID", f"{modality} response fence invalid"
@@ -726,7 +955,7 @@ def _final_request(
     if (
         request.get("schema_version") != RAW_AV_REQUEST_SCHEMA
         or request.get("provider") != PROVIDER
-        or request.get("endpoint_family") != ENDPOINT_FAMILY
+        or request.get("endpoint_family") != selected_endpoint_family(environment)
         or not isinstance(request.get("candidate_id"), str)
         or not isinstance(request.get("model"), str)
         or not isinstance(request.get("capability_id"), str)
@@ -814,6 +1043,9 @@ def run_final_review(
         config=config,
         environment=environment,
         runner=file_runner,
+        evidence_root=evidence_root,
+        label="continuous_source_video",
+        request_sha256=request_sha,
     )
     audio_outcome = _provider_call(
         media=wav,
@@ -824,6 +1056,9 @@ def run_final_review(
         config=config,
         environment=environment,
         runner=file_runner,
+        evidence_root=evidence_root,
+        label="raw_audio",
+        request_sha256=request_sha,
     )
     video_review = _strict_json_object(
         video_outcome.text, modality="continuous_source_video"

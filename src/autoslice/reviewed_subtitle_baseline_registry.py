@@ -9,6 +9,7 @@ candidate.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 from dataclasses import dataclass
 import hashlib
 import json
@@ -121,11 +122,8 @@ class ReviewedSubtitleBaseline:
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return digest
 
 
 def _clean_sha256(value: object) -> str:

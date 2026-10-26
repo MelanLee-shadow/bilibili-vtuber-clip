@@ -1,0 +1,293 @@
+{
+ "postburn_subtitle_audio_review": {
+  "schema_version": "postburn-subtitle-audio-review.v1",
+  "status": "CLEAN",
+  "release_gate": "PASS",
+  "validated_finding_count": 0,
+  "findings": [],
+  "unresolved_findings_disclosed": [
+   {
+    "base_text_sha256": "1c2e9440d7c442741e04656f6fe86579e2e02acaf6e45de035a5d873ebe1dbc9",
+    "candidate_memory_id": null,
+    "candidate_provenance": null,
+    "content_risk": "noncritical_uncertainty",
+    "correlated_text_witness": false,
+    "cue_index": 10,
+    "draft_fidelity_kept_provenance": null,
+    "evidence_cue_ids": [
+     7,
+     8,
+     11
+    ],
+    "force_acoustic": false,
+    "input_contract_normalizations": [
+     "explicit_null_proposal_bound_to_current_whole_cue"
+    ],
+    "kind": "context",
+    "proposed_full_cue": null,
+    "repair_class": "phonetic",
+    "risk_basis": "挑战规则的引入句衔接不清，但不能据此确认规则或肯否含义被反转。",
+    "span_end_codepoint": 9,
+    "span_start_codepoint": 0,
+    "suggestion": null,
+    "suspect": "我听，听到你不许哦",
+    "why": "“听到你不许哦”按 tīng dào nǐ bù xǔ 检查，不能完整解释其与后句挑战规则的关系，暂无安全近音候选。"
+   },
+   {
+    "base_text_sha256": "fbba87baf312bc8ce51c5a5e90a742a52ee9e25e8d827c64d57418e55d224000",
+    "candidate_memory_id": null,
+    "candidate_provenance": null,
+    "content_risk": "noncritical_uncertainty",
+    "correlated_text_witness": false,
+    "cue_index": 12,
+    "draft_fidelity_kept_provenance": null,
+    "evidence_cue_ids": [
+     11,
+     14,
+     95
+    ],
+    "force_acoustic": false,
+    "input_contract_normalizations": [
+     "explicit_null_proposal_bound_to_current_whole_cue"
+    ],
+    "kind": "context",
+    "proposed_full_cue": null,
+    "repair_class": "phonetic",
+    "risk_basis": "后半句的挑战题目明确，疑点仅在句首承接方式，不足以认定题意改变。",
+    "span_end_codepoint": 13,
+    "span_start_codepoint": 0,
+    "suggestion": null,
+    "suspect": "真的跟别，跟别人说你的坏话",
+    "why": "“真的跟别”在引入题目时衔接可疑，但 zhēn de 也可能是口语承接，不能仅凭后文题号安全重建。"
+   },
+   {
+    "base_text_sha256": "ec41a069c46309a6b19165fb9dc3c1de3c8bb8b8842198a4a35e4305a8cb0559",
+    "candidate_memory_id": null,
+    "candidate_provenance": {
+     "kind": "structured_context",
+     "surface": "这也不许跟别人说话"
+    },
+    "content_risk": "noncritical_uncertainty",
+    "correlated_text_witness": false,
+    "cue_index": 13,
+    "draft_fidelity_kept_provenance": null,
+    "evidence_cue_ids": [
+     12,
+     15
+    ],
+    "force_acoustic": false,
+    "kind": "context",
+    "proposed_full_cue": "这也不许跟别人说话",
+    "repair_class": "phonetic",
+    "risk_basis": "句首指示词疑似误识，影响上一项挑战与回答的衔接，不涉及明确肯否变化。",
+    "span_end_codepoint": 1,
+    "span_start_codepoint": 0,
+    "suggestion": "这",
+    "suspect": "真",
+    "why": "“真也”搭配不明，zhēn 与 zhè 音近，独立字幕见证中的“这也”能够承接前一项挑战。"
+   },
+   {
+    "base_text_sha256": "305c5131fb9616e9c4565490787270e943b8e4f9d739365dcad6b22bbb9c37a8",
+    "candidate_memory_id": null,
+    "candidate_provenance": {
+     "kind": "structured_context",
+     "surface": "你坏话"
+    },
+    "content_risk": "noncritical_uncertainty",
+    "correlated_text_witness": false,
+    "cue_index": 14,
+    "draft_fidelity_kept_provenance": null,
+    "evidence_cue_ids": [
+     12,
+     89,
+     95
+    ],
+    "force_acoustic": false,
+    "kind": "context",
+    "proposed_full_cue": "你，你不觉得我跟别，别人说你坏话很不道德吗",
+    "repair_class": "phonetic",
+    "risk_basis": "“说能发挥”使反问的宾语失去连贯语义；这里是挑战台词，不是具体负面事实指控。",
+    "span_end_codepoint": 16,
+    "span_start_codepoint": 13,
+    "suggestion": "你坏话",
+    "suspect": "能发挥",
+    "why": "néng fā huī 疑为 nǐ huài huà 的连读误识，独立字幕见证及第89条的平行反问支持该候选。"
+   },
+   {
+    "base_text_sha256": "4bde91bf04d55478f591b9d449564b4541635ebc32f7c5e8be5f15a867f59f4d",
+    "candidate_memory_id": null,
+    "candidate_provenance": null,
+    "content_risk": "noncritical_uncertainty",
+    "correlated_text_witness": false,
+    "cue_index": 27,
+    "draft_fidelity_kept_provenance": null,
+    "evidence_cue_ids": [
+     23,
+     25,
+     26
+    ],
+    "force_acoustic": false,
+    "kind": "context",
+    "proposed_full_cue": null,
+    "repair_class": "phonetic",
+    "risk_basis": "说话对象无法从当前词面解释，但没有依据确定具体人名或关系身份。",
+    "span_end_codepoint": 6,
+    "span_start_codepoint": 4,
+    "suggestion": null,
+    "suspect": "往后",
+    "why": "“往后”通常表示时间或方向，放在“跟……说话”的对象位置不通，按 wǎng hòu 未得到有依据的安全候选。"
+   },
+   {
+    "base_text_sha256": "0f10979c292f67c0b7df07654678bf8a354358f6c2ddb1ccca667d6e35291879",
+    "candidate_memory_id": null,
+    "candidate_provenance": null,
+    "content_risk": "noncritical_uncertainty",
+    "correlated_text_witness": false,
+    "cue_index": 59,
+    "draft_fidelity_kept_provenance": null,
+    "evidence_cue_ids": [
+     58,
+     60
+    ],
+    "force_acoustic": false,
+    "kind": "nonword",
+    "proposed_full_cue": null,
+    "repair_class": "phonetic",
+    "risk_basis": "范围表达的局部词面异常，不影响后半句可辨认的主要判断。",
+    "span_end_codepoint": 4,
+    "span_start_codepoint": 0,
+    "suggestion": null,
+    "suspect": "从文到尾",
+    "why": "“从文到尾”不是此处可解释的范围表达，虽可联想到常见搭配，但 wén 对应的原词缺乏安全近音证据。"
+   },
+   {
+    "base_text_sha256": "41a82ad884aae800648a1bf24dbf8e42115601f4b9be006360d8b89b08c2d62a",
+    "candidate_memory_id": null,
+    "candidate_provenance": null,
+    "content_risk": "noncritical_uncertainty",
+    "correlated_text_witness": false,
+    "cue_index": 81,
+    "draft_fidelity_kept_provenance": null,
+    "evidence_cue_ids": [
+     82,
+     89,
+     95
+    ],
+    "force_acoustic": false,
+    "input_contract_normalizations": [
+     "explicit_null_proposal_bound_to_current_whole_cue"
+    ],
+    "kind": "context",
+    "proposed_full_cue": null,
+    "repair_class": "phonetic",
+    "risk_basis": "人称与挑战题意衔接不明，尚不能确定原话对象或认定肯否发生反转。",
+    "span_end_codepoint": 9,
+    "span_start_codepoint": 0,
+    "suggestion": null,
+    "suspect": "你不跟别人说你坏话",
+    "why": "“你不跟别人说你坏话”与反复出现的挑战题目关系可疑，句首 nǐ bù 暂无足以重建整句的安全候选。"
+   },
+   {
+    "base_text_sha256": "40a5635bfc2ed42641a203125567197c6c62d80c3cc5ec6e0d297dfaa8cc46b0",
+    "candidate_memory_id": null,
+    "candidate_provenance": {
+     "kind": "structured_context",
+     "surface": "要说我坏话就跟我说"
+    },
+    "content_risk": "noncritical_uncertainty",
+    "correlated_text_witness": false,
+    "cue_index": 86,
+    "draft_fidelity_kept_provenance": null,
+    "evidence_cue_ids": [
+     16,
+     89,
+     99
+    ],
+    "force_acoustic": false,
+    "kind": "context",
+    "proposed_full_cue": "要说我坏话就跟我说",
+    "repair_class": "phonetic",
+    "risk_basis": "疑似将挑战台词中的“坏话”误识为“的话”，影响局部指向，但不构成真实负面指控。",
+    "span_end_codepoint": 4,
+    "span_start_codepoint": 3,
+    "suggestion": "坏",
+    "suspect": "的",
+    "why": "wǒ de huà 疑为 wǒ huài huà 的连读误识，第99条复现了符合当前挑战语境的同一台词。"
+   },
+   {
+    "base_text_sha256": "bc8b0fdbbc02d31c92593f4408e4324afab6bdfc35b60d8a78dd6c2a9ad92657",
+    "candidate_memory_id": null,
+    "candidate_provenance": null,
+    "content_risk": "noncritical_uncertainty",
+    "correlated_text_witness": false,
+    "cue_index": 94,
+    "draft_fidelity_kept_provenance": null,
+    "evidence_cue_ids": [
+     93,
+     95
+    ],
+    "force_acoustic": false,
+    "input_contract_normalizations": [
+     "explicit_null_proposal_bound_to_current_whole_cue"
+    ],
+    "kind": "context",
+    "proposed_full_cue": null,
+    "repair_class": "segmentation",
+    "risk_basis": "提问与挑战名称的连接边界不清，现有文字不足以判断是否改变了挑战规则。",
+    "span_end_codepoint": 18,
+    "span_start_codepoint": 0,
+    "suggestion": null,
+    "suspect": "还是到我也接受不了闺蜜做哪些事大挑战",
+    "why": "“还是到我也接受不了”不能明确连接后面的挑战名称，可能存在话轮或词边界误切，暂无安全整句候选。"
+   },
+   {
+    "base_text_sha256": "11b6f6eeb71fc7e566e6de4f6f7f4fe7c502eddfa990900dfdf92e481637dcd0",
+    "candidate_memory_id": null,
+    "candidate_provenance": null,
+    "content_risk": "noncritical_uncertainty",
+    "correlated_text_witness": false,
+    "cue_index": 98,
+    "draft_fidelity_kept_provenance": null,
+    "evidence_cue_ids": [
+     96,
+     97,
+     99
+    ],
+    "force_acoustic": false,
+    "kind": "context",
+    "proposed_full_cue": null,
+    "repair_class": "phonetic",
+    "risk_basis": "句首局部语义不明，但后半句推荐、安利的意图明确，未见具体严重含义风险。",
+    "span_end_codepoint": 3,
+    "span_start_codepoint": 0,
+    "suggestion": null,
+    "suspect": "留住这",
+    "why": "“留住这”与后面的推荐行为衔接不明，按 liú zhù zhè 检查仍无有依据的安全近音候选。"
+   },
+   {
+    "base_text_sha256": "2bc10112c7887f36a9d934abeb423a7e6387415953305bebb1300385deaff861",
+    "candidate_memory_id": null,
+    "candidate_provenance": null,
+    "content_risk": "noncritical_uncertainty",
+    "correlated_text_witness": false,
+    "cue_index": 116,
+    "draft_fidelity_kept_provenance": null,
+    "evidence_cue_ids": [
+     113,
+     115,
+     117
+    ],
+    "force_acoustic": false,
+    "kind": "context",
+    "proposed_full_cue": "没有很想演的意思",
+    "repair_class": "spoken_unit",
+    "risk_basis": "疑似漏识结构助词，主要否定含义仍然明确，不能因后句调侃而判定肯否反转。",
+    "span_end_codepoint": 5,
+    "span_start_codepoint": 5,
+    "suggestion": "的",
+    "suspect": "",
+    "why": "“很想演意思”结构不完整，yǎn yì si 可能漏识了 yǎn de yì si 中弱读的“的”。"
+   }
+  ]
+ }
+}

@@ -1,42 +1,24 @@
-"""Compatibility boundary: candidate-specific private evidence is not distributed."""
+"""Public boundary: private candidate replay projections are unavailable."""
+from __future__ import annotations
+import copy
+from dataclasses import dataclass
+from pathlib import Path
+from src.autoslice.candidate_public_text_surface_authority import CandidatePublicTextSurfaceAuthorityError
 
-CANDIDATE_ID = '__private_c6_replay_public_text_projection_unavailable__'
-RECORDING_DATE = '__private_c6_replay_public_text_projection_unavailable__'
-SCHEMA_VERSION = '__private_c6_replay_public_text_projection_unavailable__'
-RELATIVE_PUBLIC_TEXT_AUTHORITY = '__private_c6_replay_public_text_projection_unavailable__'
-RELATIVE_BASELINE_MANIFEST = '__private_c6_replay_public_text_projection_unavailable__'
-ALLOWED_DIFF_PATHS = '__private_c6_replay_public_text_projection_unavailable__'
-EXPECTED_OLD_CUE17 = '__private_c6_replay_public_text_projection_unavailable__'
-EXPECTED_NEW_CUE17 = '__private_c6_replay_public_text_projection_unavailable__'
-EXPECTED_PERSISTED_STORY_SHA256 = '__private_c6_replay_public_text_projection_unavailable__'
-EXPECTED_FRESH_STORY_SHA256 = '__private_c6_replay_public_text_projection_unavailable__'
-EXPECTED_C6_RUNTIME_FRESH_STORY_PROJECTION_SHA256 = '__private_c6_replay_public_text_projection_unavailable__'
-EXPECTED_AUTHORITY_SHA256 = '__private_c6_replay_public_text_projection_unavailable__'
-EXPECTED_BASELINE_SHA256 = '__private_c6_replay_public_text_projection_unavailable__'
-EXPECTED_DECISION_LEDGER_SHA256 = '__private_c6_replay_public_text_projection_unavailable__'
-EXPECTED_TRUTH_DIFF_SHA256 = '__private_c6_replay_public_text_projection_unavailable__'
-EXPECTED_PIPELINE_SRT_SHA256 = '__private_c6_replay_public_text_projection_unavailable__'
-EXPECTED_OLD_TRANSCRIPT_SHA256 = '__private_c6_replay_public_text_projection_unavailable__'
-EXPECTED_FRESH_TRANSCRIPT_SHA256 = '__private_c6_replay_public_text_projection_unavailable__'
-EXPECTED_CLIP_CONTEXT_SHA256 = '__private_c6_replay_public_text_projection_unavailable__'
-EXPECTED_CLIP_CONTEXT_PROMPT_SHA256 = '__private_c6_replay_public_text_projection_unavailable__'
-EXPECTED_INPUT_HOOK_SHA256 = '__private_c6_replay_public_text_projection_unavailable__'
-EXPECTED_RESOLVED_HOOK_SHA256 = '__private_c6_replay_public_text_projection_unavailable__'
-EXPECTED_TITLE_SHA256 = '__private_c6_replay_public_text_projection_unavailable__'
-EXPECTED_COVER_LINES_SHA256 = '__private_c6_replay_public_text_projection_unavailable__'
+class C6ReplayPublicTextProjectionError(CandidatePublicTextSurfaceAuthorityError):
+    pass
 
-class C6ReplayPublicTextProjectionError(ValueError):
-    reason_code = "PRIVATE_CANDIDATE_AUTHORITY_UNAVAILABLE"
-
+@dataclass(frozen=True, slots=True)
 class C6ReplayPublicTextConsumption:
-    def __init__(self, *args, **kwargs):
-        raise ValueError("PRIVATE_CANDIDATE_AUTHORITY_UNAVAILABLE")
+    """Immutable typed result carrying the derived receipt into staging."""
+    receipt: dict[str, object]
 
-def validate_c6_replay_public_text_consumption_for_fresh_story(*args, **kwargs):
-    return False
+    def as_dict(self) -> dict[str, object]:
+        return copy.deepcopy(self.receipt)
 
-def validate_c6_replay_public_text_consumption(*args, **kwargs):
-    return False
+def _unavailable(*_args, **_kwargs):
+    raise C6ReplayPublicTextProjectionError("C6_REPLAY_PRIVATE_AUTHORITY_UNAVAILABLE")
 
-def build_c6_replay_public_text_resolver(*args, **kwargs):
-    return None
+validate_c6_replay_public_text_consumption_for_fresh_story = _unavailable
+validate_c6_replay_public_text_consumption = _unavailable
+build_c6_replay_public_text_resolver = _unavailable

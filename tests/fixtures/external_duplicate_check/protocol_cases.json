@@ -1,0 +1,79 @@
+{
+  "provenance": "Synthetic protocol cases for controlled alignment tests; these are NOT claimed to be real external transcripts.",
+  "nav": {
+    "code": -101,
+    "data": {
+      "wbi_img": {
+        "img_url": "https://i0.hdslb.com/bfs/wbi/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png",
+        "sub_url": "https://i0.hdslb.com/bfs/wbi/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png"
+      }
+    }
+  },
+  "search": {
+    "code": 0,
+    "data": {
+      "result": [
+        {
+          "bvid": "BV1000000001",
+          "title": "2026-10-24 示例主播 嘉宾Guest 联动",
+          "author": "示例切片者",
+          "mid": 12345,
+          "duration": "0:10",
+          "pubdate": 1792857600
+        }
+      ]
+    }
+  },
+  "view": {
+    "code": 0,
+    "data": {
+      "bvid": "BV1000000001",
+      "title": "2026-10-24 示例主播 嘉宾Guest 联动",
+      "desc": "2026-10-24 同场直播",
+      "owner": {
+        "name": "示例切片者",
+        "mid": 12345
+      },
+      "pubdate": 1792857600,
+      "duration": 10,
+      "pages": [
+        {
+          "cid": 98765,
+          "duration": 10
+        }
+      ]
+    }
+  },
+  "player": {
+    "code": 0,
+    "data": {
+      "subtitle": {
+        "subtitles": [
+          {
+            "lan": "zh-CN",
+            "subtitle_url": "//aisubtitle.hdslb.com/bfs/subtitle/fixture.json"
+          }
+        ]
+      }
+    }
+  },
+  "subtitle": {
+    "body": [
+      {
+        "from": 1.5,
+        "to": 3.5,
+        "content": "今天来聊契约恋爱"
+      },
+      {
+        "from": 4.5,
+        "to": 6.5,
+        "content": "我觉得这个故事很好看"
+      },
+      {
+        "from": 7.5,
+        "to": 9.5,
+        "content": "最后再补充一句话"
+      }
+    ]
+  }
+}

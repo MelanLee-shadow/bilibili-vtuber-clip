@@ -39,6 +39,8 @@ from scripts.apply_speaker_turn_overrides import (
     sha256_file,
     validate_bound_speaker_override_document,
 )
+from src.autoslice.deployed_code_root import deployed_code_root_reference
+
 from src.autoslice.channel_profile import load_channel_profile
 from scripts.apply_subtitle_text_overrides import (
     apply_document as apply_text_override_document,
@@ -134,7 +136,7 @@ def resolve_staged_repo_asset(
     value: object,
     *,
     staged_root: Path,
-    remote_repo_root: str = "/opt/bilive/autoslice/repo",
+    remote_repo_root: str = str(deployed_code_root_reference()),
 ) -> Path:
     """Map a canonical deployed-repo path into a staged tree without escape."""
 

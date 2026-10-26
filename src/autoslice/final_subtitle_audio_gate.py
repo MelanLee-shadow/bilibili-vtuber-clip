@@ -24,7 +24,9 @@ from scripts.free_asr_client import transcribe_bcut as _transcribe_bcut
 
 from src.autoslice.producer_media import _validated_burned_artifact
 from src.autoslice.subtitle_audio_correspondence import (
+    ANCHOR_UNIQUENESS_POLICY,
     CorrespondenceInputError,
+    anchor_uniqueness_policy_of,
     check_subtitle_audio_correspondence,
     sha256_file,
 )
@@ -44,6 +46,17 @@ _PATH_KEYS = {
     "raw_result_path",
     "correspondence_path",
 }
+
+_FROZEN_RECEIPT_COMPOSITE_POLICY = {
+    "composite_enabled_when_single_coverage_insufficient": True,
+    "composite_max_cues_per_side": 2,
+    "composite_gap_min_ms": 0,
+    "composite_gap_max_ms": 250,
+    "composite_match": "exact_normalized_only",
+    "composite_counts_as_one_anchor": True,
+    "composite_requires_unique_text": True,
+}
+_FROZEN_RECEIPT_ADDED_POLICY_KEYS = frozenset(_FROZEN_RECEIPT_COMPOSITE_POLICY)
 
 
 class FinalSubtitleAudioGateError(ValueError):
@@ -297,6 +310,104 @@ def _expected_receipt(evidence: Mapping[str, object]) -> Mapping[str, object]:
     return receipt
 
 
+def _frozen_receipt_metadata_compatibility(
+    stored_receipt: Mapping[str, object],
+    current_receipt: Mapping[str, object],
+) -> bool:
+    """Allow one known v1 receipt-shape extension for frozen plan resumes.
+
+    The old receipt remains the authority.  Only metadata emitted by the
+    composite-anchor implementation may be projected away, and the new
+    receipt must prove that every selected anchor is still a single cue whose
+    index arrays agree with its legacy scalar indices.  This is deliberately
+    separate from normal validation so a new capture cannot use the frozen
+    compatibility path.
+    """
+
+    stored = _semantic(stored_receipt)
+    current = _semantic(current_receipt)
+    if not isinstance(stored, dict) or not isinstance(current, dict):
+        return False
+
+    stored_coverage = stored.get("anchor_coverage")
+    stored_policy = stored.get("anchor_policy")
+    stored_anchors = stored.get("anchors")
+    if not isinstance(stored_coverage, dict) or "cue_ids" in stored_coverage:
+        return False
+    if not isinstance(stored_policy, dict):
+        return False
+    if _FROZEN_RECEIPT_ADDED_POLICY_KEYS.intersection(stored_policy):
+        return False
+    if not isinstance(stored_anchors, list):
+        return False
+    for anchor in stored_anchors:
+        if not isinstance(anchor, dict):
+            return False
+        if any(key in anchor for key in ("anchor_kind", "final_cue_indices", "witness_cue_indices")):
+            return False
+        if not all(isinstance(anchor.get(key), str) for key in ("final_cue_index", "witness_cue_index")):
+            return False
+        if "+" in anchor["final_cue_index"] or "+" in anchor["witness_cue_index"]:
+            return False
+
+    current_coverage = current.get("anchor_coverage")
+    current_policy = current.get("anchor_policy")
+    current_anchors = current.get("anchors")
+    if not isinstance(current_coverage, dict) or not isinstance(current_policy, dict):
+        return False
+    if not isinstance(current_anchors, list) or len(current_anchors) != len(stored_anchors):
+        return False
+    cue_ids = current_coverage.get("cue_ids")
+    if not isinstance(cue_ids, dict) or set(cue_ids) != {"start", "middle", "end"}:
+        return False
+    if any(current_policy.get(key) != value for key, value in _FROZEN_RECEIPT_COMPOSITE_POLICY.items()):
+        return False
+
+    for anchor in current_anchors:
+        if not isinstance(anchor, dict) or anchor.get("anchor_kind") != "single":
+            return False
+        final_index = anchor.get("final_cue_index")
+        witness_index = anchor.get("witness_cue_index")
+        if not isinstance(final_index, str) or not isinstance(witness_index, str):
+            return False
+        if "+" in final_index or "+" in witness_index:
+            return False
+        if anchor.get("final_cue_indices") != [final_index]:
+            return False
+        if anchor.get("witness_cue_indices") != [witness_index]:
+            return False
+
+    for bucket in ("start", "middle", "end"):
+        bucket_ids = current_coverage.get(bucket)
+        if not isinstance(bucket_ids, list) or not all(isinstance(item, str) for item in bucket_ids):
+            return False
+        expected_ids = [
+            anchor["final_cue_indices"]
+            for anchor in current_anchors
+            if anchor.get("final_cue_index") in bucket_ids
+        ]
+        if cue_ids[bucket] != expected_ids:
+            return False
+
+    projected_current = dict(current)
+    projected_coverage = dict(current_coverage)
+    projected_coverage.pop("cue_ids", None)
+    projected_current["anchor_coverage"] = projected_coverage
+    projected_policy = dict(current_policy)
+    for key in _FROZEN_RECEIPT_ADDED_POLICY_KEYS:
+        projected_policy.pop(key, None)
+    projected_current["anchor_policy"] = projected_policy
+    projected_current["anchors"] = [
+        {
+            key: value
+            for key, value in anchor.items()
+            if key not in ("anchor_kind", "final_cue_indices", "witness_cue_indices")
+        }
+        for anchor in current_anchors
+    ]
+    return projected_current == stored
+
+
 def _resolve_evidence_paths(
     record: Mapping[str, object],
     *,
@@ -338,6 +449,7 @@ def _validate_artifacts(
     candidate_id: str | None = None,
     package_stem: str | None = None,
     require_pass: bool,
+    allow_frozen_receipt_metadata_compatibility: bool = False,
 ) -> dict[str, Any]:
     expected_intro = _intro_offset_ms(record)
     stem, paths = _resolve_evidence_paths(
@@ -459,6 +571,13 @@ def _validate_artifacts(
     ) != envelope_audio_sha256:
         raise FinalSubtitleAudioGateError("FINAL_SUBTITLE_AUDIO_RECORD_AUDIO_HASH_DRIFT")
 
+    # New captures assess wording (ASSESSED + nominations); frozen historical
+    # receipts declare UNASSESSED and are re-derived in their original shape.
+    # The recomputation is deterministic, so the declaration cannot hide a count.
+    # The anchor uniqueness rule is likewise the one the stored receipt was
+    # produced under: a legacy receipt replays the legacy rule, a current one
+    # the current rule; an unknown declared rule is refused.
+    stored_declared = _expected_receipt(envelope).get("text_correctness_status")
     try:
         receipt = check_subtitle_audio_correspondence(
             final_srt,
@@ -466,13 +585,37 @@ def _validate_artifacts(
             paths["witness_srt"],
             paths["provenance"],
             intro_offset_ms=expected_intro,
+            assess_text=stored_declared == "ASSESSED",
+            anchor_uniqueness=anchor_uniqueness_policy_of(_expected_receipt(envelope)),
         )
     except CorrespondenceInputError as exc:
         raise FinalSubtitleAudioGateError(
             f"FINAL_SUBTITLE_AUDIO_CORRESPONDENCE_INPUT_INVALID: {exc}"
         ) from exc
     stored_receipt = _expected_receipt(envelope)
-    if _semantic(stored_receipt) != _semantic(receipt):
+    if allow_frozen_receipt_metadata_compatibility:
+        record_receipt = _expected_receipt(evidence)
+        declared_receipt_sha = evidence.get("receipt_sha256")
+        expected_receipt_sha = "sha256:" + hashlib.sha256(
+            (json.dumps(record_receipt, ensure_ascii=False, sort_keys=True) + "\n").encode(
+                "utf-8"
+            )
+        ).hexdigest()
+        if declared_receipt_sha != expected_receipt_sha:
+            raise FinalSubtitleAudioGateError(
+                "FINAL_SUBTITLE_AUDIO_RECORD_RECEIPT_HASH_DRIFT"
+            )
+        if _semantic(record_receipt) != _semantic(stored_receipt):
+            raise FinalSubtitleAudioGateError(
+                "FINAL_SUBTITLE_AUDIO_RECORD_RECEIPT_DRIFT"
+            )
+    receipt_matches = _semantic(stored_receipt) == _semantic(receipt)
+    if not receipt_matches and allow_frozen_receipt_metadata_compatibility:
+        receipt_matches = _frozen_receipt_metadata_compatibility(
+            stored_receipt,
+            receipt,
+        )
+    if not receipt_matches:
         raise FinalSubtitleAudioGateError(
             "FINAL_SUBTITLE_AUDIO_RECEIPT_DRIFT: deterministic receipt changed"
         )
@@ -595,7 +738,43 @@ def _load_cache(
             package_stem=candidate_id,
             require_pass=False,
         )
-    except (FinalSubtitleAudioGateError, OSError, ValueError):
+        if anchor_uniqueness_policy_of(receipt) != ANCHOR_UNIQUENESS_POLICY:
+            # The cached BCUT observation has just been validated under the
+            # rule its stored receipt declares.  A capture must emit the
+            # current rule, so only the deterministic receipt is recomputed
+            # from that same observation: no extraction or provider call.
+            previous_receipt_sha256 = "sha256:" + hashlib.sha256(
+                (json.dumps(receipt, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+            ).hexdigest()
+            upgraded = check_subtitle_audio_correspondence(
+                final_srt,
+                actual_media,
+                paths["witness_srt"],
+                paths["provenance"],
+                intro_offset_ms=expected_intro,
+                assess_text=True,
+            )
+            envelope = dict(envelope)
+            envelope["receipt"] = upgraded
+            envelope["receipt_policy_upgrade"] = {
+                "from_anchor_uniqueness": anchor_uniqueness_policy_of(receipt),
+                "to_anchor_uniqueness": ANCHOR_UNIQUENESS_POLICY,
+                "previous_receipt_sha256": previous_receipt_sha256,
+                "previous_status": receipt.get("status"),
+                "provider_calls": 0,
+            }
+            _write_json_atomic(paths["correspondence"], envelope)
+            cached_record["subtitle_audio_correspondence"]["receipt"] = upgraded
+            receipt = _validate_artifacts(
+                cached_record,
+                actual_media=actual_media,
+                final_srt=final_srt,
+                package_dir=output_dir,
+                candidate_id=candidate_id,
+                package_stem=candidate_id,
+                require_pass=False,
+            )
+    except (FinalSubtitleAudioGateError, CorrespondenceInputError, OSError, ValueError):
         return None
     return {"paths": paths, "envelope": envelope, "receipt": receipt}
 
@@ -715,6 +894,7 @@ def capture_final_subtitle_audio_check(
             paths["witness_srt"],
             paths["provenance"],
             intro_offset_ms=expected_intro,
+            assess_text=True,
         )
     except CorrespondenceInputError as exc:
         receipt = {
@@ -761,6 +941,7 @@ def validate_final_subtitle_audio_check(
     package_root: str | Path | None = None,
     *,
     candidate_id: str | None = None,
+    allow_frozen_receipt_metadata_compatibility: bool = False,
 ) -> dict[str, Any]:
     """Re-run only deterministic validation; never calls BCUT or ffmpeg."""
 
@@ -786,6 +967,9 @@ def validate_final_subtitle_audio_check(
         candidate_id=candidate_id,
         package_stem=package_stem,
         require_pass=True,
+        allow_frozen_receipt_metadata_compatibility=(
+            allow_frozen_receipt_metadata_compatibility
+        ),
     )
 
 
@@ -846,14 +1030,19 @@ def load_validated_subtitle_audio_witness(
         raise FinalSubtitleAudioGateError(
             "FINAL_SUBTITLE_AUDIO_RECORD_INTRO_OFFSET_INVALID"
         )
+    stored_receipt = _expected_receipt(evidence)
     receipt_sha256 = "sha256:" + hashlib.sha256(
-        (json.dumps(receipt, ensure_ascii=False, sort_keys=True) + "\n").encode(
+        (json.dumps(stored_receipt, ensure_ascii=False, sort_keys=True) + "\n").encode(
             "utf-8"
         )
     ).hexdigest()
     if evidence.get("receipt_sha256") != receipt_sha256:
         raise FinalSubtitleAudioGateError(
             "FINAL_SUBTITLE_AUDIO_RECORD_RECEIPT_HASH_DRIFT"
+        )
+    if _semantic(stored_receipt) != _semantic(receipt):
+        raise FinalSubtitleAudioGateError(
+            "FINAL_SUBTITLE_AUDIO_RECORD_RECEIPT_DRIFT"
         )
     return {
         "candidate_id": candidate,
@@ -869,7 +1058,10 @@ def load_validated_subtitle_audio_witness(
         "provenance_path": str(evidence.get("provenance_path") or ""),
         "correspondence_path": str(evidence.get("correspondence_path") or ""),
         "raw_result_path": str(evidence.get("raw_result_path") or ""),
-        "receipt": dict(receipt),
+        # Revalidation uses the current regular files and their exact hashes.
+        # Preserve the captured receipt identity across a path-only relocation
+        # so the existing postburn request remains reusable.
+        "receipt": dict(stored_receipt),
         "receipt_sha256": receipt_sha256,
         "witness_text": witness_text,
     }

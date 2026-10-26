@@ -1,3 +1,6 @@
+from src.autoslice.discovery_channels import batch_from_rows
+from tests.test_final_review_meaning_policy import equivalent
+from src.autoslice.final_review_meaning_policy import POLICY_VERSION as MEANING_POLICY_VERSION
 import ast
 import hashlib
 import inspect
@@ -35,6 +38,78 @@ from src.autoslice.producer_boundary_owner_contract import (
 from tests.test_delivery_fast_path import _operator_text_owned_spec
 
 
+@pytest.mark.parametrize("mode", [None, "per_finding"])
+def test_exact_default_retains_asr_ledger_and_range_background(monkeypatch, mode):
+    """Old cue ledgers stay on the legacy path; new tasks require original M."""
+    if mode is None:
+        monkeypatch.delenv("AUTOSLICE_FINAL_REVIEW_MODE", raising=False)
+    else:
+        monkeypatch.setenv("AUTOSLICE_FINAL_REVIEW_MODE", mode)
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _: "")
+    monkeypatch.setattr(pipeline, "discover_candidate_pronoun_findings", lambda *a, **k: ([], {}))
+    row = {"cue": 1, "kind": "context", "repair_class": "phonetic", "why": "历史问题"}
+    authority = {"final_review_audit": {"findings": [
+        {"cue_index": 1, "discovery_task": {"asr_only": True}}]}}
+    monkeypatch.setattr(pipeline, "_pending_current_exact_findings", lambda *a, **k: [row])
+    ranges = ({"observation_id": "retained-range-context"},)
+    captured = {}
+    def background(*args, **kwargs):
+        captured["range_audio"] = kwargs["range_audio"]
+        return "range background", {}
+    monkeypatch.setattr(pipeline, "_bound_source_evidence_context", background)
+    def audit(*args, **kwargs):
+        captured["audit"] = kwargs
+        return []
+    monkeypatch.setattr(pipeline, "audit_final_subtitles", audit)
+    result = pipeline._run_exact_final_release_review(
+        srt_text=_srt("第一句", "第二句", "第三句"), correction_audit=_correction_pass(),
+        adapters=_adapters(), authoritative_chat=(), selection_hook="", clip_context={},
+        verified_authority_audit=authority, prior_range_acoustic_observations=ranges,
+        final_review_llm=lambda _: pytest.fail("model call is forbidden"))
+    if mode is None:
+        assert captured["range_audio"] == list(ranges)
+        assert captured["audit"]["extra_raw_findings"] == [row]
+        assert "discovery_batch" not in captured["audit"]
+        assert "ASR_LEDGER_ORIGINAL_TASK_MATERIAL_REQUIRED" not in result.get("reason_codes", [])
+    else:
+        assert "audit" not in captured
+        assert "ASR_LEDGER_ORIGINAL_TASK_MATERIAL_REQUIRED" in result["reason_codes"]
+
+
+def test_default_auditor_preserves_historical_risk_priming(monkeypatch):
+    from src.autoslice import final_review_auditor as auditor
+    monkeypatch.delenv("AUTOSLICE_FINAL_REVIEW_MODE", raising=False)
+    prompts = []
+    class BeforeModel(BaseException):
+        pass
+    def stop(prompt):
+        prompts.append(prompt)
+        raise BeforeModel
+    with pytest.raises(BeforeModel):
+        auditor.audit_final_subtitles(_srt("第一句"), llm_call=stop, extract_json=json.loads,
+            extra_raw_findings=[{"cue": 1, "kind": "context", "why": "保留原问题"}])
+    assert "本轮需逐项重新评估风险的既有疑点" in prompts[0]
+    assert "保留原问题" in prompts[0]
+    assert "历史疑点按当前全部语境重新判断" in prompts[0]
+
+
+def test_default_auditor_ignores_registry_fields_from_model_row(monkeypatch):
+    from src.autoslice import final_review_auditor as auditor
+    monkeypatch.delenv("AUTOSLICE_FINAL_REVIEW_MODE", raising=False)
+    rows = auditor.audit_final_subtitles(_srt("第一句"),
+        llm_call=lambda _: json.dumps({"findings": [{"cue": 1, "kind": "context",
+            "repair_class": "disclosure_only", "proposed_full_cue": None,
+            "why": "核对原话", "content_risk": "meaning_reversal", "risk_basis": "原意未定",
+            "discovery_task": {"asr_only": True}, "decision_authority": "NONE_DISCOVERY_ONLY",
+            "_discovery_cue_normalization": "untrusted_registry_field"}]}),
+        extract_json=json.loads)
+    assert len(rows) == 1
+    assert "discovery_task" not in rows[0]
+    assert "decision_authority" not in rows[0]
+    assert not rows[0]["force_acoustic"]
+    assert "untrusted_registry_field" not in rows[0].get("input_contract_normalizations", [])
+
+
 def _srt(*texts: str) -> str:
     def timestamp(seconds: int) -> str:
         minutes, seconds = divmod(seconds, 60)
@@ -49,6 +124,487 @@ def _srt(*texts: str) -> str:
     )
 
 
+def _literal_review_llm(callback):
+    """Give literal-router fixtures an explicit unresolved current risk.
+
+    These fixtures test acoustic/typed mechanics. They do not claim that a
+    missing model risk field or a scalar noncritical judgment can release.
+    Explicit risk/equivalence responses remain untouched.
+    """
+    def review(prompt):
+        raw = callback(prompt)
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):
+            return raw
+        if not isinstance(parsed, dict) or not isinstance(parsed.get('findings'), list):
+            return raw
+        if not parsed['findings'] and '本次不授权改字、删字或听音调度' in prompt:
+            agenda = json.loads(prompt.rsplit('\n', 1)[-1])
+            parsed['findings'] = [{'cue': row['cue'], 'content_risk': 'meaning_reversal',
+                'risk_basis': '本fixture的当前完整语境仍有实质文字疑点，交普通typed核实。'} for row in agenda]
+        for row in parsed['findings']:
+            if isinstance(row, dict) and 'content_risk' not in row:
+                row.update(content_risk='meaning_reversal',
+                    risk_basis='本fixture把具体逐字疑点保留为未决，不能以缺风险字段放行。')
+        return json.dumps(parsed, ensure_ascii=False)
+    return review
+
+
+def _legacy_pending_audio_authority(tmp_path):
+    from tests.test_producer_current_text_continuation import _valid_authority, _srt as fixture_srt
+
+    authority, context, _ = _valid_authority(tmp_path)
+    # The shared continuation fixture now builds a fresh CLEAN discovery. This
+    # test needs actual legacy pending inputs; create them explicitly instead
+    # of expecting production to resurrect rows the constructor removed.
+    source_cues = pipeline.parse_srt_cues(fixture_srt())
+    authority["final_review_audit"]["meaning_policy"] = "legacy-scalar-disclosure"
+    authority["final_review_audit"]["unresolved_findings_disclosed"] = [
+        {
+            "cue_index": index, "kind": "context", "repair_class": "phonetic",
+            "suspect": source_cues[index - 1].text, "proposed_full_cue": None,
+            "base_text_sha256": hashlib.sha256(source_cues[index - 1].text.encode()).hexdigest(),
+            "content_risk": "noncritical_uncertainty",
+            "risk_basis": "Synthetic legacy scalar assessment, not current authority.",
+            "why": "Synthetic previously disclosed audible question remains pending.",
+        }
+        for index in (17, 11, 19)
+    ]
+    authority["exact_final_cpa_self_heal"] = authority["final_review_audit"]["exact_final_cpa_self_heal"]
+    repair = authority["exact_final_cpa_self_heal"]["passes"][-1]["repairs"][-1]
+    repair["mutation_authority"]["basis"] = "CPA_HISTORY_CONVERGENCE_APPLY_PROPOSED"
+    repair["acoustic_witness_binding"] = {"judge": {"needs_audio": True}}
+    return fixture_srt(), authority, context, repair
+
+
+@pytest.mark.parametrize('provider,word_timing', [('moss', False), ('mai', True)])
+def test_bound_native_context_reaches_discovery_without_creating_findings(tmp_path, monkeypatch, provider, word_timing):
+    from tests.test_independent_context_adjudication import _native_range_artifacts
+
+    srt, _finding, context, _request, observation, paths = _native_range_artifacts(tmp_path, provider, word_timing=word_timing)
+    before = {role: path.read_bytes() for role, path in paths.items()}
+    discovery_prompts, pronoun_contexts = [], []
+
+    def pronoun(_srt, **kwargs):
+        pronoun_contexts.append(kwargs["candidate_context_text"])
+        return [], {}
+
+    monkeypatch.setattr(pipeline, "discover_candidate_pronoun_findings", pronoun)
+    # This fixture supplies the real source/range validator contract, while
+    # the unrelated whole-scene prose renderer expects additional metadata.
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _context: "scene context")
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=srt, correction_audit=_correction_pass(), adapters=_adapters(),
+        authoritative_chat=(), selection_hook="", clip_context=context,
+        timeline_offset_ms=100,
+        prior_range_acoustic_observations=[observation, observation],
+        final_review_llm=_literal_review_llm(lambda prompt: discovery_prompts.append(prompt) or '{"findings": []}'),
+    )
+    audit = receipt["source_context_discovery_audit"]
+    assert audit["status"] == "VALIDATED_CONTEXT_ONLY"
+    assert audit["range_count"] == 1
+    assert audit["mutation_authorized"] is False and audit["provider_calls"] == 0
+    assert discovery_prompts and pronoun_contexts
+    projected = json.loads(pronoun_contexts[0].split('\n')[-1])['range_audio'][0]
+    checked = pipeline.build_context_adjudication_request(srt,
+        {**_finding, '_prior_range_acoustic_observations': [observation]},
+        clip_context=context, source_media_timeline_offset_ms=100)['context_only_range_acoustic_observations'][0]
+    assert all(checked['verdict']['exact_transcript'] in text for text in discovery_prompts + pronoun_contexts)
+    assert projected['native_segments'] == checked['verdict']['native_observation']['native_segments']
+    assert projected['native_segment_time_domain'] == 'audio_crop_local_ms'
+    assert projected['native_audio_crop_source_ms'] == [5100, 19100]
+    assert projected['source_to_delivery_offset_ms'] == 100
+    assert 'no human identity' in projected['speaker_id_scope']
+    if word_timing:
+        assert projected['native_word_overlap_evidence'] == checked['native_word_overlap_evidence']
+    assert receipt["findings"] == []
+    assert {role: path.read_bytes() for role, path in paths.items()} == before
+
+
+@pytest.mark.parametrize("drift", [None, "parent", "audio"])
+def test_tone_only_context_reaches_discovery_on_recording_identity(tmp_path, drift):
+    from tests.test_native_acoustic_feature_context import _packet, SOURCE, OFFSET
+    from tests.test_independent_context_adjudication import _padded_recording_provenance
+
+    envelope, clip, files = _packet(tmp_path)
+    original_sha, original, *_ = _padded_recording_provenance(tmp_path, files["paths"]["source_media"])
+    clip["pieces"][0]["source_media_sha256"] = original_sha
+    if drift:
+        (original if drift == "parent" else files["paths"]["audio"]).write_bytes(b"drift")
+    text, audit = pipeline._bound_source_evidence_context(
+        SOURCE, clip, OFFSET, range_audio=[envelope, envelope], earlier_screen=(), range_screen=(),
+    )
+    assert audit["range_count"] == (0 if drift else 1)
+    assert audit["mutation_authorized"] is False and audit["provider_calls"] == 0
+    if drift:
+        assert text == ""
+    else:
+        row, = json.loads(text.split("\n")[-1])["range_audio"]
+        assert row["tone_sequence"] == ["2", "3", "1", "4"]
+        assert row["evidence_scope"] == "PARTIAL_CONTEXT"
+        assert row["transcript_scope"] == "TONE_FEATURES_ONLY_NO_TRANSCRIPT"
+        assert row["tone_feature_window"]["delivery_ms"] == [74060, 74740]
+        assert row["observed_pinyin"] is None and row["exact_transcript"] is None
+        assert row["witness_request_sha256"] == envelope["artifact_bindings"]["request_sha256"]
+
+
+@pytest.mark.parametrize("drift", ["audio", "input", "source", "geometry"])
+def test_unvalidated_native_context_is_not_discovery_evidence(tmp_path, drift):
+    from tests.test_independent_context_adjudication import _native_range_artifacts
+
+    srt, _finding, context, _request, observation, paths = _native_range_artifacts(tmp_path, "moss")
+    if drift == "geometry":
+        srt = srt.replace("00:00:05,000", "00:00:04,000")
+    else:
+        paths[{"audio": "audio_clip", "input": "input", "source": "source_media"}[drift]].write_bytes(b"drift")
+    text, audit = pipeline._bound_source_evidence_context(
+        srt, context, 100, range_audio=[observation], earlier_screen=(), range_screen=(),
+    )
+    assert text == ""
+    assert audit["status"] == "NO_VALIDATED_CONTEXT"
+    assert audit["range_count"] == audit["screen_frame_count"] == 0
+
+
+def test_bound_range_discovery_distinguishes_old_observation_from_current_text(tmp_path):
+    from tests.test_independent_context_adjudication import _native_range_artifacts
+
+    srt, _finding, context, _request, observation, _paths = _native_range_artifacts(tmp_path, "moss")
+    text, audit = pipeline._bound_source_evidence_context(
+        srt.replace("当前句", "现在的句"), context, 100,
+        range_audio=[observation], earlier_screen=(), range_screen=(),
+    )
+    assert audit["status"] == "VALIDATED_CONTEXT_ONLY"
+    projected = json.loads(text.split("\n")[-1])["range_audio"][0]
+    assert projected["observed_cue_texts"][1]["text"] == "当前句"
+    assert projected["current_cue_texts"][1]["text"] == "现在的句"
+    assert projected["observed_srt_sha256"] == hashlib.sha256(srt.encode()).hexdigest()
+
+
+@pytest.mark.parametrize("drift", [None, "input", "audio"])
+def test_bound_pinyin_range_discovery_uses_fully_covered_anchor(tmp_path, drift):
+    from tests.test_independent_context_adjudication import _range_artifacts, _range_clip_context
+
+    srt = _srt("第一句", "第二句", "当前句", "第四句", "第五句", "第六句")
+    context = _range_clip_context()
+    finding = {"cue_index": 3, "suspect": "当前", "suggestion": "目前", "proposed_full_cue": "目前句"}
+    request = pipeline.build_context_adjudication_request(
+        srt, finding, clip_context=context, source_media_timeline_offset_ms=100,
+    )
+    observation, _broad, _window = _range_artifacts(tmp_path, srt, request, matched_start_ms=5500)
+    checked = pipeline.build_context_adjudication_request(
+        srt, {**finding, "_prior_range_acoustic_observations": [observation]},
+        clip_context=context, source_media_timeline_offset_ms=100,
+    )["context_only_range_acoustic_observations"][0]
+    assert checked["cue_texts"][0]["coverage"] == "PARTIAL"
+    if drift:
+        Path(checked["artifact_bindings"]["input_path" if drift == "input" else "audio_clip_path"]).write_bytes(b"drift")
+    text, audit = pipeline._bound_source_evidence_context(
+        srt, context, 100, range_audio=[checked, checked], earlier_screen=(), range_screen=(),
+    )
+    assert audit["range_count"] == (0 if drift else 1)
+    assert audit["provider_calls"] == 0 and audit["mutation_authorized"] is False
+    if drift:
+        assert text == ""
+    else:
+        row = json.loads(text.split("\n")[-1])["range_audio"][0]
+        assert row["observed_pinyin"] == "ran ge zhen"
+        assert row["exact_transcript"] is None
+        assert row["provider"] == "gemini_api"
+        assert row["witness_request_sha256"] == checked["witness_request_sha256"]
+
+
+def test_empty_discovery_reopens_unsettled_legacy_acoustic_history(tmp_path, monkeypatch):
+    srt, authority, context, repair = _legacy_pending_audio_authority(tmp_path)
+    before = json.dumps(authority, sort_keys=True)
+    monkeypatch.setattr(pipeline, "discover_candidate_pronoun_findings", lambda *_a, **_k: ([], {}))
+    seen = []
+
+    def adjudicate(_srt, findings, **_kwargs):
+        seen.extend(findings)
+        return list(findings), []
+
+    monkeypatch.setattr(pipeline, "adjudicate_exact_release_findings", adjudicate)
+    monkeypatch.setattr(pipeline, "converge_reconsidered_exact_final_findings", lambda _srt, findings, **_kw: (list(findings), []))
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=srt, correction_audit=_correction_pass(), adapters=_adapters(),
+        authoritative_chat=(), selection_hook="", clip_context=context,
+        verified_authority_audit=authority,
+        final_review_llm=_literal_review_llm(lambda _prompt: '{"findings": []}'),
+    )
+    assert receipt["release_gate"] == "BLOCK"
+    assert receipt["pending_legacy_acoustic_review"]["cue_indexes"] == [repair["cue_index"]]
+    # The saved review also contains three old scalar disclosures. Current
+    # policy must reopen them, not silently accept their missing equivalence
+    # evidence merely because this test targets the acoustic-history row.
+    assert receipt["pending_current_exact_review"]["cue_indexes"] == [17, 11, 19]
+    assert {row["cue_index"] for row in seen} == {17, 11, 19, repair["cue_index"]}
+    legacy, = [row for row in seen if row["cue_index"] == repair["cue_index"]]
+    assert legacy["suspect"] == repair["after"]
+    assert legacy["proposed_full_cue"] is None
+    assert json.dumps(authority, sort_keys=True) == before
+
+
+def test_empty_discovery_keeps_bound_current_unresolved_cue(tmp_path, monkeypatch):
+    _old_srt, _old_authority, context, _repair = _legacy_pending_audio_authority(tmp_path)
+    srt = _srt("又不是你妈妈点个赞嘛")
+    cues = pipeline.parse_srt_cues(srt)
+    cue = cues[0]
+    authority = {"final_review_audit": {
+        "release_gate": "BLOCK",
+        "reviewed_srt_sha256": "sha256:" + hashlib.sha256(srt.encode()).hexdigest(),
+        "findings": [{
+            "cue_index": 1, "repair_class": "phonetic", "why": "tail unresolved",
+            "base_text_sha256": hashlib.sha256(cue.text.encode()).hexdigest(),
+            "proposed_full_cue": "an unaccepted old proposal",
+            "exact_release_adjudication": {"request": {
+                "current_cue": cue.text, "matched_start_ms": cue.start_ms,
+                "matched_end_ms": cue.end_ms}},
+        }],
+    }}
+    before = json.dumps(authority, sort_keys=True)
+    seen = []
+    monkeypatch.setattr(pipeline, "discover_candidate_pronoun_findings", lambda *_a, **_k: ([], {}))
+
+    def adjudicate(_srt, findings, **_kwargs):
+        seen.extend(findings)
+        return list(findings), []
+
+    monkeypatch.setattr(pipeline, "adjudicate_exact_release_findings", adjudicate)
+    monkeypatch.setattr(pipeline, "converge_reconsidered_exact_final_findings",
+                        lambda _srt, findings, **_kw: (list(findings), []))
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=srt, correction_audit=_correction_pass(), adapters=_adapters(),
+        authoritative_chat=(), selection_hook="", clip_context=context,
+        verified_authority_audit=authority,
+        final_review_llm=_literal_review_llm(lambda _prompt: '{"findings": []}'),
+    )
+    assert receipt["release_gate"] == "BLOCK"
+    assert receipt["pending_current_exact_review"]["cue_indexes"] == [1]
+    assert len(seen) == 1
+    assert seen[0]["suspect"] == cue.text
+    assert seen[0]["proposed_full_cue"] is None
+    assert json.dumps(authority, sort_keys=True) == before
+
+
+def _pending_successor_with_typed_audio_gate(tmp_path):
+    from tests.test_producer_current_text_continuation import _caption_successor_clock
+
+    authority, previous_srt, current_srt = _caption_successor_clock(tmp_path)
+    cue = pipeline.parse_srt_cues(previous_srt)[0]
+    proposed = cue.text[:-1] + "啊"
+    finding = {
+        "cue_index": 1,
+        "suspect": cue.text[-1],
+        "suggestion": "啊",
+        "proposed_full_cue": proposed,
+        "repair_class": "phonetic",
+        "base_text_sha256": hashlib.sha256(cue.text.encode()).hexdigest(),
+    }
+    request = pipeline.build_context_adjudication_request(previous_srt, finding)
+    adjudication = {
+        "schema_version": "subtitle-span-adjudication.v1",
+        "status": "UNCERTAIN",
+        "repaired": False,
+        "reason_code": "HISTORY_CONVERGENCE_ACOUSTIC_WITNESS_REQUIRED",
+        "policy_branch": "HISTORY_CONVERGENCE_DOWNGRADED_TO_DISCLOSURE_ONLY",
+        "timing_immutable": True,
+        "request": request,
+        "history_convergence_acoustic_witness": {
+            "schema_version": "history-convergence-acoustic-witness-authority.v1",
+            "status": "BLOCK",
+            "reason_code": "CPA_REQUESTS_MORE_AUDIO",
+            "judge_prompt_sha256": "a" * 64,
+            "judge_completion_sha256": "b" * 64,
+            "judge_served_from_cache": False,
+            "needs_audio": True,
+            "reason": "历史完整句仍需补听",
+        },
+        "decision_authority": "CPA_PROPOSAL_ONLY",
+        "witness_authority": "ACOUSTIC_WITNESS_REQUIRED",
+    }
+    previous_sha = "sha256:" + hashlib.sha256(previous_srt.encode()).hexdigest()
+    review = authority["final_review_audit"]
+    review.update(
+        release_gate="BLOCK",
+        reviewed_srt_sha256=previous_sha,
+        findings=[{
+            "cue_index": 1,
+            "suspect": cue.text[-1],
+            "repair_class": "phonetic",
+            "base_text_sha256": finding["base_text_sha256"],
+            "exact_release_adjudication": adjudication,
+        }],
+    )
+    return authority, previous_srt, current_srt, adjudication
+
+
+def test_current_successor_carries_typed_audio_gate_without_relabeling_old_request(tmp_path):
+    authority, previous_srt, current_srt, adjudication = (
+        _pending_successor_with_typed_audio_gate(tmp_path)
+    )
+
+    pending = pipeline._pending_current_exact_findings(current_srt, authority)
+
+    assert len(pending) == 1
+    row = pending[0]
+    assert row["proposed_full_cue"] is None
+    assert "mutation_authority" not in row
+    assert row["exact_release_adjudication"] == adjudication
+    assert row["exact_release_adjudication"]["request"]["whole_clip_current_srt"] == previous_srt
+    assert row["_history_audio_srt_successor"]["status"] == "PASS"
+    assert row["_history_audio_srt_successor"]["reviewed_srt_sha256"] == (
+        "sha256:" + hashlib.sha256(previous_srt.encode()).hexdigest()
+    )
+    assert row["_history_audio_srt_successor"]["current_srt_sha256"] == (
+        "sha256:" + hashlib.sha256(current_srt.encode()).hexdigest()
+    )
+
+    # The auditor receives a new microcue row first; the old typed gate must
+    # survive that identity merge without changing the old request bytes.
+    cue = pipeline.parse_srt_cues(current_srt)[0]
+    microcue = {
+        "cue": 1,
+        "kind": "context",
+        "suspect": cue.text,
+        "proposed_full_cue": None,
+        "repair_class": "phonetic",
+    }
+    normalized = pipeline.audit_final_subtitles(
+        current_srt,
+        llm_call=_literal_review_llm(lambda _prompt: '{"findings": []}'),
+        extract_json=json.loads,
+        discovery_batch=batch_from_rows([microcue, row]),
+
+    )
+    assert len(normalized) == 1
+    carried = normalized[0]["exact_release_adjudication"]
+    assert normalized[0]["proposed_full_cue"] is None
+    assert "mutation_authority" not in normalized[0]
+    assert carried["history_convergence_acoustic_witness"]["needs_audio"] is True
+    assert carried["request"] == adjudication["request"]
+
+
+def test_current_successor_rejects_malformed_typed_audio_gate(tmp_path):
+    authority, _previous_srt, current_srt, _adjudication = (
+        _pending_successor_with_typed_audio_gate(tmp_path)
+    )
+    finding = authority["final_review_audit"]["findings"][0]
+    finding["exact_release_adjudication"][
+        "history_convergence_acoustic_witness"
+    ]["judge_prompt_sha256"] = "forged"
+
+    pending = pipeline._pending_current_exact_findings(current_srt, authority)
+
+    assert len(pending) == 1
+    assert "exact_release_adjudication" not in pending[0]
+    assert "_history_audio_srt_successor" not in pending[0]
+
+
+@pytest.mark.parametrize("change", ["text", "window", "review_sha", "already_passed"])
+def test_current_unresolved_nomination_rejects_stale_or_completed_binding(change):
+    srt = _srt("current")
+    cue = pipeline.parse_srt_cues(srt)[0]
+    row = {"cue_index": 1, "base_text_sha256": hashlib.sha256(cue.text.encode()).hexdigest(),
+           "exact_release_adjudication": {"request": {
+               "current_cue": cue.text, "matched_start_ms": cue.start_ms,
+               "matched_end_ms": cue.end_ms}}}
+    review = {"release_gate": "BLOCK",
+              "reviewed_srt_sha256": "sha256:" + hashlib.sha256(srt.encode()).hexdigest(),
+              "findings": [row]}
+    if change == "text":
+        row["base_text_sha256"] = "0" * 64
+    elif change == "window":
+        row["exact_release_adjudication"]["request"]["matched_start_ms"] += 1
+    elif change == "review_sha":
+        review["reviewed_srt_sha256"] = "sha256:" + "0" * 64
+    else:
+        review["release_gate"] = "PASS"
+    assert pipeline._pending_current_exact_findings(srt, {"final_review_audit": review}) == []
+
+
+def test_requestless_current_doubt_remains_pending_without_old_authority():
+    srt = _srt("哼哼哼哼哼哼")
+    cue = pipeline.parse_srt_cues(srt)[0]
+    row = {
+        "cue_index": 1, "base_text_sha256": hashlib.sha256(cue.text.encode()).hexdigest(),
+        "suspect": "哼哼哼", "proposed_full_cue": None, "why": "原观察请求构造失败",
+        "exact_release_adjudication": {"status": "UNCERTAIN", "reason_code": "REQUEST_INVALID"},
+    }
+    review = {"release_gate": "BLOCK",
+              "reviewed_srt_sha256": "sha256:" + hashlib.sha256(srt.encode()).hexdigest(),
+              "findings": [row]}
+    pending = pipeline._pending_current_exact_findings(srt, {"final_review_audit": review})
+    assert len(pending) == 1
+    assert pending[0]["suspect"] == cue.text
+    assert pending[0]["proposed_full_cue"] is None
+    assert "exact_release_adjudication" not in pending[0]
+    row["base_text_sha256"] = "0" * 64
+    assert pipeline._pending_current_exact_findings(srt, {"final_review_audit": review}) == []
+
+
+@pytest.mark.parametrize("change", ["new_terminal_intent", "different_current_text", "different_window"])
+def test_legacy_acoustic_history_is_scoped_to_the_surviving_cue(tmp_path, change):
+    srt, authority, _context, repair = _legacy_pending_audio_authority(tmp_path)
+    if change == "new_terminal_intent":
+        repair["acoustic_witness_binding"]["judge"]["needs_audio_requested"] = False
+    elif change == "different_current_text":
+        # Preserve the valid historical chain; the earlier, superseded repair
+        # no longer owns this final cue's actual text.
+        repair = authority["exact_final_cpa_self_heal"]["passes"][0]["repairs"][0]
+        authority["exact_final_cpa_self_heal"]["passes"][-1]["repairs"][-1]["acoustic_witness_binding"]["judge"]["needs_audio_requested"] = False
+        repair["mutation_authority"]["basis"] = "CPA_HISTORY_CONVERGENCE_APPLY_PROPOSED"
+        repair["acoustic_witness_binding"] = {"judge": {"needs_audio": True}}
+        repair["cue_index"] = 83
+    else:
+        repair["matched_start_ms"] += 1
+    assert pipeline._pending_legacy_acoustic_convergence_findings(srt, authority) == []
+
+
+def test_exact_review_and_word_judge_consume_current_roles_in_prompt_and_request(monkeypatch):
+    from src.autoslice import acoustic_witness_adjudication as word_judge
+    from src.autoslice.producer_nested_acoustic import caption_audio_roles_context
+
+    srt = _srt("source words", "host words", "overlapping words", "unknown words")
+    roles = {"status": "EVIDENCE_ONLY", "mutation_authorized": False,
+             "uniform_host_display_only": True,
+             "final_srt_sha256": "sha256:" + hashlib.sha256(srt.encode()).hexdigest(),
+             "source_media_sha256": "sha256:" + "a" * 64,
+             "rows": [{"cue_index": i, "interval_ms": [i * 5000, i * 5000 + 4000],
+                       "role": role, "action": "KEEP"}
+                      for i, role in enumerate(("source_media", "host", "overlap", "unknown"), 1)]}
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _context: "whole clip context")
+    prompts = []
+
+    def model(prompt):
+        prompts.append(prompt)
+        return json.dumps({"findings": []})
+
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=srt, correction_audit=_correction_pass(), adapters=_adapters(),
+        authoritative_chat=(), selection_hook="", clip_context={},
+        verified_authority_audit={"caption_audio_roles": roles}, final_review_llm=_literal_review_llm(model),
+    )
+    assert receipt["status"] == "CLEAN"
+    assert caption_audio_roles_context(srt, roles) in prompts[0]
+    assert receipt["caption_audio_role_context_sha256"]
+    finding = {"cue_index": 1, "suspect": "source", "suggestion": "original",
+               "proposed_full_cue": "original words", "_caption_audio_roles": roles}
+    request = pipeline.build_context_adjudication_request(srt, finding)
+    prompt = word_judge._word_choice_prompt(
+        llm_call=model, check_request=request,
+        witness={"status": "UNAVAILABLE", "reason_code": "CPA_TEXT_FIRST_NOT_REQUESTED"},
+    )[0]
+    assert caption_audio_roles_context(srt, roles) in prompt
+    changed = json.loads(json.dumps(roles))
+    changed["rows"][0]["role"] = "host"
+    other = pipeline.build_context_adjudication_request(srt, {**finding, "_caption_audio_roles": changed})
+    assert other["request_sha256"] != request["request_sha256"]
+    stale = pipeline.build_context_adjudication_request(srt.replace("source words", "changed words"),
+                                                      {**finding, "suspect": "changed", "_caption_audio_roles": roles})
+    assert "caption_audio_roles" not in stale
+
+
 def test_entity_context_runs_runtime_cpa_without_ambient_credentials(tmp_path, monkeypatch):
     from types import SimpleNamespace
     from tests.test_read_aloud_llm_verifier import _request
@@ -56,6 +612,7 @@ def test_entity_context_runs_runtime_cpa_without_ambient_credentials(tmp_path, m
     prompts = []
     monkeypatch.delenv("CPA_BASE_URL", raising=False)
     monkeypatch.delenv("CPA_API_KEY", raising=False)
+    monkeypatch.setattr(pipeline, "_ensure_local_native_audio_budget", lambda *_args: None)
     monkeypatch.setattr(pipeline, "witness_audio_locally_resolvable", lambda *_args, **_kw: False)
     monkeypatch.setattr(pipeline, "load_referent_groups", lambda *_args, **_kw: [])
 
@@ -79,6 +636,194 @@ def test_entity_context_runs_runtime_cpa_without_ambient_credentials(tmp_path, m
     assert len(prompts) == 1
     assert verdict["decision_authority"] == "CPA_JUDGE"
     assert verdict["canonical_entity"] == "歪了是什么颜色"
+
+
+def test_entity_context_preserves_independent_witness_observer_seam(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from src.autoslice import read_aloud_llm_verifier
+
+    class CpaVerifier:
+        def __call__(self, request):
+            return {"status": "OBSERVED", "request": request}
+
+        def observe_independent_witnesses(self, request):
+            return {"served": request}
+
+    cpa_verifier = CpaVerifier()
+    monkeypatch.setattr(
+        pipeline, "_ensure_local_native_audio_budget", lambda *_args: None
+    )
+    monkeypatch.setattr(
+        pipeline, "witness_audio_locally_resolvable", lambda *_args, **_kw: False
+    )
+    monkeypatch.setattr(pipeline, "load_referent_groups", lambda *_args, **_kw: [])
+    monkeypatch.setattr(
+        pipeline, "_build_final_review_llm_call", lambda: lambda _prompt: "{}"
+    )
+    monkeypatch.setattr(
+        read_aloud_llm_verifier,
+        "build_cpa_read_aloud_verifier",
+        lambda *_args, **_kwargs: cpa_verifier,
+    )
+
+    context = pipeline._build_entity_verification_context(
+        spec={"date": "2026-09-29"},
+        padded=tmp_path / "padded.mp4",
+        padded_dur=20_000,
+        host="localhost",
+        text_override_path=None,
+        cid="seam-test",
+        out_root=tmp_path,
+        srt_text=_srt("候选字幕"),
+        authoritative_chat=[],
+        adapters=SimpleNamespace(
+            profile_asset_file=lambda _name: tmp_path / "entities.json",
+            topic_graph_disabled=lambda: True,
+        ),
+    )
+
+    request = {"cue_index": 1}
+    assert context.verify_confusable_entity.observe_independent_witnesses(request) == {
+        "served": request
+    }
+
+
+def test_semantic_range_observer_reaches_normal_auditor_through_both_wrappers(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from src.autoslice import entity_audio_verifier, native_context_witness
+
+    calls = []
+
+    def narrow(_request):
+        raise AssertionError("range routing must not dispatch the narrow verifier")
+
+    def observe(*, check_request, range_witness_request):
+        calls.append((check_request, range_witness_request))
+        return [{"status": "OBSERVED", "evidence_scope": "RANGE_CONTEXT_ONLY"}]
+
+    narrow.observe_range_context = observe
+    monkeypatch.setattr(pipeline, "_ensure_local_native_audio_budget", lambda *_args: None)
+    monkeypatch.setattr(pipeline, "witness_audio_locally_resolvable", lambda *_args, **_kw: True)
+    monkeypatch.setattr(entity_audio_verifier, "build_local_audio_entity_verifier", lambda **_kw: narrow)
+    monkeypatch.setattr(native_context_witness, "build_independent_context_witnesses", lambda **_kw: narrow)
+    monkeypatch.setattr(pipeline, "load_referent_groups", lambda *_args, **_kw: [])
+    monkeypatch.setattr(pipeline, "_build_final_review_llm_call", lambda: narrow)
+    context = pipeline._build_entity_verification_context(
+        spec={"date": "2026-09-29"}, padded=tmp_path / "source.mp4",
+        padded_dur=20_000, host="localhost", text_override_path=None,
+        cid="range-composition", out_root=tmp_path, srt_text=_srt("候选字幕"),
+        authoritative_chat=[], adapters=SimpleNamespace(
+            profile_asset_file=lambda _name: tmp_path / "entities.json",
+            topic_graph_disabled=lambda: True,
+        ),
+    )
+    check = {"request_sha256": "current-cue", "matched_start_ms": 1_000}
+    geometry = {"matched_start_ms": 500, "matched_end_ms": 5_000}
+    actual = context.verify_confusable_entity.observe_range_context(
+        check_request=check, range_witness_request=geometry,
+    )
+    assert actual == [{"status": "OBSERVED", "evidence_scope": "RANGE_CONTEXT_ONLY"}]
+    assert calls == [(check, geometry)]
+    assert calls[0][0] is check and calls[0][1] is geometry
+
+
+def test_entity_context_attaches_lazy_independent_witness_lane(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from src.autoslice import entity_audio_verifier, read_aloud_llm_verifier
+
+    class Fallback:
+        def __call__(self, request):
+            return {"status": "FALLBACK", "request": request}
+
+    padded = tmp_path / "padded.mp4"
+    padded.write_bytes(b"source bytes; no provider call")
+    fallback = Fallback()
+    monkeypatch.setattr(pipeline, "_ensure_local_native_audio_budget", lambda *_args: None)
+    monkeypatch.setattr(
+        pipeline, "witness_audio_locally_resolvable", lambda *_args, **_kw: True
+    )
+    monkeypatch.setattr(
+        entity_audio_verifier,
+        "build_local_audio_entity_verifier",
+        lambda **_kwargs: fallback,
+    )
+    monkeypatch.setattr(
+        pipeline, "_build_final_review_llm_call", lambda: lambda _prompt: "{}"
+    )
+    monkeypatch.setattr(
+        read_aloud_llm_verifier,
+        "build_cpa_read_aloud_verifier",
+        lambda _call, *, next_verifier: next_verifier,
+    )
+
+    context = pipeline._build_entity_verification_context(
+        spec={"date": "2026-09-29"},
+        padded=padded,
+        padded_dur=20_000,
+        host="localhost",
+        text_override_path=None,
+        cid="lazy-independent",
+        out_root=tmp_path,
+        srt_text=_srt("候选字幕"),
+        authoritative_chat=[],
+        adapters=SimpleNamespace(
+            profile_asset_file=lambda _name: tmp_path / "entities.json",
+            topic_graph_disabled=lambda: True,
+        ),
+    )
+
+    observer = context.verify_confusable_entity.observe_independent_witnesses
+    assert callable(observer)
+    assert not (tmp_path / "independent-context").exists()
+
+
+@pytest.mark.parametrize("seam", ["observe_secondary_audio_evidence", "observe_secondary_witnesses"])
+def test_bound_secondary_receipts_reach_normal_final_consumer(tmp_path, monkeypatch, seam):
+    from types import SimpleNamespace
+    from src.autoslice import entity_audio_verifier
+    from src.autoslice.independent_context_adjudication import independent_asr_candidates
+    from src.autoslice.final_review_auditor import build_context_adjudication_request
+    from src.autoslice.acoustic_witness_adjudication import build_witness_request
+    from tests.test_independent_context_adjudication import (
+        SOURCE, FINDING, _secondary, _secondary_payload,
+    )
+
+    request = build_context_adjudication_request(SOURCE, FINDING)
+    target = build_witness_request(request)
+    payload, bindings = _secondary_payload(tmp_path, request, [_secondary(target, "mai")])
+    calls = []
+
+    class Fallback:
+        def __call__(self, _request):
+            raise AssertionError("receipt consumption must not dispatch audio or CPA")
+
+    fallback = Fallback()
+
+    def observe(witness_request):
+        calls.append(witness_request)
+        return payload
+
+    setattr(fallback, seam, observe)
+    monkeypatch.setattr(pipeline, "_ensure_local_native_audio_budget", lambda *_args: None)
+    monkeypatch.setattr(pipeline, "witness_audio_locally_resolvable", lambda *_args, **_kw: True)
+    monkeypatch.setattr(entity_audio_verifier, "build_local_audio_entity_verifier", lambda **_kw: fallback)
+    monkeypatch.setattr(pipeline, "load_referent_groups", lambda *_args, **_kw: [])
+    monkeypatch.setattr(pipeline, "_build_final_review_llm_call", lambda: fallback)
+    context = pipeline._build_entity_verification_context(
+        spec={"date": "2026-09-29"}, padded=Path(bindings["source_media_path"]),
+        padded_dur=20_000, host="localhost", text_override_path=None,
+        cid="bound-secondary", out_root=tmp_path, srt_text=SOURCE,
+        authoritative_chat=[], adapters=SimpleNamespace(
+            profile_asset_file=lambda _name: tmp_path / "entities.json",
+            topic_graph_disabled=lambda: True,
+        ),
+    )
+    augmented, witness, audit = independent_asr_candidates(request, context.verify_confusable_entity)
+    assert calls == [target]
+    assert audit["status"] == "OBSERVED" and audit["candidate_count"] == 1
+    assert augmented["proposed_candidates"][0]["text"] == "然后他当时就是在做梦"
+    assert witness["mutation_authorized"] is False
+    assert not (tmp_path / "independent-context").exists()
 
 
 def test_fidelity_reverts_become_bounded_cpa_candidates(tmp_path):
@@ -425,6 +1170,210 @@ def _correction_pass() -> dict:
     }
 
 
+def test_exact_review_factory_preserves_handoff_order_and_postburn_dedup(
+    tmp_path, monkeypatch
+):
+    events = []
+    postburn_calls = []
+    correction_calls = []
+    exact_priority_batches = []
+    postburn_row = {"cue_index": 1, "reason": "postburn"}
+
+    monkeypatch.setattr(
+        pipeline,
+        "discover_priority_findings",
+        lambda *_args, **_kwargs: (events.append("micro") or ([], {})),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "validated_postburn_priority_findings",
+        lambda **_kwargs: (
+            events.append("postburn")
+            or postburn_calls.append(True)
+            or ([postburn_row], "sha256:" + "a" * 64)
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "fidelity_kept_contexts",
+        lambda *_args, **_kwargs: (),
+    )
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _context: "")
+    monkeypatch.setattr(pipeline, "caption_audio_roles_context", lambda *_args: "")
+    should_fail = {"value": True}
+
+    def correction(**_kwargs):
+        events.append("correction")
+        correction_calls.append(True)
+        if should_fail["value"]:
+            raise RuntimeError("correction failed")
+        return _correction_pass()
+
+    monkeypatch.setattr(pipeline, "exact_delivery_correction_audit", correction)
+
+    def exact(**kwargs):
+        events.append("exact")
+        exact_priority_batches.append(kwargs["priority_raw_findings"])
+        return {"status": "CLEAN"}
+
+    monkeypatch.setattr(pipeline, "_run_exact_final_release_review", exact)
+    monkeypatch.setattr(pipeline, "checkpoint_final_review_carryover", lambda *_args: events.append("checkpoint"))
+
+    callback = pipeline._build_exact_final_review_callback(
+        spec={},
+        out_root=tmp_path,
+        cid="factory-order",
+        padded=tmp_path / "padded.mp4",
+        adapters=_adapters(),
+        authoritative_chat=(),
+        clip_context={},
+        final_review_audit=_correction_pass(),
+        verify_confusable_entity=None,
+        truth_ownership=None,
+        screen_read_probe=None,
+    )
+
+    with pytest.raises(RuntimeError, match="correction failed"):
+        callback("1\n00:00:00,000 --> 00:00:01,000\ntext\n", {}, 0, 1_000)
+    assert events == ["micro", "correction"]
+    assert postburn_calls == []
+
+    should_fail["value"] = False
+    events.clear()
+    assert callback("1\n00:00:00,000 --> 00:00:01,000\ntext\n", {}, 0, 1_000)["status"] == "CLEAN"
+    assert events == ["micro", "correction", "postburn", "exact", "checkpoint"]
+    assert exact_priority_batches == [[postburn_row]]
+
+    events.clear()
+    assert callback("1\n00:00:00,000 --> 00:00:01,000\ntext\n", {}, 0, 1_000)["status"] == "CLEAN"
+    assert events == ["micro", "correction", "postburn", "exact", "checkpoint"]
+    assert postburn_calls == [True, True]
+    assert exact_priority_batches[-1] == []
+    assert len(correction_calls) == 3
+
+    continuation_audit = {
+        **_correction_pass(),
+        "correction_pass": _correction_pass(),
+    }
+    continuation_events = []
+    monkeypatch.setattr(
+        pipeline,
+        "discover_priority_findings",
+        lambda *_args, **_kwargs: (continuation_events.append("micro") or ([], {})),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "validated_postburn_priority_findings",
+        lambda **_kwargs: (continuation_events.append("postburn") or ([postburn_row], "sha256:" + "b" * 64)),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "exact_delivery_correction_audit",
+        lambda **_kwargs: (continuation_events.append("correction") or _correction_pass()),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_run_exact_final_release_review",
+        lambda **_kwargs: (continuation_events.append("exact") or {"status": "CLEAN"}),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "checkpoint_final_review_carryover",
+        lambda *_args: continuation_events.append("checkpoint"),
+    )
+    continuation_callback = pipeline._build_exact_final_review_callback(
+        spec={},
+        out_root=tmp_path,
+        cid="factory-continuation-order",
+        padded=tmp_path / "padded.mp4",
+        adapters=_adapters(),
+        authoritative_chat=(),
+        clip_context={},
+        final_review_audit=continuation_audit,
+        verify_confusable_entity=None,
+        truth_ownership=None,
+        screen_read_probe=None,
+        continuation_correction=True,
+    )
+    continuation_callback("1\n00:00:00,000 --> 00:00:01,000\ntext\n", {}, 0, 1_000)
+    assert continuation_events == ["micro", "postburn", "correction", "exact", "checkpoint"]
+
+
+
+@pytest.mark.parametrize("change", ["source_clock", "owner"])
+def test_prepared_callback_reuses_completed_negative_boundary_observation(tmp_path, monkeypatch, change):
+    import copy
+
+    monkeypatch.setattr(pipeline, "discover_priority_findings", lambda *_args, **_kwargs: ([], {}))
+    monkeypatch.setattr(pipeline, "validated_postburn_priority_findings", lambda **_kwargs: None)
+    monkeypatch.setattr(pipeline, "fidelity_kept_contexts", lambda *_args: ())
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "synthetic context")
+    monkeypatch.setattr(pipeline, "checkpoint_final_review_carryover", lambda *_args: None)
+    monkeypatch.setattr(pipeline, "_run_exact_final_release_review",
+                        lambda **kwargs: kwargs["correction_audit"])
+    calls = []
+
+    def build_llm():
+        def call(prompt):
+            calls.append(prompt)
+            return json.dumps({
+                "syntax_complete": False, "story_closed": False, "next_topic_separated": False,
+                "content_anchor_covered": False, "recommended_end_cue_index": 2,
+                "evidence_cue_indexes": [1, 2], "reason_codes": ["CONTENT_UNRESOLVED"],
+                "summary": "Synthetic complete negative observation.",
+            })
+        call.cpa_cache_identity = {"transport": "cpa_command", "models": ["fixture-model"], "effort": "medium"}
+        call.provider_runtime_binding = {
+            "provider_transport": "runtime_cpa",
+            "provider_credential_source": str(tmp_path / "synthetic-cpa.env"),
+            "provider_endpoint_host": "fixture.invalid",
+        }
+        return call
+
+    monkeypatch.setattr(pipeline, "_build_final_review_llm_call", build_llm)
+    source = {
+        "schema_version": "talk-boundary-semantic-review.v1", "status": "PASS",
+        "review_scope": "source_full_window", "request_sha256": "sha256:" + "a" * 64,
+        "cue_grid_sha256": "sha256:" + "b" * 64, "next_topic_separated": True,
+        "next_topic_witness_valid": True, "recommended_end_ms": 29000,
+        "final_endpoint_binding": {
+            "schema_version": "talk-boundary-final-endpoint-binding.v1",
+            "status": "PASS", "final_start_ms": 10000, "final_end_ms": 30000,
+        },
+    }
+    correction = _correction_pass()
+    correction["boundary_semantic_review"] = source
+    binding = {"candidate_id": "synthetic-cache", "source_clock": {"origin_ms": 10000}}
+    owner = {"frozen_boundary_owner_contract": {"source_sha256": "a" * 64}}
+
+    def review():
+        callback = pipeline._build_exact_final_review_callback(
+            spec={"selection_hook": "synthetic", "selection_scorecard": {
+                "status": "VALID", "dimensions": {"self_contained": 4, "comedic_payoff": 4}}},
+            out_root=tmp_path, cid="synthetic-cache", padded=tmp_path / "unused.mp4",
+            adapters=_adapters(), authoritative_chat=(), clip_context={},
+            final_review_audit=correction, verify_confusable_entity=None,
+            truth_ownership=None, screen_read_probe=None,
+            prepared_review_binding=copy.deepcopy(binding),
+        )
+        return callback(_srt("synthetic first", "synthetic ending"), owner, 10000, 30000)
+
+    first = review()
+    assert first["boundary_semantic_review"]["status"] == "BLOCK"
+    saved = {path: path.read_bytes() for path in (tmp_path / ".completed-review-observations").rglob("*.json")}
+    assert saved
+    assert review() == first and len(calls) == 1
+    if change == "source_clock":
+        binding["source_clock"]["origin_ms"] += 1
+    else:
+        owner["frozen_boundary_owner_contract"]["source_sha256"] = "b" * 64
+    assert review()["boundary_semantic_review"]["status"] == "BLOCK"
+    assert len(calls) == 2 and calls[0] == calls[1]
+    review()
+    assert len(calls) == 2
+    assert all(path.read_bytes() == raw for path, raw in saved.items())
+
+
 def test_frozen_boundary_owners_require_typed_gate_only_for_exact_reads():
     audit = {
         "applied": [
@@ -491,13 +1440,22 @@ def test_boundary_semantic_review_is_downstream_of_final_text_authority():
     assert len(review_calls) == 1
     assert finalize_calls[0].lineno < review_calls[0].lineno
     cues_keyword = next(keyword for keyword in review_calls[0].keywords if keyword.arg == "cues")
-    assert ast.dump(cues_keyword.value) == ast.dump(
-        ast.Attribute(
-            value=ast.Name(id="evidence", ctx=ast.Load()),
-            attr="cues",
-            ctx=ast.Load(),
-        )
+    assert ast.unparse(cues_keyword.value) == (
+        "boundary_context_cues if boundary_context_cues is not None else evidence.cues"
     )
+    projection_calls = [
+        node
+        for node in ast.walk(run_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "build_retained_source_boundary_context"
+    ]
+    assert len(projection_calls) == 1
+    projection_call = projection_calls[0]
+    assert finalize_calls[0].lineno < projection_call.lineno < review_calls[0].lineno
+    assert [ast.unparse(arg) for arg in projection_call.args] == [
+        "retained_reviewed_draft", "evidence.srt_text",
+    ]
     assert len(review_assignments) == 1
     target = review_assignments[0].targets[0]
     assert ast.unparse(target) == (
@@ -551,7 +1509,7 @@ def test_frozen_boundary_loader_receives_fresh_owner_contract():
 def test_source_only_boundary_authority_cannot_reach_final_delivery_gate():
     """Source-only carry feeds the first gate while final gets only full authority."""
 
-    run_tree = ast.parse(inspect.getsource(pipeline.run_text_pipeline))
+    factory_tree = ast.parse(inspect.getsource(pipeline._build_exact_final_review_callback))
     router_tree = ast.parse(inspect.getsource(source_boundary_review.review_source_boundary))
     authority_call = next(
         node
@@ -581,7 +1539,7 @@ def test_source_only_boundary_authority_cannot_reach_final_delivery_gate():
 
     final_call = next(
         node
-        for node in ast.walk(run_tree)
+        for node in ast.walk(factory_tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "exact_delivery_correction_audit"
@@ -592,6 +1550,14 @@ def test_source_only_boundary_authority_cannot_reach_final_delivery_gate():
     assert ast.unparse(final_keyword.value) == "frozen_boundary_receipt"
     date_keyword = next(keyword for keyword in final_call.keywords if keyword.arg == "recording_date")
     assert ast.unparse(date_keyword.value) == "str(spec.get('date') or '')"
+
+    run_tree = ast.parse(inspect.getsource(pipeline.run_text_pipeline))
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_build_exact_final_review_callback"
+        for node in ast.walk(run_tree)
+    )
 
 
 def test_replay_delivery_review_carries_source_only_boundary_witness():
@@ -619,13 +1585,7 @@ def test_replay_delivery_review_carries_source_only_boundary_witness():
     )
 
 
-def test_private_delivery_refresh_cannot_supply_recording_authority(tmp_path):
-    with pytest.raises(
-        qixi_refresh.QixiTerminalEvidenceRefreshError,
-        match="PRIVATE_CANDIDATE_AUTHORITY_UNAVAILABLE",
-    ):
-        qixi_refresh.refresh_terminal_evidence(output_dir=tmp_path)
-    assert list(tmp_path.iterdir()) == []
+
 
 
 def test_final_boundary_review_indexes_exact_post_authority_grid():
@@ -671,6 +1631,41 @@ def test_final_boundary_review_indexes_exact_post_authority_grid():
     assert result["recommended_end_cue_index"] == 2
     assert result["recommended_end_ms"] == 14_000
     assert "最终闭合句" in seen_prompt
+
+
+@pytest.mark.parametrize("http_status", [429, 503])
+def test_boundary_transport_failure_keeps_closed_diagnostics_without_retry(http_status):
+    from src.autoslice.llm_client import LlmCallError
+
+    calls = []
+    def unavailable(prompt):
+        calls.append(prompt)
+        raise LlmCallError(
+            "LLM_COMMAND_FAILED Authorization: Bearer sk-never-persist-this",
+            safe_reason="LLM_COMMAND_FAILED",
+            provider_diagnostics={
+                "provider_http_status": http_status,
+                "provider_error_code": "service_unavailable",
+                "unknown_raw_prompt": "never-persist-this-prompt",
+            },
+        )
+
+    result = pipeline.review_final_boundary_semantics(
+        cues=pipeline.parse_srt_cues(_srt("目标故事", "自然收束", "下一话题")),
+        boundary_target_ms=14_000,
+        candidate_id="boundary-provider-failure",
+        selection_hook="完整故事",
+        selection_scorecard={"status": "VALID", "dimensions": {"self_contained": 4, "comedic_payoff": 4}},
+        structured_context="", candidate_context="", boundary_max_forward_ms=30_000,
+        llm_call=unavailable, extract_json=pipeline.extract_json_object,
+    )
+    assert len(calls) == 1
+    assert result["status"] == "BLOCK"
+    assert result["reason_codes"] == ["BOUNDARY_SEMANTIC_REVIEW_UNAVAILABLE:LlmCallError"]
+    failure = result["provider_failure"]
+    assert failure["provider_error_code"] == "LLM_COMMAND_FAILED"
+    assert failure["provider_diagnostics"]["provider_http_status"] == http_status
+    assert "never-persist-this" not in json.dumps(result)
 
 
 def test_source_boundary_review_blocks_before_llm_when_witness_reserve_incomplete():
@@ -1030,6 +2025,231 @@ def test_pronoun_audit_uses_its_own_builder_not_the_final_review_one(
     )
 
 
+@pytest.mark.parametrize("authority_location,expected_discovery_calls", [
+    ("top_level", 1), ("nested", 1), ("nested_with_invalid_top", 2),
+])
+def test_exact_review_reuses_pronoun_discovery_but_still_reviews_current_full_text(
+    monkeypatch, authority_location, expected_discovery_calls,
+):
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+    pronoun_calls, final_calls = [], []
+    def pronoun_llm(prompt):
+        pronoun_calls.append(prompt)
+        return json.dumps({"decisions": [{
+            "occurrence_id": "cue-1-occurrence-1", "action": "KEEP_CURRENT",
+            "current_token": "他", "replacement_token": "他", "reason": "已知男性",
+        }]})
+    def final_llm(prompt):
+        final_calls.append(prompt)
+        return json.dumps({"findings": []})
+    inputs = dict(srt_text=_srt("他今天很开心", "第二句", "第三句"),
+                  correction_audit=_correction_pass(), adapters=_adapters(),
+                  authoritative_chat=(), selection_hook="完整回指", clip_context={},
+                  final_review_llm=_literal_review_llm(final_llm), pronoun_audit_llm=pronoun_llm)
+    prior = pipeline._run_exact_final_release_review(**inputs)
+    authority = prior if authority_location == "top_level" else {"final_review_audit": prior}
+    if authority_location == "nested_with_invalid_top":
+        authority["candidate_pronoun_consistency_audit"] = {}
+    original_authority = json.dumps(authority, sort_keys=True)
+    current = pipeline._run_exact_final_release_review(**inputs, verified_authority_audit=authority)
+    assert json.dumps(authority, sort_keys=True) == original_authority
+    assert len(pronoun_calls) == expected_discovery_calls
+    assert len(final_calls) == 2
+    replay = current["candidate_pronoun_consistency_audit"].get("prior_audit_replay")
+    if expected_discovery_calls == 1:
+        assert replay["provider_calls"] == 0
+        assert replay["status"] == "REUSED_DISCOVERY_ONLY"
+    else:
+        assert replay is None
+    assert current["release_gate"] == "PASS"
+    validate_final_review_release(current, expected_srt_sha256=current["reviewed_srt_sha256"])
+
+
+@pytest.mark.parametrize("failed_stage,bridge_shape", [
+    ("pronoun", "structured"), ("final", "structured"),
+    ("pronoun", "legacy_stderr"),
+])
+def test_exact_review_persists_transport_diagnostics(monkeypatch, failed_stage, bridge_shape):
+    from src.autoslice.llm_client import LlmCallError
+
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+    source = _srt("他今天很开心", "第二句", "第三句")
+
+    def failure(_prompt):
+        if bridge_shape == "legacy_stderr":
+            raise LlmCallError(
+                "llm command failed rc=1: [cpa] http=429 curl_exit=22 "
+                "Authorization: Bearer private-token result=failed",
+                safe_reason="LLM_COMMAND_FAILED",
+            )
+        raise LlmCallError("LLM_COMMAND_FAILED", safe_reason="LLM_COMMAND_FAILED",
+                           provider_diagnostics={"provider_http_status": 503,
+                                                 "provider_error_code": "service_unavailable"})
+
+    def pronoun_ok(_prompt):
+        return json.dumps({"decisions": [{
+            "occurrence_id": "cue-1-occurrence-1", "action": "KEEP_CURRENT",
+            "current_token": "他", "replacement_token": "他", "reason": "已知男性",
+        }]})
+
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=source, correction_audit=_correction_pass(), adapters=_adapters(),
+        authoritative_chat=(), selection_hook="完整回指", clip_context={},
+        pronoun_audit_llm=failure if failed_stage == "pronoun" else pronoun_ok,
+        final_review_llm=_literal_review_llm(failure),
+    )
+    assert receipt["status"] == "AUDITOR_UNAVAILABLE"
+    assert receipt["release_gate"] == "BLOCK"
+    assert receipt["reviewed_srt_sha256"] == "sha256:" + hashlib.sha256(source.encode()).hexdigest()
+    assert receipt["discovery"]["provider_error_code"] == "LLM_COMMAND_FAILED"
+    if bridge_shape == "structured":
+        assert receipt["discovery"]["provider_diagnostics"] == {
+            "provider_http_status": 503, "provider_error_code": "service_unavailable",
+        }
+    else:
+        assert receipt["discovery"]["provider_class"] == "quota"
+        assert receipt["discovery"]["provider_status_codes"] == [429]
+        assert "provider_detail" not in receipt["discovery"]
+        assert "private-token" not in json.dumps(receipt)
+
+
+def test_exact_release_receives_explicit_persisted_secondary_handoff_once(monkeypatch):
+    """The public exact-review seam carries a verifier handoff without cache scans."""
+
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+    monkeypatch.setattr(pipeline, "_build_final_review_llm_call", lambda: lambda _prompt: "{}")
+    monkeypatch.setattr(pipeline, "_build_pronoun_audit_llm_call", lambda: lambda _prompt: "{}")
+    monkeypatch.setattr(
+        pipeline,
+        "discover_candidate_pronoun_findings",
+        lambda *_args, **_kwargs: ([], {"status": "SKIPPED"}),
+    )
+    monkeypatch.setattr(pipeline, "audit_final_subtitles", lambda *_args, **_kwargs: [])
+    observations = [
+        {"source_request_sha256": f"sha256-source-{index}", "receipt_sha256": f"receipt-{index}"}
+        for index in range(4)
+    ]
+    captured: dict[str, object] = {}
+
+    def fake_adjudicate(_srt, findings, **kwargs):
+        captured["findings"] = list(findings)
+        captured["prior"] = kwargs["prior_secondary_audio_observations"]
+        return list(findings), []
+
+    monkeypatch.setattr(pipeline, "adjudicate_exact_release_findings", fake_adjudicate)
+    authority = {
+        "secondary_audio_handoff": {
+            "schema_version": "secondary-audio-observation-handoff.v1",
+            "status": "ACCEPTED_CONTEXT_ONLY",
+            "mutation_authorized": False,
+            "observations": observations,
+        }
+    }
+
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=_srt("第一句", "第二句", "第三句"),
+        correction_audit=_correction_pass(),
+        adapters=_adapters(),
+        authoritative_chat=(),
+        selection_hook="",
+        clip_context={},
+        verified_authority_audit=authority,
+    )
+
+    assert captured["prior"] == tuple(observations)
+    assert receipt["secondary_audio_handoff"]["observation_count"] == 4
+
+
+def test_exact_release_carries_pronoun_policy_evidence_into_context_request(
+    monkeypatch,
+):
+    from src.autoslice import pronoun_consistency
+    from src.autoslice.final_review_auditor import build_context_adjudication_request
+
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+    source = _srt("她说梦", "第二句", "第三句")
+    _, pronoun_audit = pronoun_consistency.discover_candidate_pronoun_findings(
+        source,
+        policy_text="女性主播的指代政策。",
+        candidate_context_text="当前梦境语境。",
+        llm_call=lambda _prompt: json.dumps(
+            {
+                "decisions": [
+                    {
+                        "occurrence_id": "cue-1-occurrence-1",
+                        "action": "KEEP_CURRENT",
+                        "current_token": "她",
+                        "replacement_token": "她",
+                        "reason": "指向女性主播",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        extract_json=json.loads,
+    )
+    finding = {
+        "cue_index": 1,
+        "kind": "context",
+        "suspect": "她",
+        "suggestion": "他",
+        "proposed_full_cue": "他说梦",
+        "base_text_sha256": hashlib.sha256("她说梦".encode()).hexdigest(),
+    }
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        pipeline,
+        "discover_candidate_pronoun_findings",
+        lambda *_args, **_kwargs: ([], pronoun_audit),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "audit_final_subtitles",
+        lambda *_args, **_kwargs: [dict(finding)],
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "resolve_verified_source_truth_findings",
+        lambda _srt, rows, **_kwargs: (list(rows), []),
+    )
+
+    def fake_adjudicate(_srt, rows, **_kwargs):
+        row = list(rows)[0]
+        captured["finding"] = row
+        captured["request"] = build_context_adjudication_request(_srt, row)
+        return [row], []
+
+    monkeypatch.setattr(pipeline, "adjudicate_exact_release_findings", fake_adjudicate)
+    monkeypatch.setattr(
+        pipeline,
+        "resolve_findings_from_exact_final_convergence_memos",
+        lambda _srt, rows, **_kwargs: (list(rows), []),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "converge_reconsidered_exact_final_findings",
+        lambda _srt, rows, **_kwargs: (list(rows), []),
+    )
+
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=source,
+        correction_audit=_correction_pass(),
+        adapters=_adapters(),
+        authoritative_chat=(),
+        selection_hook="梦境语境",
+        clip_context={},
+    )
+
+    carried = captured["finding"]["_candidate_pronoun_policy_audit"]
+    evidence = captured["request"]["candidate_pronoun_policy_evidence"]
+    assert carried == pronoun_audit
+    assert evidence["status"] == "EVIDENCE_ONLY"
+    assert evidence["scope"] == "CONTEXT_ONLY"
+    assert evidence["mutation_authorized"] is False
+    assert evidence["decisions"][0]["replacement_token"] == "她"
+    assert receipt["release_gate"] == "BLOCK"
+
+
 def test_exact_final_release_review_binds_explicit_clean_response(
     monkeypatch,
 ):
@@ -1056,6 +2276,80 @@ def test_exact_final_release_review_binds_explicit_clean_response(
         receipt,
         expected_srt_sha256=receipt["reviewed_srt_sha256"],
     )
+
+
+@pytest.mark.parametrize("mode", [None, "per_finding"])
+def test_exact_final_release_review_consumes_postburn_rows_as_raw_priority(
+    monkeypatch, mode,
+):
+    if mode is None:
+        monkeypatch.delenv("AUTOSLICE_FINAL_REVIEW_MODE", raising=False)
+    else:
+        monkeypatch.setenv("AUTOSLICE_FINAL_REVIEW_MODE", mode)
+    monkeypatch.setattr(pipeline, "clip_context_prompt_text", lambda _value: "")
+    srt = _srt("第一句", "第二句", "第三句")
+    row = {
+        "cue": 1,
+        "cue_index": 1,
+        "kind": "context",
+        "suspect": "第一",
+        "repair_class": "phonetic",
+        "proposed_full_cue": "改过的一句",
+        "base_text_sha256": hashlib.sha256("第一句".encode()).hexdigest(),
+    }
+    captured: dict[str, object] = {}
+
+    def fake_audit(_srt_text, **kwargs):
+        if mode == "per_finding":
+            captured["discovery_rows"] = [json.loads(n.payload_json) for n in kwargs["discovery_batch"].nominations]
+            assert isinstance(kwargs["discovery_batch"].nominations, tuple)
+            assert "extra_raw_findings" not in kwargs
+        else:
+            captured["discovery_rows"] = kwargs["extra_raw_findings"]
+            assert kwargs["prioritize_extra_raw_findings"] is True
+            assert "discovery_batch" not in kwargs
+        return [dict(row)]
+
+    monkeypatch.setattr(pipeline, "audit_final_subtitles", fake_audit)
+    monkeypatch.setattr(
+        pipeline,
+        "discover_candidate_pronoun_findings",
+        lambda *_args, **_kwargs: ([], {"status": "PASS"}),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "resolve_verified_source_truth_findings",
+        lambda _srt, findings, **_kwargs: (list(findings), []),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "adjudicate_exact_release_findings",
+        lambda _srt, findings, **_kwargs: ([], list(findings)),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "resolve_findings_from_exact_final_convergence_memos",
+        lambda _srt, findings, **_kwargs: (list(findings), []),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "converge_reconsidered_exact_final_findings",
+        lambda _srt, findings, **_kwargs: (list(findings), []),
+    )
+
+    receipt = pipeline._run_exact_final_release_review(
+        srt_text=srt,
+        correction_audit=_correction_pass(),
+        adapters=_adapters(),
+        authoritative_chat=(),
+        selection_hook="postburn witness",
+        clip_context={},
+        priority_raw_findings=[row],
+    )
+
+    assert captured["discovery_rows"] == [row]
+    assert receipt["status"] == "CLEAN"
+    assert receipt["release_gate"] == "PASS"
 
 
 def test_exact_release_accepts_typed_operator_truth_zero_mutation_bridge(
@@ -1295,6 +2589,7 @@ def test_release_contract_requires_final_boundary_endpoint_binding(monkeypatch):
 def test_release_contract_recomputes_final_boundary_endpoint_equality():
     receipt = {
         "schema_version": "final-review-audit.v2",
+            "meaning_policy": MEANING_POLICY_VERSION,
         "status": "CLEAN",
         "release_gate": "PASS",
         "reviewed_srt_sha256": "sha256:" + "a" * 64,
@@ -1321,6 +2616,7 @@ def test_release_contract_recomputes_final_boundary_endpoint_equality():
 def test_release_contract_rejects_stale_boundary_cue_grid():
     receipt = {
         "schema_version": "final-review-audit.v2",
+            "meaning_policy": MEANING_POLICY_VERSION,
         "status": "CLEAN",
         "release_gate": "PASS",
         "reviewed_srt_sha256": "sha256:" + "a" * 64,
@@ -1383,6 +2679,8 @@ def test_exact_final_release_review_unresolved_finding_is_a_block(
                             "suspect": "第一句",
                             "repair_class": "disclosure_only",
                             "why": "still suspicious",
+                            "content_risk": "meaning_reversal",
+                            "risk_basis": "This controlled fixture keeps the current meaning unresolved.",
                         }
                     ]
                 },
@@ -1400,7 +2698,7 @@ def test_exact_final_release_review_unresolved_finding_is_a_block(
     )
 
     assert receipt["status"] == "FLAGGED"
-    assert receipt["reason_codes"] == ["FINAL_REVIEW_UNRESOLVED_FINDINGS"]
+    assert receipt["reason_codes"] == ["FINAL_REVIEW_FINDING_REVIEW_PENDING"]
     with pytest.raises(FinalReviewContractError):
         validate_final_review_release(receipt)
 
@@ -1479,14 +2777,14 @@ def _judge_json(choice):
 
 
 def _split_llm(findings_json, judge_choice):
-    """Findings discovery and the word-choice judge share one llm seam."""
+    """Give controlled literal-router fixtures both discovery and judge answers."""
 
     def call(prompt):
         if "字幕选字裁决" in prompt:
             return _judge_json(judge_choice)
         return findings_json
 
-    return call
+    return _literal_review_llm(call)
 
 
 def test_exact_final_release_review_closes_acoustically_disproven_proposal(
@@ -2207,6 +3505,7 @@ def test_exact_transcript_transport_failure_adds_only_typed_infra_marker(
     def fake_adjudicate(_srt_text, findings, **_kwargs):
         row = dict(list(findings)[0])
         row["exact_release_adjudication"] = {
+            "status": "UNCERTAIN",  # the real adjudicator always writes a receipt status
             "request": check_request,
             "verdict": witness,
             "exact_source_transcript_handoff": returned_handoff,
@@ -2229,7 +3528,7 @@ def test_exact_transcript_transport_failure_adds_only_typed_infra_marker(
     assert receipt["release_gate"] == "BLOCK"
     assert receipt["reason_codes"][:2] == [
         "FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED",
-        "FINAL_REVIEW_UNRESOLVED_FINDINGS",
+        "FINAL_REVIEW_FINDING_REVIEW_PENDING",
     ]
 
     returned_handoff = deepcopy(typed_handoff)
@@ -2507,6 +3806,79 @@ def test_explicit_transcript_only_rescue_still_uses_audio_after_semantic_stage(t
     ]
 
 
+def test_pipeline_routes_missing_acoustic_proposal_to_candidate_blind_witness(
+    monkeypatch,
+):
+    source = _srt("我昨天去上班", "上班好累", "下班了")
+    finding = {
+        "cue": 2,
+        "cue_index": 2,
+        "kind": "context",
+        "suspect": "上班好累",
+        "suggestion": None,
+        "proposed_full_cue": None,
+        "repair_class": "phonetic",
+        "base_text_sha256": hashlib.sha256("上班好累".encode()).hexdigest(),
+        "why": "缺失候选的发音疑点",
+    }
+    monkeypatch.setattr(
+        pipeline,
+        "audit_final_subtitles",
+        lambda *_args, **_kwargs: [dict(finding)],
+    )
+
+    def cpa(prompt):
+        if "# 字幕缺失候选重建" in prompt:
+            return json.dumps(
+                {"status": "UNRESOLVED", "proposed_cue": ""},
+                ensure_ascii=False,
+            )
+        if "# 字幕缺失候选最终收敛" in prompt:
+            return json.dumps(
+                {"decision": "KEEP_EXISTING", "replacement_text": ""},
+                ensure_ascii=False,
+            )
+        return json.dumps(
+            {
+                "choice": "CURRENT",
+                "reason": "候选盲听与当前字幕相容",
+                "current_utterance_supported": True,
+                "current_utterance_support_reason": "目标时窗完整支持当前 cue",
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr(pipeline, "_build_final_review_llm_call", lambda: cpa)
+    requests = []
+
+    def witness(request):
+        requests.append(request)
+        return _witness_verdict(request, "shang ban hao lei")
+
+    output, audit = pipeline._run_final_review(
+        srt_text=source,
+        chat_authority_audit={"applied": []},
+        handled_entity_cues=set(),
+        verify_confusable_entity=witness,
+        adapters=_adapters(),
+    )
+
+    assert output == source
+    assert len(requests) == 1
+    row = audit["findings"][0]
+    assert row["routed"] == "disclosure"
+    assert row["context_audio_adjudication"]["status"] == "OBSERVED"
+    assert (
+        row["context_audio_adjudication"]["candidate_blind_observation"]["status"]
+        == "PASS"
+    )
+    assert (
+        row["context_audio_adjudication"]["mutation_authority"]["status"]
+        == "NOT_APPLIED"
+    )
+    assert audit["context_adjudication_witness_prewarm"]["fired_count"] == 0
+
+
 def test_final_review_adjudicates_all_bounded_findings_and_skips_protected_cue(monkeypatch):
     source_texts = [f"坏词{index}留在这里" for index in range(1, 9)]
     findings = [
@@ -2670,6 +4042,8 @@ def test_single_character_glossary_prose_cannot_authorize_li_to_li():
                         "repair_class": "phonetic",
                         "source_surface": "礼",
                         "why": "词表 prose 恰好包含同音单字",
+                        "content_risk": "meaning_reversal",
+                        "risk_basis": "李与礼可能改变当前所指，单字词表不能证明当前句意正确。",
                     }
                 ]
             },
@@ -3472,6 +4846,21 @@ def test_ledger_owned_cue_skips_entity_arbitration(tmp_path):
     assert audit["ledger_excluded_cue_indexes"] == [1]
 
 
+def test_literal_owner_precedes_chat_read_aloud_arbitration(tmp_path):
+    from src.autoslice.chat_evidence import ChatEvidence
+    source = _srt('那你知道是谁说的了','保留窗外最新合法词','你知道啥')
+    def forbidden(request):
+        pytest.fail('a lower chat authority tried to arbitrate an owned literal')
+    result = pipeline._apply_entity_authority(srt_text=source,
+        authoritative_chat=[ChatEvidence('danmaku',0,'那我知道是谁说的了')],
+        support_srts=[],referent_groups=[],verify_confusable_entity=forbidden,
+        code_switch_audit={},term_boundary_moves=[],padded=tmp_path/'padded.mp4',
+        adapters=_adapters(),source_truth_protected_cue_indexes=[1,3],retained_reviewed_draft=True)
+    assert result.srt_text == source
+    assert result.chat_authority_audit['read_aloud_arbitrations'] == []
+    assert not result.chat_authority_audit['applied']
+
+
 def test_exact_source_truth_projection_does_not_exclude_grazed_neighbour(
     tmp_path,
 ):
@@ -3909,6 +5298,8 @@ def test_source_truth_owned_cue_is_not_mutated_by_final_review(monkeypatch):
                             "proposed_full_cue": "非常やさしい呀",
                             "repair_class": "phonetic",
                             "why": "model prefers source script",
+                            "content_risk": "meaning_reversal",
+                            "risk_basis": "受控fixture保留逐字疑点，仍不得覆盖已有源真值。",
                         }
                     ]
                 },
@@ -4086,3 +5477,238 @@ def test_final_review_provider_outage_writes_the_verbatim_cascade(monkeypatch):
     assert "http=503" in discovery["provider_detail"]
     assert discovery["provider_class"] == "service"
     assert discovery["provider_status_codes"] == [503]
+
+
+@pytest.mark.parametrize('risk', ['noncritical_uncertainty', 'meaning_reversal', 'factual_error', 'potential_harm'])
+def test_p1_ordinary_exact_review_content_risk_controls_release(tmp_path, monkeypatch, risk):
+    from src.autoslice import final_review_auditor as auditor
+    monkeypatch.setenv('AUTOSLICE_BASE', str(tmp_path))
+    monkeypatch.setattr(pipeline, 'clip_context_prompt_text', lambda _: '')
+    calls = []
+    def acoustic(text, finding, **kwargs):
+        calls.append(finding)
+        return text, {'status': 'UNCERTAIN', 'repaired': False}
+    monkeypatch.setattr(auditor, 'adjudicate_context_finding', acoustic)
+    monkeypatch.setattr(pipeline, 'discover_candidate_pronoun_findings', lambda *a, **k: ([], {}))
+    result = pipeline._run_exact_final_release_review(
+        srt_text=_srt('喝口水', '接着说', '说完了'), correction_audit=_correction_pass(),
+        adapters=_adapters(), authoritative_chat=(), selection_hook='', clip_context={}, pronoun_audit_llm=lambda _: '{}',
+        final_review_llm=_literal_review_llm(lambda _: json.dumps({'findings': [{
+            'cue': 1, 'kind': 'context', 'repair_class': 'disclosure_only',
+            'proposed_full_cue': None, 'why': '当前疑点', 'content_risk': risk,
+            'risk_basis': '当前整句的喝水请求不因数量词一而改变' if risk == 'noncritical_uncertainty' else '具体原意或事实风险',
+            'meaning_equivalence': equivalent() if risk == 'noncritical_uncertainty' else None,
+        }]})),
+    )
+
+    assert result['release_gate'] == 'BLOCK', result
+    assert result['findings'] and result['findings'][0]['content_risk'] == risk
+    assert not result['unresolved_findings_disclosed']
+    with pytest.raises(FinalReviewContractError):
+        validate_final_review_release(result)
+
+
+@pytest.mark.parametrize('reason',['EDITORIAL_AUDIO_UNAVAILABLE','EDITORIAL_FACT_OR_NOOP_INVALID'])
+@pytest.mark.parametrize('risk',['noncritical_uncertainty','meaning_reversal','factual_error','potential_harm'])
+def test_ordinary_release_discloses_only_noncritical_failed_optional_edits(tmp_path,monkeypatch,reason,risk):
+    from src.autoslice import final_review_auditor as auditor
+    monkeypatch.setenv('AUTOSLICE_BASE',str(tmp_path))
+    monkeypatch.setattr(pipeline,'clip_context_prompt_text',lambda _: '')
+    receipt={'schema_version':'subtitle-editorial-adjudication.v1','status':'UNCERTAIN',
+             'reason_code':reason,'repaired':False,'timing_immutable':True}
+    calls=[]
+    def optional_edit(text,finding,**kwargs):
+        calls.append(finding)
+        return text,receipt
+    monkeypatch.setattr(auditor,'adjudicate_context_finding',optional_edit)
+    monkeypatch.setattr(pipeline,'discover_candidate_pronoun_findings',lambda *a,**k:([],{}))
+    source=_srt('咳咳','保留可靠词','说完了')
+    result=pipeline._run_exact_final_release_review(srt_text=source,correction_audit=_correction_pass(),
+        adapters=_adapters(),authoritative_chat=(),selection_hook='',clip_context={},pronoun_audit_llm=lambda _: '{}',
+        final_review_llm=_literal_review_llm(lambda _:json.dumps({'findings':[{'cue':1,'kind':'context',
+            'repair_class':'editorial_rendering','proposed_full_cue':'', 'why':'当前疑点',
+            'content_risk':risk,'risk_basis':'当前明确清嗓，保留其他可靠词不改变表达功能' if risk=='noncritical_uncertainty' else '具体当前风险依据',
+            'meaning_equivalence': {**equivalent('清嗓字幕是否显示', '同一清嗓非语言发声'),
+                'context_basis': '首句只标示清嗓，后续可靠词完整保留；显示或省略清嗓字幕不改变后续命题。'}
+                if risk=='noncritical_uncertainty' else None}]})))
+
+
+    assert result['release_gate']=='BLOCK',result
+    assert not result['unresolved_findings_disclosed']
+    assert result['findings'][0]['content_risk']==risk
+    with pytest.raises(FinalReviewContractError):
+        validate_final_review_release(result)
+    if risk!='noncritical_uncertainty':
+        assert calls
+        assert result['findings'][0]['exact_release_adjudication']['repaired'] is False
+
+
+@pytest.mark.parametrize('risk',['noncritical_uncertainty','meaning_reversal','factual_error','potential_harm'])
+def test_exact_caller_keeps_human_words_without_silencing_content_risk(tmp_path,monkeypatch,risk):
+    from src.autoslice import final_review_auditor as auditor
+    monkeypatch.setenv('AUTOSLICE_BASE',str(tmp_path))
+    monkeypatch.setattr(pipeline,'clip_context_prompt_text',lambda _: '')
+    monkeypatch.setattr(auditor,'adjudicate_context_finding',lambda text,finding,**kwargs:(text,{'status':'UNCERTAIN','repaired':False}))
+    monkeypatch.setattr(pipeline,'discover_candidate_pronoun_findings',lambda *a,**k:([],{}))
+    source=_srt('那你知道是谁说的了','保留其他当前文字','说完了')
+    human={'records':[{'alignment_binding':{'path':'fixture-alignment.json','sha256':'sha256:'+'a'*64},
+        'units':[{'start_ms':5000,'end_ms':9000,'text':'那你知道是谁说的了','role':'念弹幕'}]}]}
+    result=pipeline._run_exact_final_release_review(srt_text=source,correction_audit=_correction_pass(),
+        adapters=_adapters(),authoritative_chat=(),selection_hook='',clip_context={},pronoun_audit_llm=lambda _: '{}',
+        verified_authority_audit={'human_sequence_alignment':human},
+        final_review_llm=_literal_review_llm(lambda _:json.dumps({'findings':[{'cue':1,'kind':'context',
+            'repair_class':'phonetic','proposed_full_cue':'那我知道是谁说的了','why':'当前疑点',
+            'content_risk':risk,'risk_basis':'具体当前风险依据'}]})))
+    # This unvalidated human-alignment fixture is context only. A concrete
+    # proposal with an UNCERTAIN judge remains pending at every severity.
+    assert result['release_gate']=='BLOCK',result
+    if risk == 'noncritical_uncertainty':
+        assert 'FINAL_REVIEW_MEANING_EQUIVALENCE_REQUIRED' in result['reason_codes']
+    else:
+        assert result['findings'][0]['proposed_full_cue']=='那我知道是谁说的了'
+
+
+@pytest.mark.parametrize('status,reason', [('ERROR', ''), ('OUTCOME_UNKNOWN', ''), ('UNCERTAIN', 'TimeoutError'), ('UNCERTAIN', 'PRIOR_CALL_OUTCOME_UNKNOWN')])
+def test_p1_content_downgrade_does_not_hide_unknown_transport(status, reason):
+    from src.autoslice.final_review_contract import is_noncritical_disclosed
+    assert not is_noncritical_disclosed({'content_risk': 'noncritical_uncertainty', 'risk_basis': '非关键',
+        'exact_release_adjudication': {'status': status, 'reason_code': reason}})
+
+
+def test_p1_fresh_risk_reclassification_keeps_public_adjudication_obligation(tmp_path, monkeypatch):
+    from src.autoslice.final_review_auditor import audit_final_subtitles, adjudicate_exact_release_findings
+    monkeypatch.setenv('AUTOSLICE_BASE', str(tmp_path))
+    text = _srt('喝口水')
+    prompts = []
+    def discover(prompt):
+        prompts.append(prompt)
+        return json.dumps({'findings': [{'cue': 1, 'kind': 'context', 'repair_class': 'disclosure_only',
+            'proposed_full_cue': None, 'why': '普通口头话', 'content_risk': 'noncritical_uncertainty',
+            'risk_basis': '当前整句及语境支持同一喝水请求，仅数量词未确定', 'meaning_equivalence': equivalent()}]})
+    rows = audit_final_subtitles(text, llm_call=discover, extract_json=json.loads,
+        discovery_batch=batch_from_rows([{'cue': 1, 'kind': 'context', 'repair_class': 'phonetic',
+                            'suspect': '喝口水', 'proposed_full_cue': None, 'why': '历史仍需补听',
+                            'exact_release_adjudication': {
+                                'request': {'current_cue': '喝口水', 'proposed_candidates': [{'text': '喝口水'}]},
+                                'witness_judge': {'judge': {'choice': 'CURRENT', 'needs_audio': True,
+                                    'reason': '目标窗支持喝口水，旧hou hui shui仍待复核'}}}}]))
+    assert '历史仍需补听' not in prompts[0]
+    assert '旧hou hui shui仍待复核' not in prompts[0]
+    assert 'HISTORICAL_EVIDENCE_ONLY_NOT_MUTATION_AUTHORITY' not in prompts[0]
+    assert rows and all(r['content_risk'] == 'noncritical_uncertainty' for r in rows)
+    original_rows = json.loads(json.dumps(rows))
+    saved = tmp_path / 'fresh-risk-findings.json'
+    saved.write_text(json.dumps(rows, ensure_ascii=False))
+    saved_bytes = saved.read_bytes()
+    judged = []
+    def unresolved_judge(prompt):
+        judged.append(prompt)
+        return json.dumps({'status': 'UNRESOLVED', 'proposed_cue': None,
+            'decision': 'UNRESOLVED', 'replacement_text': None, 'needs_audio': True,
+            'reason': 'The historical listening question is still unresolved.'})
+    pending, resolved = adjudicate_exact_release_findings(
+        text, rows, entity_verifier=lambda request: {'status': 'OUTCOME_UNKNOWN'},
+        judge_llm_call=unresolved_judge)
+    assert judged and pending and not resolved
+    assert all(row.get('exact_release_adjudication') for row in pending)
+    from src.autoslice.unresolved_findings_gate import unresolved_findings_problem
+    from src.autoslice.final_review_contract import FinalReviewContractError, validate_final_review_release
+    from tests.test_final_review_meaning_policy import _audit
+    assert 'POSTBURN_UNRESOLVED_FINDINGS' in unresolved_findings_problem(
+        {'unresolved_findings_disclosed': pending})
+    with pytest.raises(FinalReviewContractError):
+        validate_final_review_release(_audit(text, pending, disclosed=True))
+    assert rows == original_rows and saved.read_bytes() == saved_bytes
+    assert text == _srt('喝口水')
+
+
+@pytest.mark.parametrize('critical_first', [True, False])
+def test_p1_same_cue_critical_finding_prevents_noncritical_downgrade(critical_first):
+    from src.autoslice.final_review_auditor import audit_final_subtitles
+    base = {'cue': 1, 'kind': 'context', 'repair_class': 'disclosure_only',
+            'proposed_full_cue': None, 'why': '需要复核'}
+    rows = [dict(base, content_risk='meaning_reversal', risk_basis='肯定与否定颠倒'),
+            dict(base, content_risk='noncritical_uncertainty', risk_basis='另一个语气词不清')]
+    if not critical_first:
+        rows.reverse()
+    findings = audit_final_subtitles(_srt('我没有说过'),
+        llm_call=lambda _: json.dumps({'findings': rows}), extract_json=json.loads)
+    assert findings and all(row['content_risk'] == 'meaning_reversal' for row in findings)
+
+
+@pytest.mark.parametrize('risk', ['noncritical_uncertainty', 'meaning_reversal', 'factual_error', 'potential_harm'])
+def test_restatement_nomination_gets_current_risk_before_ordinary_release(tmp_path, monkeypatch, risk):
+    from src.autoslice import final_review_auditor as auditor
+    from src.autoslice.restatement_recall import discover_restatement_findings
+    monkeypatch.setenv('AUTOSLICE_BASE', str(tmp_path))
+    monkeypatch.setattr(pipeline, 'clip_context_prompt_text', lambda _: '')
+    monkeypatch.setattr(pipeline, 'discover_candidate_pronoun_findings', lambda *a, **k: ([], {}))
+    text = _srt('不准跟别人说话', '嗯', '不准跟别人讲话')
+    proposals, _ = discover_restatement_findings(text)
+    assert len(proposals) == 1
+    proposals[0]['exact_release_adjudication'] = {
+        'request': {'current_cue': '不准跟别人说话', 'proposed_cue': '不准跟别人讲话'},
+        'witness_judge': {'judge': {'choice': 'CURRENT', 'needs_audio': True,
+                                  'reason': '原听音支持说，但末字仍未闭合'}},
+    }
+    prompts, acoustic_calls = [], []
+    def discover(prompt):
+        prompts.append(prompt)
+        if len(prompts) == 1:
+            return '{"findings": []}'  # R1 omitted a discovery-only proposal.
+        return json.dumps({'findings': [{'cue': 1, 'content_risk': risk,
+            'risk_basis': '说与讲不改变禁止交谈的含义' if risk == 'noncritical_uncertainty'
+                          else '具体原意、事实或伤人冲突仍需正常裁决',
+            'meaning_equivalence': {**equivalent('说/讲的词面', '禁止同一个人与别人交谈'),
+                'context_basis': '第1句和第3句分别用说话与讲话重述同一禁止交谈的要求，主体、对象和否定关系不变。',
+                'evidence_cue_ids': [1, 3]} if risk == 'noncritical_uncertainty' else None}]})
+    def acoustic(source, finding, **kwargs):
+        acoustic_calls.append(finding)
+        return source, {'status': 'UNCERTAIN', 'repaired': False}
+    monkeypatch.setattr(auditor, 'adjudicate_context_finding', acoustic)
+    result = pipeline._run_exact_final_release_review(
+        srt_text=text, correction_audit=_correction_pass(), adapters=_adapters(),
+        authoritative_chat=(), selection_hook='', clip_context={},
+        priority_raw_findings=proposals, final_review_llm=_literal_review_llm(discover), pronoun_audit_llm=lambda _: '{}',
+    )
+    assert len(prompts) == 2
+    assert '原听音支持说，但末字仍未闭合' in prompts[-1]
+    assert '不证明早句说错' in prompts[-1]
+    # The current concrete candidate still needs a completed typed answer;
+    # low severity alone does not close the same correction question.
+    if risk != 'noncritical_uncertainty':
+        assert len(acoustic_calls) == 1
+    assert result['release_gate'] == 'BLOCK'
+    assert not result['unresolved_findings_disclosed']
+    assert result['reviewed_srt_sha256'] == 'sha256:' + hashlib.sha256(text.encode()).hexdigest()
+    bucket = result['findings']
+    assert bucket[0]['proposed_full_cue'] == '不准跟别人讲话'
+
+
+@pytest.mark.parametrize('rows', [[], [{'cue': 2, 'content_risk': 'noncritical_uncertainty', 'risk_basis': '其他句'}],
+    [{'cue': 1, 'content_risk': 'noncritical_uncertainty', 'risk_basis': ''}],
+    [{'cue': 1, 'content_risk': 'noncritical_uncertainty', 'risk_basis': '普通未知'}] * 2])
+def test_missing_restatement_risk_is_not_silently_downgraded(rows):
+    from src.autoslice.final_review_auditor import FinalReviewAuditError, audit_final_subtitles
+    from src.autoslice.restatement_recall import discover_restatement_findings
+    text = _srt('不准跟别人说话', '嗯', '不准跟别人讲话')
+    proposals, _ = discover_restatement_findings(text)
+    responses = iter([{'findings': []}, {'findings': rows}])
+    with pytest.raises(FinalReviewAuditError, match='FINAL_REVIEW_(PRIORITY_RISK_|MEANING_EQUIVALENCE_REQUIRED)'):
+        audit_final_subtitles(text, llm_call=lambda _: json.dumps(next(responses)),
+            extract_json=json.loads, discovery_batch=batch_from_rows(proposals))
+
+
+def test_restatement_already_rated_by_current_r1_needs_no_followup():
+    from src.autoslice.final_review_auditor import audit_final_subtitles
+    from src.autoslice.restatement_recall import discover_restatement_findings
+    text = _srt('不准跟别人说话', '嗯', '不准跟别人讲话')
+    proposals, _ = discover_restatement_findings(text)
+    prompts = []
+    rows = audit_final_subtitles(text,
+        llm_call=lambda prompt: prompts.append(prompt) or json.dumps({'findings': [{
+            'cue': 1, 'kind': 'context', 'repair_class': 'disclosure_only', 'proposed_full_cue': None,
+            'content_risk': 'meaning_reversal', 'risk_basis': '具体否定冲突', 'why': '需要正常裁决'}]}),
+        extract_json=json.loads, discovery_batch=batch_from_rows(proposals))
+    assert len(prompts) == 1
+    assert rows and all(row['content_risk'] == 'meaning_reversal' for row in rows)

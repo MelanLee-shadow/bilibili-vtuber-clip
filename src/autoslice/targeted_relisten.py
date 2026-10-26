@@ -1,0 +1,1904 @@
+"""Admission policy over existing audio receipts; no retry or billing ledger.
+
+The ordinary provider adapters remain the owners of dispatch/cache/failure/
+UNKNOWN history. These functions derive information opportunities from their
+validated observations and bind a no-gain diagnosis for the existing editor.
+"""
+from __future__ import annotations
+
+from inspect import Parameter, signature
+from .review_errors import (ContractRejection, ProviderFailure, provider_boundary,
+                            records_program_errors, review_error_record, observation_error_record,
+                            validated_audio_anchor as anchor)
+
+from .review_evidence_store import cold_input
+
+from collections.abc import Mapping
+from copy import deepcopy
+from pathlib import Path
+import json
+
+from src.autoslice.context_assisted_audio import digest, source_catalogue, text_sha
+from src.autoslice.independent_context_adjudication import validate_range_acoustic_observation
+from src.autoslice.span_phoneme_resolution import observation_catalogue
+from src.autoslice.jingting_chunker import parse_srt_cues
+
+SCHEMA = "targeted-relisten-policy.v1"
+NO_GAIN_SCHEMA = "targeted-audio-no-gain.v1"
+LOOP_STOP_KIND = "EXACT_FINAL_NO_MODIFICATION_STOP"
+DEFAULT_OPPORTUNITIES = 3
+CLEAR_AUDIO_UNCERTAINTY = {'canonical': 'unclear', 'aliases': ('inaudible', 'unintelligible', 'unknown')}
+CLEAR_AUDIO_GAP = '[' + CLEAR_AUDIO_UNCERTAINTY['canonical'] + ']'
+CLEAR_AUDIO_MARKER_PATTERN = (r'(?:\[(?:' + '|'.join((CLEAR_AUDIO_UNCERTAINTY['canonical'],
+    *CLEAR_AUDIO_UNCERTAINTY['aliases'])) + r')[^\]]*\]|[?？]+)')
+PURPOSES = {"WORD_BOUNDARY", "SENTENCE_ONSET", "FULL_QA", "SEMANTIC_BLOCK",
+            "SPEAKER_OVERLAP", "SOURCED_CONTEXT"}
+
+
+def physical_target(check):
+    bound = anchor(check)
+    return {k: bound[k] for k in ("candidate_id", "source_media_sha256s", "physical_target_ms")}
+
+
+def assistance_information(assistance):
+    if not assistance:
+        return []
+    # Summary wording, question wording, candidate order, provider/model, IDs
+    # and encoding hashes cannot manufacture more source information.
+    return sorted({item["text_sha256"] for item in assistance["sources"].values()})
+
+
+def input_information(*, source_window, cue_indexes, assistance=None, listening_model=None):
+    return {"source_window_ms": list(source_window), "cue_indexes": list(cue_indexes),
+            "context_source_sha256s": assistance_information(assistance),
+            "observation_class": "CONTEXT_ASSISTED_AUDIO" if assistance else "CANDIDATE_BLIND_AUDIO",
+            **({"listening_model": listening_model.casefold()} if listening_model else {})}
+
+
+def _legacy_information_key(info):
+    # A historical provider's padding/codec is not a purpose change. Preserve
+    # every receipt, but count identical cue/context information only once.
+    return digest({k: v for k, v in info.items() if k != "source_window_ms"})
+
+
+def _bound_observation_identity(bindings, listening_model=None):
+    identity = {key: str(bindings[key]).removeprefix("sha256:") for key in
+                ("source_media_sha256", "audio_clip_sha256", "raw_response_sha256")}
+    identity["response_sha256"] = identity.pop("raw_response_sha256")
+    if listening_model is not None:
+        identity['listening_model'] = listening_model
+    return identity
+
+
+def bind_observed_input(observation, *, admission, plan, prompt, raw):
+    identity = _bound_observation_identity(observation['artifact_bindings'],
+        admission['input_information'].get('listening_model'))
+    binding = {"schema_version": "targeted-relisten-input.v1",
+               "observation_id": digest(identity), "admission": deepcopy(admission),
+               "plan": deepcopy(plan), "prompt": prompt, "raw_completion": raw,
+               "prompt_sha256": text_sha(prompt), "raw_sha256": text_sha(raw)}
+    binding["binding_sha256"] = digest(binding)
+    return {**observation, "targeted_relisten_input": binding}
+
+
+def validate_input_binding(binding, *, check, info, observation_id, observations, assistance):
+    from src.autoslice.llm_client import extract_json_object
+    unsigned = {k: v for k, v in binding.items() if k != "binding_sha256"}
+    if (binding.get("schema_version") != "targeted-relisten-input.v1"
+            or binding.get("binding_sha256") != digest(unsigned)
+            or binding.get("observation_id") != observation_id
+            or binding.get("prompt_sha256") != text_sha(binding.get("prompt", ""))
+            or binding.get("raw_sha256") != text_sha(binding.get("raw_completion", ""))
+            or extract_json_object(binding["raw_completion"]) != binding["plan"]
+            or binding["admission"].get("input_information") != info
+            or binding["admission"].get("physical_target") != physical_target(check)):
+        raise ContractRejection("RELISTEN_INPUT_BINDING_DRIFT")
+    # Several providers may return the same acquisition. Keep them all, while
+    # recognizing only the first distinct information opportunity.
+    identical = [row for row in observations if row["input_information"] == info]
+    if identical:
+        prior_binding = identical[0]["raw_observation"].get("targeted_relisten_input")
+        if (not prior_binding
+                or prior_binding["admission"] != binding["admission"]
+                or prior_binding["raw_sha256"] != binding["raw_sha256"]):
+            raise ContractRejection("RELISTEN_REPEATED_INPUT_NO_INFORMATION_GAIN")
+        return
+    projection = {"physical_target": physical_target(check), "observations": observations,
+                  "effective_distinct_observations": len({r["information_key"] for r in observations})}
+    rebuilt = admit_plan(binding["plan"], check, projection,
+                         source_window=info["source_window_ms"], cue_indexes=info["cue_indexes"],
+                         assistance=assistance, listening_model=info.get('listening_model'))
+    if rebuilt != binding["admission"]:
+        raise ContractRejection("RELISTEN_ADMISSION_REPLAY_DRIFT")
+
+
+def recording_identities(bound):
+    """Recording ancestors of one validated media-source binding.
+
+    The single shared ancestry reader for padded/recut media: the range
+    projection below and span catalogue blind witnesses both use it.
+    """
+    role = bound.get("role") if isinstance(bound, Mapping) else None
+    if role == "DIRECT_RECORDING_MEDIA":
+        return [bound["media_sha256"]]
+    if role == "PRODUCER_PADDED_MEDIA_FROM_RECORDING":
+        return [bound["recording_sha256"]]
+    if role == "PRODUCER_PADDED_MEDIA_FROM_RECORDING_CHAIN":
+        return [piece["recording_sha256"] for piece in bound["pieces"]]
+    if role == "PRODUCER_FINAL_RECUT_FROM_RECORDING":
+        return recording_identities(bound["parent_media_source_binding"])
+    raise ContractRejection("RELISTEN_SOURCE_OR_CLOCK_DRIFT")
+
+
+def validated_media_recordings(request, media_path, media_sha):
+    """Recording ancestors proven for one actual observation media file.
+
+    Only the ordinary producer provenance validator can relate padded/recut
+    bytes to a recording; an unproven relation returns an empty list.
+    """
+    from src.autoslice.independent_context_adjudication import _range_media_source_binding
+
+    bare = str(media_sha or "").removeprefix("sha256:")
+    if not isinstance(media_path, str) or not media_path or len(bare) != 64:
+        return []
+    binding = _range_media_source_binding(request, media_path, bare)
+    if (not isinstance(binding, Mapping)
+            or str(binding.get("media_sha256", "")).removeprefix("sha256:") != bare):
+        return []
+    try:
+        return [str(x).removeprefix("sha256:") for x in recording_identities(binding)]
+    except (KeyError, TypeError, ValueError):
+        return []
+
+
+def _validated_range_source_projection(valid, target, window):
+    """Project only the normal validator's re-opened source chain.
+
+    A recording identifies ancestry, while crop/target clocks identify the
+    actual padded or delivered media. In particular, concat mux durations are
+    not the sum of recording intervals: never invent an absolute recording
+    clock or shift the original request to make these two identities equal.
+    """
+    source = str(valid["artifact_bindings"].get("source_media_sha256", "")).removeprefix("sha256:")
+    binding = valid.get("media_source_binding")
+    start, end = target["physical_target_ms"]
+    if (not isinstance(binding, Mapping) or binding.get("media_sha256") != source
+            or any(type(x) is not int for x in window)
+            or not 0 <= window[0] <= start < end <= window[1]):
+        raise ContractRejection("RELISTEN_SOURCE_OR_CLOCK_DRIFT")
+
+    recordings = recording_identities(binding)
+    if not recordings or not set(recordings).issubset(target["source_media_sha256s"]):
+        raise ContractRejection("RELISTEN_SOURCE_OR_CLOCK_DRIFT")
+    # Keep the established direct-recording projection byte shape unchanged.
+    if binding["role"] == "DIRECT_RECORDING_MEDIA":
+        return None
+    return {"schema_version": "relisten-validated-media-source-projection.v1",
+            "media_sha256": source, "media_source_binding": deepcopy(binding),
+            "media_crop_ms": list(window), "media_target_ms": [start, end],
+            "recording_sha256s": sorted(set(recordings)),
+            "clock_domain": "ACTUAL_OBSERVATION_MEDIA_LOCAL_MS",
+            "recording_clock_rebased": False,
+            "authority": "EVIDENCE_ONLY", "mutation_authorized": False}
+
+
+def _narrow_media_paths(check):
+    """Catalogue identity -> producer media path named on a narrow prior entry."""
+    from src.autoslice.span_phoneme_resolution import digest as catalogue_digest
+    paths = {}
+    for entry in check.get("prior_acoustic_observations", []) or []:
+        if not isinstance(entry, Mapping) or not isinstance(entry.get("verdict"), Mapping):
+            continue
+        path = entry.get("media_source_path")
+        if isinstance(path, str) and path:
+            verdict = {k: v for k, v in entry["verdict"].items()
+                       if k not in {"independent_observations", "served_from_cache"}}
+            paths[catalogue_digest(verdict)] = path
+            media = str(verdict.get('source_media_sha256', '')).removeprefix('sha256:')
+            paths.setdefault('_by_media', {}).setdefault(media, []).append(path)
+    return paths
+
+
+def _deferred_native_proven(row, proven_media, sources):
+    proven = proven_media.get(str(row["source_media_sha256"]).removeprefix("sha256:"))
+    return bool(proven) and proven.issubset(sources)
+
+
+def _deferred_native_entry(row, check, *, include_target_text=False):
+    window = row["physical_audio_window_ms"]
+    info = input_information(source_window=window, cue_indexes=check["cue_indexes"])
+    if row['kind'] == 'argon_native_transcript':
+        info['verified_capability_upgrade'] = 'gemini-4-argon'
+    return {"observation_id": digest({k: row[k] for k in
+                ("source_media_sha256", "audio_clip_sha256", "response_sha256")}),
+            "information_key": _legacy_information_key(info), "input_information": info,
+            "receipt_kind": row["kind"], "raw_observation": row["raw_observation"],
+            **({'target_text': row['text']} if include_target_text else {}),
+            "witness_request": row["witness_request"],
+            "source_media_sha256": row["source_media_sha256"],
+            "usable_status": row["raw_observation"]["status"]}
+
+
+@cold_input
+def evidence_projection(check, *, witness=None, ranges=None, include_target_text=False):
+    target = physical_target(check)
+    start, end = target["physical_target_ms"]
+    sources = set(target["source_media_sha256s"])
+    observations, rejected, later_argon, deferred_native = [], [], [], []
+    proven_media: dict[str, set] = {}
+    narrow_check = {k: v for k, v in check.items() if k != "context_only_range_acoustic_observations"}
+    # This is a derived catalogue view, not the submitted provider request.
+    # Native Argon replay requires a consistent hash even on a read-only view.
+    narrow_check.pop("request_sha256", None)
+    narrow_check["request_sha256"] = digest(narrow_check)
+    narrow, invalid = observation_catalogue(narrow_check, witness or {})
+    rejected.extend(invalid)
+    for row in narrow:
+        if row["kind"] == "blind_pinyin":
+            try:
+                from src.autoslice.entity_witness_cache_probe import validate_relisten_witness_artifacts
+                validate_relisten_witness_artifacts(request=row["witness_request"],
+                                                   witness=row["raw_observation"])
+            except (ValueError, TypeError, KeyError, OSError) as exc:
+                rejected.append({"observation_id": row["observation_id"], "reason_code": str(exc)})
+                continue
+        window = row["physical_audio_window_ms"]
+        recorded = row["source_media_sha256"] in sources
+        if not recorded and row["kind"] == "blind_pinyin":
+            # A blind witness heard on producer padded/recut media keeps its
+            # recording identity through the validated provenance chain.
+            artifacts = row["raw_observation"].get("relisten_artifacts") or {}
+            proven = validated_media_recordings(
+                narrow_check, artifacts.get("source_media"), row["source_media_sha256"])
+            recorded = bool(proven) and set(proven).issubset(sources)
+            if recorded:
+                # The media's own provenance (re-opened through its actual
+                # path) proves this media for every row heard on it,
+                # including native rows that carry no path (guimi cue36 G3).
+                proven_media.setdefault(str(row["source_media_sha256"]).removeprefix("sha256:"),
+                                        set()).update(proven)
+        if (not recorded and row["kind"] in {"native_transcript", "original_language", "argon_native_transcript"}
+                and window[0] <= start < end <= window[1]):
+            # Native rows carry no media path. The same media identity may be
+            # proven by a validated range binding of this check (shared
+            # ancestry reader); decided after the ranges below.
+            deferred_native.append(row)
+            continue
+        if (not recorded
+                or not window[0] <= start < end <= window[1]):
+            rejected.append({"observation_id": row["observation_id"], "reason_code": "RELISTEN_SOURCE_OR_CLOCK_DRIFT"})
+            continue
+        info = input_information(source_window=window, cue_indexes=check["cue_indexes"])
+        if row["kind"] == "argon_native_transcript":
+            # This kind exists only after the native engine/trigger reopens
+            # actual audio, selection and raw. A caller's provider/model label
+            # cannot manufacture a capability upgrade.
+            info["verified_capability_upgrade"] = "gemini-4-argon"
+        entry = {"observation_id": digest({k: row[k] for k in
+                             ("source_media_sha256", "audio_clip_sha256", "response_sha256")}),
+                 "information_key": _legacy_information_key(info), "input_information": info,
+                 "receipt_kind": row["kind"], "raw_observation": row["raw_observation"],
+                 **({'target_text': row['text']} if include_target_text else {}),
+                 "witness_request": row["witness_request"],
+                 "source_media_sha256": row["source_media_sha256"],
+                 "usable_status": row["raw_observation"]["status"]}
+        (later_argon if row["kind"] == "argon_native_transcript" else observations).append(entry)
+    # 41:1631-1634: a native row carries no media path. Besides another row's
+    # validated media, the candidate's own producer media named on the narrow
+    # prior entry (``media_source_path``) is re-opened through the same
+    # ordinary provenance validator on every projection; a path alone, or one
+    # whose provenance does not reach this target's recordings, proves nothing.
+    own_paths = _narrow_media_paths(check)
+    for row in deferred_native:
+        media = str(row["source_media_sha256"]).removeprefix("sha256:")
+        candidates = [own_paths.get(row['observation_id']),
+            *(own_paths.get('_by_media') or {}).get(media, [])]
+        if media in proven_media:
+            continue
+        for path in dict.fromkeys(p for p in candidates if p is not None):
+            proven = validated_media_recordings(narrow_check, path, media)
+            if proven and set(proven).issubset(sources):
+                proven_media.setdefault(media, set()).update(proven)
+    offered_ranges = list(ranges if ranges is not None else check.get("context_only_range_acoustic_observations", []))
+    # Project target text at the ordinary observation producer, alongside its
+    # validated identity. Both the terminal judge and guard consume this view.
+    from src.autoslice.span_phoneme_resolution import project_validated_range_observation
+    for supplied in offered_ranges:
+        # Media proven before this range: what its own admission could see.
+        proven_before = {media: set(rows) for media, rows in proven_media.items()}
+        valid, reason = validate_range_acoustic_observation(check["whole_clip_current_srt"], check, supplied)
+        if not valid or valid.get("status") not in {"OBSERVED", "UNCERTAIN", "CONTEXT_ONLY"}:
+            rejected.append({"observation_id": digest(supplied), "reason_code": reason or "RELISTEN_OBSERVATION_NOT_USABLE"})
+            continue
+        bindings = valid["artifact_bindings"]
+        source = str(bindings.get("source_media_sha256", "")).removeprefix("sha256:")
+        media_binding = valid.get("media_source_binding")
+        if isinstance(media_binding, Mapping):
+            try:
+                proven_media.setdefault(str(media_binding["media_sha256"]).removeprefix("sha256:"), set()).update(
+                    str(x).removeprefix("sha256:") for x in recording_identities(media_binding))
+            except (KeyError, TypeError, ValueError):
+                pass
+        geometry = valid.get("range") or valid.get("witness_request") or {}
+        window_doc = valid.get("source_window") or {}
+        raw = valid.get("verdict") or {}
+        window = [window_doc.get("crop_start_ms", raw.get("audio_start_ms")),
+                  window_doc.get("crop_end_ms", raw.get("audio_end_ms"))]
+        try:
+            source_projection = _validated_range_source_projection(valid, target, window)
+        except (ValueError, KeyError, TypeError) as exc:
+            rejected.append({"observation_id": digest(supplied),
+                             "reason_code": "RELISTEN_SOURCE_OR_CLOCK_DRIFT"})
+            continue
+        identity = {key: str(bindings.get(key, "")).removeprefix("sha256:")
+                    for key in ("source_media_sha256", "audio_clip_sha256", "raw_response_sha256")}
+        if any(len(x) != 64 or any(c not in "0123456789abcdef" for c in x) for x in identity.values()):
+            rejected.append({"observation_id": digest(supplied), "reason_code": "RELISTEN_RAW_IDENTITY_MISSING"})
+            continue
+        # Normalize the primary/range response spelling, independent of IDs.
+        identity["response_sha256"] = identity.pop("raw_response_sha256")
+        info = input_information(source_window=window, cue_indexes=geometry.get("cue_indexes", check["cue_indexes"]),
+                                 assistance=valid.get("assistance"))
+        plan_binding = supplied.get("targeted_relisten_input")
+        if plan_binding is not None:
+            model = (plan_binding.get('admission', {}).get('input_information') or {}).get('listening_model')
+            if model is not None:
+                actual = valid.get('model') or (valid.get('verdict') or {}).get('model')
+                if not isinstance(actual, str) or actual.casefold() != model:
+                    rejected.append({'observation_id': digest(identity), 'reason_code': 'RELISTEN_ACTUAL_MODEL_DRIFT'})
+                    continue
+                info['listening_model'] = model
+                # Distinct actual models may produce identical bytes. Their
+                # verified input identity still differs; arbitrary plan labels
+                # never reach this branch. Historical receipts stay unchanged.
+                identity = _bound_observation_identity(bindings, model)
+        if plan_binding is not None:
+            # Replay the original admission's chronology: a later native
+            # upgrade cannot retroactively alter the first three admissions.
+            # Subsequent plans must include that already validated acquisition.
+            prior_ids = set((plan_binding.get("admission") or {}).get("prior_observation_ids", []))
+            for upgrade in list(later_argon):
+                if upgrade["observation_id"] in prior_ids:
+                    observations.append(upgrade)
+                    later_argon.remove(upgrade)
+            # A native row proven through earlier media was in that admission's
+            # projection too, although it is listed only after every range
+            # (xiamen c73e25d8). Replay it here; its listed place is unchanged.
+            # The same chronology holds for every earlier row: a narrow receipt
+            # that this admission could not see (rejected then, counted now)
+            # was not part of it, so it is not replayed into it either.
+            present = {row["observation_id"] for row in observations}
+            replay_view = [*(row for row in observations if row["observation_id"] in prior_ids), *(
+                row for row in (_deferred_native_entry(native, check, include_target_text=include_target_text) for native in deferred_native
+                                if _deferred_native_proven(native, proven_before, sources))
+                if row["observation_id"] in prior_ids and row["observation_id"] not in present)]
+            try:
+                validate_input_binding(plan_binding, check=check, info=info,
+                    observation_id=digest(identity), observations=replay_view,
+                    assistance=valid.get("assistance"))
+            except (ValueError, TypeError, KeyError) as exc:
+                rejected.append({"observation_id": digest(identity), "reason_code": str(exc)})
+                continue
+            valid = {**valid, "targeted_relisten_input": deepcopy(plan_binding)}
+        projected = project_validated_range_observation(check, supplied, valid) if include_target_text else None
+        observations.append({"observation_id": digest(identity),
+                             "information_key": digest(info) if plan_binding else _legacy_information_key(info),
+                             "input_information": info,
+                             "receipt_kind": valid.get("observation_class", "blind_range"),
+                             **({'target_text': projected['text'] if projected else None} if include_target_text else {}),
+                             "raw_observation": valid, "source_media_sha256": source,
+                             **({"media_source_projection": source_projection} if source_projection else {}),
+                             "usable_status": valid["status"]})
+    for row in deferred_native:
+        proven = proven_media.get(str(row["source_media_sha256"]).removeprefix("sha256:"))
+        if not proven or not proven.issubset(sources):
+            rejected.append({"observation_id": row["observation_id"], "reason_code": "RELISTEN_SOURCE_OR_CLOCK_DRIFT"})
+            continue
+        observations.append(_deferred_native_entry(row, check, include_target_text=include_target_text))
+    observations.extend(later_argon)
+    unique = {row["observation_id"]: row for row in observations}
+    items = list(unique.values())
+    # Arbitrary provider/model labels and re-encoding add no information.
+    # Only the native-validated Argon capability carries the explicit exception.
+    # Replays of the same upgrade still share one information key.
+    count = len({row["information_key"] for row in items})
+    return {"schema_version": SCHEMA, "physical_target": target,
+            "default_effective_opportunities": DEFAULT_OPPORTUNITIES,
+            "effective_distinct_observations": count,
+            "observations": items, "rejected_observations": rejected,
+            "authority": "EVIDENCE_ONLY", "mutation_authorized": False}
+
+
+
+def replay_retained_range_observations(check, saved):
+    """Reopen complete original observations without correcting an UNKNOWN bill.
+
+    Only the exact saved consumer/plan and normal artifact validator can supply
+    this read-only reuse. Missing/incomplete execution or raw never becomes a
+    hearing; the original wrapper's UNKNOWN and cumulative accounting survive.
+    """
+    if not isinstance(saved, Mapping) or not saved.get("native_observations"):
+        return [], None
+    report = {"schema_version": "relisten-retained-observation-replay.v1",
+              "original_audit_sha256": digest(saved),
+              "original_execution_status": saved.get("execution_status", "UNKNOWN"),
+              "original_provider_calls": saved.get("provider_calls_this_attempt"),
+              "accounting_reclassified": False, "new_provider_calls": 0,
+              "new_effective_observations": 0, "authority": "EVIDENCE_ONLY",
+              "mutation_authorized": False}
+    try:
+        previous = saved.get("consumer_check_request")
+        # What the saved observations consumed is re-checked row by row by the
+        # ordinary range validator below (candidate-blind: cue grid; exposed:
+        # its own consumed text). At this consumer only the physical target,
+        # the source/candidate anchor and the whole-clip cue grid must hold;
+        # whole-SRT bytes or the current wording are not audio identity (41).
+        from src.autoslice.independent_context_adjudication import same_physical_cue_grid
+        anchor_keys = ("candidate_id", "source_media_sha256s")
+        # Cue grids are compared on the source clock: a padded-clock audit
+        # (offset 0) and the delivery request (offset 9800) of the same
+        # physical target are one grid (guimi cue38 G2).
+        if (not isinstance(previous, Mapping)
+                or previous.get("request_sha256") != digest({k: v for k, v in previous.items() if k != "request_sha256"})
+                or physical_target(previous) != physical_target(check)
+                or not isinstance(previous.get("whole_clip_current_srt"), str)
+                or not same_physical_cue_grid(previous["whole_clip_current_srt"],
+                                              previous.get("source_media_timeline_offset_ms"),
+                                              check["whole_clip_current_srt"],
+                                              check.get("source_media_timeline_offset_ms"))
+                or any((previous.get("clip_context_binding") or {}).get(k)
+                       != (check.get("clip_context_binding") or {}).get(k) for k in anchor_keys)
+                or saved.get("audio_adapter_called") is not True
+                or saved.get("audio_adapter_returned") is not True
+                or saved.get("prompt_sha256") != text_sha(saved.get("prompt", ""))
+                or saved.get("completion_sha256") != text_sha(saved.get("raw_completion", ""))):
+            raise ContractRejection("RELISTEN_INPUT_BINDING_DRIFT")
+        bound = []
+        for row in saved["native_observations"]:
+            valid, reason = validate_range_acoustic_observation(check["whole_clip_current_srt"], check, row)
+            if not valid or valid.get("evidence_scope") != "RANGE_CONTEXT_ONLY":
+                raise ContractRejection(reason or "RELISTEN_OBSERVATION_NOT_USABLE")
+            bound.append(bind_observed_input(valid, admission=saved["admission"],
+                plan=saved["plan"], prompt=saved["prompt"], raw=saved["raw_completion"]))
+        projection = evidence_projection(check, ranges=[
+            *saved.get("previously_considered_observations", []), *bound])
+        offered = {row["targeted_relisten_input"]["observation_id"] for row in bound}
+        accepted = [row for row in projection["observations"] if row["observation_id"] in offered]
+        if not accepted or {row["observation_id"] for row in accepted} != offered:
+            raise ContractRejection("RELISTEN_OBSERVATION_NOT_USABLE")
+        report.update(status="VERIFIED_RETAINED_OBSERVATION", observation_ids=sorted(offered),
+                      current_effective_observations=projection["effective_distinct_observations"])
+        return [row["raw_observation"] for row in accepted], report
+    except (ValueError, TypeError, KeyError, OSError) as exc:
+        report.update(status="REJECTED", reason_code=str(exc))
+        return [], report
+
+
+def decisions_from_audit(audit):
+    """Read this policy's prior decisions with their actual execution status.
+
+    Preserve enclosing receipts. A missing status is UNKNOWN, never a refund.
+    Only a positively recorded failure BEFORE calling the audio adapter can
+    re-enter the same plan after current preconditions have recovered.
+    """
+    rows, seen = [], set()
+    stack = [(audit, None)]
+    while stack:
+        row, execution = stack.pop()
+        if not isinstance(row, Mapping) or id(row) in seen:
+            continue
+        seen.add(id(row))
+        if "execution_status" in row:
+            execution = {key: row.get(key) for key in
+                         ("execution_status", "audio_adapter_called", "reason_code")}
+        if row.get("schema_version") == SCHEMA and row.get("input_information_key"):
+            rows.append({**row, "original_execution": deepcopy(execution)})
+        for key in ("semantic_audio_recovery", "prior_semantic_audio_recovery",
+                    "prior_audio_adjudication", "targeted_relisten_trace", "admission"):
+            child = row.get(key)
+            if isinstance(child, Mapping):
+                stack.append((child, execution))
+            elif isinstance(child, list):
+                stack.extend((item, execution) for item in child if isinstance(item, Mapping))
+    return rows
+
+
+def _nonempty(value):
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _delta(projection, info):
+    old = [r["input_information"] for r in projection["observations"]]
+    old_context = {x for row in old for x in row["context_source_sha256s"]}
+    return {"source_window_ms": info["source_window_ms"],
+            "cue_indexes": info["cue_indexes"],
+            "new_context_source_sha256s": sorted(set(info["context_source_sha256s"]) - old_context)}
+
+
+def _same_listening_input(row, info):
+    old = row['input_information']
+    physical = lambda value: {k: v for k, v in value.items() if k not in {'listening_model', 'verified_capability_upgrade'}}
+    if physical(old) != physical(info):
+        return False
+    selected = info.get('listening_model')
+    raw = row.get('raw_observation') or {}
+    previous = old.get('listening_model') or raw.get('model') or (raw.get('verdict') or {}).get('model')
+    # Unknown past model never proves a model change. The source validator has
+    # already verified raw model identities on projected observations.
+    return not selected or not previous or str(previous).casefold() == selected
+
+
+def admit_plan(plan, check, projection, *, source_window, cue_indexes, assistance=None, prior_audit=None,
+               listening_model=None):
+    info = input_information(source_window=source_window, cue_indexes=cue_indexes, assistance=assistance,
+                             listening_model=listening_model)
+    key = digest(info)
+    decision = {"schema_version": SCHEMA, "physical_target": physical_target(check),
+                "input_information": info, "input_information_key": key,
+                "effective_distinct_observations_before": projection["effective_distinct_observations"],
+                "default_effective_opportunities": DEFAULT_OPPORTUNITIES,
+                "prior_observation_ids": sorted(r["observation_id"] for r in projection["observations"]),
+                "authority": "EVIDENCE_ONLY", "mutation_authorized": False}
+    if decision["physical_target"] != projection["physical_target"]:
+        raise ContractRejection("RELISTEN_PHYSICAL_TARGET_DRIFT")
+    if (any(row["information_key"] == key or _same_listening_input(row, info)
+            for row in projection["observations"])
+            or any(row.get("input_information_key") == key
+                   and not (row.get("physical_target") == decision["physical_target"]
+                            and (row.get("original_execution") or {}).get("execution_status") == "NOT_DISPATCHED"
+                            and (row.get("original_execution") or {}).get("audio_adapter_called") is False)
+                   for row in decisions_from_audit(prior_audit))):
+        raise ContractRejection("RELISTEN_REPEATED_INPUT_NO_INFORMATION_GAIN")
+    old = [row["input_information"] for row in projection["observations"]]
+    purpose = plan.get("purpose")
+    if purpose is None and len(cue_indexes) > len(check["cue_indexes"]):
+        purpose = "SEMANTIC_BLOCK"  # Existing legal contiguous-range protocol.
+    if purpose not in PURPOSES or not _nonempty(plan.get("reason")):
+        raise ContractRejection("RELISTEN_PURPOSE_REQUIRED")
+    if purpose == "SOURCED_CONTEXT" and not assistance:
+        raise ContractRejection("RELISTEN_SOURCED_CONTEXT_INPUT_REQUIRED")
+    new_context = _delta(projection, info)["new_context_source_sha256s"]
+    changed_window = not any(row["source_window_ms"] == info["source_window_ms"]
+                             for row in old)
+    changed_model = bool(listening_model and not any(_same_listening_input(row, info)
+                        for row in projection['observations']))
+    if assistance and not new_context and not changed_window and not changed_model and purpose == "SOURCED_CONTEXT":
+        raise ContractRejection("RELISTEN_CONTEXT_REWORDING_NO_GAIN")
+    # SUB-20: a purposeful crop change includes narrowing or a small boundary
+    # perturbation. New uncovered milliseconds are not the definition of new
+    # input. Exact physical window + actual context repeats were rejected
+    # above; ID/codec/reason wording never enters that identity.
+    decision.update(purpose=purpose, input_delta=_delta(projection, info))
+    if projection["effective_distinct_observations"] >= DEFAULT_OPPORTUNITIES:
+        strong = plan.get("continuation")
+        ids = {r["observation_id"] for r in projection["observations"]}
+        units = strong.get("disputed_units") if isinstance(strong, Mapping) else None
+        span = strong.get("disputed_codepoint_span") if isinstance(strong, Mapping) else None
+        current = check["current_cue"]
+        if (not isinstance(strong, Mapping)
+                or strong.get("physical_target") != projection["physical_target"]
+                or not isinstance(span, list) or len(span) != 2
+                or any(type(x) is not int for x in span) or not 0 <= span[0] < span[1] <= len(current)
+                or not isinstance(units, list) or not units
+                or any(not _nonempty(x) or x not in current[span[0]:span[1]] for x in units)
+                or not isinstance(strong.get("prior_observation_ids"), list)
+                or set(strong["prior_observation_ids"]) != ids
+                or strong.get("input_delta") != decision["input_delta"]
+                or any(not _nonempty(strong.get(k)) for k in ("missing_evidence", "expected_gain", "verification"))
+                or not any(unit in strong["missing_evidence"] for unit in units)
+                or strong.get("failure_exit") not in {"CONTEXT_REVIEW_OR_UNRESOLVED", "UNRESOLVED_WITH_DIAGNOSTIC"}):
+            raise ContractRejection("RELISTEN_AFTER_THREE_CONCRETE_PLAN_REQUIRED")
+        tests = strong.get("discrimination")
+        if (not isinstance(tests, list) or len(tests) < 2
+                or any(not isinstance(t, Mapping) or not all(_nonempty(t.get(k)) for k in ("audible_result", "supports", "excludes")) for t in tests)
+                or len({t["audible_result"].strip() for t in tests}) != len(tests)
+                or any(t["supports"].strip() == t["excludes"].strip() for t in tests)
+                or len({(t["supports"].strip(), t["excludes"].strip()) for t in tests}) < 2):
+            raise ContractRejection("RELISTEN_DISCRIMINATION_TEST_REQUIRED")
+        decision["strong_continuation"] = deepcopy(dict(strong))
+    decision["status"] = "ADMITTED"
+    return decision
+
+
+
+def _validate_unstarted_native_snapshot(snapshot, source_media):
+    if snapshot is None:
+        return
+    from src.autoslice.native_audio_budget_receipt import (
+        BudgetReceiptPersistenceError, _validate_budget_history)
+    try:
+        _validate_budget_history(snapshot)
+    except (BudgetReceiptPersistenceError, ValueError, RuntimeError, TypeError, KeyError) as exc:
+        raise ContractRejection("RELISTEN_NATIVE_OWNER_MEMORY_INVALID") from exc
+    if (snapshot["revision"] != 0
+            or Path(snapshot["source_media"]).resolve() != Path(source_media).resolve()):
+        raise ContractRejection("RELISTEN_NATIVE_OWNER_MEMORY_WITHOUT_RECEIPT")
+
+
+def unstarted_native_owner_state(*, source_media, receipt_path, output_dir):
+    """Read a never-started owner namespace; do not create an empty ledger."""
+    import os
+    from src.autoslice.supplement_audio_budget import get_budget
+    source, receipt, output = Path(source_media), Path(receipt_path), Path(output_dir)
+    # Include the actual wrapper's legacy namespaces. An existing or dangling
+    # receipt is evidence requiring its owner, not permission to start over.
+    locations = {receipt, output / "native-audio-budget.json",
+                 *(output / provider / "native-audio-budget.json" for provider in ("mai", "moss"))}
+    if any(os.path.lexists(path) for path in locations):
+        raise ContractRejection("RELISTEN_NATIVE_OWNER_RECEIPT_PRESENT_OR_UNSAFE")
+    owner = get_budget(source)
+    snapshot = owner.snapshot() if owner is not None else None
+    _validate_unstarted_native_snapshot(snapshot, source)
+    return {"status": "NO_NATIVE_RECEIPT", "source_media": str(source),
+            "output_dir": str(output), "memory_snapshot": snapshot,
+            "checked_paths": sorted(str(path) for path in locations)}
+
+
+def _ledger_source_is_clip_recording(source_sha, source_path, source_hashes):
+    """Native ledgers are kept per actual (often padded) media; read its ancestry."""
+    bare = str(source_sha or "").removeprefix("sha256:")
+    hashes = {str(x).removeprefix("sha256:") for x in source_hashes}
+    if bare in hashes:
+        return True
+    proven = validated_media_recordings(
+        {"clip_context_binding": {"source_media_sha256s": sorted(hashes)}},
+        str(source_path or ""), bare)
+    return bool(proven) and set(proven) <= hashes
+
+
+def validate_budget_binding(binding, source_hashes, projection=None):
+    """Delegate history validity/monotonicity to the existing budget owner."""
+    from src.autoslice.native_audio_budget_receipt import (
+        _load_existing, _validate_existing, _validate_budget_history, _require_budget_history_extension)
+    if not isinstance(binding, Mapping):
+        raise ContractRejection("RELISTEN_TERMINAL_LEDGER_REQUIRED")
+    if binding.get("receipt") is None:
+        # This narrow-only case permits an honest early no-gain judgment.
+        # Rebind the normal owner locator to the reopened narrow artifacts;
+        # an arbitrary missing path in a self-hashed proof is insufficient.
+        state = binding.get("unstarted_owner_state")
+        rows = (projection or {}).get("observations", [])
+        if (not isinstance(state, Mapping) or not rows
+                or any(row.get("receipt_kind") != "blind_pinyin" for row in rows)
+                or not _ledger_source_is_clip_recording(
+                    binding.get("source_media_sha256"), state.get("source_media"), source_hashes)):
+            raise ContractRejection("RELISTEN_TERMINAL_LEDGER_REQUIRED")
+        roots, sources = set(), set()
+        for row in rows:
+            artifacts = row["raw_observation"]["relisten_artifacts"]
+            response = Path(artifacts["response_path"])
+            if response.parent.parent.name != "entity_verdicts":
+                raise ContractRejection("RELISTEN_NATIVE_OWNER_LOCATOR_UNBOUND")
+            roots.add(response.parents[2])
+            sources.add(artifacts["source_media"])
+        if (len(roots) != 1 or sources != {state.get("source_media")}
+                or Path(binding["receipt_path"]) != next(iter(roots)) / "native-audio-budget.json"
+                or Path(state["output_dir"]) not in {next(iter(roots)), next(iter(roots)) / "independent-context"}):
+            raise ContractRejection("RELISTEN_NATIVE_OWNER_LOCATOR_UNBOUND")
+        _validate_unstarted_native_snapshot(state.get("memory_snapshot"), state["source_media"])
+        current = unstarted_native_owner_state(source_media=state["source_media"],
+            receipt_path=binding["receipt_path"], output_dir=state["output_dir"])
+        # A fresh process can have no memory object; both forms still prove
+        # no owner event. Never discard an event-bearing memory snapshot.
+        if {k: v for k, v in current.items() if k != "memory_snapshot"} != {
+                k: v for k, v in state.items() if k != "memory_snapshot"}:
+            raise ContractRejection("RELISTEN_NATIVE_OWNER_STATE_DRIFT")
+        return dict(binding)
+    if not isinstance(binding.get("receipt"), Mapping):
+        raise ContractRejection("RELISTEN_TERMINAL_LEDGER_REQUIRED")
+    old = binding["receipt"]
+    source = old.get("source_media_sha256")
+    if not _ledger_source_is_clip_recording(
+            source, (old.get("budget") or {}).get("source_media"), source_hashes):
+        raise ContractRejection("RELISTEN_TERMINAL_LEDGER_SOURCE_DRIFT")
+    _validate_existing(old, source_media_sha256=source)
+    _validate_budget_history(old["budget"])
+    current = _load_existing(Path(binding["receipt_path"]))
+    if current is None:
+        raise ContractRejection("RELISTEN_TERMINAL_LEDGER_MISSING")
+    _validate_existing(current, source_media_sha256=source)
+    _validate_budget_history(current["budget"])
+    _require_budget_history_extension(old, current)
+    if current["budget"].get("pending_attempt_count") != 0:
+        raise ContractRejection("RELISTEN_UNKNOWN_DISPATCH_REMAINS_OCCUPIED")
+    return dict(binding)
+
+
+EXHAUSTION_SCHEMA = "relisten-material-exhaustion.v1"
+TARGET_MATERIAL_CONTRACT = 'target-required-audio-channels.v1'
+
+
+def _widest_cue_block(info, cue_count):
+    """The existing exhaustion geometry, including a one-cue source block."""
+    return sorted(info.get('cue_indexes') or []) == list(range(1, cue_count + 1))
+
+
+def target_material_exhaustion(check, projection=None, *, argon_state=None):
+    """The required channels for one G6 question, derived from real receipts.
+
+    A blind transcription covering a semantic range is different from narrow
+    pinyin. A terminal UNKNOWN or failed transport is not a heard channel.
+    Argon keeps its existing after-three admission, not a new per-round quota.
+    The function is used both when stopping and when admitting the terminal.
+    """
+    projection = evidence_projection(check, include_target_text=True) if projection is None else projection
+    target = projection['physical_target']['physical_target_ms']
+    indexes = set(check.get('cue_indexes') or [])
+    offset = check.get('source_media_timeline_offset_ms') or 0
+    context_start = check.get('context_start_ms')
+    context_end = check.get('context_end_ms')
+    context_covered = (
+        isinstance(context_start, (int, float))
+        and isinstance(context_end, (int, float))
+        and context_start <= context_end
+    )
+    if context_covered:
+        context_start += offset
+        context_end += offset
+    wide = []
+    upgrade = []
+    for row in projection['observations']:
+        info = row.get('input_information') or {}
+        window = info.get('source_window_ms') or []
+        kind = row.get('receipt_kind')
+        if kind == 'argon_native_transcript':
+            upgrade.append(row['observation_id'])
+        if (kind in {'blind_range', 'native_transcript', 'original_language', 'argon_native_transcript'}
+                and info.get('observation_class') == 'CANDIDATE_BLIND_AUDIO'
+                and len(window) == 2 and window[0] <= target[0] < target[1] <= window[1]
+                and (set(info.get('cue_indexes') or []) > indexes
+                    or _widest_cue_block(info, len(parse_srt_cues(check['whole_clip_current_srt'])))
+                    or (context_covered and window[0] <= context_start
+                        and context_end <= window[1]))):
+            wide.append(row['observation_id'])
+    state = dict(argon_state or check.get('target_argon_state') or {})
+    required = ['WIDE_CANDIDATE_BLIND_AUDIO']
+    completed = {'WIDE_CANDIDATE_BLIND_AUDIO': sorted(wide)}
+    if projection['effective_distinct_observations'] >= DEFAULT_OPPORTUNITIES and check.get('argon_upgrade_available'):
+        required.append('ARGON_UPGRADE')
+        completed['ARGON_UPGRADE'] = sorted(upgrade)
+        if state.get('state') in {'TERMINAL', 'STRUCTURALLY_UNAVAILABLE'}:
+            completed['ARGON_UPGRADE'].append('owner:' + state['state'])
+    missing = [channel for channel in required if not completed[channel]]
+    return {'schema_version': TARGET_MATERIAL_CONTRACT,
+        'physical_target': deepcopy(projection['physical_target']),
+        'required_channels': required, 'completed_channels': completed,
+        'missing_channels': missing, 'exhausted': not missing,
+        'unknown_accounting': 'RETAINED', 'argon': state}
+
+
+def require_target_material_exhaustion(check, projection=None):
+    result = target_material_exhaustion(check, projection)
+    if result['missing_channels']:
+        raise ProviderFailure('TARGET_MATERIAL_CHANNELS_REQUIRED:' + ','.join(result['missing_channels']), provider='native',
+                              material_recovery={'kind':'ORIGINAL_OWNER_RECOVERY_REQUIRED',
+                                                 'new_model_call_authorized':False})
+    return result
+
+
+@records_program_errors
+def complete_target_materials(*, check, finding, adapters):
+    """Schedule a missing channel once through its ordinary audio owner.
+
+    Reused hearings are validated before this seam. In-flight and failed owner
+    requests stay with that owner; they are never made into observations. A
+    missing adapter is visible and keeps the terminal shut.
+    """
+    from src.autoslice.acoustic_witness_adjudication import build_witness_request
+    from src.autoslice.semantic_audio_recovery import _dispatched_since
+    from src.autoslice.native_audio_budget_receipt import _require_budget_history_extension
+    verifier = adapters.get('entity_verifier')
+    integration = getattr(verifier, 'argon_escalation', None)
+    if integration is not None and check.get('argon_upgrade_available') is not True:
+        check = deepcopy(dict(check))
+        check['argon_upgrade_available'] = True
+        check.pop('request_sha256', None)
+        check['request_sha256'] = digest(check)
+    projection = evidence_projection(check, include_target_text=True)
+    material = target_material_exhaustion(check, projection)
+    if material['exhausted']:
+        return check
+    if not adapters.get('provider_calls_allowed', True):
+        # Offline admission and production scheduling expose the same complete
+        # missing-channel set, without invoking any audio owner in a preflight.
+        raise ProviderFailure('TARGET_MATERIAL_CHANNELS_REQUIRED:' + ','.join(material['missing_channels']), provider='native',
+                              material_recovery={'kind':'ORIGINAL_OWNER_RECOVERY_REQUIRED',
+                                                 'new_model_call_authorized':False})
+    observe = getattr(verifier, 'observe_range_context', None)
+    if 'WIDE_CANDIDATE_BLIND_AUDIO' in material['missing_channels']:
+        if not adapters.get('provider_calls_allowed', True) or not callable(observe):
+            raise ProviderFailure('TARGET_MATERIAL_CHANNELS_REQUIRED:WIDE_CANDIDATE_BLIND_AUDIO', provider='native',
+                              material_recovery={'kind':'ORIGINAL_OWNER_RECOVERY_REQUIRED',
+                                                 'new_model_call_authorized':False})
+        budget = getattr(verifier, 'relisten_budget_state', None)
+        if not callable(budget):
+            raise ContractRejection('RELISTEN_TERMINAL_LEDGER_REQUIRED')
+        cues = parse_srt_cues(check['whole_clip_current_srt'])
+        broad = build_witness_request(check)
+        broad.pop('syllable_count_hint', None)
+        broad.pop('request_sha256', None)
+        broad.update(cue_indexes=list(range(1, len(cues) + 1)),
+            matched_start_ms=cues[0].start_ms, matched_end_ms=cues[-1].end_ms,
+            context_start_ms=cues[0].start_ms, context_end_ms=cues[-1].end_ms,
+            evidence_id=digest({'physical_target': physical_target(check),
+                'channel': 'WIDE_CANDIDATE_BLIND_AUDIO'}))
+        broad['request_sha256'] = digest(broad)
+        previous = next((item for item in reversed(finding.get('target_material_attempts', []))
+            if item.get('request') == broad and item.get('channel') == 'WIDE_CANDIDATE_BLIND_AUDIO'), None)
+        before = budget()
+        providers = tuple(getattr(observe, 'available_providers', ('native',)))
+        if not providers:
+            raise ContractRejection('TARGET_MATERIAL_CHANNEL_PROVIDER_UNAVAILABLE')
+        provider = 'native' if 'native' in providers else providers[0]
+        def owner_recovery(kind, reasons=()):
+            error = ProviderFailure('TARGET_MATERIAL_CHANNEL_OWNER_RECOVERY_REQUIRED:WIDE_CANDIDATE_BLIND_AUDIO', provider=provider)
+            error.material_recovery = {'kind': kind, 'channel': 'WIDE_CANDIDATE_BLIND_AUDIO',
+                'owner_receipt_path': before.get('receipt_path'), 'request_sha256': broad['request_sha256'],
+                'reasons': list(reasons), 'new_model_call_authorized': False}
+            return error
+        attempt = {'channel': 'WIDE_CANDIDATE_BLIND_AUDIO', 'request': broad,
+            'physical_target': physical_target(check), 'budget_before': before,
+            'execution_status': 'OUTCOME_UNKNOWN'}
+        if previous is not None:
+            # Read the original owner only. An old RETURNED/UNKNOWN row is
+            # retained byte-for-byte and cannot authorize another purchase.
+            attempt.update(replay_of_attempt_sha256=digest(previous), recovery_only=True)
+        finding.setdefault('target_material_attempts', []).append(attempt)
+        if previous is not None:
+            parameters = signature(observe).parameters.values()
+            if not any(p.name == 'cache_only' or p.kind == Parameter.VAR_KEYWORD for p in parameters):
+                raise owner_recovery('ORIGINAL_OWNER_RECOVERY_UNAVAILABLE')
+        try:
+            with provider_boundary(provider):
+                observed = observe(check_request=check, range_witness_request=broad,
+                    **({'cache_only': True} if previous is not None else {}),
+                    **({'provider': provider} if provider != 'native' else {}))
+        except (ContractRejection, ProviderFailure) as exc:
+            attempt.update(error_type=type(exc).__name__, review_error=review_error_record(exc),
+                           budget_after=budget())
+            if isinstance(exc, ContractRejection):
+                raise
+            kind = (exc.material_recovery or {}).get('kind', 'IN_FLIGHT_OR_UNKNOWN')
+            raise owner_recovery(kind, [exc.reason_code]) from exc
+        after = budget()
+        old, new = before.get('receipt'), after.get('receipt')
+        if old is not None:
+            if new is None:
+                raise ContractRejection('RELISTEN_DISPATCH_LEDGER_DISAPPEARED')
+            _require_budget_history_extension(old, new)
+        attempts = _dispatched_since(old, new)
+        # Keep the actual return and owner ledger with the finding even if a
+        # subsequent cold validator refuses it. This is an attempt, not audio.
+        attempt.update(provider_dispatches=attempts, budget_after=after, observations=observed,
+            execution_status='RETURNED')
+        if not isinstance(observed, list):
+            raise ContractRejection('TARGET_MATERIAL_CHANNEL_RETURN_INVALID')
+        accepted = []
+        rejected_reasons = []
+        rejected_errors = []
+        validation_reasons = []
+        for row in observed:
+            valid, reason = validate_range_acoustic_observation(check['whole_clip_current_srt'], check, row)
+            if valid:
+                accepted.append(valid)
+            else:
+                rejected_reasons.append(str(row.get('reason_code') or reason or ''))
+                validation_reasons.append(reason)
+                rejected_errors.append(observation_error_record(row, reason))
+        updated = deepcopy(dict(check))
+        updated['context_only_range_acoustic_observations'] = [
+            *check.get('context_only_range_acoustic_observations', []), *accepted]
+        updated.pop('request_sha256', None)
+        updated['request_sha256'] = digest(updated)
+        projection = evidence_projection(updated, include_target_text=True)
+        if not target_material_exhaustion(updated, projection)['completed_channels']['WIDE_CANDIDATE_BLIND_AUDIO']:
+            reasons = rejected_reasons
+            if accepted:
+                raise ContractRejection('TARGET_MATERIAL_CHANNEL_SCOPE_INVALID')
+            attempt['validation_reason_codes'] = validation_reasons
+            # Typed outcome records travel with provider failures. Legacy
+            # explicit execution statuses remain readable; free-form reason
+            # codes and detail text never determine the failure category.
+            if any(error['status'] == 'CONTRACT_ERROR' for error in rejected_errors):
+                raise ContractRejection('TARGET_MATERIAL_CHANNEL_LOCAL_CONTRACT_ERROR:' + ','.join(reasons))
+            if any(error['status'] not in {'CONTRACT_ERROR', 'CALL_FAILURE'} for error in rejected_errors):
+                raise RuntimeError('target material owner returned a program error')
+            kinds = {(error.get('material_recovery') or {}).get('kind') for error in rejected_errors}
+            if 'ARTIFACT_REPLAY_REQUIRED' in kinds:
+                kind = 'ARTIFACT_REPLAY_REQUIRED'
+            elif 'IN_FLIGHT_OR_UNKNOWN' in kinds or not observed:
+                kind = 'IN_FLIGHT_OR_UNKNOWN'
+            else:
+                kind = 'TRANSPORT_OR_SCHEMA_FAILURE'
+            raise owner_recovery(kind, reasons)
+        check = updated
+    material = target_material_exhaustion(check)
+    if 'ARGON_UPGRADE' in material['missing_channels']:
+        if integration is None or not adapters.get('provider_calls_allowed', True):
+            raise ProviderFailure('TARGET_MATERIAL_CHANNELS_REQUIRED:ARGON_UPGRADE', provider='native',
+                              material_recovery={'kind':'ORIGINAL_OWNER_RECOVERY_REQUIRED',
+                                                 'new_model_call_authorized':False})
+        from src.autoslice.semantic_audio_recovery import argon_terminal_kind
+        from src.autoslice.exact_final_witness_authority import history_audio_recovery_from_adjudication
+        prior = finding.get('exact_release_adjudication') or {}
+        session = integration.session(check, finding)
+        resumed = session.resume()
+        if not resumed:
+            recovery = history_audio_recovery_from_adjudication(prior)
+            if recovery is None or recovery.get('status') != 'BLOCK':
+                raise ContractRejection('TARGET_MATERIAL_ARGON_ORIGINAL_AUDIO_GATE_REQUIRED')
+            session.consider_targeted_relisten(check=check,
+                original_request=recovery.get('original_request') or prior.get('request'),
+                prior=prior, recovery=recovery, projection=evidence_projection(check))
+        finding.setdefault('target_material_attempts', []).append({
+            'channel': 'ARGON_UPGRADE', 'physical_target': physical_target(check),
+            'owner_audit': deepcopy(session.audit), 'envelope': deepcopy(session.envelope)})
+        check = session.mark_request(check)
+        if session.envelope is None:
+            kind = argon_terminal_kind(session.audit)
+            if kind not in {'HEARING_TERMINAL', 'STRUCTURALLY_UNAVAILABLE'}:
+                raise ProviderFailure('TARGET_MATERIAL_ARGON_OWNER_RECOVERY_REQUIRED', provider='argon')
+            check['target_argon_state'] = {
+                'state': 'TERMINAL' if kind == 'HEARING_TERMINAL' else 'STRUCTURALLY_UNAVAILABLE',
+                'owner_audit': deepcopy(session.audit)}
+        check.pop('request_sha256', None)
+        check['request_sha256'] = digest(check)
+    require_target_material_exhaustion(check)
+    return check
+
+
+def material_exhaustion(projection, *, cue_count, argon_state, cpa_requested_audio=True):
+    """Why no further audio can be acquired for this target (SUB-20 -> SUB-04 -> SUB-18).
+
+ Unconsumed bound observations were already handed back by the owner before
+ the planner ran, so only consumed material remains. With the default three
+ distinct target-covering observations, the terminal also needs Argon to be
+ terminal or structurally unavailable; Argon still pending is not exhaustion.
+ Below three: when the target's own COMPLETED CPA answer asked for audio,
+ a text-level "no expected gain" is not exhaustion (公开规则：如果第一次
+ 无法确定，为什么要用完全相同的听音结果再判断一次？以及，为什么不用不同的时间窗再听
+ 一次？); only a heard widest block (no wider window left) is. Without such a
+ request, 41「没有明显收益时不凑三次」 stays (admin ruling).
+ """
+    distinct = projection["effective_distinct_observations"]
+    widest = any(_widest_cue_block(row.get('input_information') or {}, cue_count)
+                 for row in projection['observations'])
+    state = dict(argon_state or {})
+    if distinct >= DEFAULT_OPPORTUNITIES:
+        if state.get("state") not in {"TERMINAL", "STRUCTURALLY_UNAVAILABLE"}:
+            raise ContractRejection("RELISTEN_NO_GAIN_ARGON_NOT_TERMINAL")
+        basis = "DEFAULT_DISTINCT_SPENT_AND_ARGON_" + state["state"]
+    elif cpa_requested_audio is not False:
+        if not widest:
+            raise ContractRejection("RELISTEN_NO_GAIN_MATERIAL_NOT_EXHAUSTED")
+        basis = "EARLY_NO_GAIN_WIDEST_BLOCK_HEARD"
+    else:
+        basis = "EARLY_NO_GAIN_CPA_DID_NOT_REQUEST_AUDIO"
+    return {"schema_version": EXHAUSTION_SCHEMA, "basis": basis,
+            "cpa_requested_audio": cpa_requested_audio is not False,
+            "effective_distinct_observations": distinct, "default_opportunities": DEFAULT_OPPORTUNITIES,
+            "unconsumed_observations": 0, "widest_block_heard": widest, "argon": state}
+
+
+def _valid_exhaustion(value, projection):
+    if value is None:
+        return True  # Proofs compiled before replay under their own contract.
+    if isinstance(value, Mapping) and value.get('basis') == LOOP_STOP_KIND:
+        if value.get('scope') == 'TARGET_REQUIRED_CHANNELS':
+            target = value.get('target_material') or {}
+            return (value.get('schema_version') == EXHAUSTION_SCHEMA
+                and value.get('unknown_accounting') == 'RETAINED'
+                and value.get('effective_distinct_observations') == projection['effective_distinct_observations']
+                and target.get('schema_version') == TARGET_MATERIAL_CONTRACT
+                and target.get('physical_target') == projection['physical_target']
+                and target.get('exhausted') is True and target.get('missing_channels') == []
+                and target.get('required_channels')
+                and all(target.get('completed_channels', {}).get(channel)
+                    for channel in target['required_channels']))
+        return (value.get('schema_version') == EXHAUSTION_SCHEMA
+            and value.get('scope') == 'THIS_RUN_NO_NEW_MATERIAL'
+            and value.get('unknown_accounting') == 'RETAINED'
+            and value.get('effective_distinct_observations') == projection['effective_distinct_observations'])
+    if (not isinstance(value, Mapping) or value.get("schema_version") != EXHAUSTION_SCHEMA
+            or value.get("effective_distinct_observations") != projection["effective_distinct_observations"]
+            or value.get("unconsumed_observations") != 0):
+        return False
+    if projection["effective_distinct_observations"] >= DEFAULT_OPPORTUNITIES:
+        return ((value.get("argon") or {}).get("state") in {"TERMINAL", "STRUCTURALLY_UNAVAILABLE"}
+                and value.get("basis") == "DEFAULT_DISTINCT_SPENT_AND_ARGON_" + value["argon"]["state"])
+    if value.get("cpa_requested_audio") is not False:
+        return value.get("basis") == "EARLY_NO_GAIN_WIDEST_BLOCK_HEARD" and value.get("widest_block_heard") is True
+    return value.get("basis") == "EARLY_NO_GAIN_CPA_DID_NOT_REQUEST_AUDIO"
+
+
+def compile_no_gain(*, check, recovery, plan, prompt, raw, projection, budget_binding,
+                    original_request=None, material_exhaustion=None, exhaustion_error=None,
+                    plan_exhaustion=None):
+    from src.autoslice.exact_final_witness_authority import valid_history_audio_recovery
+    from src.autoslice.semantic_audio_recovery import _same_pending_audio_target
+    original = original_request if isinstance(original_request, Mapping) else check
+    unsigned = {k: v for k, v in original.items() if k != "request_sha256"}
+    if (original.get("request_sha256") != digest(unsigned)
+            or not valid_history_audio_recovery(recovery, request=original)
+            or not _same_pending_audio_target(original, check)
+            or physical_target(original) != physical_target(check)):
+        raise ContractRejection("RELISTEN_NO_GAIN_ORIGINAL_AUDIO_GATE_DRIFT")
+    diagnosis = plan.get('no_gain')
+    if plan_exhaustion is not None:
+        if (projection['effective_distinct_observations'] < DEFAULT_OPPORTUNITIES
+                or material_exhaustion is None or not _valid_exhaustion(material_exhaustion, projection)):
+            raise ContractRejection('RELISTEN_PLAN_EXHAUSTION_NOT_PROVEN')
+        try:
+            admit_plan(plan, check, projection, source_window=plan_exhaustion['source_window'],
+                cue_indexes=plan_exhaustion['cue_indexes'], assistance=plan_exhaustion.get('assistance'),
+                listening_model=plan_exhaustion.get('listening_model'))
+        except ValueError as exc:
+            if str(exc) != plan_exhaustion.get('reason_code') or str(exc) not in {
+                'RELISTEN_AFTER_THREE_CONCRETE_PLAN_REQUIRED', 'RELISTEN_DISCRIMINATION_TEST_REQUIRED',
+                'RELISTEN_REPEATED_INPUT_NO_INFORMATION_GAIN', 'RELISTEN_CONTEXT_REWORDING_NO_GAIN',
+                'RELISTEN_INPUT_CHANGE_NOT_DISCRIMINATING', 'RELISTEN_BOUNDARY_OR_OVERLAP_EVIDENCE_REQUIRED'}:
+                raise ContractRejection('RELISTEN_PLAN_EXHAUSTION_REASON_INVALID') from exc
+        else:
+            raise ContractRejection('RELISTEN_PLAN_STILL_HAS_VALUE')
+        ids = sorted(r['observation_id'] for r in projection['observations'])
+        diagnosis = {'observation_ids': ids,
+            'remaining_uncertainty': plan.get('question') or check['current_cue'],
+            'why_audio_cannot_discriminate': '规划层未提供合格的新区间/来源/区分字音：' + plan_exhaustion['reason_code'],
+            'alternatives': [{'purpose': p, 'reason': '当前追加计划未通过实际输入与区分价值校验；不冒称新增听音。',
+                'observation_ids': ids} for p in ('WORD_BOUNDARY', 'SOURCED_CONTEXT')],
+            'context_refs': sorted(source_catalogue(check))}
+    elif plan.get("decision") != "NO_NEW_AUDIO":
+        raise ContractRejection("RELISTEN_NO_GAIN_DECISION_REQUIRED")
+    ids = {row["observation_id"] for row in projection["observations"]}
+    if (not ids or not isinstance(diagnosis, Mapping)
+            or not isinstance(diagnosis.get("observation_ids"), list)
+            or set(diagnosis["observation_ids"]) != ids
+            or not _nonempty(diagnosis.get("remaining_uncertainty"))
+            or not _nonempty(diagnosis.get("why_audio_cannot_discriminate"))):
+        raise ContractRejection("RELISTEN_NO_GAIN_OBSERVATION_PROOF_REQUIRED")
+    alternatives = diagnosis.get("alternatives")
+    if (not isinstance(alternatives, list) or len(alternatives) < 2
+            or any(not isinstance(row, Mapping) or row.get("purpose") not in PURPOSES
+                   or not _nonempty(row.get("reason")) or not isinstance(row.get("observation_ids"), list)
+                   or not row["observation_ids"] or not set(row["observation_ids"]) <= ids
+                   for row in alternatives)
+            or len({row["purpose"] for row in alternatives}) < 2):
+        raise ContractRejection("RELISTEN_NO_GAIN_ALTERNATIVES_REQUIRED")
+    refs = diagnosis.get("context_refs")
+    catalogue = source_catalogue(check)
+    if not isinstance(refs, list) or not refs or any(ref not in catalogue for ref in refs):
+        raise ContractRejection("RELISTEN_NO_GAIN_CONTEXT_SOURCE_REQUIRED")
+    validate_budget_binding(budget_binding, projection["physical_target"]["source_media_sha256s"], projection)
+    if exhaustion_error is not None:
+        # The plan and proof are well-formed, but the audio material is not
+        # exhausted yet: the terminal stays shut (reported after proof checks).
+        raise ContractRejection(exhaustion_error)
+    if not _valid_exhaustion(material_exhaustion, projection):
+        raise ContractRejection("RELISTEN_NO_GAIN_MATERIAL_EXHAUSTION_INVALID")
+    result = {"schema_version": NO_GAIN_SCHEMA, "authority": "EVIDENCE_ONLY", "mutation_authorized": False,
+              "anchor": anchor(check), "history_audio_recovery": deepcopy(recovery),
+              "original_request": deepcopy(dict(original)),
+              "plan": deepcopy(plan), "prompt": prompt, "raw_completion": raw,
+              "prompt_sha256": text_sha(prompt), "raw_sha256": text_sha(raw),
+              "projection": deepcopy(projection), "budget_binding": deepcopy(budget_binding),
+              "context_sources": {ref: catalogue[ref] for ref in refs},
+              "terminal_route": "EXISTING_CONTEXT_PHONEME_FIT_THEN_EDITORIAL",
+              "literal_transcription_authorized": False}
+    if material_exhaustion is not None:
+        result["material_exhaustion"] = deepcopy(dict(material_exhaustion))
+        result["audio_resolution"] = "UNRESOLVED_BY_AUDIO"
+    if plan_exhaustion is not None:
+        result['plan_exhaustion'] = deepcopy(plan_exhaustion)
+        result['no_gain_diagnosis'] = deepcopy(diagnosis)
+    result["proof_sha256"] = digest(result)
+    return result
+
+
+@cold_input
+def compile_task_stop_no_gain(*, check, finding_materials, text_version_sha256, projection=None):
+    """Stop one material version; no round receipt or mutation authority.
+
+    The caller supplies the actually consumed M. Its local text/physical
+    identity is reconstructed here, and audio receipts are reopened by their
+    ordinary owners. A stopped sibling task cannot authorize this task.
+    """
+    from .finding_context import materials_for_check, validate_materials
+    if (not isinstance(check, Mapping)
+            or check.get('request_sha256') != digest({k:v for k,v in check.items() if k != 'request_sha256'})):
+        raise ContractRejection('TASK_STOP_REQUEST_DRIFT')
+    current_sha = text_sha(check['whole_clip_current_srt'])
+    if (not isinstance(text_version_sha256, str)
+            or text_version_sha256.removeprefix('sha256:') != current_sha):
+        raise ContractRejection('TASK_STOP_TEXT_VERSION_DRIFT')
+    material = validate_materials(finding_materials)
+    rebuilt_material = materials_for_check(check, candidates=material['candidates'],
+        observation_ids=material['bound_observation_ids'], contracts=material['contracts'],
+        model_identity=material['model_identity'])
+    if rebuilt_material != material:
+        raise ContractRejection('TASK_STOP_MATERIALS_DRIFT')
+    current = evidence_projection(check, include_target_text=True)
+    if projection is not None:
+        # Older owner projections may omit only the target-text view. Never
+        # trust their derived counts: reopen every original receipt first.
+        has_text = all('target_text' in row for row in projection['observations'])
+        replayed = replay_no_gain_projection({'projection': projection}, check, include_target_text=has_text)
+        expected = current if has_text else evidence_projection(check)
+        if replayed != projection or projection != expected:
+            raise ContractRejection('TASK_STOP_OBSERVATION_DRIFT')
+        current = deepcopy(projection)
+    exhaustion = require_target_material_exhaustion(check, current)
+    models = [{'observation_id': row['observation_id'],
+        'listening_model': row.get('input_information', {}).get('listening_model')
+            or row.get('input_information', {}).get('verified_capability_upgrade')}
+        for row in sorted(current['observations'], key=lambda item: item['observation_id'])]
+    # Missing legacy model identity stays null; neither a request's preferred
+    # model nor a caller label can turn an old observation into a new hearing.
+    exhaustion = {**exhaustion, 'listen_count': current['effective_distinct_observations'],
+        'model_rotation': models, 'unknown_accounting': 'RETAINED'}
+    plan = {'decision': 'NO_NEW_AUDIO', 'no_gain': {
+        'remaining_uncertainty': 'TASK_MATERIAL_EXHAUSTED',
+        'why_audio_cannot_discriminate': '本疑点的必需材料通道已核验；在途和UNKNOWN保留，停止本材料版本不授予改字或发布权。'}}
+    proof = {'schema_version': NO_GAIN_SCHEMA, 'proof_kind': 'TASK_STOP',
+        'authority': 'EVIDENCE_ONLY', 'mutation_authorized': False,
+        'anchor': anchor(check),
+        'finding_key': {key: material[key] for key in ('physical_question_sha256', 'materials_sha256')},
+        'text_version_sha256': current_sha, 'material_exhaustion': exhaustion,
+        'projection': current, 'context_sources': source_catalogue(check), 'plan': plan,
+        'prompt': '', 'raw_completion': json.dumps(plan, ensure_ascii=False, sort_keys=True),
+        'audio_resolution': 'UNRESOLVED_BY_AUDIO', 'literal_transcription_authorized': False,
+        'terminal_route': 'EXISTING_CONTEXT_PHONEME_FIT_THEN_EDITORIAL'}
+    proof['prompt_sha256'] = text_sha(proof['prompt'])
+    proof['raw_sha256'] = text_sha(proof['raw_completion'])
+    proof['proof_sha256'] = digest(proof)
+    return proof
+
+
+@cold_input
+def compile_loop_stop_no_gain(*, check, finding, pass_receipts, projection=None):
+    """A stopped run proves no more material *in this run*, never a hearing.
+
+    Unlike a planner's audio exhaustion proof this does not assert that pending
+    jobs completed, UNKNOWN disappeared, or three listens happened. It binds
+    the actual immutable review chain and the complete stopped finding.
+    """
+    unsigned = {k: v for k, v in check.items() if k != 'request_sha256'}
+    if check.get('request_sha256') != digest(unsigned):
+        raise ContractRejection('FINAL_STOP_REQUEST_DRIFT')
+    receipts = deepcopy(list(pass_receipts))
+    if not receipts:
+        raise ContractRejection('FINAL_STOP_PASS_RECEIPTS_REQUIRED')
+    for index, receipt in enumerate(receipts):
+        if (receipt.get('receipt_sha256') != digest({k: v for k, v in receipt.items() if k != 'receipt_sha256'})
+                or type(receipt.get('pass_index')) is not int
+                or (index and receipt['pass_index'] != receipts[index-1]['pass_index'] + 1)):
+            raise ContractRejection('FINAL_STOP_PASS_CHAIN_DRIFT')
+    last = receipts[-1]
+    srt_sha = 'sha256:' + text_sha(check['whole_clip_current_srt'])
+    if (last.get('input_srt_sha256') != srt_sha or last.get('output_srt_sha256') != srt_sha
+            or last.get('repair_count') != 0 or last.get('repairs_sha256') != digest([])):
+        raise ContractRejection('FINAL_STOP_NOT_UNCHANGED')
+    row_sha = digest(finding)
+    if row_sha not in last.get('unresolved_finding_sha256s', []):
+        raise ContractRejection('FINAL_STOP_FINDING_NOT_IN_PASS')
+    own = (finding.get('exact_release_adjudication') or {}).get('request')
+    if isinstance(own, Mapping):
+        from src.autoslice.audio_question_identity import same_audio_question
+        if not same_audio_question(own, check, compare_proposed=False, strict_source=True)[0]:
+            raise ContractRejection('FINAL_STOP_QUESTION_DRIFT')
+    current_projection = evidence_projection(check, include_target_text=True)
+    if projection is not None and all('target_text' not in row for row in projection['observations']):
+        # Reopen legacy proofs in their original byte shape; the new terminal
+        # request still requires its own current producer projection below.
+        current_projection = deepcopy(current_projection)
+        for row in current_projection['observations']:
+            row.pop('target_text', None)
+    if projection is not None and projection != current_projection:
+        from .prompt_materials import same_legacy_observation_materials
+        if (check.get('target_material_contract') == TARGET_MATERIAL_CONTRACT
+                or not same_legacy_observation_materials(projection, current_projection)):
+            raise ContractRejection('FINAL_STOP_OBSERVATION_DRIFT')
+        # Keep the signed old representation. No rejected observation becomes
+        # admitted; all admitted bindings/counts were revalidated above.
+        current_projection = deepcopy(projection)
+    target_exhaustion = (require_target_material_exhaustion(check, current_projection)
+        if check.get('target_material_contract') == TARGET_MATERIAL_CONTRACT else None)
+    adjudication = finding.get('exact_release_adjudication') or {}
+    reason = adjudication.get('reason_code') or adjudication.get('policy_branch') or adjudication.get('status') or 'UNRESOLVED_FINDING'
+    sources = source_catalogue(check)
+    plan = {'decision': 'NO_NEW_AUDIO', 'no_gain': {
+        'remaining_uncertainty': reason,
+        'why_audio_cannot_discriminate': '本轮无任何可应用修改，终审循环停止；本次运行无新增材料，原观察和在途/UNKNOWN原账保留。'}}
+    proof = {'schema_version': NO_GAIN_SCHEMA, 'proof_kind': LOOP_STOP_KIND,
+        'authority': 'EVIDENCE_ONLY', 'mutation_authorized': False, 'anchor': anchor(check),
+        'pass_receipts': receipts, 'stopped_finding': deepcopy(dict(finding)),
+        'stopped_finding_sha256': row_sha, 'stop_reason_code': reason,
+        'projection': current_projection, 'context_sources': sources, 'plan': plan,
+        'prompt': '', 'raw_completion': json.dumps(plan, ensure_ascii=False, sort_keys=True),
+        'material_exhaustion': {'schema_version': EXHAUSTION_SCHEMA, 'basis': LOOP_STOP_KIND,
+            'scope': 'TARGET_REQUIRED_CHANNELS' if target_exhaustion is not None else 'THIS_RUN_NO_NEW_MATERIAL',
+            'unknown_accounting': 'RETAINED',
+            **({'target_material': target_exhaustion} if target_exhaustion is not None else {}),
+            'effective_distinct_observations': current_projection['effective_distinct_observations']},
+        'audio_resolution': 'UNRESOLVED_BY_AUDIO', 'literal_transcription_authorized': False,
+        'terminal_route': 'EXISTING_CONTEXT_PHONEME_FIT_THEN_EDITORIAL'}
+    proof['prompt_sha256'] = text_sha(proof['prompt'])
+    proof['raw_sha256'] = text_sha(proof['raw_completion'])
+    proof['proof_sha256'] = digest(proof)
+    return proof
+
+
+@cold_input
+def validate_no_gain(proof, check, *, finding_materials=None, text_version_sha256=None):
+    if not isinstance(proof, Mapping):
+        raise ContractRejection("RELISTEN_NO_GAIN_PROOF_REQUIRED")
+    unsigned = {k: v for k, v in proof.items() if k != "proof_sha256"}
+    if (proof.get("schema_version") != NO_GAIN_SCHEMA or proof.get("proof_sha256") != digest(unsigned)
+            or proof.get("anchor") != anchor(check)
+            or proof.get("raw_sha256") != text_sha(proof.get("raw_completion", ""))
+            or proof.get("prompt_sha256") != text_sha(proof.get("prompt", ""))
+            or proof.get("mutation_authorized") is not False):
+        raise ContractRejection("RELISTEN_NO_GAIN_BINDING_DRIFT")
+    if proof.get('proof_kind') == 'TASK_STOP':
+        if finding_materials is None or text_version_sha256 is None:
+            raise ContractRejection('TASK_STOP_CURRENT_MATERIALS_REQUIRED')
+        rebuilt = compile_task_stop_no_gain(check=check, finding_materials=finding_materials,
+            text_version_sha256=text_version_sha256, projection=proof.get('projection'))
+        if rebuilt != proof:
+            raise ContractRejection('TASK_STOP_PROOF_DRIFT')
+        return dict(proof)
+    if proof.get('proof_kind') == LOOP_STOP_KIND:
+        rebuilt = compile_loop_stop_no_gain(check=check, finding=proof['stopped_finding'],
+            pass_receipts=proof['pass_receipts'], projection=proof['projection'])
+        if rebuilt != proof:
+            raise ContractRejection('FINAL_STOP_PROOF_DRIFT')
+        return dict(proof)
+    from src.autoslice.llm_client import extract_json_object
+    if extract_json_object(proof["raw_completion"]) != proof["plan"]:
+        raise ContractRejection("RELISTEN_NO_GAIN_RAW_PLAN_DRIFT")
+    # Reopen the actual artifacts. A saved derived count is never authority.
+    has_target_text = all('target_text' in row for row in proof['projection']['observations'])
+    current = replay_no_gain_projection(proof, check, include_target_text=has_target_text)
+    def material(projection):
+        keys = ("observation_id", "information_key", "input_information", "receipt_kind",
+                "source_media_sha256", "usable_status") + (('target_text',) if has_target_text else ())
+        return {"physical_target": projection["physical_target"],
+                "default_effective_opportunities": projection["default_effective_opportunities"],
+                "effective_distinct_observations": projection["effective_distinct_observations"],
+                "observations": sorted(({k: row[k] for k in keys} for row in projection["observations"]),
+                                       key=lambda row: row["observation_id"])}
+    if material(current) != material(proof["projection"]):
+        raise ContractRejection("RELISTEN_NO_GAIN_OBSERVATION_DRIFT")
+    rebuilt = compile_no_gain(check=check, recovery=proof["history_audio_recovery"], plan=proof["plan"],
+                              prompt=proof["prompt"], raw=proof["raw_completion"], projection=proof["projection"],
+                              budget_binding=proof["budget_binding"],
+                              original_request=proof.get("original_request"),
+                              material_exhaustion=proof.get("material_exhaustion"),
+                              plan_exhaustion=proof.get('plan_exhaustion'))
+    if rebuilt != proof:
+        raise ContractRejection("RELISTEN_NO_GAIN_PROOF_DRIFT")
+    return dict(proof)
+
+
+def replay_no_gain_projection(proof, check, *, include_target_text=False):
+    """Replay the sealed observations through their owners, with an optional
+    terminal text view. The ordinary/Argon projection's byte shape stays v1.
+    """
+    rows = proof['projection']['observations']
+    ranges = [r['raw_observation'] for r in rows if r['receipt_kind'] in {'blind_range', 'CONTEXT_ASSISTED_AUDIO'}]
+    narrow = [{'witness_request': r['witness_request'], 'verdict': r['raw_observation']}
+        for r in rows if r['receipt_kind'] not in {'blind_range', 'CONTEXT_ASSISTED_AUDIO'}]
+    return evidence_projection({**check, 'prior_acoustic_observations': narrow}, ranges=ranges,
+        include_target_text=include_target_text)
+
+
+
+def _editorial_guard_tokens(proposed):
+    """Ephemeral conflict-check tokens, never phonetic evidence for foreign text.
+
+    Every Mandarin segment still uses its existing owner. An opaque foreign
+    run keeps its place in the full sequence and can match only an uncertainty
+    already declared by the original witness. The original text stays intact
+    in the typed editorial request/proof/cache; this token view grants nothing.
+    """
+    import re
+    from src.autoslice.span_phoneme_resolution import _mandarin
+    tokens = []
+    for part in re.split(r"([A-Za-z\u3040-\u30ff]+)", proposed):
+        if not part:
+            continue
+        if re.fullmatch(r"[A-Za-z\u3040-\u30ff]+", part):
+            tokens.append("<foreign>")
+        elif re.search(r"[\u3400-\u9fff0-9]", part):
+            # Check unsupported letters before the pronunciation owner can
+            # discard them while normalizing a mixed punctuation segment.
+            if _clear_audio_constraint_units(part, guard_comparable=True) is None:
+                raise ContractRejection("EDITORIAL_CLEAR_AUDIO_CONFLICT")
+            tokens.extend(_mandarin(part))
+        elif any(char.isalnum() for char in part):
+            if _clear_audio_constraint_units(part, guard_comparable=True) is None:
+                raise ContractRejection("EDITORIAL_CLEAR_AUDIO_CONFLICT")
+    return tokens
+
+
+def _clear_audio_units(value):
+    import re
+    return re.findall(r"[A-Za-z]+(?:'[A-Za-z]+)?|[0-9]+|[^\W_]", value.casefold())
+
+
+def _clear_audio_constraint_projection(value, *, receipt_kind=None, target_text=None,
+                                       guard_comparable=False):
+    """Project one reading onto the same literal-constraint view as the guard.
+
+    A reading can contain a reliable target-script run and an incompatible
+    pronunciation run (for example ``别去Ω``).  The latter is an existing
+    uncertainty boundary, not a reason to discard the reliable prefix.  Keep
+    that boundary as the canonical ``[unclear]`` marker so catalogue and guard
+    consume exactly the same comparison string.
+    """
+    import re
+    from .text_scripts import character_script
+    if not isinstance(value, str) or not value.strip():
+        return None
+    if target_text is None:
+        alnum = [char for char in value if char.isalnum()]
+        if guard_comparable and any(
+                char.isalnum() and character_script(char) not in {'han', 'latin', 'kana'}
+                and not '0' <= char <= '9'
+                for char in value):
+            return None
+        return value if alnum else None
+
+    def script(char):
+        detected = character_script(char)
+        if detected in {'han', 'latin', 'kana'}:
+            return detected
+        # This guard's legacy comparable scope excludes Hangul. Digits keep
+        # its original isdigit semantics (including non-ASCII digits).
+        return 'digit' if char.isdigit() else 'other'
+
+    target_scripts = {script(char) for char in target_text if char.isalnum()}
+    if not target_scripts:
+        return None
+    reading_scripts = {script(char) for char in value if char.isalnum()}
+    # A Chinese target needs at least one heard Han run.  A pure Latin/Korean
+    # rendering of a mixed Chinese/Latin cue is still a cross-script reading,
+    # not evidence for the Chinese words around its Latin suffix.
+    if 'han' in target_scripts and 'han' not in reading_scripts:
+        return None
+    compatible = target_scripts & {'han', 'latin', 'kana', 'digit'}
+    if not compatible:
+        return None
+
+    marker = re.compile(CLEAR_AUDIO_MARKER_PATTERN, re.I)
+    projected = []
+    comparable = False
+    for part in re.split('(' + CLEAR_AUDIO_MARKER_PATTERN + ')', value, flags=re.I):
+        if not part:
+            continue
+        if marker.fullmatch(part):
+            projected.append(CLEAR_AUDIO_GAP)
+            continue
+        gap = False
+        for char in part:
+            if char.isalnum() and script(char) not in compatible:
+                gap = True
+                continue
+            if gap:
+                projected.append(CLEAR_AUDIO_GAP)
+                gap = False
+            if char.isalnum():
+                comparable = True
+            projected.append(char)
+        if gap:
+            projected.append(CLEAR_AUDIO_GAP)
+    return ''.join(projected) if comparable else None
+
+
+def _clear_audio_constraint_units(value, *, receipt_kind=None, target_text=None,
+                                  guard_comparable=False):
+    """Return units that the editorial guard can compare as literal audio.
+
+    ``target_text`` is still retained on every validated observation.  When a
+    terminal request supplies its current cue, a reading is a clear-audio
+    constraint only when its script can be compared to that target.  A Han
+    target keeps any reading that contains Han (including a mixed target),
+    while a Latin-only target requires the same supported script.  Thus an
+    English ``native_transcript`` remains an exact literal guard, while
+    Latin/Korean pronunciation spellings of a Chinese cue remain observations.
+    With no target cue, preserve the historical catalogue and direct guard
+    behavior used by legacy consumers.
+    """
+    projected = _clear_audio_constraint_projection(
+        value, receipt_kind=receipt_kind, target_text=target_text,
+        guard_comparable=guard_comparable)
+    return _clear_audio_units(projected) if projected is not None else None
+
+
+def terminal_clear_audio_catalogue(projection, *, current_text=None, qualification_policy=None):
+    """A view of the SAME validated projection handed to the terminal judge.
+
+    Narrow phonetic transcriptions raise questions, never veto terminal B/C.
+    Dependent assisted context is not independently clear literal audio.
+    Current guards require the policy's independent wide-witness floor and
+    actual timed/exact target projections. Unqualified ASR stays in the full
+    model evidence for B/C. Omitting the policy only reconstructs old prompts.
+    """
+    rows = []
+    contract = None
+    if qualification_policy is not None:
+        from .semantic_terminal_adjudication import grade_a_witness_contract, independent_wide_identity
+        contract = grade_a_witness_contract({'terminal_policy': qualification_policy})
+    identities = set()
+    for row in projection['observations']:
+        if (not row.get('target_text')
+                or row.get('receipt_kind') in {'blind_pinyin', 'CONTEXT_ASSISTED_AUDIO'}):
+            continue
+        # The same predicate is used again by protect_clear_transcript below;
+        # this first pass only decides which observations may become literal
+        # constraints.  The complete projection still retains every row.
+        projected = (row['target_text'] if current_text is None else
+            _clear_audio_constraint_projection(
+                row['target_text'], receipt_kind=row.get('receipt_kind'),
+                target_text=current_text))
+        if projected is None:
+            continue
+        if contract is not None:
+            identity = independent_wide_identity(row, contract)
+            target = (projection.get('physical_target') or {}).get('physical_target_ms') or []
+            info = row.get('input_information') or {}
+            window = info.get('source_window_ms') or []
+            if (identity is None or len(target) != 2 or len(window) != 2
+                    or not all(type(value) is int for value in [*target, *window])
+                    or not window[0] <= target[0] < target[1] <= window[1]
+                    or window == target
+                    or info.get('observation_class') != 'CANDIDATE_BLIND_AUDIO'
+                    or row.get('usable_status') != 'OBSERVED'):
+                continue
+            identities.add(identity)
+        rows.append({'kind': 'native_transcript', 'text': projected,
+            'observation_id': row['observation_id']})
+    if contract is not None and len(identities) < contract['minimum_distinct_witnesses']:
+        return []
+    import re
+    from difflib import SequenceMatcher
+    # A receipt proves identity, not that every literal ASR variant is clear.
+    # Requiring two mutually exclusive complete readings creates a dead gate.
+    # Preserve their common literal runs; the conflicting portions remain
+    # evidence for B/C adjudication, never an independent clear-audio veto.
+    complete = (rows if contract is not None else
+        [row for row in rows if re.search(CLEAR_AUDIO_MARKER_PATTERN, row['text'], re.I) is None])
+    if len({row['text'] for row in complete}) < 2:
+        return rows
+    # In the qualified view, a partial reading cannot independently impose
+    # words absent from another witness. Give each uncertainty its own
+    # nonmatching token; only literal runs shared by every reading survive.
+    readings = []
+    for index, row in enumerate(complete):
+        tokens = []
+        for part in re.split('(' + CLEAR_AUDIO_MARKER_PATTERN + ')', row['text'], flags=re.I):
+            if contract is not None and re.fullmatch(CLEAR_AUDIO_MARKER_PATTERN, part, re.I):
+                tokens.append(('uncertain', index))
+            else:
+                tokens.extend(_clear_audio_units(part))
+        readings.append(tokens)
+    if len({tuple(tokens) for tokens in readings}) < 2:
+        return rows
+    base = readings[0]
+    positions = list(range(len(base)))
+    alignments = [positions[:]]
+    for other in readings[1:]:
+        selected = [base[i] for i in positions]
+        matching = SequenceMatcher(a=selected, b=other, autojunk=False).get_matching_blocks()
+        selected_indexes = [i for block in matching for i in range(block.a, block.a + block.size)]
+        other_indexes = [i for block in matching for i in range(block.b, block.b + block.size)]
+        positions = [positions[i] for i in selected_indexes]
+        alignments = [[prior[i] for i in selected_indexes] for prior in alignments] + [other_indexes]
+    parts = []
+    for at, i in enumerate(positions):
+        if any(indexes[at] != (indexes[at - 1] + 1 if at else 0) for indexes in alignments):
+            parts.append(CLEAR_AUDIO_GAP)
+        parts.append(base[i])
+    if not positions or any(indexes[-1] != len(tokens) - 1
+            for indexes, tokens in zip(alignments, readings)):
+        parts.append(CLEAR_AUDIO_GAP)
+    text = ' '.join(parts)
+    from src.autoslice.editorial_subtitle import _reliable_fragment_contract
+    return [row for row in rows if row not in complete] + [{
+        'kind': 'native_transcript', 'text': text,
+        'observation_ids': [row['observation_id'] for row in complete],
+        'readings': [row['text'] for row in complete],
+        'derived_from_conflicting_observations': True,
+        'reliable_fragments_contract': _reliable_fragment_contract(),
+        'authority': 'UNCONTESTED_FRAGMENT_GUARD_NOT_A_NEW_OBSERVATION',
+        'note': '这些目标读法互相矛盾；只保护共同清楚片段，争议部分由B/C裁定。'
+                '[unclear]是守卫的无约束区间，不是转写或观众文案。'}]
+
+
+def _tonal_han_units(value):
+    """Guard-only compatibility, never a hearing or a new observation.
+
+    Tone distinguishes 买/卖; no phonetic substitution for foreign text.
+    """
+    import re
+    text = ''.join(_clear_audio_units(value))
+    if not text or re.fullmatch(r'[\u3400-\u9fff]+', text) is None:
+        return None
+    from pypinyin import Style, lazy_pinyin
+    return lazy_pinyin(text, style=Style.TONE3, neutral_tone_with_five=True)
+
+
+def _clear_runs_match(text, proposed, *, unitizer, retained_extra=False):
+    import re
+    chunks = re.split(CLEAR_AUDIO_MARKER_PATTERN, text, flags=re.I)
+    rendered = unitizer(proposed)
+    runs = [unitizer(chunk) if chunk.strip() else [] for chunk in chunks]
+    if rendered is None or any(run is None for run in runs):
+        return False
+    if retained_extra:
+        # C's independently validated meaning-equivalent CURRENT keeps its
+        # unresolved detail. ASR omissions are not evidence of silence. Every
+        # positive clear unit must still remain in order, without substitution.
+        position = 0
+        for unit in (unit for run in runs for unit in run):
+            try:
+                position = rendered.index(unit, position) + 1
+            except ValueError:
+                return False
+        return True
+    position = 0
+    for i, run in enumerate(runs):
+        if not run:
+            continue
+        matches = [j for j in range(position, len(rendered) - len(run) + 1)
+                   if rendered[j:j + len(run)] == run]
+        if not matches:
+            return False
+        at = matches[0]
+        if i == 0 and at != 0:
+            return False
+        position = at + len(run)
+    if runs[-1] and position != len(rendered):
+        return False
+    return True
+
+
+def protect_clear_transcript(text, proposed, *, tonal_homophones=False, retained_extra=False,
+                             receipt_kind=None, target_text=None, policy=None):
+    """One positive-unit matcher; optional terminal sound compatibility.
+
+    Native ASR spelling is not a source of unique Mandarin homophone spelling.
+    This check grants no correction authority; typed evidence/facts gates stay.
+    """
+    from .nonsemantic_sound import clear_comparison
+    # A standalone hesitation's ASR script is not a lexical foreign-word
+    # constraint. Only its conventional sound-equivalent spelling is compared;
+    # the original observation and typed edit are retained unchanged.
+    text, proposed = clear_comparison(text, proposed, policy=policy)
+    projected = _clear_audio_constraint_projection(
+        text, receipt_kind=receipt_kind, target_text=target_text)
+    if projected is None:
+        return
+    if _clear_runs_match(projected, proposed, unitizer=_clear_audio_units,
+                         retained_extra=retained_extra):
+        return
+    if tonal_homophones and _clear_runs_match(projected, proposed,
+            unitizer=_tonal_han_units, retained_extra=retained_extra):
+        return
+    raise ContractRejection('EDITORIAL_CLEAR_AUDIO_CONFLICT')
+
+
+def protect_clear_audio(check, witness, proposed, *, projection=None, equivalent_current=False,
+                        policy=None, glossary_terms=()):
+    """Keep independently audible portions even when another portion is uncertain.
+
+    Wildcards mark only the uncertain portions of an existing observation.
+    They never let the editor drop, reorder or substitute the audible runs.
+    The assisted transcript cannot vote as another independent witness.
+    """
+    import re
+    from src.autoslice.witness_self_consistency import bound_witness_assessment
+    if projection is None:
+        consistency = bound_witness_assessment(check, witness)
+        catalogue, _ = observation_catalogue(check, witness)
+    else:
+        from .subtitle_acceptability_policy import load_policy
+        catalogue = terminal_clear_audio_catalogue(projection,
+            current_text=check.get('current_cue'), qualification_policy=policy or load_policy())
+        consistency = {}  # Narrow witnesses are evidence, not clear-audio vetoes here.
+    for row in catalogue:
+        if row["kind"] == "blind_pinyin":
+            if consistency['status'] == 'SELF_INCONSISTENT':
+                continue  # A contradictory witness cannot veto the other evidence.
+            from src.autoslice.entity_witness_cache_probe import validate_relisten_witness_artifacts
+            validate_relisten_witness_artifacts(request=row["witness_request"],
+                                               witness=row["raw_observation"])
+            tokens = row["text"].split()
+            uncertain = set(row["raw_observation"].get("uncertain_positions", []))
+            marked = [None if i in uncertain or value == "?" else value
+                      for i, value in enumerate(tokens)]
+            if not any(value is not None for value in marked):
+                continue
+            try:
+                rendered = " " + " ".join(_editorial_guard_tokens(proposed)) + " "
+            except ValueError:
+                raise ContractRejection("EDITORIAL_CLEAR_AUDIO_CONFLICT")
+            # Unknown syllable positions may cover a variable unclear span.
+            # All clear tokens remain in order and on their audible boundaries.
+            pieces = []
+            for token in marked:
+                piece = r"(?:(?:[a-züv]+|<foreign>) )*" if token is None else re.escape(token) + " "
+                if not pieces or token is not None or pieces[-1] != piece:
+                    pieces.append(piece)
+            if re.fullmatch(" " + "".join(pieces), rendered) is None:
+                raise ContractRejection("EDITORIAL_CLEAR_AUDIO_CONFLICT")
+        elif row["kind"] in {"native_transcript", "original_language", "range_transcript",
+                              "argon_native_transcript"}:
+            # These are the existing owners' validated exact-target projections,
+            # not a nominal wider block or a context-assisted transcription.
+            retain = equivalent_current and proposed == check['current_cue']
+            if retain and not re.search(CLEAR_AUDIO_MARKER_PATTERN, row['text'], re.I):
+                from src.autoslice.meaning_difference import classify_difference
+                from src.autoslice.subtitle_acceptability_policy import load_policy
+                rules = policy or load_policy()
+                diff = classify_difference(row['text'], proposed, policy=rules, glossary_terms=glossary_terms)
+                # An explicit C judgment may classify an otherwise unknown
+                # detail, never override a known polarity/referent/stance/etc.
+                if set(diff['features']) & (set(rules['features']['meaning_carrying']) - {'unclassified_lexical'}):
+                    retain = False
+            original = {value['observation_id']: value.get('receipt_kind') for value in
+                projection['observations']} if projection is not None else {}
+            kinds = {original.get(identity) for identity in
+                row.get('observation_ids', [row.get('observation_id')])}
+            foreign = 'original_language' in kinds
+            receipt_kind = ('original_language'
+                if kinds and kinds <= {'original_language'} else 'native_transcript')
+            protect_clear_transcript(row['text'], proposed,
+                tonal_homophones=projection is not None and not foreign, retained_extra=retain,
+                receipt_kind=receipt_kind, target_text=check.get('current_cue'), policy=policy)
+
+
+@cold_input
+def close_with_existing_editorial(*, srt_text, finding, recovery_audit, prior, clip_context,
+                                 entity_verifier, judge_llm_call):
+    """Use the existing typed editor after a proven no-gain decision.
+
+    Only a saved, still-bound narrow witness or the provider's cache-only probe
+    is available here. A cache miss is an exact remaining prerequisite, never
+    an implicit extra audio request. Normal apply/self-heal remains downstream.
+    """
+    from src.autoslice.acoustic_witness_adjudication import build_witness_request, valid_witness_evidence
+    from src.autoslice.editorial_subtitle import adjudicate
+    check = recovery_audit["terminal_check_request"]
+    proof = validate_current_no_gain(recovery_audit["no_gain_proof"], check)
+    bound = build_witness_request(check)
+    candidates = [prior.get("verdict")]
+    candidates.extend(row.get("verdict", row) for row in check.get("prior_acoustic_observations", [])
+                      if isinstance(row, Mapping))
+
+    def cache_only(request):
+        if request != bound:
+            raise ContractRejection("RELISTEN_TERMINAL_WITNESS_REQUEST_DRIFT")
+        if check.get("argon_escalation_evidence") is not None:
+            # Project only an already completed native acquisition onto this
+            # same validated target; the native validator reopens its raw.
+            from src.autoslice.argon_escalation_integration import transcript_witness
+            return transcript_witness(check, check["argon_escalation_evidence"])
+        for value in candidates:
+            if isinstance(value, Mapping) and valid_witness_evidence(value, request_sha256=bound["request_sha256"]):
+                validated, _ = observation_catalogue(check, value)
+                if any(row["raw_observation"].get("response_sha256") == value.get("response_sha256")
+                       for row in validated):
+                    return deepcopy(dict(value))
+        probe = getattr(entity_verifier, "probe_witness_cache", None)
+        result = probe(request) if callable(probe) else None
+        if not isinstance(result, Mapping):
+            if proof.get('proof_kind') in {LOOP_STOP_KIND, 'TASK_STOP'}:
+                from src.autoslice.acoustic_witness_availability import unavailable_acoustic_witness
+                return unavailable_acoustic_witness(bound)
+            if check.get('context_only_range_acoustic_observations'):
+                from src.autoslice.acoustic_witness_availability import unavailable_acoustic_witness
+                return unavailable_acoustic_witness(bound)
+            raise ContractRejection("RELISTEN_TERMINAL_BOUND_WITNESS_MISSING")
+        return result
+
+    diagnosis = proof.get('no_gain_diagnosis', proof['plan'].get('no_gain'))
+    plan = {"action": "faithful_approximation",
+            "question": diagnosis["remaining_uncertainty"],
+            "why_previous_failed": diagnosis["why_audio_cannot_discriminate"],
+            "expected_gain": "只在所引语境可确定含义且符合可靠原音时形成显式语境推断；保留清楚原文和未知部分。",
+            "verification": "现有 editorial typed 权威、源/时钟/raw绑定和可靠片段保护；无依据仍未决，后续必须真实apply及当前整片复核。"}
+    from src.autoslice.semantic_retry_progress import SemanticAttemptRecorder
+    recorder = getattr(judge_llm_call, "_semantic_attempt_recorder", None)
+    terminal_finding = {**finding, "continuation_plan": plan, "_audio_gain_termination": proof,
+                        "repair_class": "editorial_rendering", '_terminal_original_finding': deepcopy(dict(finding))}
+    if isinstance(recorder, SemanticAttemptRecorder):
+        recorder.plan = plan
+    audit = adjudicate(srt_text, terminal_finding, check_request=check, clip_context=clip_context,
+                       entity_verifier=cache_only, judge_llm_call=judge_llm_call, screen_read_probe=None)
+    from src.autoslice.semantic_terminal_adjudication import KEEP_ROUTES
+    if audit.get('terminal_review') and audit.get('keep_route') in KEEP_ROUTES:
+        return audit
+    context_basis = None
+    authority = audit.get("editorial_authority")
+    if isinstance(authority, Mapping) and isinstance(authority.get("raw_completion"), str):
+        from src.autoslice.llm_client import extract_json_object
+        try:
+            answer = extract_json_object(authority["raw_completion"])
+            context_basis = {k: deepcopy(answer.get(k)) for k in
+                             ("meaning_basis", "evidence_refs", "literal_uncertainty", "reliable_fragments")}
+        except Exception:
+            context_basis = None
+    audit["contextual_terminal_handoff"] = {
+        "status": "TYPED_EDITORIAL_AUTHORITY" if audit.get("repaired") else "UNRESOLVED",
+        # SUB-18 disclosure: the audio could not decide it; the rendering is a
+        # context inference over the cited sources, never a transcription.
+        "audio_resolution": "UNRESOLVED_BY_AUDIO", "context_basis": context_basis,
+        "material_exhaustion": deepcopy(proof.get("material_exhaustion")),
+        "no_gain_proof_sha256": proof["proof_sha256"], "provider_calls": 0,
+        "literal_transcription": False, "apply_required": audit.get("repaired") is True,
+        "prior_ordinary_phoneme_fit_reason": prior.get("reason_code") or prior.get("policy_branch"),
+        "remaining_requirement": None if audit.get("repaired") else audit.get("reason_code")}
+    return audit
+
+
+def sub18_meaning_equivalent_keep(*, finding, recovery_audit, prior):
+    """SUB-18 second terminal form, out of the same no-gain exit (admin).
+
+ 公开规则：如果有哪些真的听不清，但是你发现语义完全符合，语境完全符合，不会有
+ 任何的问题，那么那个小错是可以发的。 Only a noncritical_uncertainty row
+ (never meaning_reversal) whose complete typed current_content_risk.v2
+ meaning-equivalence evidence is bound to the reviewed subtitle, after a
+ re-validated no-gain proof that carries its material-exhaustion record.
+ Returns a typed, non-mutating adjudication with the UNRESOLVED_BY_AUDIO
+ disclosure, or None (the editorial terminal then applies as before).
+ """
+    from src.autoslice.final_review_contract import (
+        SUB18_KEEP_BRANCH, SUB18_KEEP_RULE, SUB18_KEEP_SCHEMA, is_sub18_context_meaning_equivalent_keep,
+    )
+    from src.autoslice.final_review_meaning_policy import current_meaning_equivalent
+    if (not isinstance(finding, Mapping) or finding.get("content_risk") != "noncritical_uncertainty"
+            or not current_meaning_equivalent(finding)):
+        return None
+    check = recovery_audit["terminal_check_request"]
+    proof = validate_current_no_gain(recovery_audit["no_gain_proof"], check)
+    if proof.get("material_exhaustion") is None:
+        return None
+    risk = finding["current_content_risk"]
+    equivalence = risk["meaning_equivalence"]
+    receipt = {"schema_version": SUB18_KEEP_SCHEMA, "rule": SUB18_KEEP_RULE,
+               "audio_resolution": "UNRESOLVED_BY_AUDIO", "literal_transcription": False,
+               "mutation_authorized": False, "content_risk": "noncritical_uncertainty",
+               "cue_index": finding["cue_index"], "base_text_sha256": finding["base_text_sha256"],
+               "reviewed_srt_sha256": risk["reviewed_srt_sha256"],
+               "meaning_equivalence": deepcopy(equivalence),
+               "context_consistency": {"status": "CONTEXT_FULLY_CONSISTENT",
+                                       "context_basis": equivalence["context_basis"],
+                                       "evidence_cue_ids": list(equivalence["evidence_cue_ids"]),
+                                       "no_gain_context_refs": sorted(proof.get("context_sources") or {})},
+               "no_gain_proof": deepcopy(proof), "no_gain_proof_sha256": proof["proof_sha256"],
+               "material_exhaustion": deepcopy(proof["material_exhaustion"])}
+    audit = {"schema_version": "subtitle-span-adjudication.v1", "status": "OBSERVED", "repaired": False,
+             "timing_immutable": True, "policy_branch": SUB18_KEEP_BRANCH,
+             "decision_authority": "CPA_JUDGE", "witness_authority": "EVIDENCE_ONLY",
+             "request": deepcopy(dict(check)),
+             "mutation_authority": {"schema_version": "subtitle-correction-mutation-authority.v1",
+                                    "status": "NOT_APPLIED", "basis": SUB18_KEEP_BRANCH},
+             "sub18_context_meaning_equivalent_keep": receipt,
+             "contextual_terminal_handoff": {"status": "SUB18_CONTEXT_MEANING_EQUIVALENT_KEEP",
+                                             "audio_resolution": "UNRESOLVED_BY_AUDIO",
+                                             "no_gain_proof_sha256": proof["proof_sha256"],
+                                             "provider_calls": 0, "literal_transcription": False,
+                                             "apply_required": False}}
+    if recovery_audit.get('terminal_review') is not None:
+        audit['terminal_review'] = deepcopy(recovery_audit['terminal_review'])
+    if not is_sub18_context_meaning_equivalent_keep({**finding, "exact_release_adjudication": audit}):
+        return None
+    return audit
+
+
+def with_unconsumed_assisted_plan(*, finding, check_request, recorder):
+    """Connect new sourced context to the existing physical request recorder.
+
+    The old range-byte deduplication stays unchanged. Every historical range
+    must map to an original observation reopened by the normal validator; an
+    unrecognized legacy input cannot be treated as unused context.
+    """
+    from src.autoslice.semantic_retry_progress import (
+        SemanticAttemptRecorder, RetryNeedsPlan, bound_range_evidence,
+        continuation_plan, _MATERIAL_ALREADY_OFFERED)
+    from src.autoslice.semantic_request_history import OFFERED
+    output = dict(finding)
+    if (continuation_plan(finding.get("continuation_plan")) is not None
+            or not isinstance(recorder, SemanticAttemptRecorder)
+            or recorder.directory is None):
+        return output
+    try:
+        projection = evidence_projection(
+            check_request, ranges=finding.get("_prior_range_acoustic_observations", []))
+        if projection["rejected_observations"]:
+            return output
+        candidates = [row for row in projection["observations"]
+            if row["receipt_kind"] == "CONTEXT_ASSISTED_AUDIO"
+            and row["input_information"]["context_source_sha256s"]
+            and row["raw_observation"].get("targeted_relisten_input")]
+        if not candidates:
+            return output
+        keys = ("source_media", "audio_clip", "raw_response", "provider", "model")
+        known = {}
+        audio_ids = set()
+        for row in projection["observations"]:
+            identities = bound_range_evidence(
+                {"_prior_range_acoustic_observations": [row["raw_observation"]]})
+            for identity in identities:
+                key = tuple(identity.get(k) for k in keys)
+                if key in known and known[key] != row["information_key"]:
+                    return output
+                known[key] = row["information_key"]
+                audio_ids.add(identity["audio_clip"])
+        consumed = set()
+
+        def consume(identities):
+            for identity in identities:
+                key = tuple(identity.get(k) for k in keys)
+                if key not in known:
+                    raise ContractRejection("RELISTEN_HISTORICAL_INFORMATION_UNPROVEN")
+                consumed.add(known[key])
+
+        for row in recorder._entries():
+            if row["status"] not in _MATERIAL_ALREADY_OFFERED:
+                continue
+            request = row["request"]
+            material = request["material"]
+            if "bound_range_evidence" not in material:
+                # The current recorder omits this field only when it captured
+                # no finding-level audio observations. Other legacy shapes
+                # cannot prove that the new information was never offered.
+                if material.get("audio_observations_sha256") != digest({}):
+                    return output
+                if "## 更宽范围的音频观察" in request["prompt"]:
+                    return output
+            identities = material.get("bound_range_evidence", [])
+            if not isinstance(identities, list):
+                return output
+            consume(identities)
+            recorded_audio = {item["audio_clip"] for item in identities}
+            # Earlier callers may have attached range JSON after capturing
+            # material. Such an unprojected original request remains consumed.
+            if any(audio in request["prompt"] and audio not in recorded_audio
+                   for audio in audio_ids):
+                return output
+        for row in recorder.submitted_history():
+            if row["status"] in OFFERED:
+                consume(row["ranges"])
+        novel = [row for row in candidates if row["information_key"] not in consumed]
+        if not novel:
+            return output
+        references = [{"information_key": row["information_key"],
+                       "observation_id": row["observation_id"],
+                       "input_information": row["input_information"]} for row in novel]
+        basis = {"physical_target": projection["physical_target"], "observations": references}
+        output["continuation_plan"] = {
+            "action": "expand_context",
+            "question": "用本目标尚未交给裁决的已验证来源语境观察核对当前整句："
+                        + json.dumps(basis, ensure_ascii=False, sort_keys=True),
+            "why_previous_failed": "旧音频观察已消费，新增来源语境须与实际回包一起进入当前裁决。",
+            "expected_gain": "检验有来源语境能否解释当前未决；inferred不冒充听到的字，原音冲突仍未决。",
+            "verification": "沿用原请求去重、UNKNOWN和付费guard；需普通CPA及typed消费者，不能直接改字或通过G。",
+        }
+        output["semantic_retry_evidence_basis"] = {
+            "status": "VALIDATED_ASSISTED_INFORMATION_NOT_IN_RECORDED_TARGET_REQUESTS",
+            **basis, "mutation_authorized": False,
+        }
+    except (RetryNeedsPlan, ValueError, TypeError, KeyError, OSError, AttributeError):
+        return dict(finding)
+    return output
+
+
+@cold_input
+def validate_current_no_gain(proof, check):
+    """Current task inputs come from the retained check, never from the proof."""
+    if isinstance(proof, Mapping) and proof.get('proof_kind') == 'TASK_STOP':
+        return validate_no_gain(proof, check,
+            finding_materials=check.get('task_stop_materials'),
+            text_version_sha256=text_sha(check['whole_clip_current_srt']))
+    return validate_no_gain(proof, check)

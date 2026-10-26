@@ -74,6 +74,25 @@ def test_cpa_semantic_review_script_writes_request_and_accepts_json_response(tmp
     assert response_payload["candidate_id"] == "candidate-1"
     assert response_payload["request_sha256"] == request_payload["request_sha256"]
     assert response_payload["terminology_ok"] is True
+    original_request,original_response = request.read_bytes(),response.read_bytes()
+    original_responder = responder.read_text()
+    marker = tmp_path/'unexpected-dispatch'
+    responder.write_text(f"from pathlib import Path\nPath({str(marker)!r}).write_text('dispatched')\nraise RuntimeError('must reuse complete answer')\n")
+    replay = subprocess.run(completed.args,cwd=Path(__file__).resolve().parents[2],capture_output=True,text=True)
+    assert replay.returncode==0 and json.loads(replay.stdout)['reused_existing'] is True
+    assert not marker.exists() and request.read_bytes()==original_request and response.read_bytes()==original_response
+    response.write_text('incomplete ambiguous output')
+    unknown = subprocess.run(completed.args,cwd=Path(__file__).resolve().parents[2],capture_output=True,text=True)
+    assert unknown.returncode==2 and 'CALL_OUTCOME_UNKNOWN' in unknown.stderr and not marker.exists()
+    assert response.read_text()=='incomplete ambiguous output' and request.read_bytes()==original_request
+    response.write_bytes(original_response);responder.write_text(original_responder)
+    changed=list(completed.args)
+    changed[changed.index('--candidate-text')+1]+='新增实际问题'
+    changed[changed.index('--normalized-text')+1]+='新增实际问题'
+    fresh=subprocess.run(changed,cwd=Path(__file__).resolve().parents[2],capture_output=True,text=True)
+    assert fresh.returncode==0 and 'reused_existing' not in json.loads(fresh.stdout)
+    assert any(p.read_bytes()==original_request for p in tmp_path.glob('request.json.previous.*.json'))
+    assert any(p.read_bytes()==original_response for p in tmp_path.glob('response.json.previous.*.json'))
 
 
 def test_cpa_semantic_review_script_fails_closed_on_invalid_response(tmp_path):

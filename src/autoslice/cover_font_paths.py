@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import os
 from pathlib import Path
 from typing import Any
@@ -87,11 +88,11 @@ def resolve_trusted_cover_font(
     channel_profile: Any,
     root: Path,
 ) -> Path:
-    """Resolve a renderer font only from committed profile assets.
+    """Resolve the private current font or a historical committed profile font.
 
     Review packages may carry a filename and hash, but they never get to choose
     an arbitrary host path.  This keeps independent glyph replay rooted in the
-    deployed repository rather than in package-controlled filesystem metadata.
+    deployment-owned binding or committed assets, independent of package locators.
     """
 
     if (
@@ -101,13 +102,21 @@ def resolve_trusted_cover_font(
         or len(expected_sha256) != len("sha256:") + 64
     ):
         raise RuntimeError("COVER_FONT_AUTHORITY_INVALID")
+    from .cover_private_font import FILE_NAME, resolve_private_cover_font
+    if file_name == FILE_NAME:
+        try:
+            candidate, _binding = resolve_private_cover_font()
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+        if expected_sha256 != "sha256:" + _evidence_file_sha256(candidate):
+            raise RuntimeError("COVER_FONT_AUTHORITY_HASH_MISMATCH")
+        return candidate
+    # Historical covers and the separate song lane still replay their original fonts.
     fonts_dir = channel_profile.asset_directory("fonts", repo_root=root)
     candidate = fonts_dir / file_name
     if not candidate.is_file() or candidate.is_symlink():
         raise RuntimeError("COVER_FONT_AUTHORITY_MISSING")
-    import hashlib
-
-    digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
+    digest = _evidence_file_sha256(candidate)
     if expected_sha256 != "sha256:" + digest:
         raise RuntimeError("COVER_FONT_AUTHORITY_HASH_MISMATCH")
     return candidate

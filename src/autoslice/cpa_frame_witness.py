@@ -16,34 +16,23 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from src.autoslice.cpa_model_ladder import TOP_CPA_MODEL
+from src.autoslice.completed_review_checkpoint import CompletedReviewCheckpointError
 from src.autoslice.provider_slots import ProviderSlotTimeout, provider_wait_for_call, runtime_provider_slot
+from src.autoslice.cpa_runtime import observed_cpa_request, observed_model_request
+from src.autoslice.structured_output import output_contract, openai_format, contract_receipt
+from src.autoslice.evidence_identity import sha256_hex
 
 
 SCHEMA_VERSION = "cpa-frame-witness.v1"
+DEFAULT_FRAME_MODEL = TOP_CPA_MODEL
 _UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
 _MAX_BATCH_IMAGES = 12
 
 
 def _sha256_bytes(payload: bytes) -> str:
-    return hashlib.sha256(payload).hexdigest()
-
-
-def _safe_retry_after(error: urllib.error.HTTPError) -> str | None:
-    """Return one log-safe Retry-After value without reading provider bytes."""
-
-    if error.headers is None:
-        return None
-    raw = error.headers.get("Retry-After")
-    if raw is None:
-        return None
-    value = str(raw).strip()
-    if (
-        not value
-        or len(value) > 128
-        or any(character in "\r\n" or not character.isprintable() for character in value)
-    ):
-        return None
-    return value
+    # Keep the receipt schema's historical bare spelling for existing readers.
+    return sha256_hex(hashlib.sha256(payload).hexdigest())
 
 
 def _extract_frame_jpeg(
@@ -84,10 +73,13 @@ def image_vision_probe(
     *,
     api_base: str,
     api_key: str,
-    model: str = "gpt-6-sol",
+    model: str = TOP_CPA_MODEL,
     timeout_seconds: float = 90.0,
     max_tokens: int = 1024,
     max_width: int = 1280,
+    reference_image_path: Path | None = None,
+    response_schema=None,
+    json_mode: bool | None = None,
 ) -> dict[str, object]:
     """Ask CPA one visual question about an on-disk image. Never raises."""
 
@@ -105,12 +97,12 @@ def image_vision_probe(
             error="CPA_BASE_URL/CPA_API_KEY missing",
         )
         return receipt
-    try:
-        source_bytes = Path(image_path).read_bytes()
+    def snapshot(path: Path) -> tuple[bytes, bytes]:
+        source_bytes = path.read_bytes()
         # FFmpeg must decode the same bytes we hash, not reopen the mutable
         # caller path. Keep a seekable, private snapshot with the input suffix:
         # piping bytes instead breaks formats accepted by the existing reader.
-        with tempfile.NamedTemporaryFile(suffix=Path(image_path).suffix) as source_handle, tempfile.NamedTemporaryFile(suffix=".jpg") as handle:
+        with tempfile.NamedTemporaryFile(suffix=path.suffix) as source_handle, tempfile.NamedTemporaryFile(suffix=".jpg") as handle:
             source_handle.write(source_bytes)
             source_handle.flush()
             subprocess.run(
@@ -132,6 +124,20 @@ def image_vision_probe(
                 check=True,
             )
             frame_jpeg = Path(handle.name).read_bytes()
+        return source_bytes, frame_jpeg
+
+    reference_frames = ()
+    try:
+        source_bytes, frame_jpeg = snapshot(Path(image_path))
+        if reference_image_path is not None:
+            reference_bytes, reference_jpeg = snapshot(Path(reference_image_path))
+            receipt["reference_image"] = {
+                "image_path": str(reference_image_path),
+                "image_sha256": _sha256_bytes(reference_bytes),
+                "frame_sha256": _sha256_bytes(reference_jpeg),
+                "role": "STYLE_ONLY",
+            }
+            reference_frames = (reference_jpeg,)
     except Exception as exc:
         receipt.update(
             status="UNAVAILABLE",
@@ -149,6 +155,9 @@ def image_vision_probe(
         model=model,
         timeout_seconds=timeout_seconds,
         max_tokens=max_tokens,
+        reference_frames=reference_frames,
+        response_schema=response_schema,
+        json_mode=json_mode,
     )
 
 
@@ -159,9 +168,11 @@ def frame_vision_probe(
     *,
     api_base: str,
     api_key: str,
-    model: str = "gpt-6-sol",
+    model: str = DEFAULT_FRAME_MODEL,
     timeout_seconds: float = 90.0,
     max_tokens: int = 1024,
+    response_schema=None,
+    json_mode: bool | None = None,
 ) -> dict[str, object]:
     """Ask CPA one visual question about a single video frame. Never raises."""
 
@@ -198,7 +209,32 @@ def frame_vision_probe(
         model=model,
         timeout_seconds=timeout_seconds,
         max_tokens=max_tokens,
+        response_schema=response_schema,
+        json_mode=json_mode,
     )
+
+
+def _ruling_response_bytes(request, *, question, material, api_base, model, timeout_seconds, max_tokens):
+    from .completed_review_checkpoint import ruling_response
+    from .llm_client import CpaCompletion
+    def send(_prompt):
+        with runtime_provider_slot(provider='cpa', modality='vision', timeout_seconds=provider_wait_for_call(timeout_seconds)), observed_model_request(model=model,kind='vision',transport='http_responses'):
+            with observed_cpa_request(request, timeout=timeout_seconds, model=model, kind='vision') as response:
+                raw = response.read()
+        # Preserve all wire bytes, including a malformed/non-UTF8 reply; the
+        # current decoder below must reject the same original, never re-ask it.
+        try:
+            payload = json.loads(raw)
+            answered = payload.get('model') if isinstance(payload, dict) else None
+        except (ValueError, UnicodeError):
+            answered = None
+        return CpaCompletion(base64.b64encode(raw).decode('ascii'),
+                             answered if isinstance(answered, str) and answered.strip() else model)
+    send.cpa_cache_identity = {'transport': 'cpa_vision', 'models': [model], 'effort': 'low',
+        'api_base_sha256': _sha256_bytes(api_base.encode()), 'max_tokens': max_tokens}
+    raw, hit = ruling_response(stage='vision-ruling', prompt=question, llm_call=send,
+        inputs=material, parser_path=Path(__file__))
+    return base64.b64decode(raw, validate=True), hit
 
 
 def batch_jpeg_vision_probe(
@@ -207,9 +243,12 @@ def batch_jpeg_vision_probe(
     *,
     api_base: str,
     api_key: str,
-    model: str = "gpt-6-sol",
+    model: str = TOP_CPA_MODEL,
     timeout_seconds: float = 90.0,
     max_tokens: int = 4096,
+    raw_response_path: Path | None = None,
+    response_schema=None,
+    json_mode: bool | None = None,
 ) -> dict[str, object]:
     """Ask CPA one visual question about 1--12 exact on-disk JPEG snapshots.
 
@@ -289,6 +328,11 @@ def batch_jpeg_vision_probe(
         "reasoning": {"effort": "low"},
         "max_output_tokens": max_tokens,
     }
+    contract = output_contract(response_schema, json_mode=('json' in question.lower() if json_mode is None else json_mode))
+    response_format = openai_format(contract, prompt=question)
+    if response_format:
+        body['text'] = {'format': response_format}
+    receipt['structured_output'] = contract_receipt(contract, prompt=question)
     request_bytes = json.dumps(body).encode("utf-8")
     receipt["prompt_sha256"] = _sha256_bytes(
         json.dumps(
@@ -309,11 +353,26 @@ def batch_jpeg_vision_probe(
             "User-Agent": _UA,
         },
     )
+    raw = None
     try:
-        with runtime_provider_slot(timeout_seconds=provider_wait_for_call(timeout_seconds)):
-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-                raw = response.read()
+        raw, hit = _ruling_response_bytes(request, question=question,
+            material={'image_sha256s': [image['image_sha256'] for image in images]},
+            api_base=api_base, model=model, timeout_seconds=timeout_seconds, max_tokens=max_tokens)
+        if hit:
+            receipt['served_from_cache'] = True
+        if raw_response_path is not None:
+            # Caller-owned evidence path; never persist request headers/credentials.
+            if raw_response_path.is_symlink():
+                raise ValueError("unsafe raw vision response path")
+            raw_response_path.parent.mkdir(parents=True, exist_ok=True)
+            with raw_response_path.open("xb") as evidence:
+                evidence.write(raw)
+            receipt["raw_response_path"] = str(raw_response_path)
         payload = json.loads(raw.decode("utf-8", errors="replace"))
+        if isinstance(payload, dict) and isinstance(payload.get('model'), str) and payload['model'].strip():
+            if payload['model'] != model:
+                receipt['requested_model'] = model
+                receipt['model'] = payload['model']
         answer = payload.get("output_text")
         if not answer:
             parts: list[str] = []
@@ -336,12 +395,21 @@ def batch_jpeg_vision_probe(
             error="provider capacity wait timed out",
         )
         return receipt
+    except urllib.error.HTTPError as exc:
+        receipt.update(
+            status="UNAVAILABLE", reason_code="VISION_CALL_FAILED",
+            provider_status_code=exc.code, dispatch_outcome="HTTP_ERROR_RESPONSE",
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        return receipt
     except Exception as exc:
         receipt.update(
             status="UNAVAILABLE",
             reason_code="VISION_CALL_FAILED",
             error=f"{type(exc).__name__}: {exc}",
         )
+        if raw is not None or isinstance(exc, CompletedReviewCheckpointError):
+            receipt['failure_layer'] = 'CONTRACT_ERROR'
         return receipt
     receipt.update(
         status="OBSERVED",
@@ -361,33 +429,49 @@ def _vision_qa(
     model: str,
     timeout_seconds: float,
     max_tokens: int,
+    reference_frames: tuple[bytes, ...] = (),
+    response_schema=None,
+    json_mode: bool | None = None,
 ) -> dict[str, object]:
     receipt["frame_sha256"] = _sha256_bytes(frame_jpeg)
     data_uri = "data:image/jpeg;base64," + base64.b64encode(frame_jpeg).decode(
         "ascii"
+    )
+    content = [
+        {"type": "input_text", "text": question},
+        {"type": "input_image", "image_url": data_uri},
+    ]
+    content.extend(
+        {"type": "input_image", "image_url": "data:image/jpeg;base64," + base64.b64encode(frame).decode("ascii")}
+        for frame in reference_frames
     )
     body = {
         "model": model,
         "input": [
             {
                 "role": "user",
-                "content": [
-                    {"type": "input_text", "text": question},
-                    {"type": "input_image", "image_url": data_uri},
-                ],
+                "content": content,
             }
         ],
         "reasoning": {"effort": "low"},
         "max_output_tokens": max_tokens,
     }
+    contract = output_contract(response_schema, json_mode=('json' in question.lower() if json_mode is None else json_mode))
+    response_format = openai_format(contract, prompt=question)
+    if response_format:
+        body['text'] = {'format': response_format}
+    receipt['structured_output'] = contract_receipt(contract, prompt=question)
     request_bytes = json.dumps(body).encode("utf-8")
-    receipt["prompt_sha256"] = _sha256_bytes(
-        json.dumps(
-            {
+    prompt_binding = {
                 "question": question,
                 "frame_sha256": receipt["frame_sha256"],
                 "model": model,
-            },
+    }
+    if reference_frames:
+        prompt_binding["reference_frame_sha256s"] = [_sha256_bytes(frame) for frame in reference_frames]
+    receipt["prompt_sha256"] = _sha256_bytes(
+        json.dumps(
+            prompt_binding,
             sort_keys=True,
         ).encode("utf-8")
     )
@@ -400,11 +484,18 @@ def _vision_qa(
             "User-Agent": _UA,
         },
     )
+    raw = None
     try:
-        with runtime_provider_slot(timeout_seconds=provider_wait_for_call(timeout_seconds)):
-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-                raw = response.read()
+        raw, hit = _ruling_response_bytes(request, question=question,
+            material={'image_sha256s': [_sha256_bytes(frame_jpeg), *[_sha256_bytes(f) for f in reference_frames]]},
+            api_base=api_base, model=model, timeout_seconds=timeout_seconds, max_tokens=max_tokens)
+        if hit:
+            receipt['served_from_cache'] = True
         payload = json.loads(raw.decode("utf-8", errors="replace"))
+        if isinstance(payload, dict) and isinstance(payload.get('model'), str) and payload['model'].strip():
+            if payload['model'] != model:
+                receipt['requested_model'] = model
+                receipt['model'] = payload['model']
         answer = payload.get("output_text")
         if not answer:
             parts: list[str] = []
@@ -429,31 +520,14 @@ def _vision_qa(
             error="provider capacity wait timed out",
         )
         return receipt
-    except urllib.error.HTTPError as exc:
-        receipt.update(
-            status="UNAVAILABLE",
-            reason_code=(
-                "VISION_PROVIDER_CAPACITY"
-                if exc.code == 429
-                else "VISION_CALL_FAILED"
-            ),
-            http_status=int(exc.code),
-            error=f"{type(exc).__name__}: {exc}",
-        )
-        retry_after = _safe_retry_after(exc)
-        if retry_after is not None:
-            receipt["retry_after"] = retry_after
-        try:
-            exc.close()
-        except Exception:
-            pass
-        return receipt
     except Exception as exc:
         receipt.update(
             status="UNAVAILABLE",
             reason_code="VISION_CALL_FAILED",
             error=f"{type(exc).__name__}: {exc}",
         )
+        if raw is not None or isinstance(exc, CompletedReviewCheckpointError):
+            receipt['failure_layer'] = 'CONTRACT_ERROR'
         return receipt
     receipt.update(
         status="OBSERVED",

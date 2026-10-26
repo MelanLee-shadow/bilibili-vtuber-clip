@@ -8,6 +8,7 @@ authority are carried into every selected piece so rendering can fail closed.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import hashlib
 import json
 import re
@@ -24,6 +25,7 @@ CORPUS_SCHEMA = "huozi-corpus.v1"
 PLAN_SCHEMA = "huozi-plan.v1"
 VERIFICATION_SCHEMA = "huozi-verification.v1"
 VERIFIED_PLAN_SCHEMA = "huozi-verified-plan.v1"
+TERMINAL_TAIL_EVIDENCE_SCHEMA = "huozi-terminal-tail-evidence.v1"
 
 DEFAULT_MIN_SPEAKER_CONFIDENCE = 0.98
 DEFAULT_MIN_TRANSCRIPT_CONFIDENCE = 0.90
@@ -54,6 +56,11 @@ HUMAN_EVIDENCE_AUTHORITIES = {
     "reviewer_confirmation",
     "reviewer_confirmed_phrase",
 }
+TERMINAL_TAIL_PENDING_STATUS = "PENDING_LISTENING"
+TERMINAL_TAIL_ACCEPTED_STATUS = "ACOUSTICALLY_VERIFIED"
+TERMINAL_TAIL_STATUSES = frozenset(
+    {TERMINAL_TAIL_PENDING_STATUS, TERMINAL_TAIL_ACCEPTED_STATUS}
+)
 
 _TEXT_CHAR_RX = re.compile(r"[0-9A-Za-z\u3400-\u9fff]")
 _CLAUSE_RX = re.compile(r"([^，,。！？!?；;：:\n]+)([，,。！？!?；;：:]*)")
@@ -79,11 +86,8 @@ class VerificationError(HuoziError):
 
 
 def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return digest
 
 
 def canonical_json_bytes(value: object) -> bytes:
@@ -167,6 +171,7 @@ class CorpusUtterance:
     transcript_authorities: tuple[str, ...]
     transcript_evidence: tuple[Mapping[str, object], ...]
     speaker_evidence: tuple[Mapping[str, object], ...]
+    terminal_tail_evidence: tuple[Mapping[str, object], ...]
     content_kind: str
     source_asr_path: str
     source_asr_sha256: str
@@ -198,6 +203,7 @@ class CorpusUtterance:
             "transcript_authorities": list(self.transcript_authorities),
             "transcript_evidence": [dict(row) for row in self.transcript_evidence],
             "speaker_evidence": [dict(row) for row in self.speaker_evidence],
+            "terminal_tail_evidence": [dict(row) for row in self.terminal_tail_evidence],
             "content_kind": self.content_kind,
             "source_asr_path": self.source_asr_path,
             "source_asr_sha256": self.source_asr_sha256,
@@ -238,6 +244,11 @@ class CorpusUtterance:
             speaker_evidence=tuple(
                 dict(item)
                 for item in value.get("speaker_evidence", [])
+                if isinstance(item, Mapping)
+            ),
+            terminal_tail_evidence=tuple(
+                dict(item)
+                for item in value.get("terminal_tail_evidence", [])
                 if isinstance(item, Mapping)
             ),
             content_kind=str(value.get("content_kind") or "talk"),
@@ -329,6 +340,152 @@ def _normalize_coverage_ranges(
             raise CorpusValidationError(f"{label} has invalid range: {raw_range!r}")
         normalized.append((start_ms, end_ms))
     return tuple(normalized)
+
+
+def _terminal_tail_interval(raw: object, *, label: str) -> tuple[int, int]:
+    if (
+        not isinstance(raw, Sequence)
+        or isinstance(raw, (str, bytes))
+        or len(raw) != 2
+    ):
+        raise CorpusValidationError(f"{label} must be a two-item interval")
+    start_ms, end_ms = int(raw[0]), int(raw[1])
+    if start_ms < 0 or end_ms <= start_ms:
+        raise CorpusValidationError(f"{label} has invalid interval: {raw!r}")
+    return start_ms, end_ms
+
+
+def _terminal_tail_acceptance_error(raw: Mapping[str, object]) -> str | None:
+    """Return a reason when an acoustically accepted tail lacks its gate."""
+
+    acceptance = raw.get("acceptance")
+    if not isinstance(acceptance, Mapping):
+        return "accepted status needs acceptance evidence"
+    if acceptance.get("method") != "source_pcm_continuity_and_fresh_asr":
+        return "unsupported acceptance method"
+    checks = acceptance.get("checks")
+    required_checks = {
+        "source_pcm_continuity",
+        "next_speech_boundary",
+        "fresh_bcut",
+        "fresh_jianying",
+        "full_decode",
+    }
+    if (
+        not isinstance(checks, Mapping)
+        or any(checks.get(name) is not True for name in required_checks)
+        or acceptance.get("human_exact_time_confirmation") is not False
+    ):
+        return "acceptance checks are incomplete"
+    return None
+
+
+def _bind_terminal_tail_evidence(
+    rows: object,
+    *,
+    base: Path,
+    source_id: str,
+) -> tuple[dict[str, object], ...]:
+    """Bind an audited physical tail without widening lexical evidence.
+
+    ASR word ends remain the text/core anchor.  A tail row may only provide a
+    larger physical cut endpoint when it is explicitly tied to the exact core
+    range, has a next-speech cap, and carries separate hash-bound evidence.
+    The default status intentionally remains pending listening review; an
+    acoustic observation does not become a human text or speaker confirmation.
+    """
+
+    if rows is None:
+        return ()
+    if not isinstance(rows, list):
+        raise CorpusValidationError(f"source {source_id} terminal tail evidence must be a list")
+    bound: list[dict[str, object]] = []
+    for index, raw in enumerate(rows):
+        if not isinstance(raw, Mapping):
+            raise CorpusValidationError(
+                f"source {source_id} terminal tail {index} is malformed"
+            )
+        core_start_ms, core_end_ms = _terminal_tail_interval(
+            raw.get("core_range_ms"),
+            label=f"source {source_id} terminal tail {index} core_range_ms",
+        )
+        boundary_end_ms = int(raw.get("boundary_end_ms", -1))
+        next_speech_start_ms = int(raw.get("next_speech_start_ms", -1))
+        if boundary_end_ms <= core_end_ms:
+            raise CorpusValidationError(
+                f"source {source_id} terminal tail {index} does not extend the lexical end"
+            )
+        if next_speech_start_ms <= boundary_end_ms:
+            raise CorpusValidationError(
+                f"source {source_id} terminal tail {index} crosses next speech"
+            )
+        status = str(raw.get("status") or TERMINAL_TAIL_PENDING_STATUS)
+        if status not in TERMINAL_TAIL_STATUSES:
+            raise CorpusValidationError(
+                f"source {source_id} terminal tail {index} has unsupported status {status!r}"
+            )
+        provenance = raw.get("provenance")
+        if not isinstance(provenance, Mapping):
+            raise CorpusValidationError(
+                f"source {source_id} terminal tail {index} needs separate provenance"
+            )
+        provenance_kind = str(provenance.get("kind") or "")
+        if provenance_kind != "operator_pcm_boundary_audit":
+            raise CorpusValidationError(
+                f"source {source_id} terminal tail {index} needs operator PCM provenance"
+            )
+        text = normalize_text(str(raw.get("text") or ""))
+        if not text:
+            raise CorpusValidationError(
+                f"source {source_id} terminal tail {index} needs exact text"
+            )
+        evidence = _bind_evidence_rows(
+            raw.get("evidence"),
+            base=base,
+            label=f"source {source_id} terminal tail {index}",
+        )
+        acceptance = raw.get("acceptance")
+        if status == TERMINAL_TAIL_ACCEPTED_STATUS:
+            acceptance_error = _terminal_tail_acceptance_error(raw)
+            if acceptance_error is not None:
+                raise CorpusValidationError(
+                    f"source {source_id} terminal tail {index} {acceptance_error}"
+                )
+        speaker_range = raw.get("speaker_confirmation_range_ms")
+        if speaker_range is not None:
+            speaker_start_ms, speaker_end_ms = _terminal_tail_interval(
+                speaker_range,
+                label=f"source {source_id} terminal tail {index} speaker_confirmation_range_ms",
+            )
+            if not (speaker_start_ms <= core_start_ms and core_end_ms <= speaker_end_ms):
+                raise CorpusValidationError(
+                    f"source {source_id} terminal tail {index} speaker confirmation misses core"
+                )
+            # This range is intentionally only required to cover the lexical
+            # core.  It must not be rewritten to claim confirmation through
+            # the operator-derived acoustic tail.
+            normalized_speaker_range = [speaker_start_ms, speaker_end_ms]
+        else:
+            normalized_speaker_range = None
+        row = dict(raw)
+        row.update(
+            {
+                "schema_version": str(raw.get("schema_version") or TERMINAL_TAIL_EVIDENCE_SCHEMA),
+                "core_range_ms": [core_start_ms, core_end_ms],
+                "boundary_end_ms": boundary_end_ms,
+                "next_speech_start_ms": next_speech_start_ms,
+                "text": text,
+                "status": status,
+                "provenance": dict(provenance),
+                "evidence": [dict(item) for item in evidence],
+            }
+        )
+        if status == TERMINAL_TAIL_ACCEPTED_STATUS:
+            row["acceptance"] = dict(acceptance)
+        if normalized_speaker_range is not None:
+            row["speaker_confirmation_range_ms"] = normalized_speaker_range
+        bound.append(row)
+    return tuple(bound)
 
 
 def _speaker_evidence_coverage_from_file(path: Path) -> list[list[int]]:
@@ -544,6 +701,11 @@ def build_corpus(
             if source.get("speaker_evidence") is not None
             else ()
         )
+        source["terminal_tail_evidence"] = _bind_terminal_tail_evidence(
+            source.get("terminal_tail_evidence"),
+            base=base,
+            source_id=source_id,
+        )
         if has_trusted_ranges:
             trusted_ranges: list[dict[str, object]] = []
             for index, raw_range in enumerate(source.get("trusted_ranges_ms") or []):
@@ -560,6 +722,27 @@ def build_corpus(
                     )
                 trusted_ranges.append(trusted_range)
             source["trusted_ranges_ms"] = trusted_ranges
+        if source["terminal_tail_evidence"] and speaker == "mixed":
+            trusted_ranges = source.get("trusted_ranges_ms") or []
+            for index, tail in enumerate(source["terminal_tail_evidence"]):
+                speaker_range = tail.get("speaker_confirmation_range_ms")
+                if speaker_range is None:
+                    raise CorpusValidationError(
+                        f"source {source_id} mixed terminal tail {index} has no speaker confirmation range"
+                    )
+                speaker_start_ms, speaker_end_ms = _terminal_tail_interval(
+                    speaker_range,
+                    label=f"source {source_id} terminal tail {index} speaker_confirmation_range_ms",
+                )
+                if not any(
+                    int(item.get("start_ms", -1)) <= speaker_start_ms
+                    and speaker_end_ms <= int(item.get("end_ms", -1))
+                    for item in trusted_ranges
+                    if isinstance(item, Mapping)
+                ):
+                    raise CorpusValidationError(
+                        f"source {source_id} mixed terminal tail {index} widens trusted speaker range"
+                    )
 
         asr_payload = json.loads(asr_path.read_text(encoding="utf-8"))
         rows = asr_payload.get("utterances")
@@ -614,6 +797,11 @@ def build_corpus(
                 speaker_authority=authority,
                 evidence=bound_speaker_evidence,
             )
+            terminal_tail_evidence = tuple(
+                dict(row)
+                for row in source["terminal_tail_evidence"]
+                if normalize_text(str(row.get("text") or "")) == normalized
+            )
             utterances.append(
                 CorpusUtterance(
                     utterance_id=f"{source_id}:u{row_index:05d}",
@@ -639,6 +827,7 @@ def build_corpus(
                     transcript_authorities=transcript_authorities,
                     transcript_evidence=transcript_evidence,
                     speaker_evidence=tuple(bound_speaker_evidence),
+                    terminal_tail_evidence=terminal_tail_evidence,
                     content_kind=kind,
                     source_asr_path=str(asr_path),
                     source_asr_sha256=asr_sha256,
@@ -679,6 +868,7 @@ class MatchPiece:
     cut_start_ms: int
     cut_end_ms: int
     boundary_score: int
+    terminal_tail_evidence: Mapping[str, object] | None = None
 
     @property
     def char_count(self) -> int:
@@ -716,8 +906,37 @@ class MatchPiece:
             "source_asr_path": self.utterance.source_asr_path,
             "source_asr_sha256": self.utterance.source_asr_sha256,
             "boundary_score": self.boundary_score,
+            "terminal_tail_evidence": (
+                dict(self.terminal_tail_evidence)
+                if self.terminal_tail_evidence is not None
+                else None
+            ),
             "verification_status": "DISCOVERY_ONLY",
         }
+
+
+def _terminal_tail_for_match(
+    utterance: CorpusUtterance,
+    *,
+    fragment: str,
+    source_char_end: int,
+    token_start: int,
+    token_end: int,
+) -> Mapping[str, object] | None:
+    """Return a separately audited physical tail for one exact terminal span."""
+
+    if source_char_end != len(utterance.normalized_text) or token_end != len(utterance.tokens) - 1:
+        return None
+    first = utterance.tokens[token_start]
+    last = utterance.tokens[token_end]
+    expected_core = [first.start_ms, last.end_ms]
+    for row in utterance.terminal_tail_evidence:
+        if (
+            normalize_text(str(row.get("text") or "")) == fragment
+            and list(row.get("core_range_ms") or []) == expected_core
+        ):
+            return row
+    return None
 
 
 def _occurrences(utterance: CorpusUtterance, fragment: str) -> Iterable[MatchPiece]:
@@ -745,6 +964,21 @@ def _occurrences(utterance: CorpusUtterance, fragment: str) -> Iterable[MatchPie
         tail_room = max(0, next_start - last.end_ms)
         lead_pad = min(35, lead_room // 2)
         tail_pad = min(55, tail_room // 2)
+        terminal_tail_evidence = _terminal_tail_for_match(
+            utterance,
+            fragment=fragment,
+            source_char_end=stop,
+            token_start=token_start,
+            token_end=token_end,
+        )
+        cut_end_cap = utterance.end_ms
+        if terminal_tail_evidence is not None:
+            audited_end_ms = int(terminal_tail_evidence["boundary_end_ms"])
+            next_speech_start_ms = int(terminal_tail_evidence["next_speech_start_ms"])
+            if audited_end_ms >= next_speech_start_ms:
+                raise CorpusValidationError("terminal tail evidence crosses next speech")
+            cut_end_cap = max(cut_end_cap, audited_end_ms)
+            tail_pad = audited_end_ms - last.end_ms
         boundary_score = int(found == 0) + int(stop == len(utterance.normalized_text))
         yield MatchPiece(
             text=fragment,
@@ -756,9 +990,63 @@ def _occurrences(utterance: CorpusUtterance, fragment: str) -> Iterable[MatchPie
             core_start_ms=first.start_ms,
             core_end_ms=last.end_ms,
             cut_start_ms=max(utterance.start_ms, first.start_ms - lead_pad),
-            cut_end_ms=min(utterance.end_ms, last.end_ms + tail_pad),
+            cut_end_ms=min(cut_end_cap, last.end_ms + tail_pad),
             boundary_score=boundary_score,
+            terminal_tail_evidence=terminal_tail_evidence,
         )
+
+
+def _validate_terminal_tail_piece(piece: Mapping[str, object]) -> None:
+    raw_tail = piece.get("terminal_tail_evidence")
+    if raw_tail is None:
+        return
+    if not isinstance(raw_tail, Mapping):
+        raise VerificationError("malformed terminal tail evidence")
+    if raw_tail.get("schema_version") != TERMINAL_TAIL_EVIDENCE_SCHEMA:
+        raise VerificationError("terminal tail schema drift")
+    if normalize_text(str(raw_tail.get("text") or "")) != normalize_text(
+        str(piece.get("text") or "")
+    ):
+        raise VerificationError("terminal tail text drift")
+    core_range = raw_tail.get("core_range_ms")
+    if (
+        not isinstance(core_range, list)
+        or len(core_range) != 2
+        or [int(core_range[0]), int(core_range[1])]
+        != [int(piece.get("core_start_ms", -1)), int(piece.get("core_end_ms", -1))]
+    ):
+        raise VerificationError("terminal tail evidence core drift")
+    boundary_end_ms = int(raw_tail.get("boundary_end_ms", -1))
+    next_speech_start_ms = int(raw_tail.get("next_speech_start_ms", -1))
+    if boundary_end_ms != int(piece.get("cut_end_ms", -1)):
+        raise VerificationError("terminal tail endpoint drift")
+    if boundary_end_ms <= int(piece.get("core_end_ms", -1)):
+        raise VerificationError("terminal tail does not extend lexical core")
+    if boundary_end_ms >= next_speech_start_ms:
+        raise VerificationError("terminal tail crosses next speech")
+    status = str(raw_tail.get("status") or "")
+    if status not in TERMINAL_TAIL_STATUSES:
+        raise VerificationError("terminal tail acceptance status drift")
+    if status == TERMINAL_TAIL_ACCEPTED_STATUS:
+        acceptance_error = _terminal_tail_acceptance_error(raw_tail)
+        if acceptance_error is not None:
+            raise VerificationError(f"terminal tail {acceptance_error}")
+    provenance = raw_tail.get("provenance")
+    if not isinstance(provenance, Mapping) or provenance.get("kind") != "operator_pcm_boundary_audit":
+        raise VerificationError("terminal tail provenance drift")
+    evidence_rows = raw_tail.get("evidence")
+    if not isinstance(evidence_rows, list) or not evidence_rows:
+        raise VerificationError("terminal tail evidence is missing")
+    for evidence in evidence_rows:
+        if not isinstance(evidence, Mapping):
+            raise VerificationError("malformed terminal tail evidence row")
+        path_value = str(evidence.get("path") or "")
+        expected_sha = str(evidence.get("sha256") or "").removeprefix("sha256:")
+        if not path_value or re.fullmatch(r"[0-9a-f]{64}", expected_sha) is None:
+            raise VerificationError("unbound terminal tail evidence")
+        path = Path(path_value)
+        if not path.is_file() or sha256_file(path) != expected_sha:
+            raise VerificationError("terminal tail evidence hash drift")
 
 
 def _piece_preference(
@@ -950,6 +1238,17 @@ def plan_text(target: str, corpus_payload: Mapping[str, object]) -> dict[str, ob
             "token_boundary_alignment": True,
         },
     }
+    tail_statuses = {
+        str(piece.terminal_tail_evidence.get("status") or "")
+        for piece in all_pieces
+        if piece.terminal_tail_evidence is not None
+    }
+    if tail_statuses:
+        plan["acceptance_status"] = (
+            TERMINAL_TAIL_PENDING_STATUS
+            if TERMINAL_TAIL_PENDING_STATUS in tail_statuses
+            else TERMINAL_TAIL_ACCEPTED_STATUS
+        )
     plan["plan_sha256"] = hashlib.sha256(canonical_json_bytes(plan)).hexdigest()
     return plan
 
@@ -1310,12 +1609,17 @@ def validate_renderable_plan(plan: Mapping[str, object]) -> None:
     pieces = plan.get("pieces")
     if not isinstance(pieces, list) or not pieces:
         raise VerificationError("verified plan has no pieces")
+    tail_statuses: set[str] = set()
     reconstructed = ""
     checked_speaker_evidence: dict[str, str] = {}
     checked_transcript_evidence: dict[str, str] = {}
     for piece in pieces:
         if not isinstance(piece, Mapping):
             raise VerificationError("invalid verified piece")
+        _validate_terminal_tail_piece(piece)
+        raw_tail = piece.get("terminal_tail_evidence")
+        if isinstance(raw_tail, Mapping):
+            tail_statuses.add(str(raw_tail.get("status") or ""))
         if piece.get("verification_status") != "VERIFIED":
             raise VerificationError("unverified piece reached render gate")
         if piece.get("speaker") != CHANNEL_PROFILE.profile_id:
@@ -1399,5 +1703,15 @@ def validate_renderable_plan(plan: Mapping[str, object]) -> None:
         ):
             raise VerificationError("speaker evidence does not cover piece range")
         reconstructed += normalize_text(str(piece.get("text") or ""))
+    if tail_statuses:
+        expected_acceptance_status = (
+            TERMINAL_TAIL_PENDING_STATUS
+            if TERMINAL_TAIL_PENDING_STATUS in tail_statuses
+            else TERMINAL_TAIL_ACCEPTED_STATUS
+        )
+        if plan.get("acceptance_status") != expected_acceptance_status:
+            raise VerificationError("terminal tail plan acceptance status drift")
+    elif "acceptance_status" in plan:
+        raise VerificationError("unexpected terminal tail acceptance status")
     if reconstructed != str(plan.get("normalized_target") or ""):
         raise VerificationError("verified pieces no longer exactly reconstruct the target")

@@ -25,6 +25,7 @@ an ML runtime into ordinary verification processes.
 
 from __future__ import annotations
 
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import hashlib
 import importlib.metadata
 import json
@@ -45,11 +46,8 @@ from src.autoslice.speaker_common import (
 
 
 def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return digest
 
 
 def _atomic_write_text(path: Path, text: str) -> None:

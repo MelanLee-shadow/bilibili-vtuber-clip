@@ -17,12 +17,22 @@ from src.autoslice.channel_profile import (
     ChannelProfileError,
     load_channel_profile,
 )
+from src.autoslice.channel_census import (
+    CENSUS_CLUES_ASSET_KEY,
+    CENSUS_CONFIG_ASSET_KEY,
+    lint_census_config,
+    load_census_recall_input,
+    parse_census_config,
+)
+from src.autoslice.profile_manifest_history import validate_manifest_history
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", help="profile id under profiles/<id>/profile.json")
     parser.add_argument("--manifest", type=Path, help="explicit profile manifest path")
+    parser.add_argument("--check-history", action="store_true",
+                        help="also require archived history for an external manifest (always on for profiles/)")
     parser.add_argument(
         "--config-only",
         action="store_true",
@@ -36,7 +46,12 @@ def main(argv: list[str] | None = None) -> int:
             manifest_path=args.manifest,
             environ={},
         )
-    except ChannelProfileError as exc:
+        # Managed profiles are distributed with their raw history. Explicit
+        # external config probes keep their existing schema-only semantics;
+        # executing an older binding still requires its authenticated archive.
+        if args.check_history or profile.manifest_path.is_relative_to(ROOT / "profiles"):
+            validate_manifest_history(ROOT, profile.manifest_path)
+    except (ChannelProfileError, OSError, ValueError) as exc:
         print(json.dumps({"status": "INVALID", "error": str(exc)}, ensure_ascii=False))
         return 2
 
@@ -64,6 +79,24 @@ def main(argv: list[str] | None = None) -> int:
         "missing_runtime_paths": missing,
         "voiceprint_status": voiceprint_status,
     }
+    census_config_lint = "ABSENT"
+    if CENSUS_CONFIG_ASSET_KEY in profile.asset_files:
+        config_path = profile.asset_file(CENSUS_CONFIG_ASSET_KEY)
+        if config_path.exists():
+            try:
+                config = parse_census_config(
+                    json.loads(config_path.read_text(encoding="utf-8")), profile_id=profile.profile_id,
+                )
+                lint_census_config(config, metric_text=profile.asset_file(
+                    "slice_selection_metric").read_text(encoding="utf-8"))
+                census_config_lint = "VALID"
+            except (ChannelProfileError, OSError, ValueError) as exc:
+                census_config_lint = f"INVALID: {exc}"
+    payload["census_config_lint"] = census_config_lint
+    _, census_status, _ = load_census_recall_input(
+        profile.asset_files.get(CENSUS_CLUES_ASSET_KEY), profile_id=profile.profile_id,
+    )
+    payload["census_clues_status"] = census_status
     if status == "READY" and voiceprint_status != "READY":
         payload["notes"] = [
             "voiceprint 未 enroll（声纹栈/歌切人声证明用；不影响 talk 产包）"

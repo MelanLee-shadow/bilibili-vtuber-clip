@@ -18,3 +18,9 @@ def consume_in_memory(*_args, **_kwargs):
     raise SelectionSupportOverrideError(
         "SELECTION_SUPPORT_PRIVATE_OVERRIDE_UNAVAILABLE"
     )
+
+
+_safe_document = consume_in_memory
+create_or_apply_selection_support_override = consume_in_memory
+prepare_selection_support_override = consume_in_memory
+historical_preflight = consume_in_memory

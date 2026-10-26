@@ -32,6 +32,14 @@ def _sha(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _write_offline_image_receipts(kwargs):
+    for key in ("request_path", "response_path"):
+        Path(kwargs[key]).write_text(
+            json.dumps({"transport": "offline-fixture", "kind": key}),
+            encoding="utf-8",
+        )
+
+
 def _fake_witness(answer: dict[str, object]):
     def probe(image_path: Path, _question: str, **_kwargs):
         return {
@@ -44,6 +52,72 @@ def _fake_witness(answer: dict[str, object]):
         }
 
     return probe
+
+
+@pytest.mark.parametrize("failure", [None, "identity", "head", "performance", "hook"])
+def test_song_visible_costume_gate_replays_answer_without_talk_hook(
+    tmp_path, monkeypatch, failure
+):
+    from src.autoslice import cpa_frame_witness
+
+    reference = tmp_path / "source.png"
+    final = tmp_path / "final.png"
+    Image.new("RGB", (1920, 1080), (20, 30, 40)).save(reference)
+    Image.new("RGB", (1920, 1080), (50, 60, 70)).save(final)
+    verdict = {
+        "source_lidousha_located": True,
+        "primary_subject_is_lidousha": True,
+        "primary_subject_matches_other_source_participant": False,
+        "primary_subject_is_visually_dominant": True,
+        "primary_subject_visible_head_is_large_and_clear": True,
+        "primary_subject_carries_song_performance": True,
+        "excessive_dead_space": False,
+        "meaningless_dominant_decoration": False,
+        "thumbnail_has_clear_click_hook": True,
+        "identity_conflicts": [], "composition_conflicts": [],
+        "reason": "当场头套完整，演唱主体与歌名清晰",
+    }
+    fields = {
+        "identity": "primary_subject_is_lidousha",
+        "head": "primary_subject_visible_head_is_large_and_clear",
+        "performance": "primary_subject_carries_song_performance",
+        "hook": "thumbnail_has_clear_click_hook",
+    }
+    if failure:
+        verdict[fields[failure]] = False
+    if failure == "identity":
+        verdict["identity_conflicts"] = ["摘掉源图头套后补造人脸"]
+
+    def probe(image_path, question, **kwargs):
+        assert "不要求杂谈事件" in question
+        assert "不能摘下后补造人脸" in question
+        return _fake_witness(verdict)(image_path, question, **kwargs)
+
+    monkeypatch.setattr(cpa_frame_witness, "image_vision_probe", probe)
+    receipt = verify_final_host_identity(
+        final_cover_path=final, final_cover_sha256=_sha(final),
+        reference_path=reference, scene_kind="song",
+    )
+    generation = {"final_cover_sha256": _sha(final), "final_host_identity_verification": receipt}
+    assert receipt["scene_kind"] == "song"
+    assert validate_final_host_identity_verification(generation) is (failure is None)
+    if failure:
+        receipt["status"] = "PASS"
+        assert not validate_final_host_identity_verification(generation)
+    else:
+        generation["art_direction"] = {"is_song": True}
+        receipt["scene_kind"] = "talk"
+        assert not validate_final_host_identity_verification(generation)
+        receipt["scene_kind"] = "song"
+        receipt["verdict"]["primary_subject_is_lidousha"] = False
+        assert not validate_final_host_identity_verification(generation)
+
+
+def test_final_identity_consumer_uses_song_art_direction():
+    from src.autoslice.cover_scene_binding import host_identity_scene_kwargs
+
+    assert host_identity_scene_kwargs({"art_direction": {"is_song": True}}) == {"scene_kind": "song"}
+    assert host_identity_scene_kwargs({"art_direction": {"is_song": False}}) == {}
 
 
 def _source_composition_redraw(**kwargs):
@@ -365,7 +439,8 @@ def test_cpa_redraw_blocks_before_ready_when_host_identity_is_wrong(
             "reason_code": "FINAL_HOST_IDENTITY_MISMATCH",
         }
 
-    result = publish_staging._stage_ai_cover(
+    # Replay the retained song/frozen-repair implementation directly.
+    result = publish_staging._stage_legacy_lidousha_ai_cover_unbound(
         {"status": "MATERIALIZED", "media_path": str(media)},
         media_path=media,
         candidate_id="pink-multi-person-regression",
@@ -441,11 +516,28 @@ def test_cover_redraw_binds_canonical_runtime_cpa_when_ambient_is_missing(
     def fake_redraw(**kwargs):
         captured["base_url"] = kwargs["base_url"]
         captured["api_key"] = kwargs["api_key"]
+        final = kwargs["covers_dir"] / "fixture.png"
+        request = kwargs["evidence_dir"] / "fixture.request.json"
+        response = kwargs["evidence_dir"] / "fixture.response.json"
+        Image.new("RGB", (1920, 1080), (30, 40, 80)).save(final)
+        _write_offline_image_receipts(
+            {"request_path": request, "response_path": response}
+        )
+        generation = kwargs["cover_generation"]
+        generation.update(
+            method="images.edit",
+            image_generation_used=True,
+            final_cover=str(final),
+            final_cover_sha256=_sha(final),
+            request_path=str(request),
+            response_path=str(response),
+        )
         return {
             "status": "AI_COVER_READY",
             "reason_codes": [],
-            "cover_path": str(tmp_path / "cover.png"),
-            "cover_generation": kwargs["cover_generation"],
+            "cover_path": str(final),
+            "cover_sha256": _sha(final),
+            "cover_generation": generation,
         }
 
     monkeypatch.setattr(publish_staging, "_stage_cpa_redraw_cover", fake_redraw)
@@ -453,7 +545,9 @@ def test_cover_redraw_binds_canonical_runtime_cpa_when_ambient_is_missing(
         publish_staging, "_enforce_final_talk_cover_thumbnail_gate", lambda value: value
     )
 
-    result = publish_staging._stage_ai_cover(
+    (tmp_path / "clip.mp4").write_bytes(b"offline-media-fixture")
+    # Replay the retained song/frozen-repair implementation directly.
+    result = publish_staging._stage_legacy_lidousha_ai_cover_unbound(
         {"status": "MATERIALIZED", "media_path": str(tmp_path / "clip.mp4")},
         media_path=tmp_path / "clip.mp4",
         candidate_id="runtime-cover-credentials",
@@ -512,6 +606,7 @@ def test_cpa_redraw_does_not_ship_source_pixels_when_identity_witness_is_down(
     def fake_image_edit(**kwargs):
         nonlocal image_calls
         image_calls += 1
+        _write_offline_image_receipts(kwargs)
         Image.new("RGB", (1920, 1080), (90, 30, 70)).save(
             kwargs["output_path"]
         )
@@ -532,7 +627,15 @@ def test_cpa_redraw_does_not_ship_source_pixels_when_identity_witness_is_down(
             "reason_code": "HOST_IDENTITY_WITNESS_UNAVAILABLE",
         }
 
-    result = publish_staging._stage_ai_cover(
+    fake_image_edit.cpa_cache_identity = {
+        "transport": "offline-fixture", "model": "solid-color-image"
+    }
+    unavailable_identity.cpa_cache_identity = {
+        "transport": "offline-fixture", "verdict": "witness-unavailable"
+    }
+
+    # Replay the retained song/frozen-repair implementation directly.
+    result = publish_staging._stage_legacy_lidousha_ai_cover_unbound(
         {"status": "MATERIALIZED", "media_path": str(media)},
         media_path=media,
         candidate_id="identity-witness-down",
@@ -564,8 +667,9 @@ def test_cpa_redraw_does_not_ship_source_pixels_when_identity_witness_is_down(
     assert not validate_cover_route_decision(generation)
 
 
+@pytest.mark.parametrize("retry_has_style_receipt", [True, False])
 def test_cpa_redraw_retries_once_and_recovers_host_identity(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, retry_has_style_receipt
 ):
     from src.autoslice import publish_staging
     from tests.test_cover_frame_selection import (
@@ -576,20 +680,41 @@ def test_cpa_redraw_retries_once_and_recovers_host_identity(
     monkeypatch.setenv("CPA_BASE_URL", "https://cpa.example.test/v1")
     monkeypatch.setenv("CPA_API_KEY", "test-key")
     monkeypatch.setenv("AUTOSLICE_COVER_MODE", "cpa")
+    # The sample is optional; this regression exercises explicitly selected
+    # STYLE_ONLY input surviving the identity-repair request.
+    style_reference = tmp_path / "style-only.png"
+    Image.new("RGB", (1920, 1080), (10, 90, 100)).save(style_reference)
+    style_binding = publish_staging.ordinary_talk_redraw_style_binding
+    monkeypatch.setattr(
+        publish_staging, "ordinary_talk_redraw_style_binding",
+        lambda **kwargs: style_binding(**kwargs, style_reference_path=style_reference),
+    )
     image_calls = 0
     identity_calls = 0
+    style_inputs = []
 
     def fake_image_edit(**kwargs):
         nonlocal image_calls
         image_calls += 1
+        _write_offline_image_receipts(kwargs)
+        style_inputs.append(kwargs.get("style_reference_paths"))
         Image.new("RGB", (1920, 1080), (30 * image_calls, 40, 80)).save(
             kwargs["output_path"]
         )
-        return {
+        result = {
             "status": "AI_BACKGROUND_READY",
             "selected_model": "gpt-image-2",
             "attempted_models": ["gpt-image-2"],
         }
+        if image_calls == 1 or retry_has_style_receipt:
+            result["style_reference_images"] = [
+                {
+                    "path": str(path), "sha256": _sha(path),
+                    "role": "STYLE_ONLY", "attempt": image_calls,
+                }
+                for path in kwargs.get("style_reference_paths", ())
+            ]
+        return result
 
     def identity_verifier(*, final_cover_sha256: str, **_kwargs):
         nonlocal identity_calls
@@ -620,7 +745,16 @@ def test_cpa_redraw_retries_once_and_recovers_host_identity(
             },
         }
 
-    result = publish_staging._stage_ai_cover(
+    fake_image_edit.cpa_cache_identity = {
+        "transport": "offline-fixture", "model": "solid-color-image",
+        "retry_has_style_receipt": retry_has_style_receipt,
+    }
+    identity_verifier.cpa_cache_identity = {
+        "transport": "offline-fixture", "verdict": "fail-then-hash-bound-pass"
+    }
+
+    # Replay the retained song/frozen-repair implementation directly.
+    result = publish_staging._stage_legacy_lidousha_ai_cover_unbound(
         {"status": "MATERIALIZED", "media_path": str(media)},
         media_path=media,
         candidate_id="pink-multi-person-auto-recovery",
@@ -639,6 +773,16 @@ def test_cpa_redraw_retries_once_and_recovers_host_identity(
     assert generation["host_identity_retry"]["status"] == "PASS"
     assert generation["final_host_identity_verification"]["status"] == "PASS"
     assert generation["route_decision"]["execution_status"] == "READY"
+    assert style_inputs[0] and style_inputs[1] == style_inputs[0]
+    assert generation["request_path"] == generation["identity_retry_request_path"]
+    assert generation["response_path"] == generation["identity_retry_response_path"]
+    active_styles = generation["style_reference_images"]
+    assert active_styles == generation["host_identity_retry"]["style_reference_images"]
+    if retry_has_style_receipt:
+        assert len(active_styles) == 1 and active_styles[0]["attempt"] == 2
+    else:
+        # A missing final receipt cannot borrow the rejected first attempt's.
+        assert active_styles == []
 
 
 def test_1411_prominence_failure_retries_with_stronger_prompt_then_stays_pending(
@@ -658,6 +802,7 @@ def test_1411_prominence_failure_retries_with_stronger_prompt_then_stays_pending
 
     def fake_image_edit(**kwargs):
         prompts.append(str(kwargs["prompt"]))
+        _write_offline_image_receipts(kwargs)
         Image.new("RGB", (1920, 1080), (115, 20, 30)).save(
             kwargs["output_path"]
         )
@@ -679,7 +824,15 @@ def test_1411_prominence_failure_retries_with_stronger_prompt_then_stays_pending
             "detail": "主播缩在右下角，大片空白和无意义红条压过主体",
         }
 
-    result = publish_staging._stage_ai_cover(
+    fake_image_edit.cpa_cache_identity = {
+        "transport": "offline-fixture", "model": "solid-color-image"
+    }
+    small_corner_identity_match.cpa_cache_identity = {
+        "transport": "offline-fixture", "verdict": "prominence-failed"
+    }
+
+    # Replay the retained song/frozen-repair implementation directly.
+    result = publish_staging._stage_legacy_lidousha_ai_cover_unbound(
         {"status": "MATERIALIZED", "media_path": str(media)},
         media_path=media,
         candidate_id="auto_152944_1411_1463",
@@ -1201,7 +1354,23 @@ _HOST_ONLY_BASE_VERDICT = {
     "primary_subject_identity": "李豆沙",
     "identity_conflicts": [],
     "composition_conflicts": [],
+    "source_visible_feature_observations": {
+        "clothing": ["白色衣服", "白色毛领", "红色蝴蝶结"],
+        "head_appearance": ["白色头发", "头戴护目镜"],
+        "accessories": ["熊猫装饰"],
+    },
+    "final_feature_matches": {
+        "clothing": True,
+        "head_appearance": True,
+        "accessories": True,
+    },
+    "final_feature_conflicts": [],
     "reason": "李豆沙是唯一可辨识人物并承担故事反应",
+}
+_HOST_ONLY_BASE_VERDICT['final_feature_comparisons'] = {
+    category: [{'source_feature': feature, 'status': 'MATCH',
+                'final_observation': '成品所有主播实例的同一部位可见且一致'} for feature in features]
+    for category, features in _HOST_ONLY_BASE_VERDICT['source_visible_feature_observations'].items()
 }
 
 
@@ -1212,6 +1381,43 @@ def _host_only_story(mode: str = "HOST_ONLY_GENERIC") -> dict[str, object]:
         "participants": [],
         "relation_state": "UNKNOWN",
     }
+
+
+@pytest.mark.parametrize('scope', ['MATCH', 'OUT_OF_FRAME', 'OCCLUDED', 'CONFLICT', 'UNRESOLVED'])
+def test_v6_compares_only_visible_same_part_but_never_clears_visible_conflicts(current_host_only_generation, scope):
+    generation = current_host_only_generation
+    receipt = generation['final_host_identity_verification']
+    verdict = receipt['verdict']
+    verdict['final_feature_comparisons']['accessories'][0].update(status=scope,
+        final_observation='成品裁到胸部，下缘包所在部位未入画' if scope == 'OUT_OF_FRAME' else '具体同部位观察')
+    # Even a falsely green summary cannot erase a concrete visible conflict.
+    receipt['witness']['answer'] = json.dumps(verdict, ensure_ascii=False)
+    assert validate_final_host_identity_verification(generation) is (scope in {'MATCH', 'OUT_OF_FRAME', 'OCCLUDED'})
+
+
+def test_v6_requires_complete_scope_evidence_and_some_actual_comparison(current_host_only_generation):
+    generation = current_host_only_generation
+    receipt = generation['final_host_identity_verification']
+    verdict = receipt['verdict']
+    for rows in verdict['final_feature_comparisons'].values():
+        for row in rows: row['status'] = 'OUT_OF_FRAME'
+    receipt['witness']['answer'] = json.dumps(verdict, ensure_ascii=False)
+    assert not validate_final_host_identity_verification(generation)
+    verdict['final_feature_comparisons']['accessories'] = []
+    receipt['witness']['answer'] = json.dumps(verdict, ensure_ascii=False)
+    assert not validate_final_host_identity_verification(generation)
+
+
+def test_old_v5_frozen_pass_remains_strict_and_is_not_upgraded(current_host_only_generation):
+    generation = current_host_only_generation
+    receipt = generation['final_host_identity_verification']
+    receipt['schema_version'] = 'lidousha-cover-final-host-identity-verification.v5'
+    receipt['verdict'].pop('final_feature_comparisons')
+    receipt['witness']['answer'] = json.dumps(receipt['verdict'], ensure_ascii=False)
+    assert validate_final_host_identity_verification(generation)
+    receipt['verdict']['final_feature_matches']['accessories'] = False
+    receipt['witness']['answer'] = json.dumps(receipt['verdict'], ensure_ascii=False)
+    assert not validate_final_host_identity_verification(generation)
 
 
 def test_host_only_story_rejects_secondary_avatar_even_when_host_is_primary(
@@ -1295,6 +1501,118 @@ def test_host_only_story_passes_only_when_no_other_person_or_avatar_is_visible(
 
     assert receipt["status"] == "PASS"
     assert receipt["host_only_required"] is True
+    assert validate_final_host_identity_verification(generation)
+
+
+@pytest.mark.parametrize(
+    ("category", "conflict"),
+    [
+        ("clothing", "成品借用了另一位参与者的黄色外套"),
+        ("head_appearance", "成品借用了另一位参与者的头部造型"),
+        ("accessories", "成品丢失了源图可见的头戴护目镜"),
+    ],
+)
+def test_host_only_v5_rejects_face_match_with_borrowed_or_missing_features(
+    current_host_only_generation, category, conflict
+):
+    generation = current_host_only_generation
+    receipt = generation["final_host_identity_verification"]
+    verdict = receipt["verdict"]
+    verdict["final_feature_matches"][category] = False
+    verdict["final_feature_conflicts"] = [conflict]
+    receipt["witness"]["answer"] = json.dumps(verdict, ensure_ascii=False)
+
+    assert not validate_final_host_identity_verification(generation)
+
+
+def test_host_only_v5_producer_and_replay_share_feature_predicate(
+    current_host_only_generation, monkeypatch
+):
+    from src.autoslice import cpa_frame_witness
+
+    generation = current_host_only_generation
+    previous = generation["final_host_identity_verification"]
+    verdict = json.loads(json.dumps(previous["verdict"]))
+    verdict["final_feature_matches"]["clothing"] = False
+    verdict["final_feature_conflicts"] = ["成品借用了另一参与者的围巾"]
+    monkeypatch.setattr(cpa_frame_witness, "image_vision_probe", _fake_witness(verdict))
+
+    receipt = verify_final_host_identity(
+        final_cover_path=Path(str(generation["final_cover"])),
+        final_cover_sha256=str(generation["final_cover_sha256"]),
+        reference_path=Path(str(previous["reference_path"])),
+        host_only_required=True,
+    )
+    assert receipt["status"] == "FAIL"
+    assert receipt["reason_code"] == HOST_ONLY_REASON_CODE
+    generation["final_host_identity_verification"] = receipt
+    assert not validate_final_host_identity_verification(generation)
+
+
+def test_host_only_v5_rejects_missing_feature_evidence_and_old_v4_receipt(
+    current_host_only_generation, monkeypatch
+):
+    from src.autoslice.cover_host_identity_gate import _identity_answer_valid
+    from src.autoslice import cpa_frame_witness
+
+    generation = current_host_only_generation
+    receipt = generation["final_host_identity_verification"]
+    valid_receipt = json.loads(json.dumps(receipt))
+    verdict = dict(receipt["verdict"])
+    verdict.pop("source_visible_feature_observations")
+    answer = json.dumps(verdict, ensure_ascii=False)
+    assert not _identity_answer_valid(answer, host_only_required=True)
+    receipt["verdict"] = verdict
+    receipt["witness"]["answer"] = answer
+    assert not validate_final_host_identity_verification(generation)
+
+    monkeypatch.setattr(cpa_frame_witness, "image_vision_probe", _fake_witness(verdict))
+    produced = verify_final_host_identity(
+        final_cover_path=Path(str(generation["final_cover"])),
+        final_cover_sha256=str(generation["final_cover_sha256"]),
+        reference_path=Path(str(receipt["reference_path"])),
+        host_only_required=True,
+    )
+    assert produced["status"] == "FAIL"
+    assert produced["reason_code"] == "HOST_IDENTITY_WITNESS_UNAVAILABLE"
+
+    # v4 accepted the old avatar-only contract; v5 must never replay it.
+    old_v4 = current_host_only_generation
+    old_v4["final_host_identity_verification"] = valid_receipt
+    old_v4["final_host_identity_verification"]["schema_version"] = (
+        "lidousha-cover-final-host-identity-verification.v4"
+    )
+    old_v4["final_host_identity_verification"]["authority"] = (
+        "CPA_PRIMARY_HASH_BOUND_SOURCE_FINAL_IDENTITY_PROMINENCE_AND_HOST_ONLY_COMPARISON"
+    )
+    assert not validate_final_host_identity_verification(old_v4)
+
+
+def test_host_only_v5_rejects_all_empty_feature_observations(
+    current_host_only_generation,
+):
+    generation = current_host_only_generation
+    verdict = generation["final_host_identity_verification"]["verdict"]
+    verdict["source_visible_feature_observations"] = {
+        "clothing": [],
+        "head_appearance": [],
+        "accessories": [],
+    }
+    generation["final_host_identity_verification"]["witness"]["answer"] = (
+        json.dumps(verdict, ensure_ascii=False)
+    )
+    assert not validate_final_host_identity_verification(generation)
+
+
+def test_host_only_v5_allows_pose_or_chibi_when_visible_features_match(
+    current_host_only_generation,
+):
+    generation = current_host_only_generation
+    verdict = generation["final_host_identity_verification"]["verdict"]
+    verdict["reason"] = "姿势和画风变化，但源图实际可见特征逐项保留"
+    generation["final_host_identity_verification"]["witness"]["answer"] = (
+        json.dumps(verdict, ensure_ascii=False)
+    )
     assert validate_final_host_identity_verification(generation)
 
 
@@ -1382,6 +1700,10 @@ def test_host_only_question_does_not_also_allow_secondary_people():
     assert "次要人物可以存在" not in _identity_question(
         scene_kind="talk", host_only_required=True
     )
+    question = _identity_question(scene_kind="talk", host_only_required=True)
+    assert "参与者身份，不是同一人的绘制次数" in question
+    assert "每处都须延续源图实际可见" in question
+    assert "另一个角色认作她" in question
     assert "次要人物可以存在" in _identity_question(
         scene_kind="talk", host_only_required=False
     )
@@ -1389,7 +1711,7 @@ def test_host_only_question_does_not_also_allow_secondary_people():
 
 @pytest.fixture
 def current_host_only_generation(tmp_path, monkeypatch):
-    """A synthetic native V4 PASS, with no live model or real-image claims."""
+    """A synthetic native V5 PASS, with no live model or real-image claims."""
     from src.autoslice import cpa_frame_witness
 
     reference = tmp_path / "replay-source.png"
@@ -1435,7 +1757,7 @@ def current_host_only_generation(tmp_path, monkeypatch):
     ("source_lidousha_located", 1),
     ("reason", ""),
 ])
-def test_v4_consumer_replays_verdict_instead_of_trusting_pass_label(
+def test_v5_consumer_replays_verdict_instead_of_trusting_pass_label(
     current_host_only_generation, field, value,
 ):
     generation = current_host_only_generation
@@ -1448,13 +1770,13 @@ def test_v4_consumer_replays_verdict_instead_of_trusting_pass_label(
 
 
 @pytest.mark.parametrize("status", ["UNAVAILABLE", "ERROR", None])
-def test_v4_consumer_requires_an_observed_witness(current_host_only_generation, status):
+def test_v5_consumer_requires_an_observed_witness(current_host_only_generation, status):
     generation = current_host_only_generation
     generation["final_host_identity_verification"]["witness"]["status"] = status
     assert not validate_final_host_identity_verification(generation)
 
 
-def test_v4_consumer_rejects_partial_verdict_with_only_avatar_exclusion(current_host_only_generation):
+def test_v5_consumer_rejects_partial_verdict_with_only_avatar_exclusion(current_host_only_generation):
     generation = current_host_only_generation
     receipt = generation["final_host_identity_verification"]
     receipt["verdict"] = {
@@ -1466,7 +1788,7 @@ def test_v4_consumer_rejects_partial_verdict_with_only_avatar_exclusion(current_
 
 
 
-def test_v4_consumer_keeps_disclosed_agy_fallback(current_host_only_generation):
+def test_v5_consumer_keeps_disclosed_agy_fallback(current_host_only_generation):
     generation = current_host_only_generation
     receipt = generation["final_host_identity_verification"]
     receipt["selected_witness_provider"] = "agy"
@@ -1484,7 +1806,7 @@ def test_v4_consumer_keeps_disclosed_agy_fallback(current_host_only_generation):
     assert not validate_final_host_identity_verification(generation)
 
 
-def test_v4_consumer_still_rejects_raw_answer_verdict_drift(current_host_only_generation):
+def test_v5_consumer_still_rejects_raw_answer_verdict_drift(current_host_only_generation):
     generation = current_host_only_generation
     generation["final_host_identity_verification"]["verdict"]["reason"] = "not the original answer"
     assert not validate_final_host_identity_verification(generation)

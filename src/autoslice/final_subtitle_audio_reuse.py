@@ -704,7 +704,9 @@ def reuse_final_subtitle_audio_check(
                 "correspondence_path": str(artifact_paths["correspondence"]),
                 "raw_result_path": str(artifact_paths["raw_result"]),
                 "receipt": current_receipt,
-                "receipt_sha256": _hash_bytes(_write_json_bytes(current_receipt)),
+                "receipt_sha256": _hash_bytes(
+                    (json.dumps(current_receipt, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+                ),
             }
             current_copy["subtitle_audio_correspondence"] = evidence
             hashes = current_copy.setdefault("artifact_hashes", {})
@@ -758,6 +760,9 @@ def reuse_final_subtitle_audio_check(
             actual_media=current_media,
             package_root=output,
             candidate_id=candidate_id,
+        )
+        gate.load_validated_subtitle_audio_witness(
+            current_copy, current_srt, current_media, candidate_id=candidate_id,
         )
     except (ValueError, OSError) as exc:
         raise FinalSubtitleAudioReuseError("AUDIO_REUSE_CURRENT_NATIVE_VALIDATION_FAILED", str(exc)) from exc

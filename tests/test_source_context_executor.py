@@ -11,6 +11,8 @@ from src.autoslice.source_context_executor import (
     build_ffmpeg_context_clip_command,
     execute_source_context_job,
 )
+from src.autoslice.source_context_cpa_refinement import _timing_grid_sha256
+from src.autoslice.jingting_chunker import parse_srt_cues
 
 
 def job_manifest(**overrides):
@@ -139,6 +141,137 @@ def test_source_context_job_runs_agy_runner_when_refined_srt_not_provided(tmp_pa
     assert not Path(result.review_required_path).exists()
 
 
+def test_source_context_job_accepts_only_byte_bound_cpa_text_result(tmp_path):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source bytes")
+    srt = tmp_path / "full.srt"
+    write_srt(srt)
+
+    def fake_cpa_runner(media_path: Path, draft_srt_path: Path, output_srt_path: Path) -> AgyExecutionResult:
+        output_srt_path.write_text(
+            "1\n00:00:00,500 --> 00:00:01,500\n第一句精修\n\n"
+            "2\n00:00:02,800 --> 00:00:03,500\n第二句精修\n",
+            encoding="utf-8",
+        )
+        prompt_path = output_srt_path.with_suffix(".cpa.prompt.txt")
+        completion_path = output_srt_path.with_suffix(".cpa.response.txt")
+        request_path = output_srt_path.with_suffix(".cpa.request.json")
+        prompt_path.write_text("numbered cue prompt", encoding="utf-8")
+        completion_path.write_text(
+            '{"cues":[{"n":1,"text":"第一句精修"},{"n":2,"text":"第二句精修"}]}',
+            encoding="utf-8",
+        )
+        request_path.write_text(
+            json.dumps(
+                {
+                    "provider": "cpa",
+                    "request_id": "cpa-source-context-test",
+                    "model": "test-cpa",
+                    "source_media_sha256": hashlib.sha256(media_path.read_bytes()).hexdigest(),
+                    "draft_srt_sha256": hashlib.sha256(draft_srt_path.read_bytes()).hexdigest(),
+                    "prompt_sha256": hashlib.sha256(prompt_path.read_bytes()).hexdigest(),
+                }
+            ),
+            encoding="utf-8",
+        )
+        return AgyExecutionResult(
+            provider="cpa",
+            model="test-cpa",
+            provider_fallback_used=False,
+            provider_request_id="cpa-source-context-test",
+            requested_provider="cpa",
+            executed_provider="cpa",
+            source_media_sha256=hashlib.sha256(media_path.read_bytes()).hexdigest(),
+            draft_srt_sha256=hashlib.sha256(draft_srt_path.read_bytes()).hexdigest(),
+            refined_srt_sha256=hashlib.sha256(output_srt_path.read_bytes()).hexdigest(),
+            timing_validated=True,
+            audio_input_attested=False,
+            prompt_sha256=hashlib.sha256(prompt_path.read_bytes()).hexdigest(),
+            completion_sha256=hashlib.sha256(completion_path.read_bytes()).hexdigest(),
+            prompt_path=str(prompt_path),
+            completion_path=str(completion_path),
+            request_path=str(request_path),
+            request_id_kind="content_bound_hash",
+            cpa_cache_identity={"transport": "test", "models": ["test-cpa"], "effort": "low"},
+            timing_grid_sha256=_timing_grid_sha256(parse_srt_cues(output_srt_path.read_text(encoding="utf-8"))),
+        )
+
+    result = execute_source_context_job(
+        job_manifest_for_source(source),
+        source_video_path=source,
+        output_dir=tmp_path / "out",
+        full_source_srt_path=srt,
+        agy_runner=fake_cpa_runner,
+        run_ffmpeg=False,
+    )
+
+    assert result.decision == "READY"
+    manifest = json.loads(Path(result.jingting_manifest_path).read_text(encoding="utf-8"))
+    assert manifest["source_context_route"] == "cpa_text_correction"
+    assert manifest["cpa_validation"]["status"] == "PASS"
+    assert manifest["audio_input_attested"] is False
+
+
+def test_source_context_job_blocks_cpa_media_hash_drift(tmp_path):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source bytes")
+    srt = tmp_path / "full.srt"
+    write_srt(srt)
+
+    def drift_runner(_media_path: Path, draft_srt_path: Path, output_srt_path: Path) -> AgyExecutionResult:
+        output_srt_path.write_text(draft_srt_path.read_text(encoding="utf-8"), encoding="utf-8")
+        prompt_path = output_srt_path.with_suffix(".cpa.prompt.txt")
+        completion_path = output_srt_path.with_suffix(".cpa.response.txt")
+        request_path = output_srt_path.with_suffix(".cpa.request.json")
+        prompt_path.write_text("prompt", encoding="utf-8")
+        completion_path.write_text('{"cues":[{"n":1,"text":"第一句"},{"n":2,"text":"第二句"}]}', encoding="utf-8")
+        request_path.write_text(
+            json.dumps(
+                {
+                    "provider": "cpa",
+                    "request_id": "request",
+                    "model": "test-cpa",
+                    "source_media_sha256": "0" * 64,
+                    "draft_srt_sha256": hashlib.sha256(draft_srt_path.read_bytes()).hexdigest(),
+                    "prompt_sha256": hashlib.sha256(prompt_path.read_bytes()).hexdigest(),
+                }
+            ),
+            encoding="utf-8",
+        )
+        return AgyExecutionResult(
+            provider="cpa",
+            model="test-cpa",
+            provider_request_id="request",
+            requested_provider="cpa",
+            executed_provider="cpa",
+            source_media_sha256="0" * 64,
+            draft_srt_sha256=hashlib.sha256(draft_srt_path.read_bytes()).hexdigest(),
+            refined_srt_sha256=hashlib.sha256(output_srt_path.read_bytes()).hexdigest(),
+            timing_validated=True,
+            audio_input_attested=False,
+            prompt_sha256=hashlib.sha256(prompt_path.read_bytes()).hexdigest(),
+            completion_sha256=hashlib.sha256(completion_path.read_bytes()).hexdigest(),
+            prompt_path=str(prompt_path),
+            completion_path=str(completion_path),
+            request_path=str(request_path),
+            request_id_kind="content_bound_hash",
+            timing_grid_sha256=_timing_grid_sha256(parse_srt_cues(output_srt_path.read_text(encoding="utf-8"))),
+        )
+
+    result = execute_source_context_job(
+        job_manifest_for_source(source),
+        source_video_path=source,
+        output_dir=tmp_path / "out",
+        full_source_srt_path=srt,
+        agy_runner=drift_runner,
+        run_ffmpeg=False,
+    )
+
+    assert result.decision == "BLOCK"
+    assert "CPA_SOURCE_MEDIA_SHA256_MISMATCH" in result.reason_codes
+    assert result.jingting_done is False
+
+
 def test_song_proof_context_bypasses_talk_refinement_provider(tmp_path):
     source = tmp_path / "source.mp4"
     source.write_bytes(b"source bytes")
@@ -226,6 +359,29 @@ def test_agy_retry_after_is_persisted_for_autonomous_resume(tmp_path):
     review_required = json.loads(Path(result.review_required_path).read_text(encoding="utf-8"))
     assert "AGY_QUOTA_EXHAUSTED" in result.reason_codes
     assert review_required["metadata"]["retry_after_seconds"] == 2458
+
+
+def test_invalid_cpa_response_is_blocked_with_cpa_failure_label(tmp_path):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source bytes")
+    srt = tmp_path / "full.srt"
+    write_srt(srt)
+
+    def invalid_cpa_runner(*_args) -> AgyExecutionResult:
+        raise AgyRunnerError("CPA_CORRECTION_INVALID_OUTPUT", "partial CPA response")
+
+    result = execute_source_context_job(
+        job_manifest_for_source(source),
+        source_video_path=source,
+        output_dir=tmp_path / "out",
+        full_source_srt_path=srt,
+        agy_runner=invalid_cpa_runner,
+        run_ffmpeg=False,
+    )
+
+    assert result.decision == "BLOCK"
+    assert "CPA_SOURCE_CONTEXT_RUNNER_FAILED" in result.reason_codes
+    assert "AGY_SOURCE_CONTEXT_RUNNER_FAILED" not in result.reason_codes
 
 
 def test_gemini_api_fallback_without_recorded_agy_outcome_is_rejected(tmp_path):

@@ -16,10 +16,13 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 from src.autoslice.batch_terminal_state import project_terminal_song_disposition
 from src.autoslice.runner_proxy import RunnerProxy
+from src.autoslice.infra_retry_policy import _bounded_retry_delay_seconds
 from src.autoslice.song_delivery import SongDeliveryError
 from src.autoslice.song_name_authority import (
     authoritative_song_title,
@@ -33,6 +36,80 @@ from src.autoslice.producer_prepare_result import prepared_song_result
 
 
 _runner = RunnerProxy()
+
+
+@dataclass(frozen=True)
+class _SongRunPaths:
+    candidate_dir: Path
+    selector_root: Path
+    log_file: Path
+    usage_file: Path
+    runtime_report_root: Path
+
+
+def _song_run_paths(
+    date: str, candidate_id: str, *, prepare_only: bool = False,
+    output_root: Path | None = None, source_srt: Path | None = None,
+    runtime_report_root: Path | None = None,
+) -> _SongRunPaths:
+    """Resolve shared lane/wrapper paths before either can create work files."""
+    cid = candidate_id.strip()
+    private_output = output_root is not None
+    if private_output:
+        if not prepare_only or source_srt is None:
+            raise ValueError("private Song output requires prepare_only=True and explicit source_srt")
+        root = Path(output_root).absolute()
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) or not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", cid):
+            raise ValueError("private Song output requires a safe date and candidate id")
+        try:
+            relative = root.relative_to(_runner.BASE.absolute())
+        except ValueError as exc:
+            raise ValueError("private Song output must be inside the runtime input scope") from exc
+        out_dir = root / date / cid
+        if (not relative.parts or relative.parts[0] not in {"private-runs", "production-inputs"}
+                or ".." in root.parts or any(path.is_symlink() for path in (out_dir, *out_dir.parents))):
+            raise ValueError("private Song output must be a non-symlink runtime input directory")
+    else:
+        root = _runner.BASE
+        out_dir = root / "out" / date / cid
+    report_root = Path(runtime_report_root).absolute() if runtime_report_root is not None else root
+    if private_output and not report_root.is_relative_to(root):
+        raise ValueError("private Song runtime reports must stay inside output_root")
+    if (private_output or runtime_report_root is not None) and (
+        ".." in report_root.parts
+        or any(path.is_symlink() for path in (report_root, *report_root.parents))
+    ):
+        raise ValueError("Song runtime report root must be a non-symlink directory")
+    return _SongRunPaths(
+        candidate_dir=out_dir,
+        selector_root=out_dir / "song-selector" if private_output else out_dir,
+        log_file=(out_dir / f"{date}_{cid}.log" if private_output else
+                  _runner.BASE / "logs" / f"{date}_{cid}.log"),
+        usage_file=out_dir / f"{cid}.cpa-usage.jsonl",
+        runtime_report_root=report_root,
+    )
+
+
+def _runtime_scratch_selector_env(
+    env: dict[str, str], item: Mapping[str, object]
+) -> dict[str, str]:
+    """Point the selector subprocess at the dispatcher-owned live lease."""
+
+    raw_scratch = item.get("runtime_scratch_dir")
+    if raw_scratch is None:
+        return env
+    scratch = Path(str(raw_scratch)).absolute()
+    if (
+        scratch.is_symlink()
+        or not scratch.is_dir()
+        or not scratch.name.startswith("work-")
+        or scratch.parent.name != "runtime-scratch"
+        or scratch.parent.is_symlink()
+    ):
+        raise RuntimeError("runtime scratch lease is not a dedicated live workspace")
+    for key in ("TMPDIR", "TMP", "TEMP"):
+        env[key] = str(scratch)
+    return env
 
 # 全源趟失败时保留下来的取证键。音频命名权威也在其中：窄窗那趟没有 audio
 # aligner，真名只可能在 ``_full`` 那趟证出来，不带过来就会被这层白名单埋掉
@@ -138,8 +215,9 @@ def song_delivery_ok(
     reason_codes,
     completion_evidence: bool | dict | None,
 ) -> bool:
-    """Deliver at most MAX_SONGS_PER_DATE across the recording date ,
-    danmaku-desc; a song is delivered when the window IS a song and the
+    """Daily slots come from talk_quota_authority.resolve_quota_grant(date, "song")
+    via candidate_selection.song_delivery_budget; candidates rank danmaku-desc.
+    A song is delivered when the window IS a song and the
     performance is AFFIRMATIVELY PROVEN complete.  Absence of ``SONG_PARTIAL``
     is not evidence: the ``芽吹くとき`` run had no LRC proof
     and therefore never emitted that negative code, but was still incorrectly
@@ -234,8 +312,10 @@ def classify_song_selector_transient(log_text: str) -> str | None:
 def song_infra_retry_delay_seconds(completed_retry_count: int) -> int:
     """Exponential cross-tick backoff, capped so a provider outage stays bounded."""
 
-    exponent = max(0, int(completed_retry_count))
-    return min(_runner.SONG_INFRA_RETRY_MAX_SECONDS, _runner.SONG_INFRA_RETRY_BASE_SECONDS * (2**exponent))
+    return _bounded_retry_delay_seconds(
+        completed_retry_count, base_seconds=_runner.SONG_INFRA_RETRY_BASE_SECONDS,
+        maximum_seconds=_runner.SONG_INFRA_RETRY_MAX_SECONDS,
+    )
 
 
 def song_review_retry_after_seconds(summary_record: dict, selector_dir: Path) -> int | None:
@@ -382,6 +462,7 @@ def _build_song_selector_command(
     anchor_start: int,
     anchor_end: int,
     tag: str,
+    runtime_report_root: Path | None = None,
 ) -> list[str]:
     """Build one interval-bound selector invocation for the song lane."""
 
@@ -434,6 +515,8 @@ def _build_song_selector_command(
     )
     if tag == "_full":
         command.append("--agy-audio-lrc-align")
+    if runtime_report_root is not None:
+        command.extend(["--runtime-report-root", str(runtime_report_root)])
     return command
 
 
@@ -602,6 +685,7 @@ def _apply_canonical_song_title(result: dict, *, summary_record: dict, cid: str)
 def _deliver_or_prepare_song(
     *, date: str, candidate_id: str, summary_record: dict, title: str,
     selector_rc: int, summary_authority_root: Path, prepare_only: bool,
+    allow_registered_summary_root: bool = False,
 ) -> dict:
     """Keep the long selector loop free of delivery-mode plumbing."""
 
@@ -615,6 +699,8 @@ def _deliver_or_prepare_song(
     }
     if prepare_only:
         kwargs["prepare_only"] = True
+    if allow_registered_summary_root:
+        kwargs["allow_registered_summary_root"] = True
     return _runner._commit_verified_song_package(**kwargs)
 
 
@@ -622,6 +708,7 @@ def _finish_song_delivery(
     *, date: str, candidate_id: str, result: dict, summary_record: dict,
     summary_path: Path, selector_rc: int, is_song: bool, reasons: list[str],
     completion: dict, burned: Path | None, prepare_only: bool,
+    allow_registered_summary_root: bool = False,
 ) -> dict | None:
     """Apply one verified Song delivery/prepare attempt and its recovery pin."""
 
@@ -637,6 +724,7 @@ def _finish_song_delivery(
             date=date, candidate_id=candidate_id, summary_record=summary_record,
             title=str(result.get("title") or ""), selector_rc=selector_rc,
             summary_authority_root=summary_path.parent, prepare_only=prepare_only,
+            allow_registered_summary_root=allow_registered_summary_root,
         )
     except (OSError, SongDeliveryError, ValueError) as exc:
         _runner.log(
@@ -672,8 +760,24 @@ def _finish_song_delivery(
     return prepared_song_result(result, update, prepare_only=prepare_only)
 
 
-def produce_song(date: str, item: dict, *, prepare_only: bool = False) -> dict:
-    """Run the fail-closed song pipeline; retry anchor bleed on the sung core."""
+def produce_song(
+    date: str, item: dict, *, prepare_only: bool = False,
+    output_root: Path | None = None, source_srt: Path | None = None,
+    runtime_report_root: Path | None = None,
+) -> dict:
+    """Run Song proof with one source transcript and output location for all retries.
+
+    An explicit output root is prepare-only and must be in the runtime's
+    existing private-runs/production-inputs scope. Candidate work lives at
+    ``output_root/date/cid``; prepared handles retain the ordinary transaction
+    store and deployment seal. Paths do not grant Song or publication authority.
+    """
+    private_output = output_root is not None
+    paths = _song_run_paths(
+        date, str(item.get("cid") or item.get("candidate_id") or ""),
+        prepare_only=prepare_only, output_root=output_root, source_srt=source_srt,
+        runtime_report_root=runtime_report_root,
+    )
     early_block = _early_published_song_block(item)
     if early_block is not None:
         return early_block
@@ -682,7 +786,14 @@ def produce_song(date: str, item: dict, *, prepare_only: bool = False) -> dict:
     seg_dur_ms = item["seg_dur_ms"]
     segment = Path(item["segment_path"])
     cid = item["cid"]
-    out_dir = _runner.BASE / "out" / date / cid
+    out_dir = paths.candidate_dir
+    # Keep these bindings outside attempt(): tight/full/core/resume must never
+    # silently fall back to the global transcript or output directories.
+    src_srt = Path(source_srt).absolute() if source_srt is not None else (
+        _runner.BASE / "cache" / date / f"{segment.stem}.bcut.srt"
+    )
+    selector_root = paths.selector_root
+    log_path = paths.log_file
     out_dir.mkdir(parents=True, exist_ok=True)
 
     def window_for(a0: int, a1: int) -> tuple[int, int]:
@@ -717,9 +828,16 @@ def produce_song(date: str, item: dict, *, prepare_only: bool = False) -> dict:
                     error=f"window cut failed: {cut.stderr[-200:]}",
                 )
 
-        src_srt = _runner.BASE / "cache" / date / f"{segment.stem}.bcut.srt"
         window_srt = out_dir / f"{cid}{tag}_source.srt"
-        if _runner.slice_srt(src_srt, start, end, window_srt) == 0:
+        try:
+            cue_count = _runner.slice_srt(src_srt, start, end, window_srt)
+        except OSError as exc:
+            return _early_song_infra_failure(
+                result,
+                reason_code="SONG_SOURCE_TRANSCRIPT_EMPTY",
+                error=f"source transcript unavailable: {type(exc).__name__}: {exc}",
+            )
+        if cue_count == 0:
             return _early_song_infra_failure(
                 result,
                 reason_code="SONG_SOURCE_TRANSCRIPT_EMPTY",
@@ -729,14 +847,16 @@ def produce_song(date: str, item: dict, *, prepare_only: bool = False) -> dict:
         # NOTE: segment danmaku XML is segment-relative — do not pass it to the
         # selector (it would misalign against the window-relative video); LRC is
         # the subtitle authority for songs anyway.
-        selector_dir = _runner.fresh_song_selector_dir(out_dir, tag)
-        log_path = _runner.BASE / "logs" / f"{date}_{cid}.log"
+        selector_dir = _runner.fresh_song_selector_dir(selector_root, tag)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             log_offset = log_path.stat().st_size
         except OSError:
             log_offset = 0
         with open(log_path, "a", encoding="utf-8") as sink:
-            selector_env = _runner.song_selector_env(date)
+            selector_env = _runtime_scratch_selector_env(
+                {**_runner.song_selector_env(date), "AUTOSLICE_CPA_USAGE_FILE": str(paths.usage_file)}, item
+            )
             selector_command = _build_song_selector_command(
                 item=item,
                 window_mp4=window_mp4,
@@ -747,6 +867,8 @@ def produce_song(date: str, item: dict, *, prepare_only: bool = False) -> dict:
                 anchor_start=anchor_start,
                 anchor_end=anchor_end,
                 tag=tag,
+                runtime_report_root=(paths.runtime_report_root
+                                     if private_output or runtime_report_root is not None else None),
             )
             completed = subprocess.run(
                 selector_command,
@@ -851,6 +973,7 @@ def produce_song(date: str, item: dict, *, prepare_only: bool = False) -> dict:
             summary_path=summary_path, selector_rc=completed.returncode,
             is_song=is_song, reasons=reasons, completion=completion, burned=burned,
             prepare_only=prepare_only,
+            allow_registered_summary_root=private_output,
         )) is not None:
             return prepared
         result["status"] = _runner.song_status(
@@ -859,7 +982,6 @@ def produce_song(date: str, item: dict, *, prepare_only: bool = False) -> dict:
         return result
 
     anchor_start, anchor_end = item["anchor_start_ms"], item["anchor_end_ms"]
-    src_srt = _runner.BASE / "cache" / date / f"{segment.stem}.bcut.srt"
     # A previous authoritative full-source pass that failed only because its
     # AGY runner timed out already proved that the tight window is a song but
     # lacks complete boundary evidence.  Cross-tick infrastructure recovery

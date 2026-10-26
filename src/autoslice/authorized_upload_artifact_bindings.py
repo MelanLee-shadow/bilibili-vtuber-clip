@@ -1,16 +1,12 @@
 """Bind uploader inputs to their reviewed artifacts and audio timing evidence."""
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 
 def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    from .evidence_identity import file_sha256
+    return file_sha256(path)
 
 
 def _strip_sha_prefix(value: object) -> str:
@@ -74,6 +70,7 @@ def _record_artifact_hash_problems(
 
 def _subtitle_audio_correspondence_problems(
     record: dict, *, video: Path, subtitle: Path, package_root: Path,
+    allow_frozen_receipt_metadata_compatibility: bool = False,
 ) -> list[str]:
     """Recheck actual-media timing evidence before constructing an uploader."""
     if not isinstance(record.get("subtitle_audio_correspondence"), dict):
@@ -83,6 +80,9 @@ def _subtitle_audio_correspondence_problems(
     try:
         validate_final_subtitle_audio_check(
             record, final_srt=subtitle, actual_media=video, package_root=package_root,
+            allow_frozen_receipt_metadata_compatibility=(
+                allow_frozen_receipt_metadata_compatibility
+            ),
         )
     except (ValueError, OSError) as exc:
         return [f"final subtitle/audio correspondence rejected: {exc}"]

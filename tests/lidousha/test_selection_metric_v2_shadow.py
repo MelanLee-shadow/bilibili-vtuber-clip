@@ -350,10 +350,9 @@ def test_shadow_cannot_change_v1_order_quota_bytes_or_release_gate(
     assert [row["cid"] for row in shadow_state["talk_backlog"]] == [
         row["cid"] for row in control_state["talk_backlog"]
     ]
-    def quota_bytes(value):
-        return json.dumps(
-            value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
+    quota_bytes = lambda value: json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
     assert quota_bytes(shadow_state["talk_quota_policy_disclosure"]) == quota_bytes(
         control_state["talk_quota_policy_disclosure"]
     )
@@ -408,4 +407,5 @@ def test_historical_current_report_persists_json_and_renders_v1_v2(
     assert "v1 仍是唯一的选片、排序与配额口径" in markdown
     assert "UNAVAILABLE: PRODUCTION_TOPIC_HOST_INPUT_PRODUCERS_NOT_WIRED" in markdown
     latest = (tmp_path / "reports" / "latest.md").read_text(encoding="utf-8")
-    assert "不参与选片、配额、发布或上传门" in latest
+    assert "产出 0｜发布核验 0" in latest
+    assert "选片 v1 / v2" not in latest  # detailed comparison stays in the sidecar report

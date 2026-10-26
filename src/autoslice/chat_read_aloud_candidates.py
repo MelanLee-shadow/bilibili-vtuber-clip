@@ -67,6 +67,7 @@ def find_best_read_aloud_candidate(
     cues: Sequence[Any],
     texts: Sequence[str],
     max_cues: int,
+    excluded_cue_indexes: frozenset[int] = frozenset(),
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     """Find the safest exact span and the best audio-arbitration fallback."""
 
@@ -104,6 +105,8 @@ def find_best_read_aloud_candidate(
         ):
             continue
         for count in range(1, min(max_cues, len(cues) - start) + 1):
+            if excluded_cue_indexes.intersection(range(start, start + count)):
+                continue
             candidate_parts = texts[start : start + count]
             candidate = "".join(candidate_parts)
             cue_boundaries: set[int] = set()

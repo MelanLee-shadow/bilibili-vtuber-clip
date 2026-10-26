@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from pathlib import Path
+
+from src.autoslice.review_evidence_store import review_from_bytes
 
 
 def foreign_source_gate_violation(
@@ -21,7 +22,11 @@ def foreign_source_gate_violation(
         return None
     path = Path(matches[-1])
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
+        # Bind and hash the sealed wire bytes at the caller's path first.  The
+        # review store then expands only the nested evidence references beside
+        # that path; the returned object is never used as the file identity.
+        raw = path.read_bytes()
+        document = review_from_bytes(raw, directory=path.parent)
     except (OSError, ValueError):
         return None
     source_audit = document.get("final_source_language_preservation_audit")
@@ -123,7 +128,7 @@ def foreign_source_gate_violation(
         missing_witnesses = ["positive_source_audio_transcription"]
     hashes = {
         "chat_authority_sha256": "sha256:"
-        + hashlib.sha256(path.read_bytes()).hexdigest(),
+        + hashlib.sha256(raw).hexdigest(),
         "input_srt_sha256": document.get("input_srt_sha256"),
         "output_srt_sha256": document.get("output_srt_sha256"),
         "audio_sha256": next(

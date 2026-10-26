@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -41,6 +42,7 @@ from src.autoslice.source_fact_review import (
     authorize_manual_title_keep,
     resolve_source_fact_entity_context,
     review_and_repair_source_facts,
+    validate_source_fact_review,
 )
 
 
@@ -82,6 +84,7 @@ def resolve_initial_source_fact_review(
     title_authority_status: str,
     title_llm_enabled: bool,
     prior_authority_error: str | None,
+    completed_review: Mapping[str, object] | None = None,
 ) -> InitialSourceFactResolution:
     """Choose exactly one source-fact lane without provider fallback on drift."""
 
@@ -149,7 +152,50 @@ def resolve_initial_source_fact_review(
         and deterministic_authority is None
         and operator_title_authority is None
         and qixi_operator_title_authority is None
+        and completed_review is None
     ):
+        contract = story_contract if isinstance(story_contract, Mapping) else {}
+        captured = contract.get("source_fact_review")
+        record_review = record.get("source_fact_review")
+        if captured is None:
+            captured = record_review
+        if captured is not None:
+            try:
+                transcript, speaker = build_addressee_evidence(record, cues)
+                subtitle = record.get("subtitle_path")
+                valid = (
+                    isinstance(captured, Mapping)
+                    and captured.get("schema_version") == "lidousha-source-fact-review.v1"
+                    and captured.get("decision") in {"KEEP", "REPAIRED"}
+                    and (record_review is None or record_review == captured)
+                    and validate_source_fact_review(
+                        captured,
+                        selection_hook=selection_hook,
+                        title=title,
+                        final_transcript=transcript,
+                        clip_context_prompt=str(contract.get("clip_context_prompt") or ""),
+                        selection_scorecard=contract.get("selection_scorecard"),
+                        candidate_id=candidate_id,
+                        final_reviewed_srt_path=Path(str(subtitle)) if subtitle else None,
+                        speaker_evidence=speaker.speaker_evidence,
+                        story_contract=contract,
+                    )
+                )
+            except (OSError, TypeError, ValueError, SpeakerGuessReviewRequired):
+                valid = False
+            if not valid:
+                return _blocked(
+                    violation="existing_source_fact_review_invalid",
+                    reason="EXISTING_SOURCE_FACT_REVIEW_STALE",
+                    detail="Current title, final SRT, context, scorecard or speaker evidence differs.",
+                )
+            return InitialSourceFactResolution(
+                review=deepcopy(dict(captured)),
+                violation=None,
+                authority_error=None,
+                authority_status=title_authority_status,
+                manual_title_keep_consumption=None,
+            )
         return InitialSourceFactResolution(
             review=None,
             violation=None,
@@ -164,6 +210,28 @@ def resolve_initial_source_fact_review(
     scorecard = contract.get("selection_scorecard")
     subtitle_value = record.get("subtitle_path")
     final_srt = Path(str(subtitle_value)) if subtitle_value else None
+    if completed_review is not None:
+        # This is the immutable complete editorial stage selected by an exact
+        # retained generation pin, not a new model judgment or a manual override.
+        if (any(item is not None for item in (keep_authority, deterministic_authority,
+                operator_title_authority, qixi_operator_title_authority))
+                or not title_llm_enabled or recovery_publication_authority is not None
+                or completed_review.get('decision') not in {'KEEP', 'REPAIRED'}
+                or completed_review.get('original_title') != title
+                or completed_review.get('original_selection_hook') != selection_hook
+                or not validate_source_fact_review(completed_review,
+                    selection_hook=str(completed_review.get('final_selection_hook') or ''),
+                    title=str(completed_review.get('final_title') or ''),
+                    final_transcript=final_transcript, clip_context_prompt=context_prompt,
+                    selection_scorecard=scorecard, candidate_id=candidate_id,
+                    final_reviewed_srt_path=final_srt,
+                    speaker_evidence=speaker_evidence.speaker_evidence, story_contract=contract)):
+            return _blocked(violation='existing_source_fact_review_invalid',
+                reason='EXISTING_SOURCE_FACT_REVIEW_STALE', detail='Retained complete stage input differs.')
+        from .cpa_runtime import record_cpa_event
+        record_cpa_event('cache_hit',{'kind':'source_fact_review','stage':'retained_editorial_stage'})
+        return InitialSourceFactResolution(review=deepcopy(dict(completed_review)), violation=None,
+            authority_error=None, authority_status=title_authority_status, manual_title_keep_consumption=None)
     try:
         if qixi_operator_title_authority is not None:
             if title_source != "reviewer_manual_override" or final_srt is None:

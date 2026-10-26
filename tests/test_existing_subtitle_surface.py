@@ -150,3 +150,15 @@ def test_producer_parser_exposes_existing_srt_substrate() -> None:
         default_speaker_mode="uniform_host",
     )
     assert args.substrate == "existing_srt"
+
+
+def test_existing_surface_cannot_be_reused_for_a_new_media_window(tmp_path: Path) -> None:
+    spec, media, _text = _surface(tmp_path)
+    builder = select_nonaggregate_transcriber_builder(
+        "existing_srt", spec=spec, padded=media, padded_duration_ms=4000,
+        legacy_builder=object(),
+    )
+    other = tmp_path / "boundary-extension.mp4"
+    other.write_bytes(b"different source window")
+    with pytest.raises(ValueError, match="requested media sha256"):
+        builder("localhost")(other, [])

@@ -10,6 +10,8 @@ wrapper, which injects `_has_exact_av_streams` so tests that patch
 
 from __future__ import annotations
 
+from src.autoslice.cpa_gemini_client import valid_lrc_transport
+
 import json
 import subprocess
 from dataclasses import dataclass
@@ -23,6 +25,7 @@ from src.autoslice.verified_io import (
 )
 from src.autoslice.gemini_backup_policy import validate_key_acceptance_metadata
 from src.autoslice.host_vocal_proof import verify_host_vocal_proof_claim
+from src.autoslice.song_spot_checks import repeated_section_spot_matches
 from src.autoslice.song_repair import (
     AGY_AUDIO_LRC_OBSERVATION_SCHEMA_VERSION,
     ASR_ANCHOR_AGY_AGREEMENT_TOLERANCE_MS,
@@ -33,6 +36,12 @@ from src.autoslice.song_repair import (
     validate_audio_lrc_canonical_projection,
     validate_audio_lrc_execution_metadata,
     validate_live_performance_observation,
+)
+
+from src.autoslice.song_alignment import (
+    performance_rows_on_asr_clock,
+    is_timing_model_report,
+    verify_timing_report,
 )
 
 MATERIALIZED_RECUT_SCHEMA_VERSION = "materialized-recut.v2"
@@ -167,6 +176,8 @@ def _validate_alignment_summary(
         failures.append("SONG_ALIGNMENT_REPORT_SCHEMA_INVALID")
     if report.get("alignment_model") != "external_lrc_global_shift.v1":
         failures.append("SONG_ALIGNMENT_REPORT_MODEL_INVALID")
+    if "timing_model" in report and not is_timing_model_report(report):
+        failures.append("SONG_ALIGNMENT_REPORT_MODEL_INVALID")
     if report.get("provider") != alignment.get("provider"):
         failures.append("SONG_ALIGNMENT_PROVIDER_MISMATCH")
     external_lrc = alignment.get("external_lrc")
@@ -198,7 +209,10 @@ def _validate_alignment_summary(
         failures.append("SONG_ALIGNMENT_LYRIC_TIMELINE_INVALID")
         lyric_lines = []
     else:
-        lyric_times = [line.get("lrc_time_ms") for line in lyric_lines if isinstance(line, dict)]
+        # Section-wise reports are in live order (repeated sections go back in
+        # LRC time); legacy single-shift reports are in LRC order.
+        time_key = "live_time_ms" if is_timing_model_report(report) else "lrc_time_ms"
+        lyric_times = [line.get(time_key) for line in lyric_lines if isinstance(line, dict)]
         lyric_texts_ok = all(isinstance(line, dict) and str(line.get("text") or "").strip() for line in lyric_lines)
         if (
             len(lyric_times) != len(lyric_lines)
@@ -298,6 +312,7 @@ def _validate_audio_artifacts(
                 provider_fallback_used=audio_manifest.get("provider_fallback_used"),
                 agy_failure_category=audio_manifest.get("agy_failure_category"),
                 sandbox=audio_manifest.get("sandbox"),
+                cpa_transport_valid=valid_lrc_transport(audio_manifest),
             )
             if isinstance(audio_manifest, dict)
             else "manifest is not a mapping"
@@ -394,15 +409,26 @@ def _validate_audio_artifacts(
             failures.append("SONG_LIVE_PERFORMANCE_BINDING_INVALID")
         elif raw_observation.get("live_arrangement") != report.get("live_arrangement_observation"):
             failures.append("SONG_LIVE_ARRANGEMENT_BINDING_INVALID")
+        elif raw_observation.get("spot_checks") != report.get("spot_checks"):
+            failures.append("SONG_AUDIO_LRC_SPOT_CHECK_BINDING_INVALID")
         else:
             try:
+                from src.autoslice.song_alignment import load_bound_asr_cues
+                from src.autoslice.song_omission_shape import stored_shape_uses_source_cues
+                # Re-derive in the producer's mode: a report whose holes were
+                # checked against the bound transcript must be re-checked with it.
+                transcript_report = stored_shape_uses_source_cues(report.get("arrangement_completeness"))
                 derived_arrangement = derive_live_arrangement_completeness(
                     observations=raw_rows,
+                    timing_alignment=report.get("alignment") if is_timing_model_report(report) else None,
                     live_arrangement=raw_observation.get("live_arrangement"),
                     post_song_talk_start_ms=raw_observation.get("post_song_talk_start_ms"),
                     source_duration_ms=int(audio_artifacts.get("source_duration_ms")),
+                    asr_anchor_cues=load_bound_asr_cues(report) if transcript_report else None,
+                    live_performance=raw_observation.get("live_performance"),
+                    spot_checks=raw_observation.get("spot_checks"),
                 )
-            except (TypeError, ValueError):
+            except (OSError, TypeError, ValueError, KeyError, IndexError):
                 failures.append("SONG_LIVE_ARRANGEMENT_INVALID")
             else:
                 if (
@@ -493,6 +519,17 @@ def _validate_audio_observation_rows(
     audio_artifacts: dict,
     raw_rows: list | None,
 ) -> None:
+    if is_timing_model_report(report):
+        # ASR-anchored section-wise timing: rows are on the live clock and bind
+        # to the raw AGY rows by canonical index, not by position or AGY time.
+        expected_raw_sha = str(
+            audio_artifacts.get("raw_output_sha256") if isinstance(audio_artifacts, dict) else ""
+        ).lower().removeprefix("sha256:")
+        if not isinstance(raw_rows, list) or verify_timing_report(
+            report=report, raw_rows=raw_rows, expected_raw_sha256=expected_raw_sha
+        ) is not None:
+            failures.append("SONG_AUDIO_LRC_OBSERVATION_INVALID")
+        return
     if isinstance(report_alignment, list) and isinstance(lyric_lines, list):
         ids: list[str] = []
         starts: list[int] = []
@@ -555,10 +592,48 @@ def _validate_audio_observation_rows(
             ids.append(cue_id)
             starts.append(cue_start)
             residuals.append(cue_start - lyric["lrc_time_ms"])
+        if audio_rows_ok:
+            spots = report.get("spot_checks")
+            repeated_spots = (
+                [
+                    spot for spot in spots
+                    if isinstance(spot, dict) and spot.get("name") == "repeated_section"
+                ]
+                if isinstance(spots, list)
+                else []
+            )
+            repeated_spot_ms = (
+                repeated_spots[0].get("live_time_ms")
+                if len(repeated_spots) == 1 and repeated_spots[0].get("result") == "OK"
+                else None
+            )
+            if not repeated_section_spot_matches(
+                [line["text"] for line in lyric_lines], report_alignment, repeated_spot_ms
+            ):
+                failures.append("SONG_AUDIO_LRC_SPOT_CHECK_INVALID")
         observation_offset_ms = offset_ms
         offset_provenance_ok = True
         if residuals:
             observed_median_ms = sorted(residuals)[len(residuals) // 2]
+            proof = report.get("audio_global_shift_proof")
+            proof_valid = True
+            observed_offset_ms = observed_median_ms
+            if "audio_global_shift_proof" in report:
+                from src.autoslice.song_global_shift import solve_global_shift
+                try:
+                    expected_proof = solve_global_shift(residuals)
+                except ValueError:
+                    proof_valid = False
+                else:
+                    proof_valid = (
+                        isinstance(proof, dict)
+                        and set(proof) == set(expected_proof)
+                        and all(
+                            type(proof[k]) is type(value) and proof[k] == value
+                            for k, value in expected_proof.items()
+                        )
+                    )
+                    observed_offset_ms = expected_proof["offset_ms"]
             offset_basis = report.get("offset_basis")
             if offset_basis == "asr_anchor":
                 agy_offset_ms = report.get("agy_offset_ms")
@@ -568,13 +643,14 @@ def _validate_audio_observation_rows(
                     and is_int(asr_offset_ms)
                     and asr_offset_ms == offset_ms
                     and is_int(agy_offset_ms)
-                    and agy_offset_ms == observed_median_ms
+                    and agy_offset_ms == observed_offset_ms
                     and abs(agy_offset_ms - offset_ms)
                     <= ASR_ANCHOR_AGY_AGREEMENT_TOLERANCE_MS
                 )
                 if is_int(agy_offset_ms):
                     # Raw AGY listening observations remain on their original
-                    # median.  The final subtitle/clip shift may use the
+                    # proven observation shift (legacy reports use median).
+                    # The final subtitle/clip shift may use the
                     # independently accepted ASR anchor, but that correction
                     # does not retroactively move the raw observation rows.
                     observation_offset_ms = agy_offset_ms
@@ -584,9 +660,26 @@ def _validate_audio_observation_rows(
                     is_int(offset_ms)
                     and is_int(agy_offset_ms)
                     and agy_offset_ms == offset_ms == observed_median_ms
+                    and (
+                        proof is None
+                        or (isinstance(proof, dict) and proof.get("strategy") == "upper_median")
+                    )
                 )
+            elif offset_basis == "audio_global_shift":
+                offset_provenance_ok = bool(
+                    proof_valid
+                    and isinstance(proof, dict)
+                    and proof.get("strategy") == "feasible_interval_midpoint"
+                    and is_int(offset_ms)
+                    and is_int(report.get("agy_offset_ms"))
+                    and report.get("agy_offset_ms") == offset_ms == observed_offset_ms
+                )
+                observation_offset_ms = observed_offset_ms
             elif offset_basis not in (None, ""):
                 offset_provenance_ok = False
+            elif proof is not None:
+                offset_provenance_ok = False
+            offset_provenance_ok = offset_provenance_ok and proof_valid
         if (
             not audio_rows_ok
             or len(set(ids)) != len(ids)
@@ -651,17 +744,20 @@ def _validate_audio_alignment(
     matched_count = summary.matched_count
     report_alignment = summary.report_alignment
     live_performance = report.get("live_performance")
-    performance_error = validate_live_performance_observation(
-        live_performance,
-        first_lyric_start_ms=report.get("first_lyric_start_ms") if is_int(report.get("first_lyric_start_ms")) else -1,
-        last_lyric_end_ms=report.get("last_lyric_end_ms") if is_int(report.get("last_lyric_end_ms")) else -1,
-        observations=report_alignment,
-        require_ready=True,
-    )
-    if performance_error is not None:
-        failures.extend(live_performance_failure_reason_codes(live_performance))
-    else:
-        live_performance_semantic_ready = True
+    timing_model = is_timing_model_report(report)
+    performance_error: str | None = None
+    if not timing_model:
+        performance_error = validate_live_performance_observation(
+            live_performance,
+            first_lyric_start_ms=report.get("first_lyric_start_ms") if is_int(report.get("first_lyric_start_ms")) else -1,
+            last_lyric_end_ms=report.get("last_lyric_end_ms") if is_int(report.get("last_lyric_end_ms")) else -1,
+            observations=report_alignment,
+            require_ready=True,
+        )
+        if performance_error is not None:
+            failures.extend(live_performance_failure_reason_codes(live_performance))
+        else:
+            live_performance_semantic_ready = True
     report_provider = report.get("audio_alignment_provider")
     report_execution_error = validate_audio_lrc_execution_metadata(
         provider=report_provider,
@@ -689,6 +785,22 @@ def _validate_audio_alignment(
     )
     audio_artifacts = artifact_validation.audio_artifacts
     audio_manifest = artifact_validation.audio_manifest
+    if timing_model:
+        # Preserve the raw AGY vocalist assertions on the verified ASR clock.
+        try:
+            timed_rows = performance_rows_on_asr_clock(report_alignment, artifact_validation.raw_rows)
+            performance_error = validate_live_performance_observation(
+                live_performance, first_lyric_start_ms=0,
+                last_lyric_end_ms=int(audio_artifacts["source_duration_ms"]),
+                observations=timed_rows, require_ready=True,
+                check_timing=False, check_lyric_timing=True,
+            )
+        except (KeyError, TypeError, ValueError):
+            performance_error = "ASR performance rows are invalid"
+        if performance_error is not None:
+            failures.extend(live_performance_failure_reason_codes(live_performance))
+        else:
+            live_performance_semantic_ready = True
     _validate_audio_observation_rows(
         report=report,
         failures=failures,
@@ -775,10 +887,13 @@ def _load_source_context_evidence(
     elif boundary and not (0 <= boundary_values[0] <= boundary_values[1] <= boundary_values[2] <= boundary_values[3]):
         failures.append("SONG_BOUNDARY_TIMELINE_INVALID")
     boundary_zero = boundary.get("nominal_lrc_zero_ms") if boundary else None
+    # The clip starts at or before the music start (song_clip_bounds), so it
+    # never follows the LRC zero; the zero may sit after a coarse first-lyric
+    # cue start but never after the last lyric.
     if boundary and (
         not _is_int(boundary_zero)
         or not all(_is_int(value) for value in boundary_values)
-        or not (boundary_values[0] <= boundary_zero <= boundary_values[1])
+        or not (boundary_values[0] <= boundary_zero <= boundary_values[2])
     ):
         failures.append("SONG_NOMINAL_LRC_ZERO_INVALID")
 

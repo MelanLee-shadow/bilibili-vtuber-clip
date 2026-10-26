@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.deployed_code_root import deployed_code_root_bootstrap
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.producer_media import (
     FastMediaRollbackError,
@@ -29,6 +30,10 @@ from src.autoslice.operator_reviewed_speaker_truth import (
     current_source_recording_binding,
 )
 from src.autoslice.producer_text_finalization import _format_srt_timestamp
+from src.autoslice.producer_request import (
+    ProducerRuntimePrerequisiteError,
+    validate_producer_runtime_prerequisites,
+)
 from src.autoslice.speaker_finalizer import (
     SpeakerFinalizationError,
     finalize_fast_solo_subtitles,
@@ -268,6 +273,10 @@ def run_speaker_finalizer(
     # sidecar that looked newer than the current text attempt.
     for stale in (output_srt_path, output_ass_path, output_manifest_path):
         stale.unlink(missing_ok=True)
+    validate_producer_runtime_prerequisites(
+        host=host, speaker_mode="required", speaker_python=speaker_python,
+        check_media=False,
+    )
     frozen_inputs = {
         "source_media_sha256": _sha256(media_path),
         "text_final_srt_sha256": _sha256(text_srt_path),
@@ -321,9 +330,12 @@ def run_speaker_finalizer(
             command.extend(["--speaker-session-context", str(speaker_session_context_path)])
         command.extend(_source_binding_cli(expected_source_recording))
         command.extend(["--best-effort-guess"] if best_effort_guess else [])
-        completed = subprocess.run(
-            command, cwd=str(ROOT), check=False, capture_output=True, text=True, timeout=1800
-        )
+        try:
+            completed = subprocess.run(
+                command, cwd=str(ROOT), check=False, capture_output=True, text=True, timeout=1800
+            )
+        except (FileNotFoundError, PermissionError) as exc:
+            raise ProducerRuntimePrerequisiteError("speaker_python", "launch failed") from exc
     else:
         remote_dir = f"/tmp/autoslice-speaker-{safe_cid}-{os.getpid()}"
         remote_media = f"{remote_dir}/media.mp4"
@@ -362,10 +374,7 @@ def run_speaker_finalizer(
                     timeout=120,
                 )
             try:
-                remote_profile = (
-                    Path("/opt/bilive/autoslice/repo")
-                    / profile.resolve().relative_to(ROOT.resolve())
-                )
+                remote_profile_relative = profile.resolve().relative_to(ROOT.resolve())
             except ValueError as exc:
                 raise RuntimeError(
                     "remote speaker finalization requires the selected voiceprint profile "
@@ -375,7 +384,7 @@ def run_speaker_finalizer(
                 str(speaker_python), "-m", "src.autoslice.speaker_finalizer",
                 "--candidate-id", candidate_id,
                 "--media", remote_media, "--text-srt", remote_srt,
-                "--profile", str(remote_profile),
+                "--profile", str(remote_profile_relative),
                 "--reference-dir", str(reference_dir), "--model-dir", str(model_dir),
                 "--output-srt", remote_output_srt, "--output-ass", remote_output_ass,
                 "--output-manifest", remote_manifest, "--work-dir", f"{remote_dir}/work",
@@ -390,8 +399,12 @@ def run_speaker_finalizer(
                 remote_command.extend(["--speaker-session-context", remote_speaker_context])
             remote_command.extend(_source_binding_cli(expected_source_recording))
             remote_command.extend(["--best-effort-guess"] if best_effort_guess else [])
-            shell_command = "cd /opt/bilive/autoslice/repo && " + " ".join(
-                shlex.quote(part) for part in remote_command
+            # Resolve on the execution host, then use the same immutable root
+            # for both Python imports and the repository-relative profile.
+            bootstrap = deployed_code_root_bootstrap() + "print(repo)\n"
+            shell_command = (
+                "repo=$(python3 -c " + shlex.quote(bootstrap) + ") && cd \"$repo\" && "
+                + " ".join(shlex.quote(part) for part in remote_command)
             )
             completed = subprocess.run(
                 ["ssh", host, shell_command], check=False, capture_output=True, text=True, timeout=1800

@@ -23,9 +23,10 @@ import shutil
 import stat
 import tempfile
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Mapping
 
 from src.autoslice.runner_proxy import RunnerProxy
+from src.autoslice.authorized_upload_metadata import PLATFORM_MAX_TAGS, PLATFORM_MAX_TAG_CHARS
 from src.autoslice.cover_route_evidence import (
     validate_cover_route_decision,
     validate_rendered_text_pixel_evidence,
@@ -41,12 +42,20 @@ from src.autoslice.verified_io import (
 )
 from src.autoslice.producer_delivery_transaction import (
     DeliveryArtifact,
+    _read_document,
     deployment_authority_binding,
+    load_prepared_delivery,
+    preflight_prepared_delivery,
+    ProducerDeliveryTransactionError,
     prepare_delivery,
 )
 
 
 _runner = RunnerProxy()
+
+_SONG_SELECTOR_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
+_SONG_SELECTOR_ROOTS = frozenset({"production-inputs", "private-runs"})
+PREPARED_SONG_DELIVERY_SCHEMA_VERSION = "prepared-song-delivery.v1"
 
 
 def _validated_song_upload_tags(value: object) -> dict:
@@ -63,12 +72,12 @@ def _validated_song_upload_tags(value: object) -> dict:
         or status not in {"OK", "OK_NO_LLM"}
         or not isinstance(tags, list)
         or not tags
-        or len(tags) > 12
+        or len(tags) > PLATFORM_MAX_TAGS
         or any(
             not isinstance(tag, str)
             or not tag
             or tag != tag.strip()
-            or len(tag) > 20
+            or len(tag) > PLATFORM_MAX_TAG_CHARS
             or any(character in tag for character in ",，\n\t")
             for tag in tags
         )
@@ -477,6 +486,8 @@ def _commit_verified_song_package(
     selector_rc: int,
     summary_authority_root: Path,
     prepare_only: bool = False,
+    allow_registered_summary_root: bool = False,
+    completion_verifier: Callable[[dict], dict] | None = None,
 ) -> dict:
     """Commit one already-proven song without rerunning ASR/LRC/AGY.
 
@@ -486,6 +497,10 @@ def _commit_verified_song_package(
     Covers remain optional and upload is always disabled.
     """
 
+    if allow_registered_summary_root and not prepare_only:
+        raise SongDeliveryError(
+            "registered selector summary scope is available only for prepare mode"
+        )
     if selector_rc != 0:
         raise SongDeliveryError("song selector did not exit successfully")
     if not isinstance(title, str) or not title.strip():
@@ -495,13 +510,33 @@ def _commit_verified_song_package(
         raise SongDeliveryError("song summary authority root may not be a symlink")
     try:
         authority_root = summary_authority_root.resolve(strict=True)
-        candidate_root = (_runner.BASE / "out" / date / delivery_candidate_id).resolve(strict=True)
     except OSError as exc:
-        raise SongDeliveryError(f"song summary/candidate authority root is missing: {exc}") from exc
-    if not authority_root.is_relative_to(candidate_root):
-        raise SongDeliveryError("song summary authority root escapes the outer candidate")
+        raise SongDeliveryError(f"song summary authority root is missing: {exc}") from exc
+    try:
+        candidate_root = (_runner.BASE / "out" / date / delivery_candidate_id).resolve(
+            strict=True
+        )
+    except OSError as exc:
+        if not allow_registered_summary_root:
+            raise SongDeliveryError(
+                f"song summary/candidate authority root is missing: {exc}"
+            ) from exc
+        candidate_root = None
+    if candidate_root is not None and not authority_root.is_relative_to(candidate_root):
+        if not allow_registered_summary_root or not _registered_selector_summary_parent(
+            authority_root, base=_runner.BASE, date=date
+        ):
+            raise SongDeliveryError("song summary authority root escapes the outer candidate")
+    elif candidate_root is None and not _registered_selector_summary_parent(
+        authority_root, base=_runner.BASE, date=date
+    ):
+        raise SongDeliveryError("song summary authority root escapes the registered input scope")
     reasons = [str(code) for code in summary_record.get("reason_codes", [])]
-    completion = _runner.song_completion_evidence(summary_record)
+    completion = (
+        completion_verifier(summary_record)
+        if completion_verifier is not None
+        else _runner.song_completion_evidence(summary_record)
+    )
     if not _runner.song_delivery_ok(
         selector_rc,
         record_is_song(summary_record),
@@ -635,9 +670,12 @@ def _commit_verified_song_package(
             ],
             deployed_authority=deployment_authority_binding(_runner.BASE),
         )
+        # The prepare transaction canonicalizes accepted SHA spellings.  Use
+        # its sealed target map so a bare alignment digest cannot look like
+        # artifact drift to the normal batch projector.
         intended = {
-            role: {"path": str(target), "sha256": expected}
-            for role, (_source, target, expected) in specs.items()
+            row["role"]: {"path": row["target_path"], "sha256": row["staged_sha256"]}
+            for row in _read_document(prepared)["artifacts"]
         }
         # Direct delivery reports the manifest separately, not as a public
         # sidecar.  Preserve that exact result projection in prepare mode.
@@ -709,6 +747,354 @@ def prepare_verified_song_package(**kwargs: object) -> dict:
     if "prepare_only" in kwargs:
         raise SongDeliveryError("prepare mode is selected by this entry point")
     return _commit_verified_song_package(**kwargs, prepare_only=True)
+
+
+def _registered_selector_summary_parent(
+    authority_root: Path, *, base: Path, date: str
+) -> bool:
+    """Accept only a real selector parent in BASE's registered input lanes.
+
+    The ordinary delivery entry point remains bound to ``BASE/out/date/cid``.
+    This narrower escape hatch exists only for a prepared continuation whose
+    immutable selector summary was retained under ``production-inputs`` or
+    ``private-runs``.  Every ancestor is checked with ``lstat`` so a path that
+    merely resolves below BASE through a link cannot become authority.
+    """
+
+    if not _SONG_SELECTOR_DATE_RE.fullmatch(date):
+        return False
+    try:
+        # Normalize ``..`` lexically, but deliberately do not resolve links
+        # until every original ancestor has been lstat'ed.  Otherwise a
+        # summary reached through a link could appear inside BASE after
+        # resolution and become an authority root.
+        base_lexical = Path(os.path.abspath(base))
+        authority_lexical = Path(os.path.abspath(authority_root))
+        relative = authority_lexical.relative_to(base_lexical)
+    except (OSError, ValueError):
+        return False
+    if (
+        not relative.parts
+        or relative.parts[0] not in _SONG_SELECTOR_ROOTS
+        or "song-selector" not in relative.parts
+        or date not in relative.parts
+    ):
+        return False
+    try:
+        cursor = Path(base_lexical.anchor)
+        for part in base_lexical.parts[1:]:
+            cursor /= part
+            metadata = os.lstat(cursor)
+            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+                return False
+        for part in relative.parts:
+            cursor /= part
+            metadata = os.lstat(cursor)
+            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+                return False
+        base_real = base_lexical.resolve(strict=True)
+        authority = authority_lexical.resolve(strict=True)
+        if not authority.is_relative_to(base_real):
+            return False
+    except OSError:
+        return False
+    return True
+
+
+def _selector_summary_record(
+    *,
+    summary_path: Path,
+    summary_sha256: str,
+    candidate_id: str,
+    date: str,
+    base: Path,
+) -> tuple[dict, str, Path]:
+    """Read one exact selector summary row for the bounded prepare CLI."""
+
+    if not _SONG_SELECTOR_DATE_RE.fullmatch(date):
+        raise SongDeliveryError("song prepare date is invalid")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", candidate_id):
+        raise SongDeliveryError("song prepare candidate id is unsafe")
+    summary_lexical = Path(os.path.abspath(summary_path))
+    if summary_lexical.name != "summary.json" or summary_lexical.is_symlink():
+        raise SongDeliveryError("song selector summary must be a regular summary.json")
+    try:
+        if not _registered_selector_summary_parent(
+            summary_lexical.parent, base=base, date=date
+        ):
+            raise SongDeliveryError(
+                "song selector summary is outside BASE/production-inputs or "
+                "BASE/private-runs"
+            )
+        resolved = summary_lexical.resolve(strict=True)
+    except OSError as exc:
+        raise SongDeliveryError(f"song selector summary is missing: {exc}") from exc
+    if not resolved.is_file():
+        raise SongDeliveryError(
+            "song selector summary is not a regular file"
+        )
+    normalized = _normalized_sha256(summary_sha256)
+    try:
+        summary_raw = resolved.read_bytes()
+        summary = json.loads(summary_raw)
+    except (OSError, ValueError, UnicodeDecodeError) as exc:
+        raise SongDeliveryError(f"song selector summary is unreadable: {exc}") from exc
+    actual = hashlib.sha256(summary_raw).hexdigest()
+    if actual != normalized:
+        raise SongDeliveryError(
+            f"song selector summary hash mismatch: expected {normalized}, got {actual}"
+        )
+    if not isinstance(summary, dict):
+        raise SongDeliveryError("song selector summary must be an object")
+    records = summary.get("records")
+    if not isinstance(records, list):
+        raise SongDeliveryError("song selector summary records are missing")
+    selected = [
+        row
+        for row in records
+        if isinstance(row, dict) and row.get("candidate_id") == candidate_id
+    ]
+    if len(selected) != 1:
+        raise SongDeliveryError(
+            "song selector summary must contain exactly one matching candidate row"
+        )
+    record = selected[0]
+    reasons = record.get("reason_codes")
+    materialized = record.get("materialized_recut")
+    staging = materialized.get("publish_staging") if isinstance(materialized, dict) else None
+    title = staging.get("title") if isinstance(staging, dict) else None
+    publish_value = staging.get("publish_json_path") if isinstance(staging, dict) else None
+    if (
+        record.get("decision_action") != "AUTO_UPLOAD"
+        or reasons != []
+        or not isinstance(materialized, dict)
+        or materialized.get("status") != "MATERIALIZED"
+        or materialized.get("candidate_id") != candidate_id
+        or not isinstance(staging, dict)
+        or staging.get("status") != "STAGED"
+        or staging.get("upload_enabled") is not False
+        or not isinstance(title, str)
+        or not title.strip()
+        or not isinstance(publish_value, str)
+        or not publish_value
+    ):
+        raise SongDeliveryError(
+            "song selector row is not an ordinary completed STAGED no-upload record"
+        )
+    try:
+        publish_path = Path(publish_value).resolve(strict=True)
+    except OSError as exc:
+        raise SongDeliveryError(f"song staged publish draft is missing: {exc}") from exc
+    publish_lexical = Path(os.path.abspath(publish_value))
+    if (
+        publish_lexical.is_symlink()
+        or not publish_lexical.is_relative_to(resolved.parent)
+        or not _registered_selector_summary_parent(
+            publish_lexical.parent, base=base, date=date
+        )
+    ):
+        raise SongDeliveryError("song staged publish draft escapes selector authority")
+    try:
+        publish_path = publish_lexical.resolve(strict=True)
+    except OSError as exc:
+        raise SongDeliveryError(f"song staged publish draft is missing: {exc}") from exc
+    if publish_path != publish_lexical:
+        raise SongDeliveryError("song staged publish draft uses a symlinked path")
+    publish = _read_json_object(publish_path, label="song staged publish draft")
+    if (
+        publish.get("schema_version") != "shadow-publish-draft.v1"
+        or publish.get("candidate_id") != candidate_id
+        or publish.get("title") != title
+        or publish.get("upload_enabled") is not False
+    ):
+        raise SongDeliveryError("song staged publish draft is not a bound no-upload draft")
+    return copy.deepcopy(record), title.strip(), resolved
+
+
+def _prepared_result_json_bytes(result: Mapping[str, object]) -> bytes:
+    return (
+        json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    ).encode("utf-8")
+
+
+def _load_prepared_result(path: Path) -> tuple[dict, bytes]:
+    if path.is_symlink():
+        raise SongDeliveryError("prepared Song result may not be a symlink")
+    try:
+        raw = path.read_bytes()
+        value = json.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SongDeliveryError(f"prepared Song result is unreadable: {path}") from exc
+    if not isinstance(value, dict):
+        raise SongDeliveryError("prepared Song result must be an object")
+    return value, raw
+
+
+def _prepared_result_handle(
+    *, result: Mapping[str, object], runtime_root: Path, candidate_id: str
+) -> object:
+    if result.get("status") != "delivery_prepared_no_target":
+        raise SongDeliveryError("prepared Song result has a materialized status")
+    forbidden = {
+        "delivered", "delivered_sha256", "delivery_manifest_path", "cover_path",
+    }
+    if forbidden & result.keys():
+        raise SongDeliveryError("prepared Song result projects canonical delivery fields")
+    handle_value = result.get("prepared_delivery")
+    if not isinstance(handle_value, Mapping):
+        raise SongDeliveryError("prepared Song result has no prepared handle")
+    manifest_value = handle_value.get("manifest_path")
+    digest_value = handle_value.get("prepared_sha256")
+    if not isinstance(manifest_value, str) or not isinstance(digest_value, str):
+        raise SongDeliveryError("prepared Song handle is malformed")
+    try:
+        handle = load_prepared_delivery(
+            runtime_root=runtime_root, manifest_path=Path(manifest_value)
+        )
+    except ProducerDeliveryTransactionError as exc:
+        raise SongDeliveryError(f"prepared Song handle is invalid: {exc}") from exc
+    if (
+        handle.lane != "song"
+        or handle.candidate_id != candidate_id
+        or digest_value != f"sha256:{handle.prepared_sha256}"
+    ):
+        raise SongDeliveryError("prepared Song handle binding drifts")
+    return handle
+
+
+def _validate_prepared_result_handle(
+    *, result: Mapping[str, object], runtime_root: Path, candidate_id: str
+) -> None:
+    from src.autoslice.qixi_transaction_core import exclusive_runner_commit
+
+    handle = _prepared_result_handle(
+        result=result, runtime_root=runtime_root, candidate_id=candidate_id
+    )
+    try:
+        with exclusive_runner_commit(runtime_root) as lease:
+            preflight_prepared_delivery(handle=handle, lease=lease)
+    except ProducerDeliveryTransactionError as exc:
+        raise SongDeliveryError(f"prepared Song transaction preflight failed: {exc}") from exc
+
+
+def _write_prepared_result_create_only(path: Path, result: Mapping[str, object]) -> dict:
+    payload = _prepared_result_json_bytes(result)
+    if path.exists() or path.is_symlink():
+        existing, raw = _load_prepared_result(path)
+        if raw != payload:
+            raise SongDeliveryError("prepared Song result collision")
+        return existing
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.parent.is_symlink():
+        raise SongDeliveryError("prepared Song result parent may not be a symlink")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            descriptor = -1
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o600)
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            existing, raw = _load_prepared_result(path)
+            if raw != payload:
+                raise SongDeliveryError("prepared Song result collision")
+            return existing
+        _fsync_directory(path.parent)
+        return dict(result)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+        if path.exists() and not path.is_symlink():
+            _fsync_directory(path.parent)
+
+
+def prepare_song_from_selector_summary(
+    *,
+    selector_summary: Path,
+    selector_summary_sha256: str,
+    candidate_id: str,
+    date: str,
+    result_path: Path,
+    completion_verifier: Callable[[dict], dict] | None = None,
+) -> dict:
+    """Prepare one completed Song summary through the ordinary private path.
+
+    This is deliberately a summary-bound continuation entry point.  It never
+    creates autoslice state, projects ``DELIVERED`` fields, renders media, or
+    uploads.  Re-entry returns the byte-identical result only after the existing
+    prepared handle passes the same transaction preflight and deployment seal
+    checks as a fresh invocation.
+    """
+
+    runtime_root = Path(_runner.BASE).resolve(strict=True)
+    record, title, summary_path = _selector_summary_record(
+        summary_path=Path(selector_summary),
+        summary_sha256=selector_summary_sha256,
+        candidate_id=candidate_id,
+        date=date,
+        base=runtime_root,
+    )
+    summary_digest = "sha256:" + str(_normalized_sha256(selector_summary_sha256))
+    if result_path.exists() or result_path.is_symlink():
+        existing, _raw = _load_prepared_result(result_path)
+        if (
+            existing.get("schema_version") != PREPARED_SONG_DELIVERY_SCHEMA_VERSION
+            or existing.get("lane") != "song"
+            or existing.get("candidate_id") != candidate_id
+            or existing.get("date") != date
+            or existing.get("title") != title
+            or existing.get("selector_summary_path") != str(summary_path)
+            or existing.get("selector_summary_sha256") != summary_digest
+        ):
+            raise SongDeliveryError("prepared Song result selector binding drifts")
+        _validate_prepared_result_handle(
+            result=existing, runtime_root=runtime_root, candidate_id=candidate_id
+        )
+        return existing
+
+    if completion_verifier is None:
+        # The materialized successor reads the profile path carried by this
+        # exact selector row.  The generic runner wrapper may point at a newer
+        # host profile and is intentionally not used for this continuation.
+        from src.autoslice.song_materialized_successor import completion as bound_completion
+
+        completion_verifier = bound_completion
+    update = prepare_verified_song_package(
+        date=date,
+        delivery_candidate_id=candidate_id,
+        summary_record=record,
+        title=title,
+        selector_rc=0,
+        summary_authority_root=summary_path.parent,
+        allow_registered_summary_root=True,
+        completion_verifier=completion_verifier,
+    )
+    result = {
+        "schema_version": PREPARED_SONG_DELIVERY_SCHEMA_VERSION,
+        "lane": "song",
+        "status": "delivery_prepared_no_target",
+        "candidate_id": candidate_id,
+        "date": date,
+        "title": title,
+        "selector_summary_path": str(summary_path),
+        "selector_summary_sha256": summary_digest,
+        "selector_record_candidate_id": candidate_id,
+        **update,
+    }
+    _validate_prepared_result_handle(
+        result=result, runtime_root=runtime_root, candidate_id=candidate_id
+    )
+    if "sha256:" + _sha256_regular_file(summary_path) != summary_digest:
+        raise SongDeliveryError("song selector summary changed during preparation")
+    return _write_prepared_result_create_only(result_path, result)
 
 
 VERIFIED_SONG_DELIVERY_SCHEMA_VERSION = "verified-song-delivery.v1"

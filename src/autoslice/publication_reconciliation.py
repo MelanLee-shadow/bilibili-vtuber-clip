@@ -12,7 +12,7 @@ state file.
 
 from __future__ import annotations
 
-import hashlib
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import json
 import os
 import re
@@ -22,6 +22,7 @@ from pathlib import Path
 
 from . import fastlane_c1_technical_receipt
 from . import fastlane_c2_authorized_upload
+from .publication_identity import publication_identity
 from .repository_asset_authority import (
     RepositoryAssetAuthorityError,
     require_repository_asset_authority,
@@ -62,11 +63,8 @@ _DEPLOYED_REGISTRY_MARKERS = (
 
 
 def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    digest = _evidence_file_sha256(path)
+    return digest
 
 
 def _load_object(path: Path, label: str) -> dict:
@@ -408,13 +406,10 @@ def _candidate_and_date(manifest: Mapping[str, object]) -> tuple[str, str]:
     record = _load_object(record_path, "manifest record")
     package_root = Path(str(attestation.get("package_root") or ""))
     story = record.get("story_contract")
-    candidate_id = (
-        str(story.get("candidate_id") or "")
-        if isinstance(story, Mapping)
-        else ""
-    )
-    if not candidate_id:
-        candidate_id = str(record.get("delivery_candidate_id") or "")
+    try:
+        candidate_id = publication_identity(record).candidate_id
+    except ValueError as exc:
+        raise PublicationReconciliationError(str(exc)) from exc
     is_verified_c2 = False
     if not candidate_id:
         c2_candidate_id = (
@@ -1519,6 +1514,86 @@ def _repair_successor_authority_valid(authority, manifest, incoming) -> bool:
     return True
 
 
+def _verified_title_predecessor(
+    current: Mapping[str, object], incoming: Mapping[str, object],
+    manifest: Mapping[str, object], authority: Mapping[str, object],
+) -> bool:
+    """Bridge an immutable first publication through its verified title edit."""
+
+    if current.get("title") == incoming.get("title"):
+        return True
+    if current.get("status") == "VERIFIED_SAME_BV_COVER":
+        # A second title edit after a cover-only successor must bind the exact
+        # cover completion receipt that made ``current`` live.  The title
+        # validator then replays the current manifest and its prior title
+        # receipt; a status label alone is never enough to create a public
+        # predecessor.
+        from .authorized_upload_title_repair import (
+            _entry_path,
+            validate_title_repair_successor,
+        )
+
+        try:
+            attestation = manifest.get("package_attestation")
+            record_path = _validate_sha_entry(
+                attestation.get("record") if isinstance(attestation, Mapping) else None,
+                "title predecessor package record",
+            )
+            record = _load_object(record_path, "title predecessor package record")
+            reference = record.get("verified_title_repair")
+            if not isinstance(reference, Mapping):
+                return False
+            # Title references use their native SHA binding (including the
+            # sha256: prefix) and do not require the reconciliation byte field.
+            receipt_entry = reference.get("receipt")
+            receipt_path, _ = _entry_path(receipt_entry, label="PREDECESSOR_RECEIPT")
+            if "bytes" in receipt_entry and receipt_entry["bytes"] != receipt_path.stat().st_size:
+                return False
+            receipt = _load_object(receipt_path, "title predecessor receipt")
+            binding = receipt.get("binding")
+            if not isinstance(binding, Mapping):
+                return False
+            predecessor = binding.get("predecessor_cover_completed")
+            if predecessor != current.get("authority"):
+                return False
+            validate_title_repair_successor(
+                reference,
+                authority=authority,
+                candidate_id=str(incoming.get("candidate_id") or ""),
+                title=str(incoming.get("title") or ""),
+            )
+        except (OSError, ValueError, TypeError, KeyError):
+            return False
+        return True
+    if (
+        current.get("status") != "VERIFIED_PUBLIC"
+        or authority.get("source_publication") != current.get("authority")
+        or authority.get("observed_public_title") != current.get("title")
+        or authority.get("title") != incoming.get("title")
+        or any(authority.get(k) != current.get(k) for k in (
+            "candidate_id", "recording_date", "bvid", "aid", "cid"
+        ))
+    ):
+        return False
+    from .authorized_upload_title_repair import validate_title_repair_successor
+
+    try:
+        attestation = manifest.get("package_attestation")
+        record_path = _validate_sha_entry(
+            attestation.get("record") if isinstance(attestation, Mapping) else None,
+            "title predecessor package record",
+        )
+        record = _load_object(record_path, "title predecessor package record")
+        validate_title_repair_successor(
+            record.get("verified_title_repair"), authority=authority,
+            candidate_id=str(incoming.get("candidate_id") or ""),
+            title=str(incoming.get("title") or ""),
+        )
+    except (OSError, ValueError, TypeError, KeyError):
+        return False
+    return True
+
+
 def _verified_same_bv_successor(
     current: Mapping[str, object], incoming: Mapping[str, object]
 ) -> bool:
@@ -1526,16 +1601,21 @@ def _verified_same_bv_successor(
 
     if _publication_identity(current) == _publication_identity(incoming):
         return False  # An exact rerun still uses the ordinary immutable comparison.
+    cover_successor = incoming.get("status") == "VERIFIED_SAME_BV_COVER"
     if (
-        incoming.get("status") != "VERIFIED_SAME_BV"
+        incoming.get("status") not in {"VERIFIED_SAME_BV", "VERIFIED_SAME_BV_COVER"}
         or current.get("status") not in {
             "VERIFIED_PUBLIC", "VERIFIED_SAME_BV", "VERIFIED_SAME_BV_COVER"
         }
         or any(current.get(k) != incoming.get(k)
-               for k in ("schema_version", "candidate_id", "recording_date", "bvid", "aid"))
+               for k in (
+                   "schema_version", "candidate_id", "recording_date", "bvid",
+                   "aid",
+               ))
         or any(not isinstance(v, int) or isinstance(v, bool) or v <= 0
                for v in (current.get("aid"), current.get("cid"), incoming.get("cid")))
-        or current.get("cid") == incoming.get("cid")
+        or (current.get("cid") != incoming.get("cid") if cover_successor
+            else current.get("cid") == incoming.get("cid"))
     ):
         return False
     completed_path = _validate_sha_entry(
@@ -1545,9 +1625,18 @@ def _verified_same_bv_successor(
     manifest_path, manifest = _repair_bound_object(
         completed.get("manifest"), "same-BV successor manifest"
     )
-    completed, bvid, aid, cid = _validate_same_bv_completed(
-        completed_path=completed_path, manifest=manifest, manifest_path=manifest_path
-    )
+    if cover_successor:
+        completed, bvid, aid, cid = _validate_same_bv_cover_completed(
+            completed_path=completed_path,
+            manifest=manifest,
+            manifest_path=manifest_path,
+        )
+    else:
+        completed, bvid, aid, cid = _validate_same_bv_completed(
+            completed_path=completed_path,
+            manifest=manifest,
+            manifest_path=manifest_path,
+        )
     candidate, date = _candidate_and_date(manifest)
     if (
         completed.get("remote_mutation") is not False
@@ -1560,6 +1649,31 @@ def _verified_same_bv_successor(
         or not _snapshot_matches_publication(completed.get("live_snapshot"), incoming)
     ):
         return False
+    if cover_successor:
+        _, plan = _repair_bound_object(
+            completed.get("plan"), "same-BV cover successor plan"
+        )
+        plan_authority = plan.get("recovery_publication_authority")
+        # A cover-after-full-repair plan may retain the original authority's
+        # CID.  The cover validator and the plan's unchanged_cid/before/live
+        # snapshots prove the actual predecessor identity.
+        return bool(
+            plan.get("schema_version") == "same-bv-cover-repair-plan.v1"
+            and plan.get("plan_id")
+            and plan.get("plan_id") == completed["plan"].get("plan_id")
+            and plan.get("bvid") == incoming.get("bvid")
+            and plan.get("manifest") == completed.get("manifest")
+            and plan.get("replacement_cover") == completed.get("new_cover")
+            and plan.get("unchanged_cid") == incoming.get("cid")
+            and isinstance(plan_authority, Mapping)
+            and _repair_successor_authority_valid(plan_authority, manifest, incoming)
+            and _verified_title_predecessor(current, incoming, manifest, plan_authority)
+            and all(
+                plan_authority.get(k) == current.get(k)
+                for k in ("candidate_id", "bvid", "aid")
+            )
+            and _snapshot_matches_publication(plan.get("before"), current)
+        )
     _, plan = _repair_bound_object(completed.get("plan"), "same-BV successor plan")
     plan_binding = completed["plan"]
     authority = plan.get("recovery_publication_authority")
