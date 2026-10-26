@@ -96,6 +96,7 @@ def test_context_projection_uses_g6_source_clock_and_never_drops_large_facts(rig
 def test_record_failure_reaches_cli_exit_and_content_block_stays_distinct(rig, monkeypatch):
     import sys,os
     import scripts.predeploy_contract_gauntlet as gate
+    from src.autoslice import semantic_retry_progress as progress
     from src.autoslice.review_evidence_store import record_metrics,validate_record_metrics
     audit,_ = produce(rig,c_reply)
     metrics=record_metrics({'findings':[audit]})
@@ -107,19 +108,36 @@ def test_record_failure_reaches_cli_exit_and_content_block_stays_distinct(rig, m
     assert gate.replay_exit_code([{'status':'ANSWER_UNAVAILABLE'}])==1
     assert gate.replay_exit_code([{'status':'REJECTED','reason':'TERMINAL_UNRESOLVABLE'}])==0
     monkeypatch.setenv('AUTOSLICE_BASE',str(rig.tmp))
+    production = rig.tmp / 'synthetic-production-root'
+    production.mkdir()
+    original_recorder = progress.SemanticAttemptRecorder
+    guards = []
     for phase,callback,bad,good in (
         ('worker','worker',gate.replay_exit_code([failed]),0),
         ('prepare','prepare_cases',[{'status':'PREPARE_REJECTED'}],[{'status':'PREPARED'}]),
         ('legacy','legacy_guard',[{'matches':False}],[{'matches':True}])):
-        monkeypatch.setattr(sys,'argv',['gauntlet','--phase',phase,'--state',str(rig.tmp/'cli'),
-            '--evidence',str(rig.tmp)])
-        def reply(args,value):
-            assert os.environ['AUTOSLICE_BASE']==str(args.production_root)
-            return value
-        monkeypatch.setattr(gate,callback,lambda args,value=bad:reply(args,value))
-        assert gate.main()==1
-        monkeypatch.setattr(gate,callback,lambda args,value=good:reply(args,value))
-        assert gate.main()==0
+        # The CLI normally exits its interpreter after installing its recorder
+        # and audit hook. This in-process caller must contain those side effects.
+        with monkeypatch.context() as cli:
+            cli.setattr(progress, 'SemanticAttemptRecorder', original_recorder)
+            cli.setattr(sys, 'addaudithook', guards.append)
+            cli.setattr(sys,'argv',['gauntlet','--phase',phase,'--state',str(rig.tmp/'cli'),
+                '--evidence',str(rig.tmp),'--production-root',str(production)])
+            def reply(args,value):
+                assert os.environ['AUTOSLICE_BASE']==str(args.production_root)
+                assert issubclass(progress.SemanticAttemptRecorder, original_recorder)
+                assert progress.SemanticAttemptRecorder is not original_recorder
+                return value
+            cli.setattr(gate,callback,lambda args,value=bad:reply(args,value))
+            assert gate.main()==1
+            cli.setattr(gate,callback,lambda args,value=good:reply(args,value))
+            assert gate.main()==0
+        assert progress.SemanticAttemptRecorder is original_recorder
+    assert len(guards) == 6
+    for guard in guards:
+        with pytest.raises(PermissionError, match='GAUNTLET_PRODUCTION_WRITE_FORBIDDEN'):
+            guard('os.mkdir', (str(production / 'blocked'), 0o700, -1))
+        guard('os.mkdir', (str(rig.tmp / 'ordinary-output'), 0o700, -1))
 
 
 def test_real_rendered_edit_contract_roundtrip_and_invalid_bounds(rig):
