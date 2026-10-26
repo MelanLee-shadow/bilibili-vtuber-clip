@@ -104,7 +104,10 @@ def callable_identity(value: object) -> object:
         raise ValueError("COVER_CHECKPOINT_CALLABLE_BINDING_REQUIRED")
     return {"module": getattr(value, "__module__", None),
             "name": getattr(value, "__qualname__", None),
-            "code_sha256": hashlib.sha256(marshal.dumps(code)).hexdigest(),
+            # Reference-sharing flags in newer marshal formats can change
+            # after executing a code object on CPython 3.11. Format 2 binds
+            # the same code values without incidental object-sharing state.
+            "code_sha256": hashlib.sha256(marshal.dumps(code, 2)).hexdigest(),
             "routing": routing, "runtime": runtime, "wrapped": wrapped}
 
 

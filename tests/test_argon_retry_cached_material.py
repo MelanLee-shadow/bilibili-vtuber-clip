@@ -11,7 +11,7 @@ from src.autoslice.final_review_auditor import (
 )
 from src.autoslice.acoustic_witness_adjudication import build_witness_request
 
-pytest_plugins = ["tests.test_argon_frozen_native_cache"]
+from tests.test_argon_frozen_native_cache import frozen_native, offline, scene  # noqa: F401
 
 
 @pytest.mark.parametrize("valid_cache", [True, False])

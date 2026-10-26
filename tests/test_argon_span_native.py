@@ -11,7 +11,7 @@ from src.autoslice.native_context_witness import (
     build_independent_context_witnesses as REAL_NATIVE_WRAPPER,
 )
 
-pytest_plugins = ["tests.test_argon_consumer_integration"]
+from tests.test_argon_consumer_integration import offline, scene  # noqa: F401
 
 
 def snapshot(root):

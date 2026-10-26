@@ -759,7 +759,10 @@ def test_legacy_cached_audio_request_keeps_receipt_without_provider_retry(
     llm.cpa_cache_identity = {"models": ["gpt-6-sol"], "effort": "medium"}
     witness = _witness("hai mei you ge zhai ne")
     judge_word_choice(llm_call=llm, check_request=CHECK_REQUEST, witness=witness)
-    cache_path = next((tmp_path / "cache" / "judge-verdicts").rglob("*.json"))
+    cache_path = next(
+        path for path in (tmp_path / "cache" / "judge-verdicts").rglob("*.json")
+        if json.loads(path.read_text()).get("schema_version") == "judge-verdict-cache.v2"
+    )
     entry = json.loads(cache_path.read_text())
     del entry["verdict"]["needs_audio_requested"]
     entry["verdict"].pop("span_review_raw_completion", None)

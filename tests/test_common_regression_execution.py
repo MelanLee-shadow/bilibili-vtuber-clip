@@ -12,7 +12,7 @@ from src.autoslice import argon_regression_comparison as comparison
 from src.autoslice.argon_escalation_contract import canonical, sha
 from tests.test_argon_regression_comparison import grant
 
-pytest_plugins = ["tests.test_argon_s2_joint_runtime"]
+from tests.test_argon_s2_joint_runtime import case, joint, offline, plan_args, scene  # noqa: F401
 
 
 def files(root):

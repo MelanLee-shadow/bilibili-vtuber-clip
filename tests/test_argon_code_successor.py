@@ -9,7 +9,7 @@ from src.autoslice.argon_escalation_contract import canonical
 from tests.test_argon_s2_joint_runtime import _execution_args, _argv, _saved_bytes
 from tests.smoke_common_runtime import scenario
 
-pytest_plugins = ["tests.test_argon_s2_joint_runtime"]
+from tests.test_argon_s2_joint_runtime import case, joint, offline, plan_args, scene  # noqa: F401
 
 
 def test_unmocked_normal_cli_code_successor_does_not_reset_or_manufacture_progress(tmp_path):

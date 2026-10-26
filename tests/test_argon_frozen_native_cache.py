@@ -13,7 +13,7 @@ from src.autoslice.acoustic_witness_adjudication import build_witness_request
 from src.autoslice.final_review_auditor import build_context_adjudication_request
 from tests.test_native_context_witness import _receipt, native_digest
 
-pytest_plugins = ["tests.test_argon_consumer_integration"]
+from tests.test_argon_consumer_integration import offline, scene  # noqa: F401
 
 
 def content(root):

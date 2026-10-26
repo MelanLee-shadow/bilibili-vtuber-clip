@@ -680,6 +680,18 @@ def process_generation(_record, **kwargs):
     return generation_files(kwargs["private_artifact_root"])
 
 
+def test_callable_identity_survives_execution_but_detects_changed_code(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys.modules[__name__], "PROCESS_ROOT", tmp_path)
+    before = checkpoint.callable_identity(process_generation)
+    process_generation({}, private_artifact_root=tmp_path)
+    assert checkpoint.callable_identity(process_generation) == before
+
+    def different(_record, **kwargs):
+        return {"status": "different implementation"}
+
+    assert checkpoint.callable_identity(different)["code_sha256"] != before["code_sha256"]
+
+
 def cold_process(root, action):
     global PROCESS_ROOT, PROCESS_ACTION
     PROCESS_ROOT, PROCESS_ACTION = root, action

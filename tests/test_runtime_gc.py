@@ -275,10 +275,16 @@ def test_normal_state_writer_calls_readonly_terminal_hook(tmp_path, monkeypatch)
 @pytest.mark.skipif(not Path("/proc/locks").exists(), reason="Linux live descriptors")
 def test_actual_open_descriptor_and_runner_flock(tmp_path):
     import fcntl
+    # Inspect our real descriptors and kernel locks without requiring permission
+    # to enumerate unrelated host/container processes on a shared CI runner.
+    proc = tmp_path / "proc"
+    proc.mkdir()
+    (proc / str(os.getpid())).symlink_to(Path("/proc") / str(os.getpid()))
+    (proc / "locks").symlink_to("/proc/locks")
     media = put(tmp_path / "private-runs/one/clip.mp4")
     with media.open("rb"), (tmp_path / "runner.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        observed = gc.activity(tmp_path)
+        observed = gc.activity(tmp_path, proc=proc)
         assert media in observed.paths and observed.runner_locked
         assert not gc.collect(tmp_path, home=tmp_path / "absent", live=observed)["targets"]
 
