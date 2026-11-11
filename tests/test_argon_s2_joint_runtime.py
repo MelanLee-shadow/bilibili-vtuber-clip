@@ -12,8 +12,10 @@ from src.autoslice import argon_regression_comparison as comparison
 from src.autoslice.argon_escalation_contract import canonical, sha
 from tests.test_argon_regression_comparison import grant
 
-from tests.test_argon_regression_comparison import offline, plan_args, scene  # noqa: F401
-from tests.test_producer_speaker_generation import case  # noqa: F401
+pytest_plugins = [
+    "tests.test_argon_regression_comparison",
+    "tests.test_producer_speaker_generation",
+]
 
 
 def _execution_args(plan_args, output):

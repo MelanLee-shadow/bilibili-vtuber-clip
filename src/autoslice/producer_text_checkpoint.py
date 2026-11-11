@@ -8,10 +8,11 @@ release verdict or a substitute for missing review.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping, MutableMapping
+from collections.abc import Mapping, MutableMapping, Sequence
 import hashlib
 import json
 from pathlib import Path
+from typing import TypedDict
 import copy
 
 TEXT_KEY = "post_transcript_entity_output_srt"
@@ -62,12 +63,27 @@ def _frozen_bytes(root: Path, key: str, raw: bytes, suffix: str) -> dict[str, st
     return {'path':str(path.resolve()), 'sha256':'sha256:' + digest}
 
 
+def _freeze_chat_support_srts(
+    root: Path, padded: Path, texts: Sequence[str] | None,
+) -> list[dict[str, str]]:
+    # Only the ordinary raw-audio loader may discover independent evidence.
+    # Resumed stages pass their already validated inputs, including an explicit
+    # empty list; never replace them with a nearby refined/language transcript.
+    if texts is None:
+        from .producer_chat_input import _load_independent_chat_support_srts
+        texts = _load_independent_chat_support_srts(padded)
+    if isinstance(texts, (str, bytes)) or any(not isinstance(text, str) for text in texts):
+        raise ValueError('TEXT_CHECKPOINT_CHAT_SUPPORT_INVALID')
+    return [_frozen_bytes(root, 'chat_support', text.encode('utf-8'), '.srt') for text in texts]
+
+
 def write_partial_source_text_checkpoint(
     path: Path, *, candidate_id: str, srt_text: str, authority: Mapping,
     final_review: Mapping, context_path: Path, padded: Path,
     source_language_witness_srt: str, protected_name_source_srt: str,
     native_budget_receipt_path: Path | None = None,
     retained_reviewed_input: Mapping | None = None,
+    independent_chat_support_srts: Sequence[str] | None = None,
 ) -> None:
     """Persist the actual post-review input before pending finalization.
 
@@ -144,6 +160,7 @@ def write_partial_source_text_checkpoint(
         'completed_stage':('post_entity' if final_review.get('status') == 'AUDITOR_UNAVAILABLE' else 'post_review'),
         'pending_stage':('review_and_source_finalization' if final_review.get('status') == 'AUDITOR_UNAVAILABLE' else 'source_finalization'),
         'padded':{'path':str(padded.resolve()),'sha256':'sha256:' + media_sha},
+        'independent_chat_support_srts': _freeze_chat_support_srts(root, padded, independent_chat_support_srts),
         **artifacts,'release_authorized':False,
     }
     if schema != PARTIAL_SCHEMA:
@@ -227,6 +244,7 @@ def _authority_field_reader(authority_path: Path):
 def write_source_text_checkpoint(
     path: Path, *, candidate_id: str, srt_path: Path,
     authority_path: Path, context_path: Path, padded: Path,
+    independent_chat_support_srts: Sequence[str] | None = None,
 ) -> None:
     """Freeze a validated source-stage input before a later mutable attempt.
 
@@ -277,6 +295,7 @@ def write_source_text_checkpoint(
         "schema_version": SOURCE_SCHEMA, "candidate_id": candidate_id,
         "time_domain": "padded_local", **artifacts,
         "padded": {"path": str(padded.resolve()), "sha256": "sha256:" + padded_sha},
+        "independent_chat_support_srts": _freeze_chat_support_srts(root, padded, independent_chat_support_srts),
         "release_authorized": False,
     })
 
@@ -303,6 +322,150 @@ def validate_incomplete_review_input(audit: Mapping[str, object], *, expected_sr
         raise FinalReviewContractError("FINAL_REVIEW_CORRECTION_MUTATION_AUTHORITY_INVALID")
     if unconsumed_correction_carryover_count(audit):
         raise FinalReviewContractError("FINAL_REVIEW_CARRYOVER_UNCONSUMED")
+
+
+def project_historical_span_review(authority: Mapping, *, srt_text: str,
+                                   source_clock_review: Mapping | None = None,
+                                   source_clock_srt_sha256: str | None = None) -> dict | None:
+    """Derive a blocked current input from one fully validated old writer state.
+
+    The sealed review remains evidence, not a release or a new KEEP. Only the
+    precise historic stored-state drift is eligible; every other rejection is
+    left to the ordinary release/input validators unchanged.
+    """
+    from src.autoslice.final_review_contract import (
+        FinalReviewContractError, _validate_review_geometry, _validate_review_integrity,
+    )
+    from src.autoslice.evidence_identity import sha256_ref
+    from src.autoslice.span_finding_obligations import (
+        UNAPPLIED_FIELD, derive_obligations, enforce_review, repair_chain,
+        validate_release_obligations,
+    )
+    review = authority.get('final_review_audit')
+    if not isinstance(review, Mapping) or not isinstance(review.get('span_obligation_review'), Mapping):
+        return None
+    historical = review.get('span_obligation_historical_proof')
+    if isinstance(historical, Mapping):
+        # A normal recovery writer can persist the derived BLOCK before the
+        # next review. Reopen both old and current proofs on the next restart;
+        # the marker by itself is never authority to resume or to release.
+        from .finding_lifecycle import REVIEW_PENDING
+        try:
+            validate_release_obligations(review)
+        except (ValueError, KeyError, TypeError) as exc:
+            if str(exc) != REVIEW_PENDING:
+                return None
+        else:
+            return None
+        old_review = dict(review)
+        old_review.pop('span_obligation_historical_proof')
+        old_review['span_obligation_review'] = historical
+        old_authority = {**authority, 'final_review_audit': old_review}
+        rebuilt = project_historical_span_review(old_authority, srt_text=srt_text,
+            source_clock_review=source_clock_review, source_clock_srt_sha256=source_clock_srt_sha256)
+        if (rebuilt is None or rebuilt.get('span_obligation_review') != review['span_obligation_review']
+                or rebuilt.get('findings') != review.get('findings')
+                or review.get('release_gate') != 'BLOCK'):
+            return None
+        return dict(review)
+    try:
+        validate_release_obligations(review)
+    except (ValueError, KeyError, TypeError) as exc:
+        if str(exc) != 'SPAN_KEEP_CLOSURE_CURRENT_SRT_DRIFT':
+            return None
+    else:
+        return None
+    expected = sha256_ref(hashlib.sha256(srt_text.encode('utf-8')).hexdigest())
+    try:
+        _validate_review_integrity(review, expected_srt_sha256=expected)
+    except FinalReviewContractError:
+        return None  # The unchanged normal validator reports the original rejection.
+    proof = review['span_obligation_review']
+    repairs, closures = proof['repairs'], proof['closures']
+    unapplied = proof.get(UNAPPLIED_FIELD, [])
+    if (repair_chain(authority) != repairs
+            or authority.get('span_obligation_closures', []) != closures
+            or authority.get(UNAPPLIED_FIELD, []) != unapplied
+            or derive_obligations(repairs, closures, unapplied) != proof.get('states')
+            or 'span_obligation_historical_proof' in review):
+        return None
+    clock = source_clock_review if source_clock_review is not None else review
+    clock_sha = source_clock_srt_sha256 if source_clock_review is not None else expected
+    if not clock_sha:
+        return None
+    try:
+        _validate_review_geometry(clock, expected_srt_sha256=clock_sha)
+    except FinalReviewContractError:
+        return None
+    boundary = clock['boundary_semantic_review']
+    offset = (boundary['source_separation_witness']['source_final_start_ms']
+              - boundary['final_endpoint_binding']['final_start_ms'])
+    projected = enforce_review(srt_text, authority, copy.deepcopy(dict(review)),
+                               timeline_offset_ms=offset)
+    if projected.get('release_gate') != 'BLOCK' or not projected.get('findings'):
+        return None
+    projected['span_obligation_historical_proof'] = copy.deepcopy(proof)
+    return projected
+
+
+def preburn_pending_review(reason, review, prior_postburn, authority, self_heal, projected):
+    """Existing pending-input admission, including validated span projections."""
+    from .finding_lifecycle import is_finding_failure, only_finding_failures
+    findings = review.get('findings')
+    return bool(
+        is_finding_failure(reason)
+        and review.get('status') == 'FLAGGED' and review.get('release_gate') == 'BLOCK'
+        and only_finding_failures(review.get('reason_codes'))
+        and isinstance(findings, list) and findings
+        and review.get('validated_finding_count') == len(findings)
+        and (prior_postburn or ('postburn_subtitle_audio_review' not in authority
+                               and 'postburn_subtitle_audio_review' not in review))
+        and ((isinstance(self_heal, Mapping) and self_heal.get('status') == 'REVIEW_PENDING')
+             or projected))
+
+
+def current_postburn_mixed_input(postburn, review, self_heal, current_sha, successor_pending):
+    """Classify the existing current-byte receipt without granting release."""
+    return bool(
+        not successor_pending and isinstance(postburn, Mapping)
+        and postburn == review.get("postburn_subtitle_audio_review")
+        and postburn.get("schema_version") == "postburn-subtitle-audio-review.v1"
+        and postburn.get("status") == "FLAGGED" and postburn.get("release_gate") == "BLOCK"
+        and postburn.get("reviewed_srt_sha256") == current_sha
+        and isinstance(self_heal, Mapping) and self_heal.get("status") == "PASS")
+
+
+def validate_current_postburn_mixed(*, authority, source_clock_review, padded_sha256,
+                                    srt_text, candidate_id, clip_context):
+    """Verify the existing postburn handoff against authenticated source geometry."""
+    import re
+    from src.autoslice.producer_text_pipeline import (
+        _continuation_normalize_sha, validated_postburn_priority_findings,
+    )
+    boundary = (source_clock_review or {}).get("boundary_semantic_review") or {}
+    endpoint = boundary.get("final_endpoint_binding") if isinstance(boundary, Mapping) else None
+    witness = boundary.get("source_separation_witness") if isinstance(boundary, Mapping) else None
+    language = authority.get("audio_language_discovery_audit") or {}
+    if (not isinstance(endpoint, Mapping) or not isinstance(witness, Mapping)
+            or type(endpoint.get("final_start_ms")) is not int
+            or type(endpoint.get("final_end_ms")) is not int
+            or type(witness.get("source_final_start_ms")) is not int
+            or type(witness.get("source_final_end_ms")) is not int
+            or witness.get("status") != "PASS" or not isinstance(language, Mapping) or not padded_sha256
+            or (language.get("source_media_sha256") is not None
+                and _continuation_normalize_sha(language.get("source_media_sha256"))
+                != _continuation_normalize_sha(padded_sha256))):
+        return False
+    offset = witness["source_final_start_ms"] - endpoint["final_start_ms"]
+    source_sha = _continuation_normalize_sha(padded_sha256)
+    if (re.fullmatch(r"[0-9a-f]{64}", source_sha) is None or offset < 0
+            or witness["source_final_end_ms"] - endpoint["final_end_ms"] != offset):
+        return False
+    return validated_postburn_priority_findings(
+        final_srt_text=srt_text, verified_authority_audit=authority,
+        candidate_id=candidate_id, clip_context=clip_context,
+        timeline_offset_ms=offset, source_media_sha256="sha256:" + source_sha,
+    ) is not None
 
 
 def write_current_text_checkpoint(
@@ -344,3 +507,104 @@ def write_current_text_checkpoint(
         "padded": binding(padded), "source_clock": dict(source_clock),
         "release_authorized": False,
     })
+
+
+class SourceStageChatSupportBinding(TypedDict):
+    path: str
+    sha256: str
+
+
+class SourceStageChatSupportCheckpoint(TypedDict, total=False):
+    padded: SourceStageChatSupportBinding
+    independent_chat_support_srts: list[SourceStageChatSupportBinding]
+
+
+class SourceStageChatSupportSnapshot(TypedDict, total=False):
+    native_checkpoint: SourceStageChatSupportCheckpoint | None
+
+
+def _source_stage_chat_support_srts(
+    snapshot: SourceStageChatSupportSnapshot, *, padded: Path,
+) -> list[str]:
+    """Restore the original independent input, regardless of output location.
+
+    Native checkpoints bind the original media even when preparation makes a
+    byte-identical copy elsewhere. New writers freeze its raw-audio transcripts;
+    old writers can still use only that bound media's ordinary raw sidecar.
+    The chat consumer independently replays every stored support/hash/gate.
+    """
+    from src.autoslice.producer_chat_input import _load_independent_chat_support_srts
+    from src.autoslice.producer_text_pipeline import (
+        CurrentTextContinuationError, _continuation_require_sha, _continuation_sha256_path,
+    )
+
+    native = snapshot.get('native_checkpoint')
+    if not isinstance(native, Mapping):
+        return _load_independent_chat_support_srts(padded)
+    media = native.get('padded')
+    if not isinstance(media, Mapping) or not isinstance(media.get('path'), str):
+        raise CurrentTextContinuationError('CURRENT_SOURCE_STAGE_CHAT_MEDIA_INVALID')
+    original = Path(media['path'])
+    digest = _continuation_sha256_path(original, label='SOURCE_STAGE_CHAT_MEDIA')
+    _continuation_require_sha(digest, media.get('sha256'), label='SOURCE_STAGE_CHAT_MEDIA')
+    _continuation_require_sha(
+        _continuation_sha256_path(padded, label='CURRENT_PADDED_MEDIA'), digest,
+        label='SOURCE_STAGE_CHAT_MEDIA',
+    )
+    if 'independent_chat_support_srts' not in native:
+        return _load_independent_chat_support_srts(original)
+    bindings = native['independent_chat_support_srts']
+    if not isinstance(bindings, list):
+        raise CurrentTextContinuationError('CURRENT_SOURCE_STAGE_CHAT_SUPPORT_INVALID')
+    texts = []
+    for binding in bindings:
+        if (not isinstance(binding, Mapping) or set(binding) != {'path', 'sha256'}
+                or not isinstance(binding.get('path'), str)):
+            raise CurrentTextContinuationError('CURRENT_SOURCE_STAGE_CHAT_SUPPORT_INVALID')
+        path = Path(binding['path'])
+        _continuation_require_sha(
+            _continuation_sha256_path(path, label='SOURCE_STAGE_CHAT_SUPPORT'),
+            binding['sha256'], label='SOURCE_STAGE_CHAT_SUPPORT',
+        )
+        texts.append(path.read_bytes().decode('utf-8'))
+    return texts
+
+
+
+
+def _write_partial_with_support(
+    text, *, spec, cid, out_root, padded, authority, final_review,
+    language_witness, name_source, retained, support,
+):
+    context_path = out_root / f'{cid}.clip-context.json'
+    if (padded is not None and context_path.is_file()
+            and (language_witness or retained is not None)):
+        from src.autoslice.retained_source_input import load_retained_source_input
+        retained_input = load_retained_source_input(spec=spec, cid=cid, padded=padded, out_root=out_root)
+        write_partial_source_text_checkpoint(
+            out_root / f'{cid}.partial-source-text-checkpoint.json', candidate_id=cid,
+            srt_text=text, authority=authority, final_review=final_review,
+            context_path=context_path, padded=padded,
+            source_language_witness_srt=language_witness,
+            protected_name_source_srt=name_source or text,
+            native_budget_receipt_path=(retained_input.native.budget_receipt if retained_input else None),
+            retained_reviewed_input=retained, independent_chat_support_srts=support,
+        )
+
+
+def _validate_source_authority_with_support(
+    snapshot, *, spec, durations, padded, authoritative_chat, source_truth_ledger_path,
+    verified_language_reference, pending_finalization, support=None, **kwargs,
+):
+    from src.autoslice.producer_text_pipeline import _validate_current_source_stage_authority
+    if support is None:
+        support = _source_stage_chat_support_srts(snapshot, padded=padded)
+    return _validate_current_source_stage_authority(
+        snapshot['chat_authority'], spec=spec, durations=durations,
+        srt_text=snapshot['srt_text'], srt_sha256=snapshot['srt_sha256'],
+        clip_context=snapshot['clip_context'], source_truth_ledger_path=source_truth_ledger_path,
+        authoritative_chat=authoritative_chat, independent_support_srts=support,
+        allow_pending_review=True, verified_language_reference=verified_language_reference,
+        pending_finalization=pending_finalization,
+        completed_retained_input=snapshot.get('completed_retained_input'), **kwargs,
+    )

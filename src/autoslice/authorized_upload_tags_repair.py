@@ -11,6 +11,7 @@ from pathlib import Path
 from src.autoslice.authorized_upload_metadata import validate_tags
 from src.autoslice.authorized_upload_published_recovery import uploaded_sidecar_path
 from src.autoslice.authorized_upload_recovery_cli import write_json_sidecar
+from src.autoslice.part_name_contract import part_name_is_title, same_stable
 from src.autoslice.same_bv_repair import normalise_creator_snapshot, snapshots_equivalent
 
 
@@ -106,7 +107,7 @@ def run(args, *, load_and_verify, adapter_factory, upload_lock, default_lock,
                        "before": snapshot, "before_sha256": _snapshot_sha(snapshot),
                        "status": "PLANNED", "edit_calls": 0}
             write_json_sidecar(receipt_path, receipt)
-        if stable_without_tags(snapshot) != stable_without_tags(receipt["before"]):
+        if not same_stable(receipt["before"], snapshot, stable_without_tags):
             raise ValueError("TAGS_REPAIR_NON_TAG_DRIFT")
         if args.execute and receipt["status"] == "PLANNED":
             current = adapter.session.archive_view(args.bvid)
@@ -137,13 +138,14 @@ def run(args, *, load_and_verify, adapter_factory, upload_lock, default_lock,
                     return 6, receipt
                 sleeper(args.poll)
                 continue
-            if stable_without_tags(current) != stable_without_tags(receipt["before"]):
+            if not same_stable(receipt["before"], current, stable_without_tags):
                 receipt.update(status="BLOCKED_NON_TAG_DRIFT", after=current)
                 write_json_sidecar(receipt_path, receipt)
                 return 2, receipt
             verified = all(current[s]["available"] for s in ("creator", "public", "section")) and (
                 current["public"]["state"] == 0 and current["creator"]["state"] == 0
-                and all(set(current[s]["metadata"]["tags"]) == set(tags) for s in ("creator", "public")))
+                and all(set(current[s]["metadata"]["tags"]) == set(tags) for s in ("creator", "public"))
+                and part_name_is_title(current["creator"]))
             if verified:
                 receipt.update(status="VERIFIED_TAGS_ONLY", after=current)
                 write_json_sidecar(receipt_path, receipt)

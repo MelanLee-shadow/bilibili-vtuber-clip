@@ -121,6 +121,58 @@ def test_real_builder_checkpoint_returns_consumed_material_and_actual_fallback(t
     assert replay.records[0].checkpoint==consumed.checkpoint
 
 
+@pytest.mark.parametrize('cue,status', [(3,'OBSERVED'), (5,'CURRENT_SUPPORTED')])
+@pytest.mark.parametrize('failure', [None, 'UNKNOWN', 'CALL_FAILURE', 'unbound'])
+def test_consumed_same_material_decision_routes_once_to_terminal_and_cold_validates(
+    tmp_path, monkeypatch, cue, status, failure,
+):
+    from src.autoslice import final_review_auditor
+    from src.autoslice.finding_closure_ports import ReviewRequest, ValidationRequest, ArtifactSet
+    from src.autoslice.jingting_chunker import parse_srt_cues
+
+    text=check()['whole_clip_current_srt']
+    current=parse_srt_cues(text)[cue-1].text
+    clip_context={'candidate_id':'recorded-decision','source_media_sha256':'a'*64,
+                  'pieces':[{'start_ms':0,'end_ms':50000,'source_media_sha256':'a'*64}]}
+    owners=shell.ExistingFindingOwners(shell.OwnerInputs('a'*64,0,RetainedObject.from_value(clip_context),
+        RetainedObject.from_value({'meaning':'recorded'}),
+        RetainedObject.from_value({'transport':'recorded','models':[CPA_MODEL_LADDER[0]],'effort':'medium'})))
+    proposed=current+'啊'
+    row={'cue_index':cue,'suspect':current,'suggestion':proposed,'proposed_full_cue':proposed,
+         'repair_class':'disclosure_only'}
+    finding=owners.prepare_finding(text,RetainedObject.from_value(row))
+    call,calls=router(tmp_path,monkeypatch,lambda model,_prompt:CpaCompletion('{"status":"NO_GAIN"}',model))
+    raw,_,capture=ask(call,finding,proposal_inputs(finding))
+    call.drain()
+    row['exact_release_adjudication']={'status':failure if failure in {'UNKNOWN','CALL_FAILURE'} else status,
+                                     'raw_completion':raw}
+    if failure != 'unbound':
+        row['consumed_ruling']=capture.records[0].document().value()
+    # A recorded ordinary evidence result becomes the next decision's exact
+    # task identity, including the material actually consumed by the owner.
+    evidence=owners._result(text,RetainedObject.from_value(row))
+    work=c.Work('recorded-decision','decision',c.sha(text),evidence.finding.spec)
+    monkeypatch.setattr(final_review_auditor,'adjudicate_exact_release_findings',
+                        lambda *_args,**_kwargs:([row],[]))
+    result=owners.decide(ReviewRequest(work,text,evidence.finding))
+    expected=(c.State.CALL_FAILURE if failure in {'UNKNOWN','CALL_FAILURE'} else
+              c.State.AWAITING_DECISION if failure=='unbound' else c.State.AWAITING_TERMINAL)
+    assert result.state==expected
+    assert result.finding.spec.key==evidence.finding.spec.key
+    assert len(calls)==1  # The retained answer is consumed, never re-asked.
+
+    initial=c.initial_state(source_sha256='a'*64,srt_text=text,scan_channels=('recorded',))
+    ledger=shell.FileLedger(tmp_path/'ledger',initial)
+    documents=(*shell.finding_documents(result.finding),result.receipt)
+    for document in documents:ledger.put(document)
+    cold=shell.FileLedger(tmp_path/'ledger',initial,create=False)
+    event=c.ReviewCompleted(work.work_id,result.finding.spec,result.state,result.receipt.sha256)
+    owners.revalidate(ValidationRequest(initial,work,event,
+        ArtifactSet(tuple(cold.get(document.sha256) for document in documents))))
+    # Routing to the terminal owner grants neither KEEP nor confirmation.
+    assert result.state != c.State.KEEP and not initial.confirmation_ref
+
+
 def test_unknown_answer_model_is_retained_and_never_inferred_on_resume(tmp_path,monkeypatch):
     call,calls=router(tmp_path,monkeypatch,lambda _model,_prompt:'original unbound bytes')
     finding=prepared(check());inputs=proposal_inputs(finding)

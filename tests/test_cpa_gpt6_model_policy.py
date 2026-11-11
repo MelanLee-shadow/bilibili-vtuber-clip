@@ -169,7 +169,6 @@ def test_production_source_has_no_implicit_astra_route():
         root / "scripts/astra_eval_transport.py",
         root / "scripts/evaluate_astra_native_audio.py",
         root / "scripts/evaluate_native_target_replay.py",
-        root / "scripts/run_astra_transport_canary.py",
         # The exporter removes a literal historical authorization fixture;
         # that recorded model name is not a provider route.
         root / "scripts/_export_oss_policy.py",

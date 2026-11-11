@@ -20,12 +20,19 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
 from src.autoslice import final_human_review as human_review
+from src.autoslice.publication_identity import story_less_candidate_id
 from src.autoslice.bilibili_member_api import BiliSession
 from src.autoslice.recovery_title_authority import (
     RecoveryTitleAuthorityError,
     validate_recovery_publication_authority,
 )
 from src.autoslice import recovery_publication_authority_migration as authority_migration
+from src.autoslice.same_bv_append_desc_reconciliation import (
+    APPEND_TOPOLOGY_BLOCK_REASON,
+    is_append_desc_reconciliation_transition as _is_append_desc_reconciliation_transition,
+    desc_matches_before as _desc_matches_before,
+    metadata_matches_before as _metadata_matches_before,
+)
 from src.autoslice.same_bv_cover_reconciliation import (
     is_cover_alias_reconciliation_transition as _is_cover_alias_reconciliation_transition,
     normalise_cover_url as _normalise_cover_url,
@@ -447,6 +454,20 @@ class BilibiliRepairAdapter:
         )
 
 
+def _validate_record_title_successor(
+    record: Mapping[str, Any], authority: Mapping[str, Any], *,
+    candidate_id: str, title: str,
+) -> None:
+    if "verified_title_repair" not in record:
+        return
+    from .authorized_upload_title_repair import validate_title_repair_successor
+
+    validate_title_repair_successor(
+        record["verified_title_repair"], authority=authority,
+        candidate_id=candidate_id, title=title,
+    )
+
+
 def package_recovery_publication_authority(
     record: Mapping[str, Any],
     review_item: Mapping[str, Any] | None,
@@ -482,6 +503,7 @@ def package_recovery_publication_authority(
                 or (candidate_id and candidate_id != verified_song_candidate_id)):
             return None, ["verified Song candidate_id differs from record/review identity"]
         candidate_id = verified_song_candidate_id
+    candidate_id = candidate_id or story_less_candidate_id(record)
     if not candidate_id:
         return None, ["recovery_publication_authority has no record story candidate_id"]
     item_candidate_id = str((review_item or {}).get("candidate_id") or "").strip()
@@ -497,6 +519,12 @@ def package_recovery_publication_authority(
         return None, [f"recovery_publication_authority invalid: {exc}"]
     if record_authority != authority:
         return None, ["record/review recovery_publication_authority is not canonical"]
+    try:
+        _validate_record_title_successor(
+            record, authority, candidate_id=candidate_id, title=expected_final_title,
+        )
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        return None, [f"verified_title_repair successor invalid: {exc}"]
     return authority, []
 
 
@@ -618,6 +646,22 @@ def validate_repair_publication_target(
     _final_human_review_attestation(manifest)
     if bvid != authority.get("bvid"):
         raise PlanInvalid("repair BVID differs from recovery_publication_authority")
+    attestation = manifest.get("package_attestation")
+    record_entry = attestation.get("record") if isinstance(attestation, Mapping) else None
+    if isinstance(record_entry, Mapping):
+        try:
+            record_path = Path(str(record_entry.get("path") or ""))
+            if not record_path.is_absolute() or not record_path.is_file():
+                raise ValueError("record binding is missing")
+            if sha256_file(record_path) != str(record_entry.get("sha256") or "").removeprefix("sha256:"):
+                raise ValueError("record binding hash drift")
+            record = _json_object(record_path, label="manifest record")
+            _validate_record_title_successor(
+                record, authority, candidate_id=str(authority.get("candidate_id") or ""),
+                title=str(manifest.get("title") or ""),
+            )
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            raise PlanInvalid(f"verified_title_repair successor invalid: {exc}") from exc
     return authority
 
 
@@ -1448,7 +1492,10 @@ def read_journal(path: Path) -> list[dict[str, Any]]:
                 raise JournalCorrupt(f"repair journal plan {plan_id} does not begin PLANNED")
         elif state not in _TRANSITIONS[
             previous_state
-        ] and not _is_cover_alias_reconciliation_transition(last_rows_by_plan.get(plan_id), row):
+        ] and not (
+            _is_cover_alias_reconciliation_transition(last_rows_by_plan.get(plan_id), row)
+            or _is_append_desc_reconciliation_transition(last_rows_by_plan.get(plan_id), row)
+        ):
             raise JournalCorrupt(
                 f"repair journal plan {plan_id} transition {previous_state}->{state} is invalid"
             )
@@ -1604,12 +1651,25 @@ def _before_creator_exact(snapshot: Mapping[str, Any], plan: Mapping[str, Any]) 
     return (current.get("creator") or {}) == (before.get("creator") or {})
 
 
-def _before_public_section_exact(snapshot: Mapping[str, Any], plan: Mapping[str, Any]) -> bool:
+def _before_public_section_exact(
+    snapshot: Mapping[str, Any],
+    plan: Mapping[str, Any],
+    *,
+    allow_app_truncated_desc: bool = False,
+) -> bool:
     current = _snapshot_with_current_cover_identity(snapshot)
     before = _snapshot_with_current_cover_identity(plan.get("before") or {})
-    return (current.get("public") or {}) == (before.get("public") or {}) and (
-        current.get("section") or {}
-    ) == (before.get("section") or {})
+    if (current.get("section") or {}) != (before.get("section") or {}):
+        return False
+    current_public = dict(current.get("public") or {})
+    before_public = dict(before.get("public") or {})
+    if not allow_app_truncated_desc:
+        return current_public == before_public
+    current_metadata = current_public.pop("metadata", None)
+    before_metadata = before_public.pop("metadata", None)
+    return current_public == before_public and _metadata_matches_before(
+        current_metadata, before_metadata, allow_app_truncated_desc=True
+    )
 
 
 def _public_section_available(snapshot: Mapping[str, Any]) -> bool:
@@ -1624,6 +1684,7 @@ def _two_p_new_video(
     plan: Mapping[str, Any],
     *,
     expected_new: Mapping[str, Any] | None = None,
+    allow_app_truncated_desc: bool = False,
 ) -> dict[str, Any] | None:
     current = _snapshot_with_current_cover_identity(snapshot)
     before = _snapshot_with_current_cover_identity(plan.get("before") or {})
@@ -1639,7 +1700,11 @@ def _two_p_new_video(
         return None
     if creator.get("aid") != before_creator.get("aid"):
         return None
-    if creator.get("metadata") != before_creator.get("metadata"):
+    if not _metadata_matches_before(
+        creator.get("metadata"),
+        before_creator.get("metadata"),
+        allow_app_truncated_desc=allow_app_truncated_desc,
+    ):
         return None
     new_video = videos[1]
     if new_video.get("cid") == old_videos[0].get("cid"):
@@ -1649,7 +1714,7 @@ def _two_p_new_video(
     return dict(new_video)
 
 
-def _pre_edit_video(snapshot, plan, *, expected_new):
+def _pre_edit_video(snapshot, plan, *, expected_new, allow_app_truncated_desc=False):
     """Normal repairs require two P; a scoped metadata stage retains one P."""
     if plan.get("schema_version") == "same-bv-stage-plan.v1" and plan.get("operation") == "title_cover_only":
         current = _snapshot_with_current_cover_identity(snapshot).get("creator") or {}
@@ -1658,7 +1723,12 @@ def _pre_edit_video(snapshot, plan, *, expected_new):
                 and all(current.get(k) == before.get(k) for k in ("bvid", "aid", "metadata"))):
             return dict(expected_new)
         return None
-    return _two_p_new_video(snapshot, plan, expected_new=expected_new)
+    return _two_p_new_video(
+        snapshot,
+        plan,
+        expected_new=expected_new,
+        allow_app_truncated_desc=allow_app_truncated_desc,
+    )
 
 
 def _target_creator_exact(
@@ -1692,8 +1762,14 @@ def _public_section_state(
     *,
     new_video: Mapping[str, Any],
     cover_url: str,
+    tolerate_app_truncated_public_desc: bool = False,
 ) -> tuple[str, list[str]]:
-    """Return target/pending/drift with exact eventual CID+metadata checks."""
+    """Return target/pending/drift with exact eventual CID+metadata checks.
+
+    ``target`` is always exact.  The opt-in flag only lets a public ``desc``
+    that still shows the append-time truncation count as the not-yet-propagated
+    old value while the pending projection converges.
+    """
 
     problems = _basic_snapshot_problems(
         snapshot,
@@ -1755,9 +1831,17 @@ def _public_section_state(
                 return False
         return True
 
-    if value_in_transition(public, before_public, target_public) and value_in_transition(
-        matches[0], before_match, target_match
-    ):
+    transition_public = public
+    if tolerate_app_truncated_public_desc and isinstance(public.get("metadata"), Mapping):
+        before_desc = (before_public.get("metadata") or {}).get("desc")
+        if _desc_matches_before(public["metadata"].get("desc"), before_desc):
+            transition_public = {
+                **public,
+                "metadata": {**public["metadata"], "desc": before_desc},
+            }
+    if value_in_transition(
+        transition_public, before_public, target_public
+    ) and value_in_transition(matches[0], before_match, target_match):
         return "pending", problems
     problems.append("public or section surface contains values outside before/target")
     return "drift", problems
@@ -1914,7 +1998,7 @@ def _append_stage(
             "only the old P is visible; poll only and never append again",
             {"rule": "POLL_ONLY_NEVER_REAPPEND"},
         )
-    new_video = _two_p_new_video(snapshot, plan)
+    new_video = _two_p_new_video(snapshot, plan, allow_app_truncated_desc=True)
     if new_video is not None and not _public_section_available(snapshot):
         return RepairResult(
             state,
@@ -1922,7 +2006,9 @@ def _append_stage(
             "new P is visible but public/section readback is unavailable; poll only",
             {"rule": "POLL_ONLY_NEVER_REAPPEND"},
         )
-    if new_video is not None and _before_public_section_exact(snapshot, plan):
+    if new_video is not None and _before_public_section_exact(
+        snapshot, plan, allow_app_truncated_desc=True
+    ):
         row = append_journal(
             journal,
             plan_path=plan_path,
@@ -1936,7 +2022,7 @@ def _append_stage(
             journal,
             plan_path,
             plan,
-            reason="append reconciliation found unknown P/CID/metadata/section topology",
+            reason=APPEND_TOPOLOGY_BLOCK_REASON,
             snapshot=snapshot,
         )
     )
@@ -2013,7 +2099,11 @@ def _swap_outcome(
             },
         )
         return _row_result(row, "Creator single-new verified")
-    two_p = _pre_edit_video(after, plan, expected_new=new_video) if after is not None else None
+    two_p = (
+        _pre_edit_video(after, plan, expected_new=new_video, allow_app_truncated_desc=True)
+        if after is not None
+        else None
+    )
     if after is not None and two_p is None:
         return _row_result(
             _block(
@@ -2025,7 +2115,7 @@ def _swap_outcome(
             )
         )
     if after is not None and _public_section_available(after):
-        if not _before_public_section_exact(after, plan):
+        if not _before_public_section_exact(after, plan, allow_app_truncated_desc=True):
             return _row_result(
                 _block(
                     journal,
@@ -2107,7 +2197,10 @@ def _swap_stage(
             },
         )
         return _row_result(row, "Creator is already single-new")
-    if _pre_edit_video(snapshot, plan, expected_new=new_video) is None:
+    if (
+        _pre_edit_video(snapshot, plan, expected_new=new_video, allow_app_truncated_desc=True)
+        is None
+    ):
         return _row_result(
             _block(
                 journal,
@@ -2124,7 +2217,7 @@ def _swap_stage(
             "exact two-P Creator topology is visible but public/section readback is unavailable",
             {"remote_mutation": False},
         )
-    if not _before_public_section_exact(snapshot, plan):
+    if not _before_public_section_exact(snapshot, plan, allow_app_truncated_desc=True):
         return _row_result(
             _block(
                 journal,
@@ -2210,7 +2303,11 @@ def _final_projection_stage(
             )
         )
     projection, problems = _public_section_state(
-        snapshot, plan, new_video=new_video, cover_url=cover_url
+        snapshot,
+        plan,
+        new_video=new_video,
+        cover_url=cover_url,
+        tolerate_app_truncated_public_desc=True,
     )
     if projection == "target":
         row = append_journal(

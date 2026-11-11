@@ -142,7 +142,11 @@ def test_invalid_timing_reference_fails_before_current_review(tmp_path, case):
         )
 
 
-from tests.continuation_support import srt as _srt
+def _srt() -> str:
+    return (
+        Path(__file__).resolve().parents[1]
+        / "tests/fixtures/t06_bookshop_same_bv_extension/second.srt"
+    ).read_text(encoding="utf-8")
 
 
 def _valid_authority(tmp_path: Path) -> tuple[dict, dict, str]:
@@ -164,8 +168,12 @@ def _valid_authority(tmp_path: Path) -> tuple[dict, dict, str]:
             payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         ).encode()
     )
-    from tests.continuation_support import review as synthetic_review
-    review = synthetic_review()
+    review = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "tests/fixtures/t06_bookshop_same_bv_extension/second-final-review.json"
+        ).read_text(encoding="utf-8")
+    )
     # Fresh synthetic discovery for continuation-mechanics tests, not an
     # upgrade of the archived file's old resolved/disclosed judgments. Only
     # this low-level provider reply is fixed; real release validators run.
@@ -559,7 +567,7 @@ def test_pending_authority_rejects_unproved_caption_successor(tmp_path, failure)
     elif failure == "profile":
         receipt["caption_display_successors"][0]["normalization_audit"]["authority"] = "invented"
     elif failure == "timing":
-        current = current.replace("00:00:00,000", "00:00:00,001")
+        current = current.replace("00:03:08,900", "00:03:08,901")
     elif failure == "chain":
         receipt["passes"][-1]["output_srt_sha256"] = "sha256:" + "1" * 64
     else:
@@ -583,7 +591,7 @@ def test_caption_successor_rejects_unregistered_text_or_rebound_chain(tmp_path, 
     elif failure == "profile_audit":
         row["normalization_audit"]["authority"] = "invented-authority"
     elif failure == "grid":
-        row["input_srt_text"] = row["input_srt_text"].replace("00:00:00,000", "00:00:00,001")
+        row["input_srt_text"] = row["input_srt_text"].replace("00:03:08,900", "00:03:08,901")
     elif failure == "pass_index":
         row["after_pass_index"] = True
     elif failure == "chain":
@@ -603,11 +611,11 @@ def test_source_clock_typed_suffix_rejects_unproved_bytes_and_timing(tmp_path, f
     reference_sha = _sha(reference.encode())
     current = _srt()
     if failure == "old_bytes":
-        reference = reference.replace("合成中间句", "不同的原句")
+        reference = reference.replace("直播间八个人在看我", "不同的原句")
     elif failure == "repair_window":
         chat["exact_final_cpa_self_heal"]["passes"][-1]["repairs"][0]["matched_end_ms"] += 1
     elif failure == "current_bytes":
-        current = current.replace("00:00:00,000", "00:00:00,001")
+        current = current.replace("00:03:08,900", "00:03:08,901")
     else:
         reference_sha = "0" * 64
     with pytest.raises(pipeline.CurrentTextContinuationError):
@@ -844,6 +852,166 @@ def test_mixed_pending_checkpoint_resumes_with_bound_source_clock_and_keeps_both
     assert json.dumps(current, sort_keys=True) == before
     with pytest.raises(pipeline.FinalReviewContractError, match="FINAL_REVIEW_FINDING_REVIEW_PENDING"):
         pipeline.validate_final_review_release(review, expected_srt_sha256="sha256:" + digest)
+
+
+def _current_postburn_mixed_checkpoint(tmp_path):
+    current, context, digest, continuation = _mixed_pending_checkpoint(tmp_path)
+    separate, _, _ = _semantic_blocked_authority(tmp_path)
+    postburn = separate["postburn_subtitle_audio_review"]
+    review = current["final_review_audit"]
+    current["postburn_subtitle_audio_review"] = postburn
+    review["postburn_subtitle_audio_review"] = postburn
+    current["exact_final_cpa_self_heal"]["status"] = "PASS"
+    current["exact_final_cpa_self_heal"]["final_srt_sha256"] = "sha256:" + digest
+    padded_sha = "sha256:" + "a" * 64
+    clock, _ = pipeline._continuation_source_clock_reference(
+        continuation, chat_authority=current, srt_text=_srt(), srt_sha256=digest,
+        clip_context=context, candidate_id="relationship-candidate",
+    )
+    boundary = clock["boundary_semantic_review"]
+    offset = (boundary["source_separation_witness"]["source_final_start_ms"]
+              - boundary["final_endpoint_binding"]["final_start_ms"])
+    context_text, _, _ = pipeline.postburn_candidate_context(
+        _srt(), current, context, timeline_offset_ms=offset, source_media_sha256=padded_sha,
+    )
+    request = postburn["cpa_request"]
+    request["candidate_context_sha256"] = "sha256:" + _sha(context_text.encode())
+    request["request_sha256"] = pipeline._postburn_request_sha256(request)
+    postburn["cpa_calls"][0]["request_sha256"] = request["request_sha256"]
+    return current, context, digest, clock, padded_sha
+
+
+def test_mixed_current_postburn_and_completed_chain_remain_blocked_input(tmp_path):
+    current, context, digest, clock, padded_sha = _current_postburn_mixed_checkpoint(tmp_path)
+    before = copy.deepcopy(current)
+    review = pipeline._continuation_validate_existing_authority(
+        current, srt_text=_srt(), srt_sha256=digest, clip_context=context,
+        candidate_id="relationship-candidate", source_clock_review=clock,
+        authenticated_padded_sha256=padded_sha,
+    )
+    assert current == before and review["release_gate"] == "BLOCK" and review["findings"]
+    with pytest.raises(pipeline.FinalReviewContractError):
+        pipeline.validate_final_review_release(review, expected_srt_sha256="sha256:" + digest)
+
+
+def test_mixed_postburn_uses_authenticated_bare_padded_hash_in_language_context(tmp_path):
+    from src.autoslice import audio_language_discovery as language
+    current, context, digest, clock, padded_sha = _current_postburn_mixed_checkpoint(tmp_path)
+    saved = {"schema_version": language.SCHEMA, "source_media_sha256": padded_sha,
+             "time_domain": "padded_local", "output_srt": _srt(),
+             "output_srt_sha256": _sha(_srt().encode()), "pending_current_risk": []}
+    saved["discovery_sha256"] = language._audit_sha(saved)
+    current["audio_language_discovery_audit"] = saved
+    boundary = clock["boundary_semantic_review"]
+    offset = boundary["source_separation_witness"]["source_final_start_ms"] - boundary["final_endpoint_binding"]["final_start_ms"]
+    rendered, _, _ = pipeline.postburn_candidate_context(
+        _srt(), current, context, timeline_offset_ms=offset, source_media_sha256=padded_sha)
+    postburn = current["postburn_subtitle_audio_review"]
+    request = postburn["cpa_request"]
+    request["candidate_context_sha256"] = "sha256:" + _sha(rendered.encode())
+    request["request_sha256"] = pipeline._postburn_request_sha256(request)
+    postburn["cpa_calls"][0]["request_sha256"] = request["request_sha256"]
+    review = pipeline._continuation_validate_existing_authority(
+        current, srt_text=_srt(), srt_sha256=digest, clip_context=context,
+        candidate_id="relationship-candidate", source_clock_review=clock,
+        authenticated_padded_sha256=padded_sha.removeprefix("sha256:"))
+    assert review["release_gate"] == "BLOCK"
+
+
+def test_normal_postburn_writer_receipt_reaches_mixed_input_after_restart(tmp_path, monkeypatch):
+    from src.autoslice import final_subtitle_audio_gate as gate
+    from src.autoslice import producer_package_finalization as finalization
+    from tests.test_final_subtitle_audio_gate import _record, _adapters, _postburn_adapters, _postburn_chat_audit
+    current, context, digest, clock, _ = _current_postburn_mixed_checkpoint(tmp_path)
+    cues = pipeline.parse_srt_cues(_srt())
+    rows = [(cue.start_ms, cue.end_ms, cue.text) for cue in cues]
+    folder = tmp_path / "ordinary-writer"
+    folder.mkdir()
+    record, path, media = _record(folder, rows=rows)
+    path.write_text(_srt(), encoding="utf-8")
+    record = gate.capture_final_subtitle_audio_check(
+        record, path, folder / "evidence", "relationship-candidate",
+        adapters=_adapters(witness_rows=[(a+6200, b+6200, text) for a,b,text in rows], calls={}))
+    writer_authority = _postburn_chat_audit(path)
+    source_sha = "sha256:" + _sha(media.read_bytes())
+    boundary = clock["boundary_semantic_review"]
+    offset = boundary["source_separation_witness"]["source_final_start_ms"] - boundary["final_endpoint_binding"]["final_start_ms"]
+    _postburn_adapters(monkeypatch, json.dumps({"findings":[{"cue":1,"kind":"context",
+        "suspect":cues[0].text,"proposed_full_cue":None,"repair_class":"disclosure_only",
+        "content_risk":"factual_error","risk_basis":"上下文需要复核。","why":"核对原话。"}]}, ensure_ascii=False))
+    with pytest.raises(SystemExit):
+        finalization._run_postburn_subtitle_audio_review(
+            cid="relationship-candidate", out_root=folder,
+            recut=finalization.FinalRecutArtifacts(folder, media, path, None, None), record=record,
+            chat_authority_audit=writer_authority, chat_authority_path=folder / "chat.json",
+            clip_context=context, timeline_offset_ms=offset,
+            source_evidence_spec={"source_piece_clock":{"padded_sha256":source_sha}})
+    postburn = json.loads(json.dumps(writer_authority["postburn_subtitle_audio_review"]))
+    current["postburn_subtitle_audio_review"] = postburn
+    current["final_review_audit"]["postburn_subtitle_audio_review"] = copy.deepcopy(postburn)
+    review = pipeline._continuation_validate_existing_authority(
+        current, srt_text=_srt(), srt_sha256=digest, clip_context=context,
+        candidate_id="relationship-candidate", source_clock_review=clock,
+        authenticated_padded_sha256=source_sha.removeprefix("sha256:"))
+    assert review["release_gate"] == "BLOCK" and review["findings"]
+
+
+def test_mixed_input_postburn_reaches_normal_exact_review_callback(tmp_path, monkeypatch):
+    current, context, digest, clock, padded_sha = _current_postburn_mixed_checkpoint(tmp_path)
+    review = pipeline._continuation_validate_existing_authority(
+        current, srt_text=_srt(), srt_sha256=digest, clip_context=context,
+        candidate_id="relationship-candidate", source_clock_review=clock,
+        authenticated_padded_sha256=padded_sha)
+    seen = []
+    monkeypatch.delenv("AUTOSLICE_FINAL_REVIEW_MODE", raising=False)
+    monkeypatch.setattr(pipeline, "discover_priority_findings", lambda *a, **k: ([], {}))
+    monkeypatch.setattr(pipeline, "fidelity_kept_contexts", lambda *a: [])
+    monkeypatch.setattr(pipeline, "checkpoint_final_review_carryover", lambda *a: None)
+    def exact(**kwargs):
+        seen.extend(kwargs["priority_raw_findings"])
+        return {"status": "FLAGGED", "release_gate": "BLOCK"}
+    monkeypatch.setattr(pipeline, "_run_exact_final_release_review", exact)
+    boundary = clock["boundary_semantic_review"]
+    offset = boundary["source_separation_witness"]["source_final_start_ms"] - boundary["final_endpoint_binding"]["final_start_ms"]
+    callback = pipeline._build_exact_final_review_callback(
+        spec={"source_piece_clock":{"padded_sha256":padded_sha}}, out_root=tmp_path,
+        cid="relationship-candidate", padded=tmp_path / "source.mp4", adapters=None,
+        authoritative_chat=[], clip_context=context, final_review_audit=review,
+        verify_confusable_entity=None, truth_ownership=None, screen_read_probe=None,
+        continuation_correction=True, text_recovery_only=True)
+    result = callback(_srt(), current, offset, offset + pipeline.parse_srt_cues(_srt())[-1].end_ms)
+    assert result["release_gate"] == "BLOCK"
+    assert len(seen) == 1 and seen[0]["cue_index"] == 1
+
+
+@pytest.mark.parametrize("failure", ["missing_postburn", "wrong_srt", "wrong_media", "wrong_clock",
+                                      "missing_media", "broken_chain", "changed_raw", "wrong_candidate"])
+def test_mixed_current_postburn_rejects_unbound_inputs(tmp_path, failure):
+    current, context, digest, clock, padded_sha = _current_postburn_mixed_checkpoint(tmp_path)
+    postburn = current["postburn_subtitle_audio_review"]
+    if failure == "missing_postburn":
+        current.pop("postburn_subtitle_audio_review")
+    elif failure == "wrong_srt":
+        postburn["reviewed_srt_sha256"] = "sha256:" + "0" * 64
+    elif failure == "wrong_media":
+        padded_sha = "sha256:" + "f" * 64
+        current["audio_language_discovery_audit"] = {"source_media_sha256": "sha256:" + "a" * 64}
+    elif failure == "wrong_clock":
+        clock["boundary_semantic_review"]["final_endpoint_binding"]["final_end_ms"] += 1
+    elif failure == "missing_media":
+        padded_sha = None
+    elif failure == "broken_chain":
+        current["exact_final_cpa_self_heal"]["passes"][-1]["output_srt_sha256"] = "sha256:" + "0" * 64
+    elif failure == "changed_raw":
+        Path(postburn["cpa_calls"][0]["response_path"]).write_text("changed")
+    else:
+        postburn["cpa_request"]["candidate_id"] = "foreign"
+    with pytest.raises(pipeline.CurrentTextContinuationError):
+        pipeline._continuation_validate_existing_authority(
+            current, srt_text=_srt(), srt_sha256=digest, clip_context=context,
+            candidate_id="relationship-candidate", source_clock_review=clock,
+            authenticated_padded_sha256=padded_sha,
+        )
 
 
 def _mixed_final_endpoint_checkpoint(tmp_path):
@@ -2673,8 +2841,8 @@ def test_current_continuation_consumes_caption_display_canon_before_fresh_review
 
 
 def test_original_historical_fixture_does_not_inherit_current_policy_pass():
-    from tests.continuation_support import review as synthetic_review
-    raw = json.dumps(synthetic_review()).encode()
+    raw = (Path(__file__).resolve().parents[1]
+        / "tests/fixtures/t06_bookshop_same_bv_extension/second-final-review.json").read_bytes()
     historical = json.loads(raw)
     assert "meaning_policy" not in historical
     with pytest.raises(pipeline.FinalReviewContractError, match="FINAL_REVIEW_MEANING_POLICY_REVIEW_REQUIRED"):

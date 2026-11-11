@@ -44,6 +44,10 @@ from .argon_escalation_contract import (
     integer,
     window,
 )
+from .argon_raw_replay import (
+    create_raw_replay,
+    read_raw_replay,
+)
 from .content_bound_request_ledger import ContentBoundRequestLedger
 from .gemini_backup_policy import validate_key_acceptance_metadata, valid_paid_policy_stamp
 from .gemini_backup_policy import CANDIDATE_BLIND_AUDIO_WITNESS_PURPOSE
@@ -696,23 +700,72 @@ class ArgonEscalationWitness:
                 "usage_receipt": usage,
             },
         )
-        return {
+        output = {
             **result,
             "result_sha256": result_sha,
             "accounting": self._accounting(task, manifest, inner),
         }
+        if (
+            not self.read_only
+            and result["status"] == "RESPONSE_REJECTED"
+            and reason == "HEARING_UNCERTAINTIES_INVALID"
+        ):
+            replay = create_raw_replay(
+                self,
+                task,
+                manifest,
+                inner,
+                mode,
+                output,
+                snapshot=self._read_snapshot(ledger),
+            )
+            if replay is not None:
+                output["raw_replay"] = replay
+        return output
 
-    def _saved_result(self, task, manifest, inner, ledger, mode, expected) -> dict | None:
+    def _saved_result(
+        self,
+        task,
+        manifest,
+        inner,
+        ledger,
+        mode,
+        expected,
+        *,
+        capability_binding_task=None,
+    ) -> dict | None:
         snapshot = ledger.snapshot()
         digest = snapshot["events"][-1]["metadata"].get("result_sha256")
         if not digest:
             return None
         result = strict_json(storage.get_blob(task, digest))
-        self.validate_evidence(task.name, result, expected=expected)
+        validated = self.validate_evidence(
+            task.name,
+            result,
+            expected=expected,
+            capability_binding_task=capability_binding_task,
+        )
+        replay = validated.get("raw_replay")
+        if (
+            replay is None
+            and not self.read_only
+            and validated.get("status") == "RESPONSE_REJECTED"
+            and validated.get("reason") == "HEARING_UNCERTAINTIES_INVALID"
+        ):
+            replay = create_raw_replay(
+                self,
+                task,
+                manifest,
+                inner,
+                mode,
+                validated,
+                snapshot=snapshot,
+            )
         return {
-            **result,
+            **validated,
             "result_sha256": digest,
             "accounting": self._accounting(task, manifest, inner),
+            **({"raw_replay": replay} if replay is not None else {}),
         }
 
     def _acquisition_task(self, task, manifest, inner, mode, snapshot, acquisition_root):
@@ -750,7 +803,8 @@ class ArgonEscalationWitness:
         return original
 
     def validate_evidence(self, task_id: str, evidence: dict, *, expected: AudioSpec,
-                          acquisition_root: Path | None = None) -> dict:
+                          acquisition_root: Path | None = None,
+                          capability_binding_task: Path | None = None) -> dict:
         """Read-only public consumer: replay raw/geometry, not a status-only gate."""
         task, manifest, inner = self._load(task_id, expected)
         mode = evidence.get("mode")
@@ -780,7 +834,8 @@ class ArgonEscalationWitness:
         require(valid_sha(sealed_sha), "EVIDENCE_NOT_TERMINALLY_RETAINED")
         sealed = strict_json(storage.get_blob(task, sealed_sha))
         supplied_core = {
-            k: v for k, v in evidence.items() if k not in {"result_sha256", "accounting"}
+            k: v for k, v in evidence.items()
+            if k not in {"result_sha256", "accounting", "raw_replay"}
         }
         require(
             canonical(supplied_core) == canonical(sealed)
@@ -801,7 +856,13 @@ class ArgonEscalationWitness:
             require(evidence.get("model_capability_receipt_sha256")
                     == self._dispatch_metadata(snapshot).get("capability_receipt_sha256"),
                     "CAPABILITY_RECEIPT_DRIFT")
-            self._validate_capability(task, inner, mode, snapshot, binding_task=binding_task)
+            self._validate_capability(
+                task,
+                inner,
+                mode,
+                snapshot,
+                binding_task=capability_binding_task or binding_task,
+            )
         raw = storage.get_blob(task, evidence["response_sha256"])
         payload, heard, reason = self._decode(
             raw, task_id, manifest["binding"], mode, self._job_name(snapshot)
@@ -814,13 +875,23 @@ class ArgonEscalationWitness:
             == usage_receipt(payload, mode, None)["model_version"],
             "EVIDENCE_RAW_REPLAY_MISMATCH",
         )
-        # Caller-supplied accounting is never authoritative; reconstruct it from
-        # the content-bound ledgers rather than trusting a pasted cost field.
-        return {
+        # A retained exact flat-shape failure may have a separate, immutable
+        # structural interpretation. It never changes the sealed result or its
+        # status; this read-only path only revalidates an already-published copy.
+        output = {
             **sealed,
             "result_sha256": sealed_sha,
             "accounting": self._accounting(task, manifest, inner),
         }
+        if (sealed.get("status") == "RESPONSE_REJECTED"
+                and sealed.get("reason") == "HEARING_UNCERTAINTIES_INVALID"):
+            replay = read_raw_replay(
+                self,
+                task, manifest, inner, mode, output, snapshot=snapshot
+            )
+            if replay is not None:
+                output["raw_replay"] = replay
+        return output
 
     def advance_agy(self, task_id, *, expected, request_timeout_s=60):
         from .argon_escalation_agy import advance
@@ -839,10 +910,13 @@ class ArgonEscalationWitness:
         max_batch_wait_s: float = 86400,
         max_recovery_pages: int = 3,
         now: Callable[[], float] = time.time,
+        mode: str | None = None,
+        capability_binding_task=None,
     ) -> dict:
         """One bounded advance, no background worker and no implicit POST retry."""
         require(not self.read_only, "READ_ONLY_ENGINE")
         require(valid_sha(task_id), "TASK_ID_INVALID")
+        require(mode is None or mode in {"batch", "realtime"}, "ARGON_MODE_INVALID")
         require(type(allow_realtime_fallback) is bool, "FALLBACK_POLICY_INVALID")
         require(
             type(request_timeout_s) in (int, float)
@@ -862,6 +936,31 @@ class ArgonEscalationWitness:
         )
         with storage.locked(self.root / task_id):
             task, manifest, inner = self._load(task_id, expected)
+            # A format-repair successor may be bound to a retained realtime
+            # request.  It must enter that exact mode directly: constructing a
+            # fresh batch lane here would silently change the original request
+            # method or create an unauthorised fallback.
+            if mode == "realtime":
+                ledger = self._ledger(task, manifest, "realtime", inner)
+                if not ledger.path.exists():
+                    ledger.prepare()
+                return self._advance_mode(
+                    task,
+                    manifest,
+                    inner,
+                    ledger,
+                    "realtime",
+                    expected,
+                    provider,
+                    key_policy,
+                    pricing,
+                    request_timeout_s,
+                    max_batch_wait_s,
+                    max_recovery_pages,
+                    now,
+                    None,
+                    capability_binding_task,
+                )
             ledger = self._ledger(task, manifest, "batch", self._body(task_id, inner, "batch"))
             snapshot = ledger.snapshot()
             mode = "batch"
@@ -946,6 +1045,7 @@ class ArgonEscalationWitness:
                 max_recovery_pages,
                 now,
                 fallback_proof,
+                capability_binding_task,
             )
 
     def _validate_capability(self, task, inner, mode, snapshot, *, binding_task=None):
@@ -984,11 +1084,22 @@ class ArgonEscalationWitness:
         max_pages,
         now,
         fallback_proof,
+        capability_binding_task=None,
     ):
         snapshot = ledger.snapshot()
-        self._validate_capability(task, inner, mode, snapshot)
+        self._validate_capability(
+            task, inner, mode, snapshot, binding_task=capability_binding_task
+        )
         if snapshot["state"] in {"COMPLETED", "FAILED", "FAILED_PRE_DISPATCH"}:
-            saved = self._saved_result(task, manifest, inner, ledger, mode, expected)
+            saved = self._saved_result(
+                task,
+                manifest,
+                inner,
+                ledger,
+                mode,
+                expected,
+                capability_binding_task=capability_binding_task,
+            )
             return saved or self._view(
                 task,
                 manifest,

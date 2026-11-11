@@ -346,7 +346,7 @@ def rebuild_candidate_after_neither(
                           'before': request.get('context_before'), 'after': request.get('context_after')},
                     contracts={'proposal_schema': _PROPOSAL_REBUILD_SCHEMA,
                                'instructions': _PROPOSAL_REBUILD_PROMPT, 'policy': TOPIC_PHONEME_POLICY},
-                    model_identity=getattr(llm_call, 'cpa_cache_identity', {}))
+                    model_identity=getattr(llm_call, 'cpa_cache_identity', {}),_read_only=True)
                 completion, served_from_cache = ruling_response(stage='proposal-rebuild', prompt=prompt,
                     llm_call=llm_call, inputs={'finding_materials': typed,
                         'original_check_request':dict(request),
@@ -360,7 +360,7 @@ def rebuild_candidate_after_neither(
             if request.get('finding_context') is not None:
                 audit['raw_completion']=completion
                 from .finding_closure_shell import attach_f2_consumption
-                audit=attach_f2_consumption(audit)
+                audit=attach_f2_consumption(audit,_read_only=True)
             payload = extract_json_object(completion)
         except Exception as exc:
             audit.update(

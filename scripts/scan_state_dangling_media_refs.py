@@ -30,6 +30,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.autoslice.review_evidence_store import expand
+from src.autoslice.batch_items import ItemBatch
+from src.autoslice import evidence_lease
+from src.autoslice.evidence_identity import same_sha256
 
 MEDIA_EXT = {
     ".mp4", ".m4s", ".mp3", ".wav", ".flac", ".m4a", ".mkv", ".ts", ".aac",
@@ -54,7 +57,7 @@ def walk(node, path, hits):
             hits.append((path[:], node))
 
 
-def surviving_stem_index(base: str) -> dict[tuple[str, str], set[str]]:
+def surviving_stem_index(base: str, *, issues: ItemBatch | None = None) -> dict[tuple[str, str], set[str]]:
     """candidate_id -> delivered stem, read out of each day dir's *.record.json.
 
     Deliverable filenames come from the recall hook, so hook/title surgery
@@ -63,11 +66,16 @@ def surviving_stem_index(base: str) -> dict[tuple[str, str], set[str]]:
     from a deletion.
     """
     index: dict[tuple[str, str], set[str]] = {}
+    issues = issues if issues is not None else ItemBatch()
     for record in glob.glob(f"{base}/repo/lidousha/*/*.record.json"):
-        try:
+        doc = None
+        with issues.isolate(record):
             with open(record, encoding="utf-8") as fh:
                 doc = expand(json.load(fh))
-        except (OSError, ValueError):
+            if not isinstance(doc, dict):
+                doc = None
+                raise ValueError("MEDIA_REFERENCE_RECORD_OBJECT_REQUIRED")
+        if doc is None:
             continue
         day_dir = os.path.dirname(record)
         stem = os.path.basename(record)[: -len(".record.json")]
@@ -136,7 +144,72 @@ def classify(base, index, retired, missing_path, row):
     return "B_cleanup_deleted", None, "out/ intermediate removed by a capacity cleanup"
 
 
-def main() -> int:
+STAGE_SCHEMAS = {f"same-bv-stage-{kind}.v1" for kind in ("request", "plan", "completed")}
+
+
+def structured_files(root: Path):
+    """Only the explicitly selected runtime/administrative tree, without links."""
+    if root.is_symlink():
+        return
+    if root.is_file():
+        yield root
+        return
+    for directory, dirs, files in os.walk(root, followlinks=False):
+        dirs[:] = [name for name in dirs if name not in {".git", "evidence-leases"}
+                   and not (Path(directory) / name).is_symlink()]
+        for name in files:
+            path = Path(directory) / name
+            if not path.is_symlink() and (path.suffix.lower() == ".json" or name == "COMMANDS.md"):
+                yield path
+
+
+command_declarations = evidence_lease.command_declarations
+input_bindings = evidence_lease.input_bindings
+stage_bindings = evidence_lease.stage_bindings
+
+
+def unleased_bindings(base: Path, *, stage_roots=(), now=None) -> list[dict]:
+    """Report missing/expired/hash-mismatched leases; do not issue or renew them."""
+    leases = evidence_lease.read_leases(base, now=now)
+    private = base / "private-runs"
+    sources = set(structured_files(private))
+    for root in (base / "state", *stage_roots):
+        sources.update(structured_files(Path(root)))
+    rows = []
+    for source in sorted(sources):
+        is_private = private in source.parents
+        if source.name == "COMMANDS.md":
+            if not is_private:
+                continue
+            documents = list(command_declarations(source.read_text(encoding="utf-8")))
+        else:
+            document = json.loads(source.read_text(encoding="utf-8"))
+            if not isinstance(document, dict):
+                continue
+            is_stage = document.get("schema_version", document.get("schema")) in STAGE_SCHEMAS
+            if not is_stage and not (is_private and source.name == "RESULT.json"):
+                continue
+            documents = [document]
+        hits = set()
+        for document in documents:
+            stage = isinstance(document, dict) and document.get("schema_version", document.get("schema")) in STAGE_SCHEMAS
+            hits.update(stage_bindings(document) if stage else input_bindings(document))
+        for location, value, sha256 in sorted(hits, key=lambda hit: (hit[0], hit[1], str(hit[2]))):
+            path = Path(value)
+            path = (path if path.is_absolute() else source.parent / path).resolve()
+            covering = [lease for lease in leases.values() if evidence_lease.covers(lease, path)]
+            if any(not sha256 or same_sha256(lease["sha256"], sha256) or Path(lease["path"]).resolve() != path
+                   for lease in covering):
+                continue
+            rows.append({"binding_file": str(source), "json_path": ".".join(location),
+                         "bound_path": str(path), "sha256": sha256, "exists": path.exists(),
+                         "reason": "sha256-mismatch" if covering else "no-active-lease"})
+    return rows
+
+
+
+
+def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", default="/opt/bilive/autoslice")
     parser.add_argument("--json", help="write the full classified row list here")
@@ -144,21 +217,49 @@ def main() -> int:
         "--include-backups", action="store_true",
         help="also scan state/*.pre-*.json snapshots (excluded by default)",
     )
-    args = parser.parse_args()
+    parser.add_argument('--unleased-bindings', action='store_true')
+    parser.add_argument('--stage-root', type=Path, action='append', default=[])
+    parser.add_argument('--issue-source', type=Path, action='append', default=[],
+                        help='selected live SPEC/structured input declaration (repeatable)')
+    parser.add_argument('--lease-base', type=Path, help='lease output base, defaults to --base')
+    parser.add_argument('--holder')
+    parser.add_argument('--purpose')
+    parser.add_argument('--until-utc')
+    args = parser.parse_args(argv)
+    if args.issue_source:
+        if not all((args.holder, args.purpose, args.until_utc)):
+            parser.error('issuing requires --holder, --purpose and --until-utc')
+        leases = evidence_lease.issue_from_sources(Path(args.base), args.issue_source,
+                    lease_base=args.lease_base, holder=args.holder, purpose=args.purpose,
+                    until_utc=args.until_utc)
+        print(json.dumps({'issued': len(leases), 'lease_base': str(args.lease_base or args.base)}))
+        return 0
+    if args.unleased_bindings:
+        rows = unleased_bindings(Path(args.base).resolve(), stage_roots=args.stage_root)
+        print(f"unleased structured bindings: {len(rows)}")
+        for row in rows:
+            print(json.dumps(row, ensure_ascii=False))
+        if args.json:
+            Path(args.json).write_text(json.dumps(rows, ensure_ascii=False, indent=2) + '\n')
+        return 0
 
     base = args.base.rstrip("/")
-    index = surviving_stem_index(base)
+    issues = ItemBatch()
+    index = surviving_stem_index(base, issues=issues)
     retired = relocated_index(base)
     rows = []
     for state_file in sorted(glob.glob(f"{base}/state/*.json")):
         name = os.path.basename(state_file)
         if ".pre-" in name and not args.include_backups:
             continue
-        try:
+        doc = None
+        with issues.isolate(state_file):
             with open(state_file, encoding="utf-8") as fh:
                 doc = expand(json.load(fh))
-        except (OSError, ValueError) as exc:
-            print(f"PARSE-FAIL {name}: {exc}", file=sys.stderr)
+            if not isinstance(doc, dict):
+                doc = None
+                raise ValueError("MEDIA_REFERENCE_STATE_OBJECT_REQUIRED")
+        if doc is None:
             continue
         hits: list = []
         walk(doc, [], hits)
@@ -179,6 +280,9 @@ def main() -> int:
             if survivor:
                 entry["surviving_stem"] = survivor
             rows.append(entry)
+
+    for failure in issues.as_list():
+        print(json.dumps({"event": "BATCH_ITEM_ISOLATED", **failure}, ensure_ascii=False), file=sys.stderr)
 
     print(f"dangling media references: {len(rows)}")
     print(f"state files affected: {len({r['state_file'] for r in rows})}")

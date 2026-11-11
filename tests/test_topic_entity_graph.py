@@ -976,3 +976,66 @@ def test_scoped_graph_reaches_agy_and_cpa_prompts_without_changing_timeline():
     assert context in captured["prompt"]
     assert "00:00:00,000 --> 00:00:01,000" in output
     assert "椎名立希" in output
+
+
+class _CharacterListClient(_FakeClient):
+    """The shared fake client with the Bangumi cast replaced by ``characters``."""
+
+    def __init__(self, characters):
+        super().__init__()
+        self._characters = characters
+
+    def fetch(self, url, *, method="GET", body=None, content_type="", headers=None):
+        response = super().fetch(
+            url, method=method, body=body, content_type=content_type, headers=headers
+        )
+        if method == "POST":
+            return response
+        payload = json.loads(response.body)
+        payload["crt"] = self._characters
+        return SimpleNamespace(body=json.dumps(payload, ensure_ascii=False).encode())
+
+
+def _cast_member(character_id, native, name_cn):
+    return {
+        "id": character_id,
+        "name": native,
+        "name_cn": name_cn,
+        "role_name": "主角",
+        "info": {"name_cn": name_cn},
+    }
+
+
+def _crawl_cast(characters):
+    return crawl_topic_entity_graph(
+        client=_CharacterListClient(characters),
+        timely_snapshot=_timely_snapshot(),
+        input_timely_terms_sha256="e" * 64,
+        generated_at=dt.datetime(2026, 7, 12, 12, tzinfo=dt.timezone.utc),
+        max_topics=1,
+        max_queries=3,
+        max_works_per_topic=1,
+    )
+
+
+def test_crawler_keeps_a_non_latin_native_name_instead_of_erasing_it():
+    # Bangumi's original name can be Hangul; identity folding is matching-only and
+    # must not turn a real surface into an empty native_names list.
+    result = _crawl_cast([_cast_member(137889, "데지르 아르망", "戴基尔·阿曼德")])
+
+    entity = result.graph["entities"][0]
+    assert entity["entity_id"] == "bgm:character:137889"
+    assert entity["native_names"] == ["데지르 아르망"]
+
+
+def test_crawler_drops_a_character_whose_native_name_has_no_letters():
+    # A punctuation-only source name has no usable surface; the record is dropped
+    # like other unusable character records instead of failing the whole graph.
+    result = _crawl_cast(
+        [
+            _cast_member(7, "椎名立希", "椎名立希"),
+            _cast_member(8, "★☆", "无名之人"),
+        ]
+    )
+
+    assert [row["entity_id"] for row in result.graph["entities"]] == ["bgm:character:7"]

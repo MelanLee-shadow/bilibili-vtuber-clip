@@ -935,6 +935,14 @@ def complete_target_materials(*, check, finding, adapters):
             'owner_audit': deepcopy(session.audit), 'envelope': deepcopy(session.envelope)})
         check = session.mark_request(check)
         if session.envelope is None:
+            if (session.audit or {}).get('status') == 'RESPONSE_REJECTED':
+                # resume/advance already reopened and verified the owner's raw
+                # result. Preserve that contract failure at this scheduling
+                # boundary instead of reporting an unfinished provider call.
+                raise ContractRejection(session.audit['reason'], material_recovery={
+                    'kind': 'REVALIDATE_ORIGINAL_ANSWER_AFTER_CONSUMER_REPAIR',
+                    'provider': 'argon', 'owner_audit': deepcopy(session.audit),
+                    'new_model_call_authorized': False})
             kind = argon_terminal_kind(session.audit)
             if kind not in {'HEARING_TERMINAL', 'STRUCTURALLY_UNAVAILABLE'}:
                 raise ProviderFailure('TARGET_MATERIAL_ARGON_OWNER_RECOVERY_REQUIRED', provider='argon')
@@ -1121,9 +1129,10 @@ def compile_task_stop_no_gain(*, check, finding_materials, text_version_sha256, 
         # Older owner projections may omit only the target-text view. Never
         # trust their derived counts: reopen every original receipt first.
         has_text = all('target_text' in row for row in projection['observations'])
-        replayed = replay_no_gain_projection({'projection': projection}, check, include_target_text=has_text)
         expected = current if has_text else evidence_projection(check)
-        if replayed != projection or projection != expected:
+        # The current owner reopens every supplied receipt, including rejected
+        # inputs. Replaying only admitted rows discards that negative evidence.
+        if projection != expected:
             raise ContractRejection('TASK_STOP_OBSERVATION_DRIFT')
         current = deepcopy(projection)
     exhaustion = require_target_material_exhaustion(check, current)

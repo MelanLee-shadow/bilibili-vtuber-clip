@@ -64,7 +64,10 @@ class NativeProvider:
             "supportedGenerationMethods": ["generateContent", "batchGenerateContent"],
         }))
 
-    def factory(self, resolver):
+    def factory(self, resolver, *, cpa_operation='argon_lifecycle'):
+        # Match the ordinary constructor seam and prove that the lifecycle
+        # keeps its original key/accounting rather than using standalone CPA.
+        assert cpa_operation == 'argon_lifecycle'
         parent = self
 
         class Transport:
@@ -748,7 +751,6 @@ def test_genuine_new_argon_material_crosses_existing_three_unresolved_pressure_o
     wrapped = recorder.wrap(old_answer)
     wrapped("prior actual question one")
     wrapped("prior actual question two")
-    wrapped("prior actual question three")
     scene.after_choice = "NEITHER"
     _, result = scene.run(scene.build())
     assert result["witness_judge"]["judge"]["choice"] == "NEITHER", result

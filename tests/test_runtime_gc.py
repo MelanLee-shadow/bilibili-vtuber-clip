@@ -275,16 +275,10 @@ def test_normal_state_writer_calls_readonly_terminal_hook(tmp_path, monkeypatch)
 @pytest.mark.skipif(not Path("/proc/locks").exists(), reason="Linux live descriptors")
 def test_actual_open_descriptor_and_runner_flock(tmp_path):
     import fcntl
-    # Inspect our real descriptors and kernel locks without requiring permission
-    # to enumerate unrelated host/container processes on a shared CI runner.
-    proc = tmp_path / "proc"
-    proc.mkdir()
-    (proc / str(os.getpid())).symlink_to(Path("/proc") / str(os.getpid()))
-    (proc / "locks").symlink_to("/proc/locks")
     media = put(tmp_path / "private-runs/one/clip.mp4")
     with media.open("rb"), (tmp_path / "runner.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        observed = gc.activity(tmp_path, proc=proc)
+        observed = gc.activity(tmp_path)
         assert media in observed.paths and observed.runner_locked
         assert not gc.collect(tmp_path, home=tmp_path / "absent", live=observed)["targets"]
 
@@ -428,3 +422,153 @@ def test_corrupt_ledger_means_no_exclusions(tmp_path, junk):
     os.utime(media.parent, None)
     put(tmp_path / "state/runtime-gc-self-touch.json", content=junk)
     assert not paths(plan(tmp_path))
+
+
+
+def raw_lease(base, media, *, until="2099-01-01T00:00:00Z", lease_id="input"):
+    # Independent input contract also runs against the old GC as the guard.
+    import hashlib
+    destination = base / f"state/evidence-leases/{lease_id}.json"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps({"schema": "evidence-lease.v1", "path": str(media),
+        "sha256": hashlib.sha256(b"media").hexdigest(), "holder": "four-repair",
+        "purpose": "native-audio source_media", "until_utc": until}))
+    return destination
+
+
+@pytest.mark.parametrize("relative", [
+    "out/2026-10-11/auto_195637_47_259/source.mp4",
+    "private-runs/reaction-nanaliya-20261023/manual/out-r3/final.mp4",
+])
+def test_bound_old_idle_media_lease_protects_and_expiry_releases(tmp_path, relative):
+    media = put(tmp_path / relative)
+    # The private-run fixture has nested directories: age the entire idle run,
+    # not just the media's immediate parent (fresh directories protect a run).
+    for parent in media.parents:
+        if parent == tmp_path:
+            break
+        os.utime(parent, (media.stat().st_mtime, media.stat().st_mtime))
+    assert paths(plan(tmp_path)) == {str(media)}
+    raw_lease(tmp_path, media)
+    assert not paths(plan(tmp_path))
+    raw_lease(tmp_path, media, until="2000-01-01T00:00:00Z")
+    assert paths(plan(tmp_path)) == {str(media)}
+
+
+def test_lease_directory_covers_descendants_but_file_does_not_cover_siblings(tmp_path):
+    first = put(tmp_path / "out/2026-10-01/c1/input.mp4")
+    second = put(first.parent / "other.wav")
+    unrelated = put(tmp_path / "out/2026-10-01/c10/idle.mp4")
+    raw_lease(tmp_path, first)
+    assert paths(plan(tmp_path)) == {str(second), str(unrelated)}
+    raw_lease(tmp_path, first.parent)
+    assert paths(plan(tmp_path)) == {str(unrelated)}
+
+
+@pytest.mark.parametrize("change", ["add-target", "add-unrelated", "renew", "revoke", "expire"])
+def test_apply_refuses_entire_batch_on_lease_snapshot_change(tmp_path, monkeypatch, change):
+    first = put(tmp_path / "private-runs/one/clip.mp4")
+    second = put(tmp_path / "private-runs/two/clip.mp4")
+    unrelated = tmp_path / "protected/unrelated.mp4"
+    if change in {"renew", "revoke", "expire"}:
+        raw_lease(tmp_path, unrelated)
+    approved = plan(tmp_path)
+    assert paths(approved) == {str(first), str(second)}
+    monkeypatch.setattr(gc, "activity", lambda *_: gc.Activity())
+    if change == "add-target":
+        raw_lease(tmp_path, second)
+    elif change == "add-unrelated":
+        raw_lease(tmp_path, unrelated)
+    elif change == "renew":
+        raw_lease(tmp_path, unrelated, until="2099-02-01T00:00:00Z")
+    elif change == "revoke":
+        (tmp_path / "state/evidence-leases/input.json").unlink()
+    else:
+        raw_lease(tmp_path, unrelated, until="2000-01-01T00:00:00Z")
+    with pytest.raises(RuntimeError, match="evidence leases changed"):
+        gc.apply_plan(approved)
+    assert first.exists() and second.exists()
+
+
+def test_lease_added_after_preflight_is_rechecked_before_unlink(tmp_path, monkeypatch):
+    media = put(tmp_path / "private-runs/one/clip.mp4")
+    approved = plan(tmp_path)
+    monkeypatch.setattr(gc, "activity", lambda *_: gc.Activity())
+    original = gc.UnlinkEvents
+
+    def register(path):
+        raw_lease(tmp_path, media)
+        return original(path)
+
+    monkeypatch.setattr(gc, "UnlinkEvents", register)
+    result = gc.apply_plan(approved)
+    assert result["status"] == "REFUSED" and result["removed"] == []
+    assert "evidence leases changed" in result["error"] and media.exists()
+
+
+def test_lease_does_not_change_disabled_recording_recent_and_lock_controls(tmp_path):
+    put(tmp_path / "DISABLED", age=0)
+    idle = put(tmp_path / "out/2026-10-01/c1/idle.mp4")
+    recording = put(idle.parent / "22966160_20261001-12-00-00.mp4")
+    recent = put(tmp_path / "private-runs/recent/clip.mp4", age=.5)
+    assert paths(plan(tmp_path)) == {str(idle)}
+    locked = gc.collect(tmp_path, home=tmp_path / "absent", free_bytes=30 * gc.GIB,
+                        live=gc.Activity(runner_locked=True))
+    assert not paths(locked) and recording.exists() and recent.exists()
+
+
+def test_invalid_lease_blocks_collection_without_removing_media(tmp_path):
+    media = put(tmp_path / "private-runs/one/clip.mp4")
+    lease = raw_lease(tmp_path, media)
+    lease.write_text('{"schema":"unknown"}')
+    with pytest.raises(ValueError, match="schema"):
+        plan(tmp_path)
+    assert media.exists()
+
+
+def test_invalid_lease_blocks_apply_before_any_unlink(tmp_path, monkeypatch):
+    media = put(tmp_path / 'private-runs/one/clip.mp4')
+    approved = plan(tmp_path)
+    raw_lease(tmp_path, media).write_text('{"schema":"unknown"}')
+    monkeypatch.setattr(gc, 'activity', lambda *_: gc.Activity())
+    with pytest.raises(ValueError, match='schema'):
+        gc.apply_plan(approved)
+    assert media.exists()
+
+
+def test_lease_protects_terminal_nonmedia_and_leaves_unbound_cache_collectable(tmp_path):
+    root = tmp_path / 'private-runs/terminal'
+    first = put(root / 'bulk.json', content=b' ' * (gc.DECISION_RECORD_MAX_BYTES + 1))
+    second = put(root / 'other.json', content=b' ' * (gc.DECISION_RECORD_MAX_BYTES + 1))
+    put(root / 'RUN-LIFECYCLE.json', content=json.dumps({'schema_version': gc.RUN_LIFECYCLE_SCHEMA,
+                                                       'status': 'abandoned'}).encode())
+    raw_lease(tmp_path, first)
+    assert paths(plan(tmp_path)) == {str(second)}
+
+
+@pytest.mark.parametrize('path,parent,expected', [
+    ('/a/b', '/a', True), ('/ab', '/a', False), ('a/b', '.', True), ('/a', '.', False)])
+def test_hot_ancestry_matches_component_boundaries(path, parent, expected):
+    assert gc.under(Path(path), Path(parent)) is expected
+
+
+def test_walk_samples_directory_activity_on_entry_not_parent_listing(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    child = tmp_path / 'a-child'
+    media = put(child / 'old.mp4')
+    put(tmp_path / 'z-anchor.json')
+    original = gc.os.scandir
+    @contextmanager
+    def ordered(path):
+        with original(path) as entries:
+            yield iter(sorted(entries, key=lambda entry: entry.name))
+    monkeypatch.setattr(gc.os, 'scandir', ordered)
+    entries = gc.walk_entries(tmp_path)
+    assert next(entries)[0] == tmp_path
+    assert next(entries)[0].name == 'z-anchor.json'
+    touch = child / 'new.tmp'
+    touch.write_bytes(b'activity')
+    touch.unlink()
+    path, observed = next(entries)
+    assert path == child and observed.st_mtime_ns == child.stat().st_mtime_ns
+    assert media.exists()

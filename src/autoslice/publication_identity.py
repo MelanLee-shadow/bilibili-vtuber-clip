@@ -61,9 +61,18 @@ def publication_identity(record: Mapping[str, object]) -> PublicationIdentity:
         _id(record.get(key))
         for key in ("source_candidate_id", "parent_candidate_id", "original_candidate_id")
     ) - {""}
+    # Finished-media review records have no story_contract by design; their
+    # delivery id is the registry identity (typed branch, no other record
+    # shape is affected).
+    finished_media = (
+        record.get("record_kind") == "FINISHED_MEDIA_REVIEW"
+        and bool(delivery) and not story_id and not source
+    )
     return PublicationIdentity(
         candidate_id=delivery if paired else str(raw_story or raw_delivery or ""),
-        registry_candidate_id=delivery if paired else str(raw_story or ""),
+        registry_candidate_id=(
+            delivery if paired or finished_media else str(raw_story or "")
+        ),
         record_candidate_id=delivery if paired else raw_candidate,
         declared_ids=frozenset(declared_ids),
         authority_ids=authority_ids,
@@ -71,3 +80,15 @@ def publication_identity(record: Mapping[str, object]) -> PublicationIdentity:
         lineage_aliases=lineage,
         selector_aliases=frozenset({source}) if paired else frozenset(),
     )
+
+
+def story_less_candidate_id(record: Mapping[str, object]) -> str:
+    """Registry identity of a record that has no story_contract (finished-media review).
+
+    Empty when the record shape grants none; a paired selector record never gets one.
+    """
+    try:
+        identity = publication_identity(record)
+    except ValueError:
+        return ""
+    return "" if identity.selector_aliases else identity.registry_candidate_id.strip()

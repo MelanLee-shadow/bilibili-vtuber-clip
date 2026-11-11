@@ -5,8 +5,12 @@ import urllib.error
 
 import pytest
 
+
 from src.autoslice import entity_audio_verifier as verifier_module
 
+
+# These fixtures replace the original Google HTTP / AGY process boundary.
+pytestmark = pytest.mark.usefixtures("legacy_gemini_transport")
 
 class _Completed:
     def __init__(self, returncode=0, stdout="", stderr=""):

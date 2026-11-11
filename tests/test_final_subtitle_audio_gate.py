@@ -996,7 +996,8 @@ def test_postburn_priority_handoff_rejects_drift_or_incomplete_raw_receipts(
 @pytest.mark.parametrize("risk", ["noncritical_uncertainty", "meaning_reversal", "factual_error", "potential_harm"])
 def test_postburn_current_risk_discloses_only_noncritical_and_reuses_raw_response(tmp_path, monkeypatch, risk, legacy_context, omit_descriptor, actionable):
     # Historical node ID retained; noncritical disclosure is no longer a
-    # release exit. A complete equivalence assessment must still be FLAGGED.
+    # release exit. Without a same-question completed keep ruling, a complete
+    # equivalence assessment must still be FLAGGED (see test_postburn_handback).
     record, final_srt, media = _postburn_record(tmp_path)
     before = (final_srt.read_bytes(), media.read_bytes())
     calls = []
@@ -1265,7 +1266,7 @@ def test_postburn_replays_current_bound_source_context(tmp_path, monkeypatch, dr
         paths["audio_clip" if drift == "audio" else "source_media"].write_bytes(b"drift")
     prompts = []
     _postburn_adapters(monkeypatch, '{"findings":[]}', prompts)
-    monkeypatch.setattr(finalization, "clip_context_prompt_text", lambda _context: "scene")
+    monkeypatch.setattr(text_pipeline, "clip_context_prompt_text", lambda _context: "scene")
     audit = _postburn_chat_audit(final_srt)
     before = final_srt.read_bytes(), media.read_bytes()
     finalization._run_postburn_subtitle_audio_review(
@@ -1422,10 +1423,7 @@ def test_postburn_parser_recovery_preserves_original_doubt_without_new_dispatch(
     actual_auditor = finalization.audit_final_subtitles
 
     def old_parser(srt_text, *, llm_call, **kwargs):
-        from src.autoslice.surface_canon import CHANNEL_PROFILE
         prompt = prompt_template.format(
-            host_name=CHANNEL_PROFILE.display_name,
-            host_short=CHANNEL_PROFILE.short_name,
             max_findings=24,
             numbered="\n".join(f"{i}. {cue.text}" for i, cue in enumerate(parse_srt_cues(srt_text), 1)),
             glossary=kwargs["glossary_text"].strip() or "（无）",

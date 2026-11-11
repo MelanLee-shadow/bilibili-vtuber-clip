@@ -15,6 +15,7 @@ import threading
 from typing import Any, Callable, Mapping
 
 from src.autoslice.audio_question_identity import same_audio_question
+from src.autoslice.canonical_json_hash import canonical_sha256
 from src.autoslice.exact_final_witness_authority import (
     history_audio_recovery_from_adjudication,
 )
@@ -46,7 +47,7 @@ def _nonnegative_int(value: object, *, name: str) -> int:
     return value
 
 
-def _public_identity(value: object) -> object:
+def _public_identity(value: object, *, _memo=None) -> object:
     """Return the public, JSON-shaped identity of a finding/context value.
 
     Audit bookkeeping is deliberately excluded so that feeding a finding back
@@ -55,23 +56,41 @@ def _public_identity(value: object) -> object:
     public fields remain part of the identity.
     """
 
+    identity = id(value)
+    if _memo is not None and identity in _memo:
+        return _memo[identity][1]
     if isinstance(value, Mapping):
-        return {
-            str(key): _public_identity(item)
+        result = {
+            str(key): _public_identity(item, _memo=_memo)
             for key, item in value.items()
             if str(key) not in _FINGERPRINT_AUDIT_KEYS
         }
-    if isinstance(value, (list, tuple)):
-        return [_public_identity(item) for item in value]
-    if isinstance(value, set):
-        items = [_public_identity(item) for item in value]
-        return sorted(
+    elif isinstance(value, (list, tuple)):
+        result = [_public_identity(item, _memo=_memo) for item in value]
+    elif isinstance(value, set):
+        items = [_public_identity(item, _memo=_memo) for item in value]
+        result = sorted(
             items,
             key=lambda item: json.dumps(
                 item, ensure_ascii=False, sort_keys=True, default=repr
             ),
         )
-    return value
+    else:
+        return value
+    if _memo is not None:
+        # Keep the input alive too: arbitrary Mapping iterators may yield
+        # temporary containers, whose addresses must not be reused as identities.
+        _memo[identity] = (value, result)
+    return result
+
+
+def _shared_public_identity(value: object) -> object:
+    """Private hash input; repeated immutable history needs one projection."""
+    memo = {}
+    try:
+        return _public_identity(value, _memo=memo)
+    finally:
+        memo.clear()
 
 
 def _adjudication_input_fingerprint(
@@ -89,24 +108,17 @@ def _adjudication_input_fingerprint(
         finding.pop("_prior_exact_source_transcript_handoffs", None)
     identity = {
         "srt_text": srt_text,
-        "finding": _public_identity(finding),
-        "clip_context": _public_identity(clip_context),
+        "finding": _shared_public_identity(finding),
+        "clip_context": _shared_public_identity(clip_context),
         "source_media_timeline_offset_ms": source_media_timeline_offset_ms,
-        "cpa_cache_identity": _public_identity(
+        "cpa_cache_identity": _shared_public_identity(
             getattr(judge_llm_call, "cpa_cache_identity", None)
         ),
         # A bound request for new audio changes the work to do. The remaining
         # adjudication bookkeeping stays excluded from same-input identity.
         "pending_audio_obligation": _pending_audio_obligation(finding),
     }
-    encoded = json.dumps(
-        identity,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        default=repr,
-    ).encode("utf-8")
-    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+    return "sha256:" + canonical_sha256(identity, allow_nan=True, default=repr)
 
 
 def relevant_transcript_handoffs(
@@ -417,13 +429,16 @@ def replay_cached_context_adjudication(
     # Replaying the old word judge cannot fulfill its request for a new
     # semantic audio range. Keep the cache-only wrapper free of live provider
     # seams; let the ordinary caller use its actual range observer instead.
+    source_request = finding.get('chat_source_owner_request')
     if (
+        not isinstance(source_request, Mapping)
+        and
         callable(getattr(entity_verifier, "observe_range_context", None))
         and _pending_audio_obligation(finding) is not None
     ):
         return None
 
-    if getattr(entity_verifier, "argon_escalation", None) is not None:
+    if not isinstance(source_request, Mapping) and getattr(entity_verifier, "argon_escalation", None) is not None:
         return None  # Do not replay a pre-upgrade judgment over a pending/new job.
     cache_probe = getattr(entity_verifier, "probe_witness_cache", None)
     prior = finding.get("exact_release_adjudication")
@@ -432,7 +447,7 @@ def replay_cached_context_adjudication(
         isinstance(prior_request, Mapping)
         and prior_request.get("kind") == "missing_proposal_context_only_convergence"
     )
-    if not callable(cache_probe) and not context_only_candidate:
+    if not callable(cache_probe) and not context_only_candidate and not isinstance(source_request, Mapping):
         return None
     witness_hits: list[Mapping[str, Any]] = []
     witness_misses = 0
@@ -471,6 +486,36 @@ def replay_cached_context_adjudication(
             setattr(provider_forbidden, attr, getattr(judge_llm_call, attr))
     if hasattr(judge_llm_call, "cpa_resource_pressure"):
         provider_forbidden.cpa_resource_pressure = judge_llm_call.cpa_resource_pressure
+
+    if isinstance(source_request, Mapping):
+        # The source-owner checkpoint is a terminal ruling, not a fabricated
+        # blind-witness cache hit. Reopen it through its original verifier
+        # with a no-network sentinel, then run the full source and typed
+        # consumer again against the actual current text.
+        try:
+            from .context_assisted_audio import digest
+            from .read_aloud_llm_verifier import build_cpa_read_aloud_verifier
+            from .chat_authority_reconciliation import owner_answer_to_adjudication
+            if finding.get('chat_source_owner_request_sha256') != digest(source_request):
+                return None
+            answer = build_cpa_read_aloud_verifier(provider_forbidden)({
+                'schema_version': 'chat-source-owner-reevaluation-request.v1',
+                'terminal_request': source_request})
+            if (provider_seam_attempts != 0 or not isinstance(answer, Mapping)
+                    or answer.get('status') != 'VALIDATED' or answer.get('checkpoint_hit') is not True
+                    or answer.get('terminal_request') != source_request):
+                return None
+            owner_answer_to_adjudication(answer, srt_text=srt_text, finding=finding,
+                authority={'applied': source_request['chat_source_conflict']['original_applied']},
+                delivery_start_ms=source_media_timeline_offset_ms, clip_context=clip_context)
+            return {**answer, 'provider_budget_replay': {
+                'schema_version': 'final-review-provider-budget-replay.v1',
+                'status': 'PASS', 'provider_call_count': 0,
+                'basis': 'BOUND_SOURCE_OWNER_TERMINAL_CHECKPOINT',
+                'judge_prompt_sha256': answer['prompt_sha256'],
+                'judge_completion_sha256': answer['completion_sha256']}}
+        except (_CacheMiss, ValueError, TypeError, KeyError, OSError):
+            return None
 
     def cached_exact_only(request: Mapping[str, Any]) -> Mapping[str, Any] | None:
         nonlocal exact_misses

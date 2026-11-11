@@ -242,14 +242,18 @@ def test_enabled_local_job_has_real_native_receipt_without_agy_trace(environment
             model='Gemini 3.8 Flash (High)', files=[media], text=run.stdout)
 
 
-def test_batch_is_explicitly_unsupported_without_credential_or_network_access(environment, tmp_path):
+def test_batch_lifecycle_enters_existing_runtime_without_cpa_refusal(environment, tmp_path, monkeypatch):
     from src.autoslice.argon_escalation_runtime import ArgonRuntime
     def forbidden(*args, **kwargs):
         raise AssertionError('credentials or direct transport reached')
     runtime = ArgonRuntime(runtime_root=tmp_path, config={}, credential_loader=forbidden, transport_factory=forbidden)
-    with pytest.raises(cpa.CpaGeminiError, match='UNSUPPORTED_OPERATION:batch_lifecycle'):
-        runtime.advance(root=tmp_path / 'new-job', spec=None)
-    assert not (tmp_path / 'new-job').exists()
+    calls = []
+    def existing(root, spec):
+        calls.append((root, spec))
+        return {'result': {'status': 'PENDING'}, 'dispatches_this_advance': 0}
+    monkeypatch.setattr(runtime, '_advance_locked', existing)
+    assert runtime.advance(root=tmp_path / 'new-job', spec=None)['result']['status'] == 'PENDING'
+    assert calls == [(tmp_path / 'new-job', None)]
 
 
 @pytest.mark.parametrize('process_switch', [True, False])
@@ -356,7 +360,7 @@ def test_lrc_cold_consumer_checks_native_audio_lyrics_prompt_and_response(enviro
 
 def test_switch_off_ignores_leftover_cpa_receipt_when_persisting_lrc(environment, monkeypatch, tmp_path):
     from src.autoslice import agy_lrc_alignment as lrc
-    monkeypatch.delenv(cpa.ENABLE_ENV)
+    monkeypatch.setenv(cpa.ENABLE_ENV, '0')
     audio, lyrics, prompt, raw = [tmp_path / name for name in ('input.mp3', 'lyrics.jsonl', 'prompt.md', 'raw.json')]
     for path in (audio, lyrics, prompt, raw):
         path.write_text('{}')
@@ -427,13 +431,16 @@ def test_physical_capability_cannot_reuse_files_proof_for_cpa_transport(environm
     monkeypatch.setattr(runtime, '_bound_regular', lambda path, **kw: (path, 'a' * 64))
     monkeypatch.setattr(runtime, '_external_tool', lambda *a, **kw: (Path('/fake/tool'), 'b' * 64))
     legacy_env = {runtime.MODEL_ENV: 'gemini-3.8-flash', cpa.ENABLE_ENV: '0', 'GEMINI_API_KEY': 'synthetic'}
-    native_env = {runtime.MODEL_ENV: 'gemini-3.8-flash', cpa.ENABLE_ENV: '1'}
+    native_env = {runtime.MODEL_ENV: 'gemini-3.8-flash'}
     old, old_keys = runtime._manifest(tmp_path, legacy_env)
     new, new_keys = runtime._manifest(tmp_path, native_env)
+    joint, _ = runtime._manifest(tmp_path, {**native_env, 'GEMINI_API_KEY': 'synthetic'})
     assert (old['provider'], old['model']) == (new['provider'], new['model'])
     assert old['capability_id'] != new['capability_id']
     assert old['endpoint_family'] != new['endpoint_family']
     assert old_keys == 1 and new_keys == 0
+    assert joint['endpoint_family'] == runtime.CPA_FILES_ENDPOINT_FAMILY
+    assert joint['capability_id'] not in {old['capability_id'], new['capability_id']}
 
 
 def test_sentinel_rejects_a_receipt_for_the_other_wire_protocol(environment, tmp_path):
@@ -477,7 +484,7 @@ def test_gemini_transports_never_manufacture_two_independent_witnesses(environme
     request['audio_gain_termination']['projection']['observations'] = [first, different]
     assert len(grade_a_witnesses(request, ['subscription', 'argon'])) == 2
     # OFF preserves the baseline's exact comparison, including its aliases.
-    monkeypatch.delenv(cpa.ENABLE_ENV)
+    monkeypatch.setenv(cpa.ENABLE_ENV, '0')
     request['audio_gain_termination']['projection']['observations'] = [first, second]
     assert len(grade_a_witnesses(request, ['subscription', 'api'])) == 2
     assert independent_wide_identity(merged, contract) is None

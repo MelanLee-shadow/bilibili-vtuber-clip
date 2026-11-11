@@ -106,7 +106,7 @@ def test_incidental_name_cannot_self_declare_tier_one() -> None:
     assert "TIER1_ADMISSION_DOWNGRADED" in scorecard["reason_codes"]
 
 
-def test_current_performance_requires_exceptional_payoff() -> None:
+def test_current_performance_can_use_a_clear_payoff_without_exceptional_reversal() -> None:
     raw = _raw(
         tier=1,
         basis="audience_driven_performance",
@@ -128,7 +128,7 @@ def test_current_performance_requires_exceptional_payoff() -> None:
     )
 
     assert scorecard is not None
-    assert scorecard["tier"] == 2
+    assert scorecard["tier"] == 1
     assert scorecard["effective_score"] == 68.0
     assert scorecard[ADMISSION_POLICY_FIELD] == CURRENT_ADMISSION_POLICY
     assert selection_scorecard_is_valid(scorecard)

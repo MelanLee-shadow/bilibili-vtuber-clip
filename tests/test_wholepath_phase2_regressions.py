@@ -460,6 +460,9 @@ def test_k19_unparseable_final_review_keeps_both_modalities_raw_and_usage(tmp_pa
 
 def _nested_entry(tmp_path, monkeypatch, generate):
     """Normal nested acoustic entry with offline credentials and transport seams."""
+    # COST-01 here exercises the client-owned legacy key ladder; CPA owns it
+    # in the default path and cannot expose these synthetic key ordinals.
+    monkeypatch.setenv("AUTOSLICE_CPA_GEMINI_ENABLED", "0")
     import scripts.session_autoslice as runtime
     import src.autoslice.agy_gemini_client as gemini
     import src.autoslice.nested_media_acoustic_runtime as acoustic_runtime

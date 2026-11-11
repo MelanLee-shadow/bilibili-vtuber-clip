@@ -10,6 +10,21 @@ import pytest
 from scripts import llm_via_runtime_cpa_ssh as bridge
 
 
+def test_text_request_identity_and_attempt_pass_through_ssh_envelope(tmp_path,monkeypatch):
+    prompt=tmp_path/'prompt.txt';prompt.write_text('JSON request')
+    monkeypatch.setenv('AUTOSLICE_CPA_LOGICAL_REQUEST_ID','a'*64)
+    monkeypatch.setenv('AUTOSLICE_CPA_TEXT_ATTEMPT','4')
+    observed=[]
+    def fake_run(command,**kwargs):
+        observed.append(json.loads(kwargs['input']))
+        return SimpleNamespace(returncode=0,stdout=json.dumps({'status':'PASS','completion':'{}','diagnostics':{}}),stderr='')
+    monkeypatch.setattr(bridge.subprocess,'run',fake_run)
+    bridge.run_bridge(prompt_file=prompt,completion_file=tmp_path/'completion.txt',ssh_host='recorded',
+        runtime_root=tmp_path,model='gpt-6.1-sol',effort='medium',attempts=1)
+    assert observed[0]['text_request_context']=={'AUTOSLICE_CPA_LOGICAL_REQUEST_ID':'a'*64,'AUTOSLICE_CPA_TEXT_ATTEMPT':'4'}
+    assert 'text_request_context' in bridge.REMOTE_PROGRAM and 'env[name]=value' in bridge.REMOTE_PROGRAM
+
+
 def test_runtime_cpa_ssh_bridge_writes_completion_and_safe_diagnostics(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:

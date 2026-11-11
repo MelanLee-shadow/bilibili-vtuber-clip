@@ -45,6 +45,13 @@ from src.autoslice.native_foreign_witness import (
     native_acquisition_identity, native_acquisition_path, read_native_acquisition,
 )
 
+from src.autoslice.native_range_routing import (
+    _PRE_HTTP_CONFIG_FAILURES,
+    NativeRangeRoutes,
+    configuration_recovery_observation,
+    native_range_service_failure as native_range_service_failure,
+)
+
 
 NATIVE_WITNESS_KIND = "subtitle_span_acoustic_witness"
 NATIVE_CONTEXT_ENVELOPE_SCHEMA = "native-context-witness-envelope.v1"
@@ -69,41 +76,6 @@ _ALLOWED_REQUEST_KEYS = frozenset(
     }
 )
 _REQUIRED_REQUEST_KEYS = _ALLOWED_REQUEST_KEYS - {"syllable_count_hint", "request_sha256"}
-
-# These are the only failures that happen after the exact audio has been
-# prepared but before ``before_request`` can reserve a provider attempt.  Do
-# not turn an arbitrary uncertain envelope into a retry permission: transport,
-# response, extraction, and provider failures have already crossed a different
-# evidence boundary and remain immutable failures.
-_NATIVE_RUNTIME_CONFIG_REASONS = frozenset(
-    {
-        "NATIVE_AUDIO_RUNTIME_MISSING",
-        "NATIVE_AUDIO_RUNTIME_UNSAFE",
-        "NATIVE_AUDIO_RUNTIME_CONFIG_MISSING",
-        "NATIVE_AUDIO_RUNTIME_CONFIG_UNSAFE",
-        "NATIVE_AUDIO_RUNTIME_CONFIG_INVALID",
-        "NATIVE_AUDIO_RUNTIME_CONFIG_FIELDS_MISSING",
-    }
-)
-_PRE_HTTP_CONFIG_FAILURES = frozenset(
-    {
-        "MAI_ENDPOINT_INVALID",
-        "MAI_API_KEY_MISSING",
-        "MAI_API_KEY_INVALID",
-        "MAI_API_KEY_FILE_INVALID",
-        "MAI_API_KEY_FILE_PERMISSIONS",
-        "MOSS_API_KEY_MISSING",
-        "MOSS_API_KEY_INVALID",
-        "MOSS_API_KEY_FILE_INVALID",
-        "MOSS_API_KEY_FILE_PERMISSIONS",
-    }
-    | {
-        f"{provider}_{reason}"
-        for provider in ("MAI", "MOSS")
-        for reason in _NATIVE_RUNTIME_CONFIG_REASONS
-    }
-)
-
 
 @dataclass(frozen=True)
 class _PreparedRequest:
@@ -1135,6 +1107,7 @@ def build_independent_context_witnesses(
         if budget_receipt_path is None
         else Path(budget_receipt_path).absolute()
     )
+    range_routes = NativeRangeRoutes(fallback, shared_budget_receipt)
     default_budget_receipt = (output_dir / "native-audio-budget.json").absolute()
     source_stat_binding: tuple[int, ...] | None = None
     source_sha256: str | None = None
@@ -2046,16 +2019,11 @@ def build_independent_context_witnesses(
 
                 config_reason = _validate_recovery_provider_configuration(provider)
                 if config_reason is not None:
-                    observed_rows.append(
-                        _independent_uncertain(
-                            range_mapping,
-                            provider,
-                            config_reason,
-                            detail="current native provider configuration is not ready",
-                            source_sha256=source_sha256,
-                            geometry=geometry,
-                        )
-                    )
+                    observed_rows.append(configuration_recovery_observation(
+                        range_mapping, provider, config_reason, source_sha256=source_sha256,
+                        geometry=geometry, original_envelope=old_envelope,
+                        build_uncertain=_independent_uncertain,
+                    ))
                     continue
                 try:
                     recovered, history = _recover_pre_http_configuration_failure(
@@ -2174,8 +2142,11 @@ def build_independent_context_witnesses(
                 normalized["served_from_cache"] = True
             normalized.update(recovery_history.get(provider, {}))
             output.append(normalized)
-        output.sort(key=lambda row: range_provider_names.index(row['provider'])
-                    if row.get('provider') in range_provider_names else len(range_provider_names))
+        range_routes.complete(
+            output, provider_names=range_provider_names,
+            cache_only=cache_only, check_request=check_request,
+            range_witness_request=range_witness_request,
+        )
         return output
 
     def wrapper(request: Mapping[str, Any]) -> Mapping[str, Any]:

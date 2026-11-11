@@ -487,6 +487,38 @@ def apply_review_decisions(
     return result
 
 
+HUMAN_TRUTH_KINDS: frozenset[str] = frozenset({"IDENTITY_BACKGROUND", "APPEARANCE"})
+
+
+def append_human_truth(
+    ledger: PersonaFactLedger,
+    *,
+    kind: FactKind,
+    predicate: Predicate,
+    statement_zh: str,
+    render: RenderSlot,
+    authority: HumanAuthorityEvidence,
+    recorded_at: str,
+) -> PersonaFactLedger:
+    """Append one ACCEPTED row for a fact about the host that 维护者 (the reviewer) states himself."""
+    if kind not in HUMAN_TRUTH_KINDS:
+        raise ValueError("Kind is not a human-only persona truth kind")
+    _validate_ledger(ledger)
+    _validate_authority(authority)
+    if (not statement_zh.strip() or statement_zh.lstrip(" \t-*#").startswith(PROJECTION_RESERVED_LINE_PREFIXES)
+            or "\n" in statement_zh or "\r" in statement_zh or "<!--" in statement_zh):
+        raise ValueError("Reserved, empty or multiline human projection")
+    claim = FactClaim(kind, predicate, statement_zh, None, "AFFIRM", TemporalScope(True, None, None))
+    fingerprint = claim_fingerprint(claim)
+    if any(row.claim_fingerprint == fingerprint and row.status == "ACCEPTED" for row in current_revisions(ledger)):
+        raise ValueError("Fact is already accepted")
+    row = PersonaFactRevision("pf-" + fingerprint, "r1", "ACCEPTED", claim, fingerprint, statement_zh, render,
+                              (authority,), "ATOMIC_HUMAN_PERSONA_TRUTH", None, authority, None, recorded_at)
+    updated = replace(ledger, revisions=(*ledger.revisions, row))
+    verify_append_only(ledger, updated)
+    return updated
+
+
 def verify_append_only(previous: PersonaFactLedger, current: PersonaFactLedger) -> None:
     """Validate unchanged prefixes and every new revision's transition."""
     _validate_ledger(previous)

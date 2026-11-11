@@ -124,6 +124,10 @@ def test_change_between_stat_and_open_or_during_read_is_rejected(tmp_path, monke
             if raw and not done:
                 done = True
                 path.write_bytes(b"new-data")
+                # same inode and same size: only the timestamps can show it; a coarse-clock filesystem may not tick
+                # between the two writes, so the rewrite carries its own later mtime
+                stamp = os.stat(path).st_mtime_ns + 1_000_000_000
+                os.utime(path, ns=(stamp, stamp))
             return raw
 
         monkeypatch.setattr(os, "read", read)

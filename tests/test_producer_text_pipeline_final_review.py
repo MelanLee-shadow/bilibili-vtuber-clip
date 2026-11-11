@@ -1585,7 +1585,17 @@ def test_replay_delivery_review_carries_source_only_boundary_witness():
     )
 
 
-
+def test_exact_delivery_review_callers_propagate_their_recording_date():
+    qixi_tree = ast.parse(inspect.getsource(qixi_refresh.refresh_terminal_evidence))
+    qixi_call = next(
+        node
+        for node in ast.walk(qixi_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "exact_delivery_correction_audit"
+    )
+    date_keyword = next(keyword for keyword in qixi_call.keywords if keyword.arg == "recording_date")
+    assert ast.unparse(date_keyword.value) == "RECORDING_DATE"
 
 
 def test_final_boundary_review_indexes_exact_post_authority_grid():

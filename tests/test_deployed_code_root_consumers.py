@@ -66,10 +66,20 @@ SITES = [
 ]
 
 
-@pytest.mark.parametrize("topology", ["version", "legacy"])
+@pytest.mark.parametrize("topology", ["version", "legacy", "staged"])
 @pytest.mark.parametrize("site", SITES)
 def test_consumer_reads_selected_tree(tmp_path, monkeypatch, site, topology):
     runtime, expected = tree(tmp_path, topology)
+    if topology == "staged":
+        (expected / "DEPLOYED_MANIFEST.json").write_text("{}")
+        (runtime / "current").unlink()
+        # An explicit CLI/import lease chooses this physical version, while
+        # the live pointer names another complete version.
+        other = runtime / "versions" / ("c" * 40) / "repo"
+        other.mkdir(parents=True)
+        (other / "DEPLOYED_COMMIT").write_text("c" * 40 + "\n")
+        (runtime / "current").symlink_to("versions/" + "c" * 40)
+        monkeypatch.setenv("AUTOSLICE_RUNTIME_VERSION_ROOT", str(expected))
     plan = SimpleNamespace(candidate_id="cid", date=DATE, record_path=tmp_path / "record")
 
     def invoke():
@@ -173,7 +183,7 @@ def test_consumer_reads_selected_tree(tmp_path, monkeypatch, site, topology):
         invoke()
     selected = caught.value.args[0]
     assert selected == expected, f"{site}: selected {selected}, expected {expected}"
-    assert (selected / "TREE").read_text() == ("version" if topology == "version" else "stale")
+    assert (selected / "TREE").read_text() == ("stale" if topology == "legacy" else "version")
 
 
 

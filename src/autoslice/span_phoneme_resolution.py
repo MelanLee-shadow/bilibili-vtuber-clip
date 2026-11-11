@@ -8,6 +8,7 @@ finding. It does not make the rest of the utterance correct or authorize release
 from __future__ import annotations
 
 from .validation_memo import memoized_validation
+from .continuation_subchecks import session_cached_validation
 
 from .review_errors import ContractRejection
 
@@ -337,12 +338,16 @@ def _blind_source_is_clip_recording(request: Mapping, artifacts: Mapping, media_
 
 
 @cold_input
+@session_cached_validation('span.observation_catalogue', cache_result=lambda result: not result[1])
 def observation_catalogue(request: Mapping, witness: Mapping) -> tuple[list[dict], list[dict]]:
     """Revalidate native target observations, retaining all conflicting ones.
 
     Range/source-only contexts are never relabelled as exact cue observations.
     The native transcript owner and native original-language owner remain the
     validators; a model label, candidate string or hash alone is insufficient.
+    Only fully validated catalogues are reused within the ordinary cold-read
+    session, under current-content and original-file dependency checks. Invalid
+    rows may describe missing material, so those results are never remembered.
     """
     from src.autoslice.acoustic_witness_adjudication import (
         build_witness_request,
@@ -1470,10 +1475,21 @@ def _validate_persisted_scope(node):
 @cold_input
 def validate_persisted_judge_scopes(value: object) -> int:
     """Replay per-judge outcomes from persisted review/typed history, no models."""
+    from src.autoslice.span_judgment_history import validate_history
+
     seen = set()
+    # The ordinary evidence reader preserves shared immutable history. Validate
+    # each container once per read, not once per logical JSON occurrence. Keep
+    # the objects alive (including Mapping implementations), and mark only after
+    # traversal so a cycle still fails instead of becoming a trusted shortcut.
+    visited = {}
     def visit(node):
+        if not isinstance(node, (Mapping, list)):
+            return
+        identity = id(node)
+        if identity in visited:
+            return
         if isinstance(node, Mapping):
-            from src.autoslice.span_judgment_history import validate_history
             validate_history(node)
             outcome = node.get("span_compilation")
             if node.get("span_compilation_required") is True and outcome is None:
@@ -1491,5 +1507,6 @@ def validate_persisted_judge_scopes(value: object) -> int:
         elif isinstance(node, list):
             for item in node:
                 visit(item)
+        visited[identity] = node
     visit(value)
     return len(seen)

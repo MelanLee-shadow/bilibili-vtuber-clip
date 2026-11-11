@@ -10,6 +10,7 @@ from copy import deepcopy
 from typing import Any
 
 from src.autoslice.acoustic_witness_adjudication import build_witness_request
+from src.autoslice.canonical_json_hash import canonical_sha256
 from src.autoslice.acoustic_witness_protocol import (
     BLIND_PINYIN_PROTOCOL,
     CANDIDATE_BLIND_TRANSCRIPT_PROTOCOL,
@@ -99,14 +100,7 @@ def _sha_text(text: str) -> str:
 
 
 def _sha_json(value: object) -> str:
-    return hashlib.sha256(
-        json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
+    return canonical_sha256(value, allow_nan=True)
 
 
 def _digest(value: object) -> str:

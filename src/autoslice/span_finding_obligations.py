@@ -1,13 +1,14 @@
 """Replay outside-span questions from actual typed repair history.
 
 This is not a second review system: questions return to the ordinary finding
-agenda, and only ordinary typed repairs or audio-supported CURRENT close them.
+agenda, and only ordinary typed repairs or the shared release-resolved KEEP
+contract close them.
 Omitting a question in a fresh CLEAN response never resolves it.
 """
 
 from __future__ import annotations
 
-from .review_evidence_store import cold_input
+from .review_evidence_store import cold_input, persisted_upgrade, persisted_view
 from collections.abc import Mapping
 from copy import deepcopy
 
@@ -22,6 +23,12 @@ from src.autoslice.span_phoneme_resolution import (
 UNAPPLIED_FIELD = "span_unapplied_questions"
 REVIEW_FIELD = "span_obligation_review"
 ORIGIN_FIELD = "origin_span_obligation"
+# The historical writer's closed row shape. A future writer field must get
+# its own upgrade; historical replay must not silently inherit it.
+_PRE_CLOCK_STATE_FIELDS = frozenset({
+    "obligation_id", "cue_index", "current_cue", "base_text_sha256",
+    "codepoint_span", "cue_window_ms", "current_text", "status", "origin", "resolution",
+})
 
 
 @cold_input
@@ -107,13 +114,14 @@ def _closed_set_current_has_full_utterance_support(adjudication) -> bool:
         return False
 
 
-def _valid_closing_adjudication(adjudication, *, before, after, window, keep=False):
+def _valid_closing_adjudication(adjudication, *, before, after, window, keep=False,
+                                finding=None, reviewed_srt_sha256=None):
     if not isinstance(adjudication, Mapping):
         return False
     request = adjudication.get("request")
     witness_judge = adjudication.get("witness_judge")
     judge = witness_judge.get("judge") if isinstance(witness_judge, Mapping) else None
-    if not isinstance(request, Mapping) or not isinstance(judge, Mapping):
+    if not isinstance(request, Mapping):
         return False
     try:
         request_sha = digest({k: v for k, v in request.items() if k != "request_sha256"})
@@ -127,19 +135,30 @@ def _valid_closing_adjudication(adjudication, *, before, after, window, keep=Fal
         or request.get("base_text_sha256") != text_sha(before)
         or [request.get("matched_start_ms"), request.get("matched_end_ms")] != list(window)
         or request_sha != request.get("request_sha256")
-        or judge.get("status") != "JUDGED"
-        or judge.get("check_request_sha256") != request.get("request_sha256")
     ):
         return False
     if keep:
+        from src.autoslice.final_review_contract import is_release_resolved_keep, SUB18_KEEP_BRANCH
+
+        # C needs the original row's typed meaning/risk proof; do not infer it
+        # from an adjudication label or manufacture an audio witness for it.
+        row = dict(finding) if isinstance(finding, Mapping) else {
+            "base_text_sha256": text_sha(before),
+        }
+        row["exact_release_adjudication"] = adjudication
+        if row.get("base_text_sha256") != text_sha(before) or not is_release_resolved_keep(row):
+            return False
+        risk = row.get("current_content_risk")
+        if (adjudication.get("policy_branch") == SUB18_KEEP_BRANCH
+                and reviewed_srt_sha256 is not None and isinstance(risk, Mapping)
+                and str(risk.get("reviewed_srt_sha256")).removeprefix("sha256:")
+                != str(reviewed_srt_sha256).removeprefix("sha256:")):
+            return False
         if adjudication.get('terminal_review'):
-            # The terminal B producer carries its real observations in the
-            # sealed terminal request, rather than fabricating a legacy
-            # narrow verdict. Consume the same complete-CURRENT contract as
-            # G. A C meaning-equivalent keep does not settle an independent
-            # audible span obligation.
-            from src.autoslice.final_review_contract import complete_audio_keep_current_ruling
-            return complete_audio_keep_current_ruling(adjudication, timing_immutable=True)
+            return True
+        from src.autoslice.final_review_contract import is_sub18_context_meaning_equivalent_keep
+        if is_sub18_context_meaning_equivalent_keep(row):
+            return True
         from src.autoslice.span_phoneme_resolution import observation_catalogue
 
         if not _closed_set_current_has_full_utterance_support(adjudication):
@@ -157,6 +176,9 @@ def _valid_closing_adjudication(adjudication, *, before, after, window, keep=Fal
             and bool(rows)
             and not invalid
         )
+    if (not isinstance(judge, Mapping) or judge.get("status") != "JUDGED"
+            or judge.get("check_request_sha256") != request.get("request_sha256")):
+        return False
     if (
         adjudication.get("repaired") is not True
         or request.get("proposed_cue") != after
@@ -247,9 +269,28 @@ def _repair_source_offset(repair, span_value):
 
 
 def derive_obligations(
-    repairs: list[Mapping], closures: list[Mapping] = (), unapplied: list[Mapping] = ()
+    repairs: list[Mapping], closures: list[Mapping] = (), unapplied: list[Mapping] = (),
+    *, reviewed_srt_sha256: str | None = None,
 ) -> list[dict]:
+    return _derive_obligations(repairs, closures, unapplied,
+                               reviewed_srt_sha256=reviewed_srt_sha256)
+
+
+def _derive_obligations(repairs, closures=(), unapplied=(), *, legacy=False,
+                        reviewed_srt_sha256=None):
+    """Replay current meaning or the exact pre-clock/pre-reanchor v1 form.
+
+    Legacy replay is only a recognizer for sealed historical rows. It is never
+    used to decide release, create findings, or write a new review.
+    """
     from src.autoslice.span_phoneme_resolution import validate_question_packet
+
+    def born(value, after, *, applied):
+        rows = _born_questions(value, after, applied=applied)
+        if legacy:
+            rows = {oid: {key: value for key, value in row.items()
+                          if key in _PRE_CLOCK_STATE_FIELDS} for oid, row in rows.items()}
+        return rows
 
     births = {}
     for record in unapplied:
@@ -265,7 +306,7 @@ def derive_obligations(
     pending = {}
     for number in range(len(repairs) + 1):
         for value in births.get(number, []):
-            pending.update(_born_questions(value, value["request"]["current_cue"], applied=False))
+            pending.update(born(value, value["request"]["current_cue"], applied=False))
         if number == len(repairs):
             break
         repair = repairs[number]
@@ -275,7 +316,7 @@ def derive_obligations(
         index = repair.get("cue_index")
         window = [repair.get("matched_start_ms"), repair.get("matched_end_ms")]
         value = validate_span_repair(repair)
-        offset = _repair_source_offset(repair, value)
+        offset = None if legacy else _repair_source_offset(repair, value)
         change_start, change_end, delta = _difference(before, after)
         for oid, row in pending.items():
             if row["status"] == "RESOLVED":
@@ -323,7 +364,7 @@ def derive_obligations(
                 # Its sealed before/after and exact physical window permit a
                 # fresh whole-current-cue question, not guessed word alignment
                 # or a release. Retain the original question and repair edge.
-                if not after.strip() or row["status"] == "LOCATION_STALE":
+                if legacy or not after.strip() or row["status"] == "LOCATION_STALE":
                     row["status"] = "LOCATION_STALE"
                     continue
                 row["codepoint_span"] = [0, len(after)]
@@ -335,11 +376,12 @@ def derive_obligations(
                 })
             row["current_cue"] = after
             row["base_text_sha256"] = text_sha(after)
-            a, b = row["codepoint_span"]
-            row["current_text"] = after[a:b]
+            if not legacy:
+                a, b = row["codepoint_span"]
+                row["current_text"] = after[a:b]
         if value is None:
             continue
-        pending.update(_born_questions(value, after, applied=True))
+        pending.update(born(value, after, applied=True))
     for closure in closures:
         oid = closure.get("obligation_id")
         if oid not in pending:
@@ -347,8 +389,35 @@ def derive_obligations(
         row = pending[oid]
         adjudication = closure.get("adjudication")
         request = adjudication.get("request") if isinstance(adjudication, Mapping) else None
+        from src.autoslice.final_review_contract import SUB18_KEEP_BRANCH
+        finding = closure.get("finding")
+        risk = finding.get("current_content_risk") if isinstance(finding, Mapping) else None
+        historical = (not legacy and reviewed_srt_sha256 is not None
+                      and isinstance(adjudication, Mapping)
+                      and adjudication.get("policy_branch") == SUB18_KEEP_BRANCH
+                      and isinstance(risk, Mapping)
+                      and str(risk.get("reviewed_srt_sha256")).removeprefix("sha256:")
+                      != str(reviewed_srt_sha256).removeprefix("sha256:"))
+        if historical:
+            # Verify the original ruling on its own terms before retaining it
+            # as history. It cannot close the question on a different SRT.
+            span = closure.get("codepoint_span")
+            before = request.get("current_cue") if isinstance(request, Mapping) else None
+            window = ([request.get("matched_start_ms"), request.get("matched_end_ms")]
+                      if isinstance(request, Mapping) else [])
+            offset = request.get("source_media_timeline_offset_ms", 0) if isinstance(request, Mapping) else None
+            if (not isinstance(before, str) or not isinstance(span, list) or len(span) != 2
+                    or any(type(p) is not int for p in span)
+                    or not 0 <= span[0] <= span[1] <= len(before)
+                    or type(offset) is not int or any(type(p) is not int for p in window)
+                    or [p + offset for p in window] != _physical_window(row)
+                    or not _valid_closing_adjudication(
+                        adjudication, before=before, after=before, window=window,
+                        keep=True, finding=finding)):
+                raise ValueError("SPAN_KEEP_CLOSURE_INVALID")
+            continue
         window = row["cue_window_ms"]
-        if isinstance(request, Mapping):
+        if not legacy and isinstance(request, Mapping):
             candidate_window = [request.get("matched_start_ms"), request.get("matched_end_ms")]
             offset = request.get("source_media_timeline_offset_ms")
             if (type(offset) is int and all(type(p) is int for p in candidate_window)
@@ -363,12 +432,15 @@ def derive_obligations(
                 after=row["current_cue"],
                 window=window,
                 keep=True,
+                finding=closure.get("finding"),
             )
         ):
             raise ValueError("SPAN_KEEP_CLOSURE_INVALID")
         row["status"] = "RESOLVED"
         row["resolution"] = {
-            "kind": "ORDINARY_AUDIO_KEEP_CURRENT",
+            "kind": ("ORDINARY_RELEASE_RESOLVED_KEEP"
+                     if adjudication.get("sub18_context_meaning_equivalent_keep")
+                     else "ORDINARY_AUDIO_KEEP_CURRENT"),
             "closure_sha256": digest(closure),
         }
     return list(pending.values())
@@ -389,7 +461,7 @@ def _finding(row: Mapping) -> dict:
     if "source_offset_ms" in row:
         origin["source_offset_ms"] = row["source_offset_ms"]
         origin["physical_cue_window_ms"] = _physical_window(row)
-    return {
+    finding = {
         "cue": row["cue_index"],
         "cue_index": row["cue_index"],
         "base_text_sha256": row["base_text_sha256"],
@@ -410,6 +482,134 @@ def _finding(row: Mapping) -> dict:
         "span_obligation_status": row["status"],
         "mutation_authorized": False,
     }
+    from .finding_lifecycle import annotate
+    return annotate(finding)
+
+
+def _reviewed_adjudication(row):
+    return (row.get("exact_release_adjudication") or row.get("context_audio_adjudication")
+            or (row.get("span_obligation_recovery") or {}).get("latest_adjudication"))
+
+
+def _recovery_view(row):
+    saved = row.get("span_obligation_recovery")
+    if not isinstance(saved, Mapping):
+        return False
+    actual = row.get("exact_release_adjudication") or row.get("context_audio_adjudication")
+    return not actual or saved.get("latest_adjudication_sha256") == digest(actual)
+
+
+def _reviewed_rows(authority):
+    for review in (authority.get("final_review_audit") or {}, authority):
+        for regenerated in (True, False):
+            for row in [*(review.get("resolved_findings") or []),
+                        *(review.get("unresolved_findings_disclosed") or []),
+                        *(review.get("findings") or [])]:
+                if (isinstance(row, Mapping) and _reviewed_adjudication(row)
+                        and _recovery_view(row) == regenerated):
+                    yield row
+
+
+def _retain_review(pending, reviewed, *, reviewed_srt_sha256):
+    """Keep the latest real answer, without moving its authority to new text."""
+    from .finding_lifecycle import annotate, classify
+
+    origin = pending[ORIGIN_FIELD]
+    ids = set(origin["obligation_ids"])
+    generated = pending
+    for prior in reviewed:
+        old = prior.get(ORIGIN_FIELD) or {}
+        if not ids.intersection({old.get("obligation_id"), *(old.get("obligation_ids") or [])}):
+            continue
+        adj = _reviewed_adjudication(prior)
+        if not (prior.get("exact_release_adjudication") or prior.get("context_audio_adjudication")):
+            # A reanchored row intentionally has no current adjudication. Its
+            # retained answer is still history on the next cold resume.
+            pending = dict(generated)
+            pending.pop("lifecycle", None)
+            pending["span_obligation_recovery"] = deepcopy(prior["span_obligation_recovery"])
+            pending = annotate(pending)
+            continue
+        request = adj.get("request") if isinstance(adj, Mapping) else None
+        if not isinstance(request, Mapping):
+            bound = False
+        else:
+            bound = (request.get("base_text_sha256") == pending["base_text_sha256"]
+                     and [request.get("matched_start_ms"), request.get("matched_end_ms")]
+                     == origin["cue_window_ms"]
+                     and request.get("source_media_timeline_offset_ms", 0)
+                     == origin.get("source_offset_ms", 0)
+                     and request.get("request_sha256") == digest(
+                         {k: v for k, v in request.items() if k != "request_sha256"})
+                     and pending["span_obligation_status"] != "LOCATION_STALE")
+        risk = prior.get("current_content_risk")
+        srt_drift = (isinstance(risk, Mapping)
+                     and str(risk.get("reviewed_srt_sha256")).removeprefix("sha256:")
+                     != reviewed_srt_sha256)
+        if srt_drift:
+            bound = False
+        history = {
+            "latest_finding_sha256": ((prior.get("span_obligation_recovery") or {})
+                                       .get("latest_finding_sha256") if _recovery_view(prior)
+                                       else digest(prior)),
+            "latest_adjudication_sha256": digest(adj),
+            "latest_adjudication": deepcopy(adj),
+            "reason_code": ("SPAN_OBLIGATION_CURRENT_SRT_DRIFT" if srt_drift else
+                            "SPAN_RELEASE_RESOLVED_KEEP_REJECTED" if bound else
+                            "SPAN_OBLIGATION_ADJUDICATION_BINDING_MISMATCH"),
+            "owner": "exact_final_terminal_funnel.terminal_check",
+        }
+        previous_view = classify({k: v for k, v in prior.items()
+                                  if k not in {"lifecycle", "span_obligation_recovery"}})
+        if bound:
+            detail = previous_view.get("detail") or {}
+            history["reason_code"] = (detail.get("validation_error")
+                                      or detail.get("reason_code")
+                                      or "SPAN_RELEASE_RESOLVED_KEEP_REJECTED")
+            if previous_view["state"] == "EDIT_REVIEW":
+                history.update(reason_code="SPAN_TYPED_REPAIR_NOT_APPLIED",
+                               owner="producer_package_finalization._apply_exact_final_cpa_repairs")
+        if bound:
+            # Retain risk/meaning/candidate evidence with the actual answer.
+            # The regenerated location and unresolved status remain decisive.
+            pending = {**prior, **generated, "exact_release_adjudication": deepcopy(adj)}
+        else:
+            pending = dict(generated)
+        pending.pop("lifecycle", None)
+        pending["span_obligation_recovery"] = history
+        pending = annotate(pending)
+    return pending
+
+
+def _resolved_generated_finding(finding, resolved):
+    """Retract only an old derived agenda row whose bound questions closed."""
+    if (finding.get("span_obligation_status") != "UNRESOLVED"
+            or finding.get("mutation_authorized") is not False
+            or finding.get("content_risk") is not None
+            or finding.get("proposed_full_cue")
+            or finding.get("suggestion")
+            or finding.get("exact_release_adjudication")
+            or finding.get("context_audio_adjudication")):
+        return False
+    origin = finding.get(ORIGIN_FIELD) or {}
+    ids = set(origin.get("obligation_ids") or [origin.get("obligation_id")])
+    window = origin.get("cue_window_ms")
+    span = origin.get("codepoint_span")
+    if (not ids or not isinstance(window, list) or len(window) != 2
+            or not isinstance(span, list) or len(span) != 2
+            or [finding.get("span_start_codepoint"), finding.get("span_end_codepoint")] != span):
+        return False
+    return all(oid in resolved
+        and finding.get("base_text_sha256") == origin.get("base_text_sha256")
+            == resolved[oid]["base_text_sha256"]
+        # Older generated rows omitted the source offset. Their unchanged
+        # delivery window inherits its clock from this validated birth ID;
+        # an explicitly supplied offset must still match the physical window.
+        and (window == resolved[oid]["cue_window_ms"] if "source_offset_ms" not in origin
+             else [p + origin["source_offset_ms"] for p in window] == _physical_window(resolved[oid]))
+        and span[0] <= resolved[oid]["codepoint_span"][0]
+            <= resolved[oid]["codepoint_span"][1] <= span[1]
+        for oid in ids)
 
 
 @cold_input
@@ -421,7 +621,8 @@ def pending_findings(srt_text: str, authority: Mapping, *, timeline_offset_ms=0)
     if not any(FIELD in r for r in repairs) and not unapplied:
         return []
     closures = authority.get("span_obligation_closures", [])
-    rows = derive_obligations(repairs, closures, unapplied)
+    rows = derive_obligations(repairs, closures, unapplied,
+                              reviewed_srt_sha256=text_sha(srt_text))
     grouped = []
     for row in sorted(
         (r for r in rows if r["status"] != "RESOLVED"),
@@ -465,7 +666,8 @@ def pending_findings(srt_text: str, authority: Mapping, *, timeline_offset_ms=0)
             row["cue_window_ms"] = [cue.start_ms, cue.end_ms]
             if timeline_offset_ms or "source_offset_ms" in row:
                 row["source_offset_ms"] = timeline_offset_ms
-        result.append(_finding(row))
+        result.append(_retain_review(_finding(row), _reviewed_rows(authority),
+                                     reviewed_srt_sha256=text_sha(srt_text)))
     return result
 
 
@@ -523,6 +725,24 @@ def merge_pending(srt_text: str, authority: Mapping, findings: list, *, timeline
                 matched = row
                 break
         if matched is not None and isinstance(matched, dict):
+            if pending.get("span_obligation_recovery") and _recovery_view(matched):
+                # This is a previously regenerated agenda row, not a newer
+                # ruling. Replace its old recovery view with the latest one.
+                matched.update(pending)
+            elif pending.get("span_obligation_recovery") and not (
+                matched.get("exact_release_adjudication") or matched.get("context_audio_adjudication")
+            ):
+                matched.update({**pending, **matched,
+                                "span_obligation_recovery": pending["span_obligation_recovery"],
+                                "lifecycle": pending["lifecycle"]})
+            elif (pending.get("span_obligation_recovery")
+                    and pending["span_obligation_recovery"]["latest_adjudication_sha256"]
+                    == digest(_reviewed_adjudication(matched))):
+                # A fresh real answer may inherit the previous recovery tag.
+                # Update its derived view without replacing that new answer.
+                from .finding_lifecycle import annotate
+                matched["span_obligation_recovery"] = deepcopy(pending["span_obligation_recovery"])
+                matched.update(annotate(matched))
             matched[ORIGIN_FIELD] = deepcopy(origin)
             matched.setdefault("span_start_codepoint", pending["span_start_codepoint"])
             matched.setdefault("span_end_codepoint", pending["span_end_codepoint"])
@@ -569,7 +789,8 @@ def enforce_review(srt_text: str, authority: Mapping, audit: dict, *, timeline_o
     closures = list(authority.get("span_obligation_closures", []))
     unclosed = {
         r["obligation_id"]: r
-        for r in derive_obligations(repairs, closures, unapplied)
+        for r in derive_obligations(repairs, closures, unapplied,
+                                    reviewed_srt_sha256=text_sha(srt_text))
         if r["status"] != "RESOLVED"
     }
     for finding in [
@@ -592,12 +813,15 @@ def enforce_review(srt_text: str, authority: Mapping, audit: dict, *, timeline_o
                 after=row["current_cue"],
                 window=[p - timeline_offset_ms for p in _physical_window(row)],
                 keep=True,
+                finding=finding,
+                reviewed_srt_sha256=text_sha(srt_text),
             ):
                 closures.append(
                     {
                         "obligation_id": oid,
                         "codepoint_span": row["codepoint_span"],
                         "adjudication": adj,
+                        "finding": deepcopy(finding),
                     }
                 )
                 unclosed.pop(oid)
@@ -605,10 +829,17 @@ def enforce_review(srt_text: str, authority: Mapping, audit: dict, *, timeline_o
         **dict(authority),
         "span_obligation_closures": closures,
         UNAPPLIED_FIELD: unapplied,
+        "final_review_audit": {"findings": [*_reviewed_rows(authority), *_reviewed_rows(audit)]},
     }
     audit["findings"] = merge_pending(srt_text, effective, list(audit.get("findings") or []),
                                      timeline_offset_ms=timeline_offset_ms)
-    states = derive_obligations(repairs, closures, unapplied)
+    states = derive_obligations(repairs, closures, unapplied,
+                                reviewed_srt_sha256=text_sha(srt_text))
+    resolved = {row["obligation_id"]: row for row in states if row["status"] == "RESOLVED"}
+    prior_count = len(audit["findings"])
+    audit["findings"] = [row for row in audit["findings"]
+                         if not _resolved_generated_finding(row, resolved)]
+    retracted = prior_count != len(audit["findings"])
     proof = {
         "schema_version": "subtitle-span-obligation-review.v1",
         "srt_sha256": text_sha(srt_text),
@@ -627,10 +858,14 @@ def enforce_review(srt_text: str, authority: Mapping, audit: dict, *, timeline_o
         audit["reason_codes"] = list(
             dict.fromkeys([*(audit.get("reason_codes") or []), REVIEW_PENDING])
         )
+    if retracted:
+        from .finding_lifecycle import review_outcome
+        audit.update(review_outcome(audit, terminal=bool(audit.get("terminal_funnel"))))
     return audit
 
 
-def _normalized_persisted_states(proof):
+@persisted_upgrade("span-obligation-states", "subtitle-span-obligation-review.v1")
+def _upgrade_state_clock(stored, proof):
     """Read pre-clock states using their own sealed birth packet's clock.
 
     The proof's original bytes and receipt remain authoritative. Only an
@@ -647,7 +882,6 @@ def _normalized_persisted_states(proof):
     for record in proof.get(UNAPPLIED_FIELD, []):
         value = validate_question_packet(record.get("packet"))
         clocks[value["receipt_sha256"]] = value["binding"]["source_offset_ms"]
-    stored = proof.get("states")
     if not isinstance(stored, list):
         return stored
     normalized = []
@@ -662,8 +896,33 @@ def _normalized_persisted_states(proof):
     return normalized
 
 
+@persisted_upgrade("span-obligation-states", "subtitle-span-obligation-review.v1")
+def _upgrade_pre_reanchor_states(stored, proof):
+    """Recognize the entire old projection before replaying current meaning.
+
+    No field is ignored: an explicit mismatch, extra field, missing birth
+    material or tampered legacy status cannot qualify. Original questions and
+    seals survive, and current release/pending checks still run afterwards.
+    """
+    if not isinstance(stored, list):
+        return stored
+    try:
+        old = _derive_obligations(proof["repairs"], proof["closures"],
+                                  proof.get(UNAPPLIED_FIELD, []), legacy=True)
+    except ValueError:
+        return stored
+    if stored != _upgrade_state_clock(old, proof):
+        return stored
+    current = _derive_obligations(proof["repairs"], proof["closures"],
+                                  proof.get(UNAPPLIED_FIELD, []),
+                                  reviewed_srt_sha256=proof.get("srt_sha256"))
+    fields = _PRE_CLOCK_STATE_FIELDS | {"source_offset_ms", "reanchor_chain"}
+    return [{key: value for key, value in row.items() if key in fields} for row in current]
+
+
 @cold_input
 def validate_release_obligations(audit: Mapping) -> None:
+    from .final_review_contract import SUB18_KEEP_BRANCH
     repairs = repair_chain(audit)
     proof = audit.get(REVIEW_FIELD)
     if proof is None:
@@ -680,8 +939,27 @@ def validate_release_obligations(audit: Mapping) -> None:
         or (repairs and repairs != proof.get("repairs"))
     ):
         raise ValueError("SPAN_OBLIGATION_REVIEW_DRIFT")
-    states = derive_obligations(proof["repairs"], proof["closures"], proof.get(UNAPPLIED_FIELD, []))
-    if states != _normalized_persisted_states(proof):
+    states = derive_obligations(proof["repairs"], proof["closures"],
+                                proof.get(UNAPPLIED_FIELD, []),
+                                reviewed_srt_sha256=proof["srt_sha256"])
+    stored = proof.get("states")
+    stale_closure_hashes = set()
+    for closure in proof["closures"]:
+        finding = closure.get("finding") or {}
+        risk = finding.get("current_content_risk") if isinstance(finding, Mapping) else None
+        if ((closure.get("adjudication") or {}).get("policy_branch") == SUB18_KEEP_BRANCH
+                and isinstance(risk, Mapping)
+                and str(risk.get("reviewed_srt_sha256")).removeprefix("sha256:")
+                != proof["srt_sha256"]):
+            stale_closure_hashes.add(digest(closure))
+    if isinstance(stored, list) and any(
+        isinstance(row, Mapping) and row.get("status") == "RESOLVED"
+        and isinstance(row.get("resolution"), Mapping)
+        and row["resolution"].get("closure_sha256") in stale_closure_hashes
+        for row in stored
+    ):
+        raise ValueError("SPAN_KEEP_CLOSURE_CURRENT_SRT_DRIFT")
+    if states != stored and states != persisted_view("span-obligation-states", proof, stored):
         raise ValueError("SPAN_OBLIGATION_STATES_DRIFT")
     if any(r["status"] != "RESOLVED" for r in states):
         from .finding_lifecycle import REVIEW_PENDING

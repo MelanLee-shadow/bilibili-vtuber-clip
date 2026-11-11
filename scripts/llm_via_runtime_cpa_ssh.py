@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -49,6 +50,7 @@ repo = deployed_code_root(runtime)
 sys.path.insert(0, str(repo))
 from src.autoslice.llm_client import runtime_cpa_command_environment
 from src.autoslice.provider_slots import runtime_provider_slot
+from src.autoslice.infra_retry_policy import CPA_TEXT_MAX_ATTEMPTS
 from src.autoslice.cpa_model_ladder import cpa_call_timeout_seconds
 
 
@@ -87,6 +89,16 @@ diagnostics = {
     "provider_credential_source": str(runtime / "cpa.env"),
 }
 wrapper = repo / "scripts" / "llm_via_cpa.sh"
+text_context=request.get('text_request_context') or {}
+for name,value in text_context.items():
+    if (name=='AUTOSLICE_CPA_TEXT_ATTEMPT' and isinstance(value,str) and value.isdigit()
+            and 1<=int(value)<=CPA_TEXT_MAX_ATTEMPTS):
+        env[name]=value
+    elif (name=='AUTOSLICE_CPA_LOGICAL_REQUEST_ID' and isinstance(value,str) and len(value)==64
+            and all(c in '0123456789abcdef' for c in value)):
+        env[name]=value
+    else:
+        raise ValueError('invalid CPA text request context')
 with tempfile.TemporaryDirectory(prefix="runtime_cpa_review_") as tmp:
     prompt_file = Path(tmp) / "prompt.txt"
     completion_file = Path(tmp) / "completion.txt"
@@ -223,6 +235,10 @@ def run_bridge(
         "attempts": attempts,
         "response_format": load_response_format(prompt_file),
     }
+    text_context={name:os.environ[name] for name in (
+        'AUTOSLICE_CPA_TEXT_ATTEMPT','AUTOSLICE_CPA_LOGICAL_REQUEST_ID') if name in os.environ}
+    if text_context:
+        request['text_request_context']=text_context
     if exact_model:
         from src.autoslice.cpa_model_ladder import resolve_models
         resolve_models(model, exact_model=True)

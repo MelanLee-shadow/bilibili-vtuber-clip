@@ -7,6 +7,8 @@ import pytest
 
 from scripts import gemini_slice_jingting as jingting
 
+pytestmark = pytest.mark.usefixtures("legacy_gemini_transport")
+
 
 def _write(path: Path, content: str | bytes) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -13,7 +13,7 @@ from src.autoslice.argon_escalation_contract import canonical, sha
 
 # These fixtures already exercise the actual ordinary producer factory, native
 # manifest, public context adjudicator, raw response and normal typed consumers.
-from tests.test_argon_consumer_integration import offline, scene  # noqa: F401
+pytest_plugins = ["tests.test_argon_consumer_integration"]
 
 
 @pytest.fixture

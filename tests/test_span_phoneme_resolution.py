@@ -234,7 +234,7 @@ def model_for(
 
 
 def run_case(
-    *, text="你想，甲0呀", old="甲0", new="甲零", verifier=None, model=None, finding_extra=None, clip_context=None
+    *, text="你想，甲0呀", old="甲0", new="甲零", verifier=None, model=None, finding_extra=None
 ):
     verifier = verifier or Observers()
     model = model or model_for()
@@ -251,7 +251,7 @@ def run_case(
         srt(text),
         finding,
         entity_verifier=verifier,
-        judge_llm_call=model, clip_context=clip_context,
+        judge_llm_call=model,
         require_complete_utterance_support=True,
     )
     return output, audit, verifier, model, finding

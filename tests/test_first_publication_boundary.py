@@ -12,10 +12,15 @@ from src.autoslice.producer_boundary_resolution import _manual_end_contract
 from src.autoslice.producer_boundary_owner_contract import freeze_required_boundary_owner_contract
 from src.autoslice.recovery_title_authority import validate_recovery_publication_authority
 from src.autoslice.source_subtitle_truth import candidate_boundary_owner_scope
-from tests.test_publication_reconciliation import (
-    CANDIDATE, DATE, _entry, _new_bv_fixture, _reconcile_new, _sha, _write_json,
+from tests.test_publication_reconciliation import (  # noqa: F401  (first_publication_registries: fixture)
+    CANDIDATE, DATE, _entry, _new_bv_fixture, _reconcile_new, _registry_kw, _sha, _write_json,
+    first_publication_registries,
 )
 from src.autoslice.publication_reconciliation import authority_sidecar_path
+
+# Every test builds a published fixture and goes through the deep validation chain
+# (recovery authority / boundary resolver), which reads the default registry: use this test's tmp one.
+pytestmark = pytest.mark.usefixtures("first_publication_registries")
 
 
 def published_fixture(tmp_path):
@@ -95,14 +100,15 @@ def published_fixture(tmp_path):
 def recall_authority(fixture):
     return authority_module.build_new_bv_repair_authority(
         fixture["publication"], candidate_id=CANDIDATE,
-        title=fixture["spec"]["given_title"], published_recall_anchor=True,
+        title=fixture["spec"]["given_title"], published_recall_anchor=True, **_registry_kw(fixture),
     )
 
 
 def test_existing_title_only_authority_stays_title_only(tmp_path):
     fixture = published_fixture(tmp_path)
     original = authority_module.build_new_bv_repair_authority(
-        fixture["publication"], candidate_id=CANDIDATE, title=fixture["spec"]["given_title"])
+        fixture["publication"], candidate_id=CANDIDATE, title=fixture["spec"]["given_title"],
+        **_registry_kw(fixture))
     assert "boundary_end_mode" not in original
     assert "required_given_end_ms" not in original
 

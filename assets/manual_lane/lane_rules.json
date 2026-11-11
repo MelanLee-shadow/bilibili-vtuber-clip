@@ -1,0 +1,271 @@
+{
+  "schema": "manual-lane.rules.v1",
+  "_doc": "Where, whether and with which numbers the subtitle and speaker rules of TASK-28 run (read by src/autoslice/manual_lane/lane_rules.py; MANUAL_LANE_RULES=<path> reads another file).  The values come from epochs/e05/COACH-ADVICE.md (TASK-12, chosen round e05), except listening.ladder / whole_witness (the TASK-11 production defaults, unchanged) and detection.latin_* (TASK-29 ruling 6); `source` names where each comes from.  No value was fitted on a validation or test clip.",
+  "detection": {
+    "_doc": "Which cues are doubts (variant C step 1).  content_key: BCUT and jianying are compared on their content characters only: punctuation, filler words, the spelling of numbers, 他/她/它 and the small words are not a difference; two readings that differ only in how often a word is repeated are not a doubt (the repeat rule decides them: repeats).  one_side_empty: BCUT has words and jianying has none for the cue.  near_name: the cue carries a near-homophone of a name in the proper-noun table.  latin_unknown: the cue carries a Latin-letter word of at least latin_min_letters letters that is neither a name of the table nor in latin_common_words (latin_source).",
+    "source": "COACH-ADVICE e05 §0 第2步, §1.1 第1/3/5/6条, §11",
+    "content_key": true,
+    "small_words": "了的就那对呢啦嘛吗",
+    "pronouns_one_class": "他她它",
+    "one_side_empty": true,
+    "near_name": true,
+    "latin_unknown": true,
+    "latin_min_letters": 2,
+    "latin_common_words": [
+      "ok",
+      "okay",
+      "no",
+      "yes",
+      "yeah",
+      "get",
+      "my",
+      "oh",
+      "hi",
+      "hey",
+      "bye",
+      "wow",
+      "so",
+      "go",
+      "do",
+      "the",
+      "and",
+      "you",
+      "me",
+      "is",
+      "it",
+      "lol",
+      "omg",
+      "hmm",
+      "um",
+      "uh",
+      "ah",
+      "ha",
+      "haha",
+      "oops",
+      "sorry",
+      "nice",
+      "good",
+      "what",
+      "why",
+      "how",
+      "who"
+    ],
+    "latin_source": "TASK-29 行政裁定第 6 条：latin_unknown 只认至少 latin_min_letters 个字母、且不在 latin_common_words 里的拉丁字母词（比较不分大小写）。例词 ok、no、get、my、oh 出自该裁定（TASK-28 RESULT 对 6 片输入、不看真值统计的误报）；其余是同类的英文常用短词和感叹词，不取自任何片的真值"
+  },
+  "listening": {
+    "_doc": "The listening ladder and the whole-clip ASR witnesses: the production defaults TASK-11 measured and accepted, kept as they were at ed5428bb1 (TASK-29 ruling 1; this file only records them in one place).  asr_first: each doubt window is first re-recognised by MAI and MOSS, Gemini 3.8 then argon only for what that leaves unsettled; the whole clip is also recognised by MAI and MOSS (step 4 then labels speakers by the MOSS clusters named by the host voiceprint, 8c1).  escalate_without_reading (COACH e05 §1.2): on a listening level that has a next level, a doubt whose window gave no reading from that level stays open for the next one even when CPA wrote 高.  change_needs_listening (TASK-30, COACH e05 §2/§4; change_source): on a level that does not listen (window ASR, text only) and has a listening level after it, a doubt CPA decided to change in content while no Gemini reading of it exists stays open for that listening level.  MANUAL_LANE_LADDER / MANUAL_LANE_WHOLE_WITNESS still override for experiments.",
+    "source": "TASK-11 (ladder asr_first, whole_witness mai,moss); COACH-ADVICE e05 §1.2 (escalate_without_reading)",
+    "ladder": "asr_first",
+    "whole_witness": "mai,moss",
+    "escalate_without_reading": true,
+    "change_needs_listening": true,
+    "change_source": "TASK-30：COACH-ADVICE e05 §2「这句你没有听过音：不采用 CPA 的读法……回到第 2 步补听一次，按听写结果定」，§4「几家 ASR 的错误往往相同……不要因为家数多就直接保留」。在不听音的级（窗口 ASR、只看文字），CPA 把现稿改成另一种实义写法、而这个疑点还没有任何 Gemini 听写时，不算定下，交给后面的听写级；CPA 拿到听写后重新定，答案照用（U107），计票家数不变（U59）"
+  },
+  "candidates": {
+    "_doc": "How the readings vote before CPA decides (CPA's choice still stands, U107/U108). single_source_min_chars: a content addition at least this long that no other independent voting family corroborates makes that reading evidence-only, for every vendor and entry point (whole/window ASR, listening, asr_notes, speaker_segments). Those latter views are not new families. Shared portions cannot license a unique tail. gemini_min_overlap still guards unsupported whole-sentence rewrites, but does not suppress additions corroborated by an independent family. repeat_variants_join_current is applied first: repeat-only variants vote for BCUT, never treated as novel speech. All entries follow the existing timed sentence ownership and neighbour join, with unknown/ties retaining real repetitions (U159).",
+    "source": "COACH-ADVICE e05 §2 局部修正, §3, §4；TASK-44 按 U122 来源家族统一适用，不增加 CPA 后拦截",
+    "gemini_min_overlap": 0.5,
+    "single_source_min_chars": 4,
+    "repeat_variants_join_current": true
+  },
+  "orphans": {
+    "_doc": "A jianying segment that overlaps no BCUT cue becomes its own line (jianying text and time) when it has at least min_content_chars content characters (fillers and laughter removed) and does not repeat the words of a cue within neighbour_s seconds; otherwise it is not subtitled (recorded in PROCESS).  Either way it is no longer shown to CPA as a sentence to merge into the nearest cue.",
+    "source": "COACH-ADVICE e05 §3",
+    "enabled": true,
+    "min_content_chars": 4,
+    "neighbour_s": 2.0,
+    "repeat_coverage": 0.5
+  },
+  "split": {
+    "_doc": "A BCUT cue that two or more jianying segments share is cut at the jianying boundaries when every piece keeps at least min_content_chars content characters; each piece is then a line of its own (its own speaker in step 4).",
+    "source": "COACH-ADVICE e05 §6",
+    "enabled": true,
+    "min_content_chars": 2
+  },
+  "speaker": {
+    "_doc": "Step 4 without engine clusters (v8 only).  The host threshold on the cue's v8 host probability depends on how many people speak: multi_person_from or more -> multi_person_host_min, else two_person_host_min.  The people count is session.speaker_count when the session records it, else the number of participant groups.  Two people: a cue whose probability lies in two_person_mid goes to the CPA speaker review as an acoustic tie (by turn-taking; unsure = guest).  Three or more: a cue in [two_person_host_min, multi_person_host_min) is the guest and goes to the review, where only explicit content evidence (自称) makes it the host.",
+    "source": "COACH-ADVICE e05 §10 第1/2/3/5款",
+    "two_person_host_min": 0.5,
+    "multi_person_host_min": 0.9,
+    "multi_person_from": 3,
+    "two_person_mid": [
+      0.3,
+      0.7
+    ],
+    "review_mid": true
+  },
+  "effort": {
+    "_doc": "CPA 文本调用按用途分思考档位（U168）。purposes 的 key 是用途（这一次调用要 CPA 做什么），每条给 effort（low/medium/high）与理由/出处；step_io._ask_cpa 按 purpose 读这里，档位随调用写进记录（cpa[].effort）与缓存键（换档不命中旧缓存）；没传或没登记的用途用 default，并在 PROCESS 写一行提示（runner.write_process 打 cpa[].effort_note），不静默。Gemini 听写的档位不在这一段：step3_evidence.LISTEN_MODELS 已是 Low（2026-11-01 协调员），argon 没有思考 token。",
+    "source": "公开规则U168 原话：「类似这种任务可以分不同的思考难度，思考档位。例如说这种想一想自己有没有做错，这种就可以是高思考档位。如果是单纯的听，然后来确认，那就是可以是低思考档位嘛。这个不同思考档位可以分配给不同任务。」归类：想一想自己有没有做错（整片自查复审、判官、复核）-> high；单纯确认（查证、拼接检查、格式化）-> low；其余逐句裁定、生成 -> medium（保持不变）",
+    "default": "medium",
+    "purposes": {
+      "boundary": {
+        "effort": "high",
+        "reason": "边界审查：拿提议的起止和前后各 12 句上下文判断「这段起止讲完整了一个故事、起止都在句边界上」，也就是审别人（选片）提的切点有没有错，改错的代价是整片从错的画面上切。归 high 的依据是它属于「想一想自己有没有做错」这一类（审查/判官），不是单纯确认。",
+        "source": "U168（判官/审查 -> high）；prompt 自称「边界审查员」（assets/manual_lane/prompts/boundary.md）"
+      },
+      "adjudicate": {
+        "effort": "medium",
+        "reason": "逐句裁定：每批疑点按听写/声纹/弹幕证据决定这句怎么写。属于「其余逐句裁定」，U168 没有把它归到高或低，保持既有 medium（也是 TASK-6 实测成绩用的档位，改档等于改被测对象）。",
+        "source": "U168（其余逐句裁定 -> medium 保持不变）"
+      },
+      "subtitle-agent": {
+        "model": "gpt-6.1-sol",
+        "effort": "high",
+        "max_output_tokens": 32768,
+        "reason": "字幕代理跨证据取证、逐句裁定并自查修订，包含 U168 的整片复核。",
+        "source": "U168（想一想自己有没有做错 -> high）；TASK-110 第 2 轮"
+      },
+      "concat-check": {
+        "effort": "low",
+        "reason": "拼接检查：把上一次裁定出来的写法拿回来看是不是把两个候选拼在一起（重复了 3 字以上的连续片段），只判「有没有拼接」、不改字。属于 U168 的「单纯确认」一类。",
+        "source": "U168（拼接检查 -> low）"
+      },
+      "speaker-review": {
+        "effort": "high",
+        "reason": "说话人复核：全片过一遍声纹中间带与引擎不一致的句子，用内容证据（自称、只能出自一方）推翻或维持声学标签，还要判要不要切分。这是「复核」，U168 明确归 high。",
+        "source": "U168（复核 -> high；COACH e05 §10 只认明确内容证据）"
+      },
+      "speaker-video": {
+        "effort": "high",
+        "reason": "有他人声音的单人场（看视频、看动画）的说话人复核：整片逐句过一遍声纹和被看视频画面字幕的读数，定每句是李豆沙还是视频里的人，要权衡两路证据冲突的句子。这是 U168 的「复核」一类，与 speaker-review 同档。",
+        "source": "U168（复核 -> high）；公开规则：看动画的切片里有李豆沙之外的声音，应尽最大努力分辨说话人"
+      },
+      "title": {
+        "effort": "medium",
+        "reason": "标题生成：按技能与权威资料写候选标题与封面字。属于「其余……生成」，保持 medium。",
+        "source": "U168（生成 -> medium 保持不变）"
+      },
+      "title-read": {
+        "effort": "medium",
+        "reason": "标题前的读片：读整片字幕归纳这段的主线、笑点、指代和岔话题，同一提示词独立读两遍。属于生成（归纳），归 medium。",
+        "source": "U168（生成 -> medium）"
+      },
+      "title-merge": {
+        "effort": "high",
+        "reason": "标题前的读片合并：对照字幕核对两份阅读、以选片理由为锚裁定分歧，定出主线和笑点。属于复核（想一想别人读得对不对），归 high。",
+        "source": "U168（复核 -> high）"
+      },
+      "title-context": {
+        "effort": "high",
+        "reason": "标题前的圈内背景整理：对照检索结果核对每个指称到底有没有被说清、出处是否真在结果里，说不清就判查不到。属于判官（想一想结果够不够下结论），归 high。",
+        "source": "U168（判官 -> high）"
+      },
+      "title-judge": {
+        "effort": "high",
+        "reason": "标题判官：按技能的验收条款独立判一条候选标题能不能用（事实/引语/换主播自检/合规），也就是「想一想自己有没有做错」里最典型的一道判官；它判错就会放行一条不能发的标题。两轮都走同一档位。",
+        "source": "U168（判官 -> high）"
+      },
+      "title-pick": {
+        "effort": "high",
+        "reason": "按口味给候选标题排序：拿频道主逐条评过的候选与原话，预测他对本片每条候选的取舍并排名，也就是替他把关的判官。排错会让他不认可的那条被采用，所以归 high。",
+        "source": "U168（判官 -> high）"
+      },
+      "cover-brief": {
+        "effort": "medium",
+        "reason": "封面画面说明生成：从最终字幕写表情、动作、要引的原话、要不要场景。属于生成，保持 medium。",
+        "source": "U168（生成 -> medium 保持不变）"
+      },
+      "cover-text": {
+        "effort": "low",
+        "reason": "封面字缩短：渲染器报「放不下」，按它的字数/像素上限把封面字压短、意思不变。这是格式化，不是判断对错，属于 U168 的「单纯确认」一类。",
+        "source": "U168（格式化 -> low）"
+      },
+      "review": {
+        "effort": "high",
+        "reason": "整片自查复审（第 9 步）：全片字幕、说话人、标题、标签、定不下的句子一起看，找自己前面几步做错的地方并直接改。U168 点名的第一类「想一想自己有没有做错」。",
+        "source": "U168（整片自查复审 -> high）"
+      },
+      "review-c": {
+        "effort": "high",
+        "reason": "整片审读（variant C 第 1 步）：读全片字幕标出需要再听的句子，是整片范围的自查，不是逐句裁定。U168 的「整片自查复审」一类。",
+        "source": "U168（整片自查复审 -> high）"
+      },
+      "import-meaning": {
+        "effort": "low",
+        "reason": "手推导入的低把握句：只判「换成备选写法会不会改变意思」，prompt 明确要求不改写、不判哪个写法对，输出一个布尔量。属于 U168 的「单纯确认」（查证）一类。",
+        "source": "U168（查证/确认 -> low）"
+      },
+      "writing-canon": {
+        "effort": "high",
+        "reason": "规范写法：每片一次，逐处判一个非规范写法是不是词表里那个词的同音/谐音/大小写写法（要改成规范形），还是另一个称呼或别的词（要保留）。判错会把别的词改掉，或让同一个词留下两种写法，是对字幕、标题、封面字的把关判断，不是单纯确认。",
+        "source": "U168（判官/复核 -> high）；公开规则：同音词、同义词的两种写法统一用规范写法"
+      },
+      "name-consistency": {
+        "effort": "medium",
+        "reason": "片内名字统一：每片一次，判哪些多写法组是名字、哪几处确实是这个名字、用哪种已有写法。是逐组裁定，不是自查复审也不是单纯确认，按「其余逐句裁定」保持 medium。",
+        "source": "U168（其余裁定 -> medium）；TASK-36"
+      },
+      "trim": {
+        "effort": "high",
+        "reason": "片中剪除判定：对一条已定边界的切片，判断其中哪几句是和主线无关、也没人接的致谢，只有这一类可以剪。问两遍、两遍都提议才算数，错剪会丢内容。属于审别人已定稿内容有没有可删之处的判官类，与「定边界」同档。",
+        "source": "U168（判官/审查 -> high，与 boundary 同档同模型）；判定提示词 assets/manual_lane/prompts/trim.md"
+      },
+      "compilation-select": {
+        "effort": "medium",
+        "reason": "同场合集选段：从整场字幕里挑出有序的多段，并回答这一场成不成合集。是从材料里挑选、生成一份选择，不是审别人的结论，也不是单纯确认，按「其余生成/裁定」保持 medium。",
+        "source": "U168（生成/其余裁定 -> medium）；U184（一场里零散的片段可以剪成合集）；U191（流水线的判断归 CPA）"
+      }
+    }
+  },
+  "trim_thanks_words": {
+    "_doc": "片中剪除的保险（trim.guard）：被两遍都提议剪的一段里，至少一句要含这里的一个词，才放行；一个都没有就否决（NO_THANKS）。比较前双方都过 doubt_policy.norm_text。只管「是不是致谢」这一道字面保险；后面有没有人接，由模型判，代码不二次判断。",
+    "source": "片中剪除试验的判定提示词（assets/manual_lane/prompts/trim.md）所说的致谢：谢礼物、谢 SC、谢上舰、念名字说谢谢",
+    "words": [
+      "谢谢",
+      "感谢",
+      "多谢",
+      "ありがと",
+      "thank"
+    ]
+  },
+  "screen_work": {
+    "_doc": "字幕代理开工前从画面认出在看/在玩的作品并取角色名（work_context.py）。默认关：唯一一条有画面文字栏的实测片上它读到了作品和角色，但分数没有变好（关 24、开 26），训练片里没有这种版式可验证。确认有用后再开。",
+    "enabled": false
+  },
+  "name_consistency": {
+    "_doc": "One name, one spelling in one clip (e05 §5.6; TASK-36).  After the words are decided, the clip's decided subtitles are scanned for runs of min_syllables..max_syllables Chinese characters whose sound is the same under detection's own pinyin comparison (name_match.sound_key: toneless, zh/z ch/c sh/s n/l, in/ing en/eng merged), plus Latin words whose letters are those syllables' initials (e05 §5.4).  A group with one spelling is not touched and costs no CPA call.  The proper-noun table decides the spelling where it has this sound; otherwise one CPA call per clip decides which groups are names and which places are, and only the places it names are changed (never a global replacement).  A failed call or an unreadable answer leaves every sentence as it was.",
+    "source": "COACH-ADVICE e05 §5.1（专名表及其 note 第一）、§5.4（写法必须来自专名表/弹幕/标题，不许按读音自拼）、§5.6（同一片同一个名字只用一种写法）、§5.7（未定专名）；公开规则U169（能用代码做的留在代码里，判断交给 CPA）",
+    "enabled": true,
+    "min_syllables": 2,
+    "max_syllables": 5
+  },
+  "other_voices": {
+    "_doc": "第 4 步：单人场次（只有主播一位参与者）里有没有他人的声音（主播在看视频、看动画）。判断先看画面：在 screen_frames 个均匀取的帧上让 CPA 视觉读「是否正在播放别人做的视频」，任一帧读到就进入有他人声音的路径（screen_min_hits）。进入后每句在其时间内取 1 到 cue_frames_max 帧（每 cue_frame_every_s 秒多取一帧），让 CPA 视觉读被看视频画面自带的字幕，系统只算该字幕与本句识别文字的吻合度，再与 v8 声纹一起交 CPA 逐句定李豆沙或非李豆沙。看图用封面步的同一个视觉客户端（pick_frame.py），思考档 low；CPA 文本复核的档位见 effort.purposes.speaker-video。screen_frames 为 0 时不看图，单人场一律 uniform host。",
+    "source": "公开规则18:50Z：看动画的切片里有李豆沙之外的声音，应尽最大努力分辨说话人；被看视频的字幕就是别人在说话",
+    "screen_frames": 6,
+    "screen_min_hits": 1,
+    "cue_frame_every_s": 2.5,
+    "cue_frames_max": 3
+  },
+  "concurrency": {
+    "_doc": "How many of one provider's independent calls the lane's executor (src/autoslice/manual_lane/parallel.py) keeps open at once.  A bound here is a guard against one clip's fan-out, never a claim about the provider: the provider's own 429/quota signal and the adapters' retry decide the real pace (cpa_text.py retries 408/429/5xx and waits out 524/503; listen_windows.py turns a 429 into a QUOTA record; free_asr_paced.py runs one call per provider at a time).  Concurrency already fixed inside a remote tool is not repeated here: listen_windows.py runs 16 window calls (its `workers`), witness_windows.py 4 (WORKERS), witness_asr.py 1 per provider (whole clip: the two providers share one extracted audio file and one out dir, so they stay serial).  `host_encode` is not a provider: it bounds how many of the process's clips run a heavy ffmpeg encode on the media host at once (stages.GATES, and the segment encodes of source_read.HOST_ENCODE); like the provider bounds it is shared by every clip of the process.  The number of clips a `run` drives at once has no bound of its own: one thread per clip, and what limits it are the rows here.",
+    "source": "公开规则/10-22 (memory provider-concurrency-real-limits: a local number is only a guard; the call runs outside any lock) and docs/pipeline/41-semantic-repair.md (the measured shape: 20 items, 8 at once)",
+    "cpa": {
+      "limit": 8,
+      "source": "防呆，非真实限制：CPA has no documented concurrent limit; 8 is the shape docs/pipeline/41-semantic-repair.md measured at (20 items, 8 at once) and leaves the rest of the subscription for other runs.  A 429/503/524 is handled by cpa_text.py's own retry and 150 s cooldown, not here."
+    },
+    "lookup": {
+      "limit": 4,
+      "source": "防呆，非真实限制：Bangumi / zh.wikipedia / Baidu Baike / Search Router are public read APIs with no published per-client concurrency.  4 keeps a clip's handful of distinct work queries from opening a burst; the layers inside one query stay serial (baike's formal names and the web fallback depend on the earlier layers)."
+    },
+    "host_encode": {
+      "limit": 2,
+      "source": "真实资源：the media host's CPU, shared with the live recording and the rest of production.  How many clips cut from the source recording (step 2), burn subtitles and the intro (step 5) or encode the pieces of a compilation or trim (compilation.build_media) at once; every one of them is ffmpeg libx264 on that host.  2 leaves the cores to the recording; it is not a provider's quota and nothing else bounds the clips."
+    }
+  },
+  "graph_context": {
+    "_doc": "第 6 步标题先查知识图再上网：字幕里出现图中实体（names 各用途与 aliases）时，取该实体的一跳背景放进标题提示的“圈内背景”位置，已认可与候选（爬虫线索）分两段呈现。匹配沿用 detection 的排除规则（latin_min_letters、latin_common_words、专名表 detection_name=false 的条目不参与；非 ASCII 写法至少两个字符）。只取 neighbour_kinds 里种类的邻居，alias_of 边不算邻居（同一实体的别名并成一个实体）。邻居与行数按“与本片命中实体的连接数、时间新旧”排序后截断。",
+    "source": "圈内新闻、企划、联动背景自动进入标题判断（频道主的既有要求，见新闻爬虫说明开头）；邻居种类与上限是本节的实现选择",
+    "neighbours_per_entity": 6,
+    "lines_per_clip": 20,
+    "neighbour_kinds": [
+      "group",
+      "project",
+      "event",
+      "work",
+      "community"
+    ],
+    "limits_source": "防呆，非真实限制：neighbours_per_entity 和 lines_per_clip 只是防止一条片提到很多实体时把提示灌满，不对应任何模型或服务的限制。"
+  }
+}

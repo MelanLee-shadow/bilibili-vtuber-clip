@@ -12,9 +12,15 @@ from src.autoslice.production_final_media_review_admission import (
     bootstrap_production_final_media_review_job, inspect_production_final_media_review_admission,
 )
 from tests.test_first_publication_boundary import published_fixture, recall_authority
+from tests.test_publication_reconciliation import first_publication_registries  # noqa: F401  (fixture)
 from tests.test_production_final_media_review_admission import _package, _sha, _write_json
 from tests.test_final_media_review_gemini_api_runtime import _runtime_tree
 from src.autoslice.final_media_review_gemini_api_runtime import ensure_gemini_api_sentinel_runtime
+
+
+# build_request / bootstrap validate the first-publication authority through the default registry read;
+# point it at the tmp registry that published_fixture wrote.
+pytestmark = pytest.mark.usefixtures("first_publication_registries")
 
 
 def _request(tmp_path):

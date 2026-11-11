@@ -282,7 +282,7 @@ def test_command_429_prior_to_success_updates_shared_window(tmp_path, monkeypatc
 
 
 @pytest.mark.parametrize('diagnostic', ['quota exhausted', 'HTTP 429 rate limit'])
-def test_agy_canonical_cli_failure_classification_reaches_shared_window(tmp_path, monkeypatch, diagnostic):
+def test_agy_canonical_cli_failure_classification_reaches_shared_window(tmp_path, monkeypatch, diagnostic, legacy_gemini_transport):
     import subprocess
     from src.autoslice import agy_gemini_client as agy
     monkeypatch.setenv('AUTOSLICE_BASE', str(tmp_path))

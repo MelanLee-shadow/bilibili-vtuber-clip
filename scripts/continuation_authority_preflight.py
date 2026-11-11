@@ -56,6 +56,40 @@ FAMILY = {
 }
 
 
+def validate_sandbox_env(assignments: list[str]) -> dict[str, str]:
+    """One policy for the gauntlet and the sandbox's direct argv entry."""
+    selected = {}
+    for assignment in assignments:
+        name, separator, value = assignment.partition("=")
+        if not separator or not re.fullmatch(r"(?:AUTOSLICE|LIDOUSHA)_[A-Z0-9_]+", name):
+            raise ValueError("SANDBOX_ENV_NAME_INVALID: expected AUTOSLICE_/LIDOUSHA_ NAME=VALUE")
+        if name in {"AUTOSLICE_BASE", "AUTOSLICE_FINAL_REVIEW_RUNTIME_ROOT"} and value != "/opt/bilive/autoslice":
+            raise ValueError("--sandbox-env cannot replace sandbox runtime roots")
+        # Inspect the locator spelling only; never open a potential credential.
+        if re.search(r"(?:^|[/\\])(?:\.env(?:[.\"' /\\]|$)|[^/\\\"']*\.env(?:[.\"' /\\]|$)|"
+                     r"\.(?:ssh|aws)(?:[/\\]|$)|"
+                     r"(?:id_(?:rsa|dsa|ecdsa|ed25519)|token|api[_-]?key|service[_-]account)(?:[.\"' /\\]|$)|"
+                     r"[^/\\\"']*\.(?:pem|key)(?:[\"' ,}]|$))"
+                     r"|[/\\][^/\\\"'\r\n]*(?:credentials?|secrets?)[^/\\\"'\r\n]*(?:[\"' /\\]|$)"
+                     r"|(?:^|[\"'\s])[^/\\\"'\s]*(?:credentials?|secrets?)[^/\\\"'\s]*\.[^/\\\"'\s]+(?:[\"' ,}]|$)",
+                     value, re.IGNORECASE):
+            raise ValueError("--sandbox-env credential file paths are forbidden")
+        if "\x00" in value:
+            raise ValueError("--sandbox-env must be a NUL-free assignment")
+        if name in selected and selected[name] != value:
+            raise ValueError("conflicting --sandbox-env assignments")
+        selected[name] = value
+    return selected
+
+
+def sandbox_environment_report() -> dict[str, str | list[str]]:
+    """Report effective explicit keys, without their values or ambient keys."""
+    names = json.loads(os.environ.get("CONTINUATION_PREFLIGHT_SANDBOX_ENV_KEYS", "[]"))
+    return {"sandbox_env_keys": sorted(name for name in names if name in os.environ),
+            "final_review_mode": ("per_finding" if os.environ.get("AUTOSLICE_FINAL_REVIEW_MODE")
+                                  == "per_finding" else "legacy")}
+
+
 class PreflightBoundary(BaseException):
     """The first provider-facing step was reached; nothing past it runs."""
 
@@ -267,7 +301,8 @@ def legacy_rows(ptp, chat, kwargs) -> list[dict]:
 def run_one(args) -> dict:
     state = {"large_file_opens": {}, "validators": {}, "groups": [], "subcheck_rows": []}
     report = {"schema_version": "continuation-authority-preflight.v1", "spec": str(args.spec),
-              "code_root": str(args.code_root), "isolation_problems": isolation_problems()}
+              "code_root": str(args.code_root), "isolation_problems": isolation_problems(),
+              **sandbox_environment_report()}
     if report["isolation_problems"]:
         report["outcome"] = "REFUSED_NOT_ISOLATED"
         return report
@@ -381,6 +416,18 @@ def seal_version(repo: Path, version: str, like: Path) -> None:
 
 
 def main() -> int:
+    if len(sys.argv) >= 2 and sys.argv[1] == "--validate-sandbox-env":
+        try:
+            selected = validate_sandbox_env(sys.argv[2:])
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        for name, value in selected.items():
+            sys.stdout.buffer.write(os.fsencode(f"{name}={value}\0"))
+        if selected:
+            sys.stdout.buffer.write(("CONTINUATION_PREFLIGHT_SANDBOX_ENV_KEYS="
+                                     + json.dumps(sorted(selected)) + "\0").encode())
+        return 0
     if len(sys.argv) == 5 and sys.argv[1] == "--seal-version":
         seal_version(Path(sys.argv[2]), sys.argv[3], Path(sys.argv[4]))
         return 0

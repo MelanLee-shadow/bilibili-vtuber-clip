@@ -547,20 +547,18 @@ def _review_one_selected_candidate(*, args, original_candidate, lexicon, duplica
         content_type_hint=candidate.content_type_hint,
         danmaku_context_json=danmaku_context_json,
     )
-    # Viewer-perspective retry: when the CPA judge says a viewer could not
-    # follow the clip and names how far the missing context sits, expand
-    # the window once and re-review.  Still fail-closed: if the expanded
-    # window is judged incomplete again, the reason codes stand.
+    # Re-review each suggested expansion until context passes or no further
+    # source cues can be added; the final CPA verdict remains fail-closed.
     expansion_record: dict[str, object] | None = None
     expanded = _viewer_context_expanded_candidate(
         candidate, cues, response_json, source_duration_ms=source_duration_ms
     )
-    if expanded is not None:
+    while expanded is not None:
         expansion_record = {
             "original_candidate_id": original_candidate.anchor.candidate_id,
             "expanded_candidate_id": expanded.anchor.candidate_id,
-            "original_start_ms": candidate.boundary.resolved_start_ms,
-            "original_end_ms": candidate.boundary.resolved_end_ms,
+            "original_start_ms": original_candidate.boundary.resolved_start_ms,
+            "original_end_ms": original_candidate.boundary.resolved_end_ms,
             "expanded_start_ms": expanded.boundary.resolved_start_ms,
             "expanded_end_ms": expanded.boundary.resolved_end_ms,
         }
@@ -592,6 +590,7 @@ def _review_one_selected_candidate(*, args, original_candidate, lexicon, duplica
             content_type_hint=candidate.content_type_hint,
             danmaku_context_json=danmaku_context_json,
         )
+        expanded = _viewer_context_expanded_candidate(candidate, cues, response_json, source_duration_ms=source_duration_ms)
     job = candidate.to_source_context_job(source_duration_ms=source_duration_ms)
     job["room_id"] = args.room_id
     job["selector_stage"] = selector_stage

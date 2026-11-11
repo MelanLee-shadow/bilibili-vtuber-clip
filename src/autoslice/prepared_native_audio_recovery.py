@@ -7,6 +7,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from src.autoslice.evidence_identity import sha256_ref
 from src.autoslice.native_audio_budget_receipt import (
     _no_links,
     _write_atomic,
@@ -80,7 +81,7 @@ def _require_registered_acquisitions(*, parent: Path, account: Path, manifest: d
         _no_links(path)
         if not path.is_file():
             raise ValueError('PREPARED_NATIVE_RANGE_ACQUISITION_MISSING')
-        if 'sha256:' + _sha256(path) != digest:
+        if sha256_ref(_sha256(path)) != digest:
             raise ValueError('PREPARED_NATIVE_RANGE_ACQUISITION_DRIFT')
 
 
@@ -187,7 +188,7 @@ def _range_acquisition_inputs(
         _no_links(artifact)
         if artifact.is_file():
             if artifact.suffix != '.lock':
-                present[str(artifact)] = 'sha256:' + _sha256(artifact)
+                present[str(artifact)] = sha256_ref(_sha256(artifact))
         elif not artifact.is_dir():
             raise ValueError('PREPARED_NATIVE_RANGE_ACQUISITION_DRIFT')
     for path in sorted(root.glob("*/*/acquisition.json")):
@@ -220,15 +221,15 @@ def _range_acquisition_inputs(
                 artifact = Path(record['path'])
                 if artifact.is_file():
                     _require_bound(artifact, record['sha256'])
-                    present[str(artifact)] = 'sha256:' + _sha256(artifact)
+                    present[str(artifact)] = sha256_ref(_sha256(artifact))
         missing = missing or bool(unavailable)
         if unavailable:
-            acquisitions[str(path)] = 'sha256:' + _sha256(path)
+            acquisitions[str(path)] = sha256_ref(_sha256(path))
             continue  # retain other complete acquisitions in this same window
         for original, recovered in resolved.items():
             if origins is not None and Path(original).is_relative_to(parent):
                 origins[str(Path(original).relative_to(account_parent))] = recovered
-                inventory[str(Path(original).relative_to(parent))] = 'sha256:' + _sha256(recovered)
+                inventory[str(Path(original).relative_to(parent))] = sha256_ref(_sha256(recovered))
         for artifact in path.parent.rglob("*"):
             if artifact.is_file() and artifact.suffix != ".lock":
                 _no_links(artifact)
@@ -355,7 +356,7 @@ def _parent_inputs(
         if saved is None or not resolved.is_file():
             _record_unavailable(unusable=unusable, relative=str(audio.parent.relative_to(parent)),
                 parent=parent, budget_sha=inventory['native-audio-budget.json'], attempt=attempt,
-                present={str(p): 'sha256:' + _sha256(p) for p in (audio, receipt) if p.is_file()})
+                present={str(p): sha256_ref(_sha256(p)) for p in (audio, receipt) if p.is_file()})
             continue
         _no_links(resolved)
         if _sha256(resolved) != audio_sha:
@@ -602,7 +603,7 @@ def inherit_prepared_native_audio(
         if original is not None and (parent != account or unusable):
             archives.append((parent, inventory['native-audio-budget.json']))
         if current_unusable:
-            archives.append((account, 'sha256:' + _sha256(receipt_path)))
+            archives.append((account, sha256_ref(_sha256(receipt_path))))
         for origin_parent, digest in archives:
             archive = account / "parents" / (digest[7:] + ".json")
             archive.parent.mkdir(exist_ok=True)

@@ -82,7 +82,7 @@ from src.autoslice.cover_text_pixel_evidence import (
 from src.autoslice.cue_split_hygiene import merge_release_grade_cues
 from src.autoslice.delivery_fast_path import resolve_operator_text_full_ownership
 from src.autoslice.final_review_auditor import (
-    audit_final_subtitles, persist_review_audit, audit_correction_mutation_authority,
+    audit_final_subtitles, persist_review_audit, audit_correction_mutation_authority, FinalReviewAuditError,
 )
 from src.autoslice.final_review_schema_retry import is_schema_repair_prompt_for
 from src.autoslice.exact_final_cpa_history import (
@@ -140,6 +140,8 @@ from src.autoslice.producer_text_finalization import (
 )
 from src.autoslice.producer_text_pipeline import (
     _bound_source_evidence_context,
+    postburn_candidate_context,
+    postburn_replay_failure_parent,
     validated_postburn_priority_findings,
 )
 from src.autoslice.redelivery_baseline_ownership import (
@@ -148,6 +150,7 @@ from src.autoslice.redelivery_baseline_ownership import (
 
 
 from src.autoslice.chat_authority_ownership import (
+    protected_review_cue_indexes,
     suppress_chat_authority_owned_self_heal_findings,
 )
 from src.autoslice.redelivery_full_window_replay import (
@@ -1509,6 +1512,8 @@ def _apply_exact_final_cpa_repairs(
     clip_context: Mapping[str, object] | None = None,
     adjudication_stage: str = "exact_release_adjudication",
     protected_cue_indexes: frozenset[int] = frozenset(),
+    chat_authority_audit: object = None,
+    human_protected_cue_indexes: frozenset[int] | None = None,
 ) -> tuple[str, list[dict[str, object]]]:
     """Apply only exact-final findings already authorized by CPA.
 
@@ -1546,14 +1551,37 @@ def _apply_exact_final_cpa_repairs(
                 and isinstance(proposed, str)):
             from src.autoslice.chat_evidence import normalize_chat_text
             if normalize_chat_text(proposed) != normalize_chat_text(cues[cue_index - 1].text):
-                if isinstance(finding, dict):
-                    finding["human_literal_proposal_veto"] = {
-                        "status": "BLOCKED_PROPOSAL",
-                        "reason_code": "HUMAN_LITERAL_REQUIRES_CONTEXT_REVIEW",
-                        "mutation_authorized": False,
-                        "finding_resolved": False,
-                    }
-                continue
+                adjudication = finding.get(adjudication_stage)
+                receipt = adjudication.get('editorial_authority') if isinstance(adjudication, Mapping) else None
+                request = receipt.get('request') if isinstance(receipt, Mapping) else None
+                conflict = request.get('chat_source_conflict') if isinstance(request, Mapping) else None
+                authorized_owner = bool(
+                    human_protected_cue_indexes is not None
+                    and cue_index not in human_protected_cue_indexes
+                    and isinstance(receipt, Mapping)
+                    and receipt.get('source_owner_reconciliation') is True
+                    and isinstance(conflict, Mapping)
+                    and isinstance(chat_authority_audit, Mapping)
+                    and conflict.get('original_applied') == chat_authority_audit.get('applied'))
+                if authorized_owner:
+                    from src.autoslice.editorial_subtitle import validate_authority
+                    try:
+                        validate_authority(receipt, current=cues[cue_index - 1].text,
+                            window=(cues[cue_index - 1].start_ms, cues[cue_index - 1].end_ms),
+                            srt_text=srt_text, clip_context=clip_context)
+                    except (ValueError, TypeError, KeyError, OSError):
+                        authorized_owner = False
+                if authorized_owner:
+                    pass
+                else:
+                    if isinstance(finding, dict):
+                        finding["human_literal_proposal_veto"] = {
+                            "status": "BLOCKED_PROPOSAL",
+                            "reason_code": "HUMAN_LITERAL_REQUIRES_CONTEXT_REVIEW",
+                            "mutation_authorized": False,
+                            "finding_resolved": False,
+                        }
+                    continue
         adjudication = finding.get(adjudication_stage)
         editorial_cycle = finding.get("exact_final_cpa_cycle_adjudication")
         if (isinstance(adjudication, Mapping)
@@ -2041,6 +2069,14 @@ def _register_exact_final_cpa_repairs(
         raise ValueError("EXACT_FINAL_SURFACE_REGISTRATION_LEDGER_INVALID")
 
     for repair in repairs:
+        source_receipt = repair.get('editorial_authority')
+        source_owner = (isinstance(source_receipt, Mapping)
+                        and source_receipt.get('source_owner_reconciliation') is True)
+        if source_owner:
+            source_request = source_receipt.get('request') or {}
+            source_conflict = source_request.get('chat_source_conflict') or {}
+            if source_conflict.get('original_applied') != applied_rows:
+                raise ValueError('CHAT_RECONCILIATION_LIVE_OWNER_DRIFT')
         if repair.get("repair_class") == "editorial_rendering" or repair.get("editorial_authority") is not None:
             from src.autoslice.editorial_subtitle import validate_repair
             validate_repair(repair)
@@ -2135,9 +2171,8 @@ def _register_exact_final_cpa_repairs(
                 # before→after receipt prove that the CPA repair removed it.
                 # Mere overlap is never sufficient.
                 row["reconciliation"] = {
-                    "schema_version": (
-                        "exact-final-cpa-exact-read-supersession.v1"
-                    ),
+                    "schema_version": ("chat-source-owner-exact-read-supersession.v1"
+                        if source_owner else "exact-final-cpa-exact-read-supersession.v1"),
                     "status": "SUPERSEDED_BY_EXACT_FINAL_CPA",
                     "exact_final_repair_sha256": repair_sha256,
                     "before_sha256": repair["before_sha256"],
@@ -2590,6 +2625,11 @@ def _run_exact_final_review_gate_body(
                 review_timeline_offset_ms,
                 final_end,
             )
+        # The stopped terminal consumes the same immutable pre-pass chat
+        # authority that the protection/apply gate will use below.  Keeping a
+        # existing snapshot binds its evidence projection to the original applied
+        # receipt rather than to post-review bookkeeping mutations.
+        terminal_adapters["chat_authority_audit"] = chat_authority_before_pass
         from src.autoslice.span_finding_obligations import enforce_review as enforce_span_review
         with producer_stage("exact_final_review.postprocess.span_obligations"):
             audit = enforce_span_review(final_text, chat_authority_audit, audit,
@@ -2689,13 +2729,17 @@ def _run_exact_final_review_gate_body(
         expected_srt_sha256 = "sha256:" + hashlib.sha256(
             final_bytes
         ).hexdigest()
-        from src.autoslice.human_sequence_alignment import protected_indexes as human_protected_indexes
-        protected = frozenset(human_protected_indexes(
-            chat_authority_audit.get('human_sequence_alignment') or {}, final_text,
-            timeline_offset_ms=final_start))
+        protected = protected_review_cue_indexes(final_text,
+            chat_authority_audit.get('human_sequence_alignment') or {}, chat_authority_before_pass,
+            human_offset_ms=final_start, chat_offset_ms=review_timeline_offset_ms)
+        human_protected = protected_review_cue_indexes(final_text,
+            chat_authority_audit.get('human_sequence_alignment') or {}, {},
+            human_offset_ms=final_start, chat_offset_ms=review_timeline_offset_ms)
         with producer_stage("exact_final_review.postprocess.repairs"):
             repaired_text, repairs = _apply_exact_final_cpa_repairs(
-                final_text, audit, clip_context=clip_context, protected_cue_indexes=protected)
+                final_text, audit, clip_context=clip_context, protected_cue_indexes=protected,
+                chat_authority_audit=chat_authority_before_pass,
+                human_protected_cue_indexes=human_protected)
         proposed_sha256 = hashlib.sha256(repaired_text.encode('utf-8')).hexdigest()
         returning_memos = (_matching_cycle_return_memos(repairs, convergence_memos,
             prior_memo_ids=prior_convergence_memo_ids, input_srt_sha256=expected_srt_sha256)
@@ -2717,17 +2761,23 @@ def _run_exact_final_review_gate_body(
             # span questions. Feed them back to the ordinary closure consumer
             # before G; retaining the pre-terminal proof leaves those actual
             # obligations pending despite the completed full-CURRENT ruling.
-            audit = enforce_span_review(final_text, chat_authority_audit, audit,
-                                        timeline_offset_ms=review_timeline_offset_ms)
-            if 'span_obligation_review' in audit:
-                chat_authority_audit['span_obligation_closures'] = deepcopy(audit['span_obligation_review']['closures'])
-                chat_authority_audit['span_unapplied_questions'] = deepcopy(audit['span_obligation_review']['span_unapplied_questions'])
-            chat_authority_audit['final_review_audit'] = audit
-            if isinstance(audit.get('cpa_adjudication_usage'), Mapping):
-                chat_authority_audit['cpa_adjudication_usage'] = deepcopy(audit['cpa_adjudication_usage'])
-            persist_review_audit(review_audit_path, audit)
-            repaired_text, repairs = _apply_exact_final_cpa_repairs(
-                final_text, audit, clip_context=clip_context, protected_cue_indexes=protected)
+            with producer_stage("exact_final_review.postprocess.terminal_span_obligations"):
+                audit = enforce_span_review(final_text, chat_authority_audit, audit,
+                                            timeline_offset_ms=review_timeline_offset_ms)
+            with producer_stage("exact_final_review.postprocess.terminal_authority_bind"):
+                if 'span_obligation_review' in audit:
+                    chat_authority_audit['span_obligation_closures'] = deepcopy(audit['span_obligation_review']['closures'])
+                    chat_authority_audit['span_unapplied_questions'] = deepcopy(audit['span_obligation_review']['span_unapplied_questions'])
+                chat_authority_audit['final_review_audit'] = audit
+                if isinstance(audit.get('cpa_adjudication_usage'), Mapping):
+                    chat_authority_audit['cpa_adjudication_usage'] = deepcopy(audit['cpa_adjudication_usage'])
+            with producer_stage("exact_final_review.postprocess.terminal_persist"):
+                persist_review_audit(review_audit_path, audit)
+            with producer_stage("exact_final_review.postprocess.terminal_repairs"):
+                repaired_text, repairs = _apply_exact_final_cpa_repairs(
+                    final_text, audit, clip_context=clip_context, protected_cue_indexes=protected,
+                    chat_authority_audit=chat_authority_before_pass,
+                    human_protected_cue_indexes=human_protected)
             if repairs:
                 terminal_pass_receipts[-1] = review_pass_receipt(pass_index=pass_index + 1,
                     srt_text=final_text, audit=audit, repaired_text=repaired_text, repairs=repairs)
@@ -3768,8 +3818,9 @@ def _load_postburn_observation(out_root: Path, cid: str) -> Mapping[str, object]
     # authority written alongside the observation, never guessed from mtime.
     if (isinstance(review, Mapping) and review.get("cpa_calls") == []
             and review.get("status") == "AUDITOR_UNAVAILABLE"
-            and review.get("error_type") == "ValueError"
-            and review.get("reason_codes") == ["POSTBURN_SUBTITLE_AUDIO_CPA_AMBIGUOUS_REPLAY"]):
+            and ((review.get("error_type") == "ValueError"
+                  and review.get("reason_codes") == ["POSTBURN_SUBTITLE_AUDIO_CPA_AMBIGUOUS_REPLAY"])
+                 or (review.get("replay_error") or {}).get("dispatch_state") == "COMPLETED")):
         source = binding.get("source_authority")
         if isinstance(source, Mapping):
             source_path = Path(str(source.get("path") or ""))
@@ -3830,14 +3881,8 @@ def _postburn_cached_review_complete(review: object) -> bool:
 
 def _completed_postburn_before_parser_failure(review: object) -> object:
     """A failed replay with no dispatch cannot erase a complete bound parent."""
-    if (not isinstance(review, Mapping) or review.get("status") != "AUDITOR_UNAVAILABLE"
-            or review.get("error_type") != "ValueError" or review.get("cpa_calls") != []
-            or review.get("reason_codes") != ["POSTBURN_SUBTITLE_AUDIO_CPA_AMBIGUOUS_REPLAY"]):
-        return review
-    parent = review.get("prior_postburn_subtitle_audio_review")
-    if (isinstance(parent, Mapping) and _postburn_cached_review_complete(parent)
-            and review.get("cpa_request") == parent.get("cpa_request")
-            and review.get("reviewed_srt_sha256") == parent.get("reviewed_srt_sha256")):
+    parent = postburn_replay_failure_parent(review)
+    if parent is not review and _postburn_cached_review_complete(parent):
         return parent
     return review
 
@@ -3929,6 +3974,81 @@ def _postburn_current_risk_partition(findings: list[dict]) -> tuple[list[dict], 
     disclosed = [row for row in findings if can_disclose(row)]
     blocked = [row for row in findings if not can_disclose(row)]
     return blocked, disclosed
+
+
+def _postburn_question_identity(row: Mapping, cue_text: str) -> tuple | None:
+    """Same cue, issue type, suspect span and current cue bytes; never just a cue."""
+    index = row.get("cue_index", row.get("cue"))
+    base = str(row.get("base_text_sha256") or "").removeprefix("sha256:")
+    suspect = row.get("suspect")
+    kind, repair = row.get("kind", "context"), row.get("repair_class")
+    if (type(index) is not int or index < 1 or len(base) != 64
+            or any(c not in "0123456789abcdef" for c in base)
+            or not isinstance(suspect, str) or not kind or not repair):
+        return None
+    span = (row.get("span_start_codepoint"), row.get("span_end_codepoint"))
+    provenance = row.get("candidate_provenance") or {}
+    if not isinstance(provenance, Mapping):
+        return None
+    # Insertion nominations have an empty surface: their position still matters.
+    if not suspect and span == (None, None):
+        nomination = provenance.get("nomination") or provenance
+        if not isinstance(nomination, Mapping):
+            return None
+        span = (nomination.get("final_span_start_codepoint"), nomination.get("final_span_end_codepoint"))
+        if span == (None, None):
+            return None
+    elif span == (None, None):
+        start = cue_text.find(suspect)
+        if start < 0 or cue_text.find(suspect, start + 1) >= 0:
+            return None
+        span = (start, start + len(suspect))
+    if (any(type(n) is not int for n in span) or not 0 <= span[0] <= span[1] <= len(cue_text)
+            or cue_text[span[0]:span[1]] != suspect):
+        return None
+    return index, kind, repair, suspect, span, base
+
+
+def _postburn_reuse_resolved_keeps(findings: list[dict], *, preburn: Mapping,
+        final_text: str, typed_resolution_evidence: Mapping | None = None) -> list[dict]:
+    """Replay an existing release ruling, without converting a disclosure to one."""
+    from src.autoslice.final_review_contract import is_release_resolved_keep
+    digest = _sha256_text(final_text)
+    if preburn.get("reviewed_srt_sha256") != digest or preburn.get("release_gate") != "PASS":
+        return findings
+    cues = parse_srt_cues(final_text)
+    def identity_for(row):
+        index = row.get("cue_index", row.get("cue"))
+        if type(index) is not int or not 1 <= index <= len(cues):
+            return None
+        return _postburn_question_identity(row, cues[index-1].text)
+    known = [*(preburn.get("resolved_findings") or []),
+             *(preburn.get("unresolved_findings_disclosed") or [])]
+    if typed_resolution_evidence and typed_resolution_evidence.get("reviewed_srt_sha256") == digest:
+        known.extend(typed_resolution_evidence.get("resolved_findings") or [])
+    result = []
+    for row in findings:
+        identity = identity_for(row)
+        matches = [old for old in known if isinstance(old, Mapping)
+                   and identity is not None and identity_for(old) == identity
+                   and (not old.get("current_content_risk")
+                        or (isinstance(old["current_content_risk"], Mapping)
+                            and old["current_content_risk"].get("reviewed_srt_sha256") == digest))
+                   and is_release_resolved_keep(old)]
+        # A new critical assessment is a new obligation, regardless of an old keep.
+        if (matches and row.get("content_risk") == "noncritical_uncertainty"
+                and 1 <= identity[0] <= len(cues)
+                and _sha256_text(cues[identity[0]-1].text).removeprefix("sha256:") == identity[-1]):
+            old = deepcopy(dict(matches[0]))
+            old["postburn_keep_replay"] = {
+                "role": "SAME_QUESTION_COMPLETED_KEEP_NO_MUTATION",
+                "reviewed_srt_sha256": digest, "nomination": deepcopy(row),
+            }
+            # The ordinary predicate is still the sole release definition.
+            result.append(old)
+        else:
+            result.append(row)
+    return result
 
 
 def _postburn_reuse_current_gift_risk(findings: list[dict], *, preburn: Mapping,
@@ -4042,7 +4162,7 @@ def _current_postburn_resolution_evidence(
 
     A later review may address only newly discovered cues. Earlier decisions
     remain evidence while the entire SRT is unchanged; changed bytes discard
-    them, and a new decision about the same cue supersedes the old one. CPA
+    them, and a new decision about the same question supersedes the old one. CPA
     still independently reviews this context and supplies the postburn gate.
     """
     latest = exact_review.get("resolved_findings")
@@ -4063,8 +4183,12 @@ def _current_postburn_resolution_evidence(
             and not row.get("mutation_authority")
             for old in echoes if isinstance(old, Mapping)
         )]
-    addressed_cues = {
-        row.get("cue_index") for row in [*latest, *disclosed]
+    def question_key(row):
+        return json.dumps([row.get(key) for key in (
+            "cue_index", "kind", "repair_class", "suspect", "span_start_codepoint",
+            "span_end_codepoint", "base_text_sha256")], ensure_ascii=False, sort_keys=True)
+    addressed_questions = {
+        question_key(row) for row in [*latest, *disclosed]
         if isinstance(row, Mapping)
     }
     retained = (
@@ -4075,7 +4199,7 @@ def _current_postburn_resolution_evidence(
     )
     resolved = [
         *(row for row in (retained if isinstance(retained, list) else [])
-          if isinstance(row, Mapping) and row.get("cue_index") not in addressed_cues),
+          if isinstance(row, Mapping) and question_key(row) not in addressed_questions),
         *(row for row in latest if isinstance(row, Mapping)),
         *(row for row in disclosed if is_keep_current_disclosed(row)),
     ]
@@ -4083,11 +4207,11 @@ def _current_postburn_resolution_evidence(
     # prose, prompt/response hashes or ordering cannot manufacture new input.
     previous_rows = retained if isinstance(retained, list) else []
     first_by_identity = {
-        json.dumps(_postburn_material_progress(row), ensure_ascii=False, sort_keys=True): row
+        (question_key(row), json.dumps(_postburn_material_progress(row), ensure_ascii=False, sort_keys=True)): row
         for row in previous_rows if isinstance(row, Mapping)
     }
     resolved = [first_by_identity.get(
-        json.dumps(_postburn_material_progress(row), ensure_ascii=False, sort_keys=True), row,
+        (question_key(row), json.dumps(_postburn_material_progress(row), ensure_ascii=False, sort_keys=True)), row,
     ) for row in resolved]
     resolved.sort(key=lambda row: json.dumps(_postburn_material_progress(row), ensure_ascii=False, sort_keys=True))
     return (
@@ -4250,21 +4374,11 @@ def _run_postburn_subtitle_audio_review(
             "provider_effort": cache_identity["effort"],
         }
     )
-    candidate_context_text = (
-        clip_context_prompt_text(clip_context)
-        if isinstance(clip_context, Mapping)
-        else ""
-    )
-    from src.autoslice.editorial_subtitle import rendering_context
-    editorial_text, editorial_cues = rendering_context(final_text, chat_authority_audit, timeline_offset_ms)
-    candidate_context_text += editorial_text
-    from src.autoslice.audio_language_discovery import current_language_discovery_context
-    language_context, language_findings = current_language_discovery_context(
-        final_text, chat_authority_audit,
+    candidate_context_text, editorial_cues, language_findings = postburn_candidate_context(
+        final_text, chat_authority_audit, clip_context,
         source_media_sha256=(source_spec.get("source_piece_clock") or {}).get("padded_sha256"),
         timeline_offset_ms=timeline_offset_ms,
     )
-    candidate_context_text += language_context
     # The independent witness's span-level wording disagreements are deterministic
     # nominations: the ordinary reviewer must hear the audio and choose between
     # the current words and the witness words. Decisions already made on these
@@ -4457,6 +4571,41 @@ def _run_postburn_subtitle_audio_review(
     inherit_ruling_context(tracked_llm_call, final_review_llm)
     inherit_ruling_context(replay_cached_call, final_review_llm)
 
+    class PostburnCacheRecorder:
+        """Observe completed inner answers without inventing another dispatch."""
+        def __init__(self, previous):
+            self.previous = previous
+
+        def __getattr__(self, name):
+            return getattr(self.previous, name)
+
+        def note_cache_replay(self, *, prompt, completion, model_identity):
+            if not isinstance(prompt, str) or not isinstance(completion, str):
+                raise ValueError("POSTBURN_SUBTITLE_AUDIO_CPA_CACHED_TEXT_INVALID")
+            attempt = len(cpa_calls) + 1
+            private_root = out_root / f".{cid}.postburn-cpa"
+            prompt_sha = _sha256_text(prompt)
+            response_sha = _sha256_text(completion)
+            prompt_path = private_root / f"attempt-{attempt:02d}-{prompt_sha[7:19]}.prompt.txt"
+            response_path = private_root / f"attempt-{attempt:02d}-{response_sha[7:19]}.completion.txt"
+            _write_postburn_cpa_text(prompt_path, prompt)
+            _write_postburn_cpa_text(response_path, completion)
+            cpa_calls.append({
+                "attempt": attempt, "request_sha256": request["request_sha256"],
+                "prompt_sha256": prompt_sha, "prompt_path": str(prompt_path),
+                "response_sha256": response_sha, "response_path": str(response_path),
+                "dispatch_status": "COMPLETED", "served_from_cache": True,
+                "cache_source": "ORDINARY_COMPLETED_REVIEW",
+            })
+            notify = getattr(self.previous, "note_cache_replay", None)
+            if callable(notify):
+                notify(prompt=prompt, completion=completion, model_identity=model_identity)
+
+    # The normal raw writer notifies this hook only when its own completed
+    # cache supplied bytes without calling the transport wrapper above.
+    tracked_llm_call._semantic_attempt_recorder = PostburnCacheRecorder(  # type: ignore[attr-defined]
+        getattr(final_review_llm, "_semantic_attempt_recorder", None))
+
     def replay_or_complete_candidate_risk(prompt: str) -> str:
         from src.autoslice.final_review_candidate_risk import RISK_PROMPT_MARKER
         if RISK_PROMPT_MARKER not in prompt:
@@ -4475,6 +4624,7 @@ def _run_postburn_subtitle_audio_review(
     findings: list[dict[str, object]] = []
     error: BaseException | None = None
     error_reason_code: str | None = None
+    replay_error_detail = None
     cached_review = existing.get("postburn_subtitle_audio_review")
     replay_index = [0]
     cache_reused = False
@@ -4518,23 +4668,27 @@ def _run_postburn_subtitle_audio_review(
         elif prior_review_present and same_request:
             prior_review_for_audit = cached_review
             try:
-                replay_findings = audit_final_subtitles(
-                    final_text,
-                    llm_call=replay_cached_call,
-                    extract_json=extract_json_object,
-                    glossary_text=review_glossary,
-                    structured_context_text=context_text,
-                    candidate_context_text=candidate_context_text,
-                    candidate_context=clip_context,
-                    editorial_rendered_cues=editorial_cues,
-                    source_media_timeline_offset_ms=timeline_offset_ms,
-                    candidate_risk_llm_call=replay_or_complete_candidate_risk,
-                    **({"discovery_batch": batch_from_rows(
-                        review_extra_findings, context=clip_context, source_offset_ms=timeline_offset_ms)}
-                        if os.environ.get("AUTOSLICE_FINAL_REVIEW_MODE") == "per_finding" else {
-                            "extra_raw_findings": review_extra_findings,
-                            "prioritize_extra_raw_findings": bool(review_extra_findings)}),
-                )
+                from .completed_review_checkpoint import ruling_material_scope
+                # This completed receipt owns replay. A nested ordinary raw
+                # cache must not skip its prompt/SHA checks or call accounting.
+                with ruling_material_scope(None, cache_allowed=False):
+                    replay_findings = audit_final_subtitles(
+                        final_text,
+                        llm_call=replay_cached_call,
+                        extract_json=extract_json_object,
+                        glossary_text=review_glossary,
+                        structured_context_text=context_text,
+                        candidate_context_text=candidate_context_text,
+                        candidate_context=clip_context,
+                        editorial_rendered_cues=editorial_cues,
+                        source_media_timeline_offset_ms=timeline_offset_ms,
+                        candidate_risk_llm_call=replay_or_complete_candidate_risk,
+                        **({"discovery_batch": batch_from_rows(
+                            review_extra_findings, context=clip_context, source_offset_ms=timeline_offset_ms)}
+                            if os.environ.get("AUTOSLICE_FINAL_REVIEW_MODE") == "per_finding" else {
+                                "extra_raw_findings": review_extra_findings,
+                                "prioritize_extra_raw_findings": bool(review_extra_findings)}),
+                    )
                 cached_parser_recovery = bool(completed_raw_pending or (
                     cached_review.get("status") == "AUDITOR_UNAVAILABLE"
                     and cached_review.get("error_type") == "FinalReviewAuditError"
@@ -4575,9 +4729,25 @@ def _run_postburn_subtitle_audio_review(
                 cached_parser_recovery = cached_parser_recovery or (risk_parser_recovery and replay_findings != cached_findings)
                 cache_reused = True
             except Exception as exc:
-                error = ValueError("POSTBURN_SUBTITLE_AUDIO_CPA_AMBIGUOUS_REPLAY")
-                error.__cause__ = exc
-                error_reason_code = "POSTBURN_SUBTITLE_AUDIO_CPA_AMBIGUOUS_REPLAY"
+                import traceback
+                # Dispatch is known complete here. Report the failed local
+                # replay contract, rather than claiming an unknown dispatch.
+                code = getattr(exc, "reason_code", None) or str(exc)
+                error_reason_code = (code if isinstance(code, str)
+                    and re.fullmatch(r"POSTBURN_[A-Z0-9_]+", code)
+                    else "POSTBURN_SUBTITLE_AUDIO_CPA_REPLAY_PARSE_FAILED"
+                    if isinstance(exc, FinalReviewAuditError)
+                    else "POSTBURN_SUBTITLE_AUDIO_CPA_REPLAY_PROGRAM_ERROR")
+                error = exc
+                replay_error_detail = {
+                    "reason_code": error_reason_code, "exception_type": type(exc).__name__,
+                    "dispatch_state": "COMPLETED", "request_sha256": request["request_sha256"],
+                    **({"cause_reason_code": code} if isinstance(code, str)
+                       and re.fullmatch(r"[A-Z][A-Z0-9_]+", code) else {}),
+                    "traceback": [{"file": Path(frame.filename).name, "line": frame.lineno,
+                                   "function": frame.name}
+                                  for frame in traceback.extract_tb(exc.__traceback__)],
+                }
         elif completed_raw_pending and not same_request:
             prior_review_for_audit = cached_review
             error = ValueError("POSTBURN_COMPLETED_RAW_REQUIRES_ORIGINAL_INPUT")
@@ -4618,6 +4788,10 @@ def _run_postburn_subtitle_audio_review(
             from src.autoslice.cpa_runtime import record_cpa_event
             record_cpa_event('cache_hit',{'kind':'postburn_review','stage':'postburn_subtitle_audio'})
         findings=_postburn_reuse_current_gift_risk(findings,preburn=existing,final_text=final_text)
+        findings = _postburn_reuse_resolved_keeps(
+            findings, preburn=existing, final_text=final_text,
+            typed_resolution_evidence=typed_resolution_evidence,
+        )
     findings, disclosed_findings = _postburn_current_risk_partition(findings) if error is None else (findings, [])
     # Every open witness nomination must be on the exact-final agenda. One the
     # reviewer dropped, capped or could not parse is an unresolved wording
@@ -4695,6 +4869,7 @@ def _run_postburn_subtitle_audio_review(
             else {}
         ),
         **({"error_type": type(error).__name__} if error is not None else {}),
+        **({"replay_error": replay_error_detail} if replay_error_detail is not None else {}),
     }
     merged_audit = deepcopy(dict(existing))
     merged_findings = [
@@ -5477,6 +5652,8 @@ def finalize_producer_package(
                     verified_authority_audit=chat_authority_audit,
                     candidate_id=cid,
                     clip_context=clip_context_for_postburn,
+                    timeline_offset_ms=final_start,
+                    source_media_sha256=(spec.get("source_piece_clock") or {}).get("padded_sha256"),
                     expected_media_sha256=(
                         str(
                             record.get("burned_preview", {}).get("burned_sha256")

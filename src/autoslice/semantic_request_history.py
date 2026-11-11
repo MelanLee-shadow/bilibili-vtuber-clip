@@ -475,9 +475,8 @@ def with_partial_usage_guard(call, audit: Mapping | None, *,
         if current_count is not None and (type(current_count) is not int or current_count < verified["known_lower_bound"]):
             raise CallNotDispatched("RETAINED_PARTIAL_CPA_USAGE_UNKNOWN")
         return call(prompt)
-    for attr in ("cpa_cache_identity", "provider_runtime_binding", "provider_diagnostics", "cpa_resource_pressure"):
-        if hasattr(call, attr):
-            setattr(guarded, attr, getattr(call, attr))
+    from .completed_review_checkpoint import inherit_ruling_context
+    inherit_ruling_context(guarded, call)
     guarded.cpa_partial_usage_lineage = deepcopy(proof)
     return guarded
 

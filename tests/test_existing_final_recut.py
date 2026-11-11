@@ -20,7 +20,7 @@ def _sha(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
-def _surface(tmp_path: Path) -> tuple[dict, Path, Path, dict]:
+def _surface(tmp_path: Path, candidate: str = "candidate") -> tuple[dict, Path, Path, dict]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     padded = tmp_path / "padded.mp4"
     padded.write_bytes(b"exact padded bytes")
@@ -40,10 +40,10 @@ def _surface(tmp_path: Path) -> tuple[dict, Path, Path, dict]:
     }
     provenance.write_text(json.dumps(document), encoding="utf-8")
     spec = {
-        "candidate_id": "candidate",
+        "candidate_id": candidate,
         CONFIG_KEY: {
             "schema_version": SCHEMA_VERSION,
-            "candidate_id": "candidate",
+            "candidate_id": candidate,
             "path": str(recut),
             "sha256": _sha(recut.read_bytes()),
             "provenance_path": str(provenance),
@@ -101,6 +101,134 @@ def test_existing_final_recut_is_hash_bound_hardlink_reuse(tmp_path: Path) -> No
         "ffmpeg_calls": 0,
         "provider_calls": 0,
     }
+
+
+@pytest.mark.parametrize("candidate", ["candidate", "new-normal-member"])
+def test_normal_hardlink_materialization_can_resume_without_replacing_bytes(
+    tmp_path: Path, candidate: str,
+) -> None:
+    from src.autoslice import producer_package_finalization as finalization
+
+    spec, padded, recut, _ = _surface(tmp_path, candidate)
+    spec["pieces"] = [{"start_ms": 10_000, "end_ms": 14_000}]
+    spec_path = tmp_path / "SPEC.json"
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    padded_provenance = tmp_path / "padded.provenance.json"
+    padded_provenance.write_text("{}", encoding="utf-8")
+    out_root = tmp_path / "out"
+    out_root.mkdir()
+    before = recut.read_bytes()
+
+    def unused(*args, **kwargs):
+        raise AssertionError("no provider, burn or publication belongs in recut reuse")
+
+    identity = None
+    for attempt in range(2):
+        # Reopen the ordinary persisted contract; no in-memory receipt is reused.
+        cold_spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        audit = {}
+        builder = select_accurate_recut_command(
+            spec=cold_spec, padded=padded, chat_authority_audit=audit,
+            legacy_command=unused,
+        )
+        commands = []
+
+        def run_command(command):
+            commands.append(command)
+            subprocess.run(command, check=True)
+
+        result = finalization._materialize_final_recut_body(
+            spec=cold_spec, cid=candidate, out_root=out_root, padded=padded,
+            padded_provenance_path=padded_provenance, piece_provenance_rows=[],
+            final_start=1_000, final_end=3_000, sanitized=[], timing_qa={},
+            text_override_path=None, chat_authority_audit=audit,
+            adapters=finalization.ProducerFinalizationAdapters(
+                accurate_recut_command=builder, run_command=run_command,
+                write_source_range_srt=lambda cues, start, end, path: path.write_text(
+                    "1\n00:00:00,000 --> 00:00:02,000\n这是恢复测试\n", encoding="utf-8",
+                ),
+                apply_text_override_document=unused, run_speaker_finalization=unused,
+                burn_preview_subtitles=unused, stage_publish_draft=unused,
+                generate_upload_tags=unused, delivery_root=unused,
+            ),
+        )
+        output = result.media_path
+        stat = output.stat()
+        current = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+        if attempt == 0:
+            identity = current
+            assert commands == [["/bin/ln", str(recut), str(output)]]
+        else:
+            assert current == identity
+            assert commands == [["/bin/true"]]
+        assert os.path.samefile(recut, output)
+        assert output.read_bytes() == before
+        assert audit["existing_final_recut_receipt"]["provider_calls"] == 0
+        assert audit["existing_final_recut_receipt"]["authority_kind"] == AUTHORITY_KIND
+        assert result.subtitle_path.is_file()
+        provenance = json.loads(output.with_suffix(".provenance.json").read_text())
+        assert provenance["final_recut"]["output_sha256"] == _sha(before)[7:]
+
+
+@pytest.mark.parametrize("kind", ["equal_copy", "symlink", "dangling_symlink", "mutated_link"])
+def test_resumed_recut_does_not_adopt_foreign_or_changed_output(tmp_path, kind):
+    spec, padded, recut, _ = _surface(tmp_path)
+    output = tmp_path / "destination.mp4"
+    builder = select_accurate_recut_command(
+        spec=spec, padded=padded, chat_authority_audit={}, legacy_command=object())
+    if kind == "equal_copy":
+        output.write_bytes(recut.read_bytes())
+    elif kind == "symlink":
+        output.symlink_to(recut)
+    elif kind == "dangling_symlink":
+        output.symlink_to(tmp_path / "missing.mp4")
+    else:
+        os.link(recut, output)
+        output.write_bytes(b"changed after builder creation")
+    before_bytes = output.read_bytes() if output.exists() else None
+    before = output.lstat()
+    with pytest.raises(ValueError, match="already exists|sha256"):
+        builder(source_video=padded, output_media=output,
+                start_ms=1_000, duration_ms=2_000)
+    after = output.lstat()
+    assert (after.st_dev, after.st_ino, after.st_mode, after.st_size, after.st_mtime_ns) == (
+        before.st_dev, before.st_ino, before.st_mode, before.st_size, before.st_mtime_ns,
+    )
+    assert (output.read_bytes() if output.exists() else None) == before_bytes
+
+
+@pytest.mark.parametrize("kind", ["source", "provenance", "digest", "boundary", "source_path"])
+def test_resumed_recut_revalidates_contract_before_reuse(tmp_path: Path, kind: str) -> None:
+    spec, padded, recut, _ = _surface(tmp_path)
+    output = tmp_path / "destination.mp4"
+    os.link(recut, output)
+    audit = {}
+    builder = select_accurate_recut_command(
+        spec=spec, padded=padded, chat_authority_audit=audit, legacy_command=object(),
+    )
+    source_video = padded
+    if kind == "source":
+        padded.write_bytes(b"changed source after builder creation")
+    elif kind == "provenance":
+        Path(spec[CONFIG_KEY]["provenance_path"]).write_text("{}")
+    elif kind == "digest":
+        spec[CONFIG_KEY]["sha256"] = "sha256:" + "0" * 64
+    elif kind == "boundary":
+        spec[CONFIG_KEY]["final_end_ms"] += 1
+    else:
+        source_video = tmp_path / "foreign.mp4"
+        source_video.write_bytes(padded.read_bytes())
+    before_bytes = output.read_bytes()
+    before = output.stat()
+    with pytest.raises(ValueError, match="already exists|sha256|boundary|source path"):
+        builder(source_video=source_video, output_media=output,
+                start_ms=1_000, duration_ms=2_000)
+    after = output.stat()
+    assert (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) == (
+        before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns,
+    )
+    assert output.read_bytes() == before_bytes
+    assert "existing_final_recut_receipt" not in audit
 
 
 def test_absent_existing_final_recut_keeps_legacy_builder() -> None:

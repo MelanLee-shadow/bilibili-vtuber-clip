@@ -226,7 +226,10 @@ def test_same_day_alias_metadata_is_validated_and_does_not_weaken_source_windows
     assert identity_problems({**target, "same_day_candidate_ids": ["unbound"]})
     previous = {**target, "package_locator": "other", "recording_date": "2026-10-12", "source_windows": [{"source_sha256": "a" * 64, "start_ms": 10, "end_ms": 200}]}
     target["candidate_ids"] = ["other"]
-    target["source_windows"] = [{"source_sha256": "a" * 64, "start_ms": 100, "end_ms": 300}]
+    # Source windows must still hold. The windows are basically the same video
+    # (overlap 180 ms of 190 ms and 190 ms), so the bidirectional 80% rule matches;
+    # the former fixture (100-300 vs 10-200) was only a 50% overlap.
+    target["source_windows"] = [{"source_sha256": "a" * 64, "start_ms": 20, "end_ms": 210}]
     assert row_matches_target({"content_identity": previous}, "new", manifest, identity=target)
 
 

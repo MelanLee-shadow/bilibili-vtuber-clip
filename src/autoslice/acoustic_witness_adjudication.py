@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 from dataclasses import dataclass
 from src.autoslice.finding_context import JsonValue, json_value
+from src.autoslice.canonical_json_hash import canonical_sha256
 
 from src.autoslice.acoustic_pinyin import (
     candidate_pinyin_similarities,
@@ -806,7 +807,7 @@ def _judge_cache_root() -> Path | None:
     return Path(base) / "cache" / "judge-verdicts"
 
 
-def _semantic_normalize(value: Any, *, top_level: bool = False) -> Any:
+def _semantic_normalize(value: Any, *, top_level: bool = False, _read_only: bool = False) -> Any:
     """Remove transport-only fields while retaining substantive evidence.
 
     The normalizer deliberately does not drop nested ``reason`` values: a
@@ -815,32 +816,31 @@ def _semantic_normalize(value: Any, *, top_level: bool = False) -> Any:
     are ignored.
     """
 
-    if isinstance(value, Mapping):
-        normalized: dict[str, Any] = {}
-        for key in sorted(value, key=lambda item: str(item)):
-            key_text = str(key)
-            if key_text in _SEMANTIC_CONTROLLER_ONLY_KEYS:
-                continue
-            if top_level and key_text in _SEMANTIC_TOP_LEVEL_CONTROLLER_ONLY_KEYS:
-                continue
-            normalized[key_text] = _semantic_normalize(value[key])
-        return normalized
-    if isinstance(value, list):
-        return [_semantic_normalize(item) for item in value]
-    if isinstance(value, tuple):
-        return [_semantic_normalize(item) for item in value]
-    return value
+    memo: dict[tuple[int, bool], tuple[Any, Any]] = {}
+    def normalize(item: Any, top: bool) -> Any:
+        if not isinstance(item, (Mapping, list, tuple)):
+            return item
+        identity = (id(item), top)
+        if _read_only and identity in memo:
+            return memo[identity][1]
+        if isinstance(item, Mapping):
+            result: Any = {str(key): normalize(item[key], False)
+                for key in sorted(item, key=lambda field: str(field))
+                if str(key) not in _SEMANTIC_CONTROLLER_ONLY_KEYS
+                and not (top and str(key) in _SEMANTIC_TOP_LEVEL_CONTROLLER_ONLY_KEYS)}
+        else:
+            result = [normalize(child, False) for child in item]
+        if _read_only:
+            memo[identity] = (item, result)
+        return result
+    try:
+        return normalize(value, top_level)
+    finally:
+        memo.clear()
 
 
 def _semantic_json_sha256(value: Any) -> str:
-    return hashlib.sha256(
-        json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
+    return canonical_sha256(value, allow_nan=True)
 
 
 def _judge_evidence_template(witness: Mapping[str, Any]) -> str:
@@ -865,6 +865,7 @@ def _semantic_fingerprint_payload(
     require_complete_support: bool,
     policy_version: str | None = None,
     dependencies: WordChoiceDependencies | None = None,
+    _read_only: bool = False,
 ) -> dict[str, Any]:
     if check_request.get('finding_context') is not None:
         from .finding_context import decision_materials
@@ -877,7 +878,7 @@ def _semantic_fingerprint_payload(
             'matched_start_ms', 'matched_end_ms', 'source_media_timeline_offset_ms',
             'context_start_ms', 'context_end_ms', 'caption_audio_roles'}}
         data = {'check': rendered_check, 'cue_catalogue': catalogue,
-            'witness': _semantic_normalize(witness), 'candidates': candidates,
+            'witness': _semantic_normalize(witness, _read_only=_read_only), 'candidates': candidates,
             'context_before': context_before or check_request.get('context_before', ''),
             'context_after': context_after or check_request.get('context_after', ''),
             'structured_chat_context': structured_chat_context,
@@ -889,7 +890,8 @@ def _semantic_fingerprint_payload(
             contracts={'semantic_policy': policy_version, 'decision_contract': decision_contract,
                 'allowed_choices': sorted(allowed_choices), 'require_complete_support': require_complete_support,
                 'evidence_template': _judge_evidence_template(witness), 'choice_template': _JUDGE_CHOICES,
-                'text_first_policy': TEXT_FIRST_INSTRUCTIONS}, model_identity=model_identity)
+                'text_first_policy': TEXT_FIRST_INSTRUCTIONS}, model_identity=model_identity,
+            _read_only=_read_only)
         # Retain the original signed request for R(P,M)'s cold revalidation.
         # It is audit data; typed identity is computed only from the above M.
         return {'finding_materials': typed, 'original_check_request': dict(check_request)}
@@ -899,7 +901,7 @@ def _semantic_fingerprint_payload(
         witness = semantic_projection(witness, original_check)
         candidates = semantic_projection(candidates, original_check)
         check_request = semantic_projection(check_request, original_check)
-    request_payload = _semantic_normalize(check_request, top_level=True)
+    request_payload = _semantic_normalize(check_request, top_level=True, _read_only=_read_only)
     # These arguments can be supplied by the caller instead of being copied
     # into the request envelope; include their effective values explicitly.
     request_payload["context_before"] = context_before or str(
@@ -934,10 +936,10 @@ def _semantic_fingerprint_payload(
             ),
             "choice_template_sha256": _semantic_json_sha256(_JUDGE_CHOICES),
         },
-        "model_identity": _semantic_normalize(model_identity),
-        "candidate_set": _semantic_normalize(candidates),
+        "model_identity": _semantic_normalize(model_identity, _read_only=_read_only),
+        "candidate_set": _semantic_normalize(candidates, _read_only=_read_only),
         "check_request": request_payload,
-        "witness": _semantic_normalize(witness),
+        "witness": _semantic_normalize(witness, _read_only=_read_only),
         "effective_context_before": request_payload["context_before"],
         "effective_context_after": request_payload["context_after"],
         "structured_chat_context": structured_chat_context,
@@ -972,6 +974,7 @@ def _semantic_fingerprint(
         require_complete_support=require_complete_support,
         policy_version=policy_version,
         dependencies=dependencies,
+        _read_only=True,
     )
     return _semantic_json_sha256(payload), payload
 

@@ -704,9 +704,9 @@ class SemanticAttemptRecorder:
             rows = self._entries()
         except (KeyError, TypeError, ValueError, AttributeError, RetryNeedsPlan):
             return None
-        # K22 is per request (41:「不完整 STARTED 保留未知，不盲重发。」): an
-        # outstanding STARTED/ERROR/UNKNOWN row is never re-sent and stays
-        # UNKNOWN, but it does not close the target's other routes. Only a
+        # STARTED/ERROR/UNKNOWN remains historical UNKNOWN. H104 recovery
+        # appends under its durable request budget; it cannot close this
+        # target's outstanding audio obligation. Only a
         # COMPLETED row can be the gate (admin ruling).
         asked = []
         for row in rows:
@@ -924,17 +924,15 @@ class SemanticAttemptRecorder:
         unknown = next((row for row in rows
             if row['status'] in {'STARTED', 'ERROR', 'OUTCOME_UNKNOWN'} and same_prompt(row)
             and row['request'].get('model') == dict(model_identity)), None)
-        if unknown is not None:
-            self.blocked = 'PRIOR_CALL_OUTCOME_UNKNOWN'
-            self.events.append({'status': self.blocked, 'provider_calls': 0,
-                                'request_sha256': unknown['request_sha256']})
-            raise RetryNeedsPlan(self.blocked)
+        # A fully bound outer checkpoint is a completed observation, even if
+        # an older recorder row stayed UNKNOWN. Preserve that row verbatim.
         raw_sha = hashlib.sha256(completion.encode()).hexdigest()
         original = next((row for row in rows if row['status'] == 'COMPLETED'
             and row.get('answering_model_identity') == dict(model_identity)
             and row.get('completion_sha256') == raw_sha and same_prompt(row)), None)
         self.events.append({'status': 'EXACT_RAW_REPLAY', 'provider_calls': 0,
             'request_sha256': original['request_sha256'] if original else None,
+            'prior_unknown_request_sha256':unknown['request_sha256'] if unknown else None,
             'completion_sha256': raw_sha, 'source': 'RULING_CACHE'})
 
     def wrap(self, call: Callable[[str], str] | None) -> Callable[[str], str] | None:
@@ -978,16 +976,11 @@ class SemanticAttemptRecorder:
             rows = self._entries()
             prior = next((r for r in rows if r['request_sha256'] == request_sha), None)
             # Old ERROR rows did not prove non-dispatch. Keep them unknown,
-            # as with STARTED/crashed calls; changing only a continuation plan
-            # cannot authorize resending the same actual transport input.
+            # as with STARTED/crashed calls. H104 recovery keeps the original
+            # row and shares a persistent budget across continuation plans.
             unknown = next((row for row in rows if row['status'] in {'STARTED', 'ERROR', 'OUTCOME_UNKNOWN'}
                             and all(row['request'].get(key) == request[key]
                                     for key in ('prompt', 'model'))), None)
-            if unknown is not None:
-                self.blocked = 'PRIOR_CALL_OUTCOME_UNKNOWN'
-                self.events.append({'status': self.blocked, 'request_sha256': unknown['request_sha256'],
-                                    'provider_calls': 0})
-                raise RetryNeedsPlan(self.blocked)
             # The actual transport input is prompt + model. New material
             # fields/plan metadata must neither launder UNKNOWN nor resend an
             # already completed identical input after an upgrade. No rewrite
@@ -1011,6 +1004,28 @@ class SemanticAttemptRecorder:
                                     'provider_calls': 0})
                 return cached_completion(completed['completion'],
                     completed['answering_model_identity'])
+            returned = [row for row in rows if row['status'] == 'COMPLETED'
+                and row['request'].get('prompt') == prompt and row['request'].get('model') == dict(model)]
+            if returned:
+                # A requested route returning a fallback is still one completed
+                # physical request. Read its owner; do not create another semantic
+                # attempt or turn it into a hit under the requested model.
+                from .cpa_request_lifecycle import replay_completed_text_request
+                raw = replay_completed_text_request(call,prompt,model=model,
+                    root=self.directory,issue=self.issue)
+                answering = completion_identity(model,raw)
+                original = next((row for row in returned if row['completion']==raw
+                    and row['answering_model_identity']==answering),None)
+                if original is None:
+                    raise RetryNeedsPlan('SEMANTIC_COMPLETED_REQUEST_BINDING_DRIFT')
+                self.events.append({'status':'EXACT_RAW_REPLAY','provider_calls':0,
+                    'request_sha256':original['request_sha256'],'source':'COMPLETED_REQUEST_OWNER'})
+                return raw
+            if unknown is not None:
+                # H104 transport recovery is the same logical request, not
+                # new semantic material or a reset of its original UNKNOWN.
+                from .semantic_unknown_recovery import recover_unknown
+                return recover_unknown(self,unknown,call,prompt,model)
             # Original archives are consumption evidence only. They cannot
             # replay an old decision as this call's current answer.
             from src.autoslice.semantic_request_history import submitted_question
@@ -1120,18 +1135,8 @@ class SemanticAttemptRecorder:
                 raise RetryNeedsPlan(self.blocked)
             _atomic(path, entry)
             try:
-                if native_retry_capable:
-                    # build_llm_call owns the same terminal scope already; an
-                    # outer wrapper here would count and sleep every physical
-                    # attempt twice.
-                    completion = call(prompt)
-                else:
-                    # Plain adapters still need the terminal transport policy,
-                    # but keep one recorder row for all physical attempts.
-                    from src.autoslice.infra_retry_policy import terminal_retry_call
-                    completion = terminal_retry_call(
-                        lambda: call(prompt), timeout_seconds=retry_timeout
-                    )
+                from .semantic_unknown_recovery import recorded_call
+                completion = recorded_call(self,call,prompt,model)
             except Exception as exc:
                 if type(exc) is CallNotDispatched:
                     failure = {**entry, 'status': 'NOT_DISPATCHED', 'dispatch_outcome': 'NOT_DISPATCHED',

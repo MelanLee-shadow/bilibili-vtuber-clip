@@ -719,11 +719,9 @@ def run_package(package: dict, out: Path, code_root: Path, gemini_environment: d
                 "materialization": "INDEPENDENT_BYTE_COPY"}
             checkpoint("SOURCE_MATERIALIZED")
         checkpoint("PREPARED_CONSTRUCTOR_STARTED")
-        from src.autoslice.prepared_native_audio_recovery import PreparedNativeAudioState
-        native_state = PreparedNativeAudioState(out, out / "native-audio-budget.json")
         reviewer = build_prepared_exact_final_reviewer(
             spec=spec, out_root=out, cid=cid, padded=review_media, host="localhost",
-            authority=copy.deepcopy(authority), completed_record=record, adapters=adapters, native_audio_state=native_state,
+            authority=copy.deepcopy(authority), completed_record=record, adapters=adapters, native_audio_state=None,
         )
         run["prepared_source_boundary_clock"] = getattr(reviewer, "source_boundary_clock", None)
         run["preparation_status"] = "PREPARED"

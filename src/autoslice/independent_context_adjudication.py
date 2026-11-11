@@ -1397,9 +1397,10 @@ def validate_native_range_context_observation(
         return None, "NATIVE_RANGE_PROVIDER_ARTIFACT_DRIFT"
     try:
         from .bound_media_recovery import resolve_bound_media
+        from .evidence_identity import read_file_bytes
         audio_path = resolve_bound_media(Path(paths["audio_clip"]), hashes["audio_clip"])
         rebuilt = exact_target_evidence(
-            metadata, audio=audio_path.read_bytes(),
+            metadata, audio=read_file_bytes(audio_path),
             source_sha256=hashes["source_media"], start_ms=prepared.physical_start_ms,
             end_ms=prepared.physical_end_ms,
             prefer_provider_text=native.get("transcript_basis") == "provider_full_crop_text",

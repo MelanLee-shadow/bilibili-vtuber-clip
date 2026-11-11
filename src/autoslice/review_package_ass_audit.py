@@ -19,6 +19,7 @@ from typing import Any, Mapping
 from src.autoslice.channel_profile import LABEL_RE, load_channel_profile
 from src.autoslice.speaker_label_display import speaker_display
 from src.autoslice.subtitle_rendering import (
+    ASS_SAFE_DISPLAY_CHARS,
     _layout_cue_sequence_for_display,
     _write_sapphire_ass_from_srt,
 )
@@ -370,6 +371,7 @@ def _expected_events(
     cues: list[_SpeakerCue],
     *,
     host_style: str = "LDS",
+    max_chars: int | None = None,
 ) -> list[_AssEvent]:
     events: list[_AssEvent] = []
     rows = [(cue.start_ms, cue.end_ms,
@@ -377,7 +379,7 @@ def _expected_events(
             for cue in cues]
     keys = [cue.speaker for cue in cues]
     for source_index, start_ms, end_ms, display_text in _layout_cue_sequence_for_display(
-        rows, continuity_keys=keys
+        rows, continuity_keys=keys, max_chars=max_chars
     ):
         style = host_style if cues[source_index].speaker == HOST_SPEAKER else "GUEST"
         events.append(_AssEvent(
@@ -428,6 +430,7 @@ def _pair_issues(
     events: list[_AssEvent],
     ass_is_valid: bool,
     uniform_host_speaker: str | None = None,
+    max_chars: int | None = None,
 ) -> list[ReviewPackageAssIssue]:
     cues, srt_issues = _speaker_cues(
         speaker_srt_path, uniform_host_speaker=uniform_host_speaker
@@ -441,6 +444,7 @@ def _pair_issues(
             # The daily burn lane renders every cue with its single Default
             # style; LDS/GUEST styles only exist in the speaker-finalized lane.
             host_style="Default" if uniform_host_speaker is not None else "LDS",
+            max_chars=max_chars,
         )
     except ValueError as exc:
         issues.append(ReviewPackageAssIssue(
@@ -676,6 +680,7 @@ def audit_review_package_ass(
                 events=events,
                 ass_is_valid=not event_issues,
                 uniform_host_speaker=HOST_SPEAKER if uniform_fallback else None,
+                max_chars=min(max_visual_line_chars, ASS_SAFE_DISPLAY_CHARS),
             )
         )
 

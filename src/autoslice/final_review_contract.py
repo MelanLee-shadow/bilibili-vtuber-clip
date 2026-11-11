@@ -5,10 +5,11 @@ from __future__ import annotations
 from .review_evidence_store import cold_input
 from .canonical_json_hash import canonical_sha256
 from .validation_memo import memoized_validation
+from .continuation_subchecks import session_cached_validation
 
 import hashlib
 import re
-from typing import Mapping
+from typing import Mapping, NamedTuple
 
 from src.autoslice.acoustic_witness_adjudication import (
     REQUIRE_COMPLETE_UTTERANCE_SUPPORT,
@@ -474,7 +475,6 @@ def _validate_review_geometry(audit, *, expected_srt_sha256):
         raise FinalReviewContractError(unreadable_problem)
 
 
-@cold_input
 def validate_final_review_release(
     audit: object,
     *,
@@ -482,7 +482,24 @@ def validate_final_review_release(
 ) -> dict[str, object]:
     """Validate a positive receipt; every other state is a release block."""
     from src.autoslice.final_review_meaning_policy import POLICY_VERSION
-    if not isinstance(audit, Mapping) or audit.get("meaning_policy") != POLICY_VERSION:
+    outcome = _final_review_release_outcome(audit, expected_srt_sha256=expected_srt_sha256,
+                                           meaning_policy=POLICY_VERSION)
+    if isinstance(outcome, _PendingRelease):
+        raise FinalReviewContractError(outcome.reason_code)
+    return outcome
+
+
+class _PendingRelease(NamedTuple):
+    # Only a completed, typed release-blocking classification. Continuation
+    # still checks its full parent/source/window/SRT/geometry and authorization.
+    reason_code: str
+
+
+@session_cached_validation('final_review.pending',
+                           cache_result=lambda result: isinstance(result, _PendingRelease))
+@cold_input
+def _final_review_release_outcome(audit, *, expected_srt_sha256, meaning_policy):
+    if not isinstance(audit, Mapping) or audit.get("meaning_policy") != meaning_policy:
         raise FinalReviewContractError("FINAL_REVIEW_MEANING_POLICY_REVIEW_REQUIRED")
 
     if audit.get("final_review_mode") == "per_finding" or "finding_closure" in audit:
@@ -539,7 +556,7 @@ def validate_final_review_release(
         return validate_preserved_review(audit, expected_srt_sha256=expected_srt_sha256)
     _validate_review_integrity(audit, expected_srt_sha256=expected_srt_sha256)
     from src.autoslice.span_finding_obligations import validate_release_obligations
-    from .finding_lifecycle import REVIEW_PENDING, release_reason_codes
+    from .finding_lifecycle import EDIT_REQUIRED, REVIEW_PENDING, release_reason_codes
     pending_obligations = False
     try:
         validate_release_obligations(audit)
@@ -564,8 +581,14 @@ def validate_final_review_release(
             codes = release_reason_codes(findings, terminal=bool(audit.get('terminal_funnel')))
         except ValueError as exc:
             raise FinalReviewContractError(str(exc)) from exc
-        raise FinalReviewContractError(codes[0] if codes else "FINAL_REVIEW_FINDINGS_CONTRACT_INVALID")
+        reason = codes[0] if codes else "FINAL_REVIEW_FINDINGS_CONTRACT_INVALID"
+        if (reason in {REVIEW_PENDING, EDIT_REQUIRED}
+                and audit.get('status') == 'FLAGGED' and audit.get('release_gate') == 'BLOCK'):
+            return _PendingRelease(reason)
+        raise FinalReviewContractError(reason)
     if pending_obligations:
+        if audit.get('status') == 'FLAGGED' and audit.get('release_gate') == 'BLOCK':
+            return _PendingRelease(REVIEW_PENDING)
         raise FinalReviewContractError(REVIEW_PENDING)
 
 

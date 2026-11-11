@@ -15,6 +15,8 @@ from src.autoslice.nested_media_acoustic_runtime import (
 )
 from tests.test_nested_media_acoustic_observer import _inputs
 
+pytestmark = pytest.mark.usefixtures("legacy_gemini_transport")
+
 
 _CPA_IDENTITY = {
     "transport": "fixture.cpa",

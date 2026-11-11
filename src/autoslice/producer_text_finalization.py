@@ -1669,6 +1669,10 @@ def _prepare_final_surface_owners(
     return parallel_context, source_owner_count, baseline_owner_count
 
 
+from .continuation_subchecks import cold_read_session_scope
+
+
+@cold_read_session_scope
 def verify_chat_authority_final_surfaces(
     audit: dict,
     *,
@@ -1677,6 +1681,33 @@ def verify_chat_authority_final_surfaces(
     operator_text_full_ownership: Mapping[str, object] | None = None,
 ) -> bool:
     """Verify every in-delivery authority decision at its original time span."""
+
+    from .chat_authority_reconciliation import validated_retired_chat_rows
+    claimed = {index for index, row in enumerate(audit.get('applied') or [])
+               if isinstance(row, Mapping) and isinstance(row.get('reconciliation'), Mapping)
+               and row['reconciliation'].get('schema_version') == 'chat-source-owner-exact-read-supersession.v1'}
+    owners = audit.get('entity_repairs') or []
+    for registration in audit.get('exact_final_cpa_surface_registrations') or []:
+        if not isinstance(registration, Mapping):
+            continue
+        index = registration.get('owner_entity_repair_index')
+        owner = owners[index] if type(index) is int and 0 <= index < len(owners) else None
+        receipt = owner.get('editorial_authority') if isinstance(owner, Mapping) else None
+        if isinstance(receipt, Mapping) and receipt.get('source_owner_reconciliation') is True:
+            indexes = registration.get('superseded_applied_indexes')
+            if not isinstance(indexes, list) or not indexes or any(type(i) is not int for i in indexes):
+                audit['final_verification_failure'] = 'CHAT_SOURCE_OWNER_RECONCILIATION_INVALID'
+                return False
+            claimed.update(indexes)
+    if claimed:
+        validated = validated_retired_chat_rows(audit, current_srt_text=final_text_srt,
+                                               delivery_start_ms=delivery_start_ms)
+        speaker_validated = validated_retired_chat_rows(audit, current_srt_text=final_speaker_srt,
+                                                       delivery_start_ms=delivery_start_ms,
+                                                       chain_srt_text=final_text_srt)
+        if not claimed.issubset(validated & speaker_validated):
+            audit['final_verification_failure'] = 'CHAT_SOURCE_OWNER_RECONCILIATION_INVALID'
+            return False
 
     prepared = _prepare_final_surface_owners(
         audit, final_text_srt=final_text_srt, final_speaker_srt=final_speaker_srt,

@@ -127,7 +127,7 @@ def _usage(authority):
                 "final_review_audit.context_adjudication_count")
 
 
-def _derive(parent_spec: dict, checkpoint: dict, live: dict, *, accept_source_endpoint=False):
+def _derive(parent_spec: dict, checkpoint: dict, live: dict, *, restore_frozen_source=False):
     from src.autoslice.producer_text_checkpoint import SOURCE_SCHEMA, load_post_transcript_text
     cid = parent_spec.get("candidate_id")
     _need(checkpoint.get("schema_version") == SOURCE_SCHEMA
@@ -142,7 +142,7 @@ def _derive(parent_spec: dict, checkpoint: dict, live: dict, *, accept_source_en
           and context.get("recording_date") == parent_spec.get("date"), "CANDIDATE_DRIFT")
     source_text = bound(artifacts["srt"], as_json=False).read_text(encoding="utf-8")
     _need(load_post_transcript_text(frozen) is not None, "SOURCE_TEXT_MISSING")
-    if accept_source_endpoint:
+    if restore_frozen_source:
         # This lane restores the checkpoint's frozen SOURCE, not live CURRENT.
         # Its retained post-transcript snapshot binds its own bytes above; a
         # later source-truth stage may legitimately make SOURCE differ from it.
@@ -161,20 +161,33 @@ def _derive(parent_spec: dict, checkpoint: dict, live: dict, *, accept_source_en
               "SOURCE_AUTHORITY_DRIFT")
     _need(hashlib.sha256(source_text.encode()).hexdigest()
           == artifacts["srt"]["sha256"][7:], "TEXT_DRIFT")
-    pieces, old = parent_spec.get("pieces"), context.get("pieces")
+    pieces, old = copy.deepcopy(parent_spec.get("pieces")), context.get("pieces")
     _need(isinstance(pieces, list) and pieces and isinstance(old, list)
           and len(pieces) == len(old), "PIECES_INVALID")
     for piece, previous in zip(pieces, old):
+        # Candidate specs precede the producer's byte inspection. Resolve an
+        # absent declaration from the same inspected source, never by copying
+        # the checkpoint's claim back into the original spec.
+        _need(isinstance(piece, dict) and isinstance(previous, Mapping), "PIECES_INVALID")
+        if piece.get("source_media_sha256") is None:
+            from src.autoslice.producer_source_media import (
+                _bind_piece_source_media_sha256, _source_media_sha256,
+            )
+            _, digest = _source_media_sha256("localhost", Path(str(piece.get("remote_media"))))
+            _bind_piece_source_media_sha256(piece, source_sha256=digest)
+        from src.autoslice.clip_context import source_piece_context
+        from src.autoslice.evidence_identity import same_sha256
+        projected = source_piece_context(piece)
         _need(all(piece.get(key) == previous.get(key) for key in ("start_ms", "end_ms"))
-              and Path(str(piece.get("remote_media"))).name == previous.get("recording_basename")
-              and str(piece.get("source_media_sha256")).removeprefix("sha256:")
-                  == str(previous.get("source_media_sha256")).removeprefix("sha256:"),
+              and all(projected[key] == previous.get(key)
+                  for key in ("start_ms", "end_ms", "recording_basename"))
+              and same_sha256(projected["source_media_sha256"], previous.get("source_media_sha256")),
               "SOURCE_CLOCK_DRIFT")
     previous_usage, _ = _usage(frozen)
     latest_usage, usage_field = _usage(live)
     _need(latest_usage["provider_adjudication_count"]
           >= previous_usage["provider_adjudication_count"], "CPA_HISTORY_REGRESSION")
-    return artifacts, latest_usage, usage_field
+    return artifacts, latest_usage, usage_field, pieces
 
 
 def checkpoint_parent_paths(parent: Path, cid: str) -> dict[str, Path]:
@@ -261,7 +274,8 @@ def build_source_endpoint_rebuild_authority(parent_spec: Mapping) -> dict:
 
 
 def build_source_checkpoint_parent(*, parent_spec_path: Path, checkpoint_path: Path,
-                                   accept_source_endpoint: bool = False) -> dict:
+                                   accept_source_endpoint: bool = False,
+                                   restore_source_checkpoint: bool = False) -> dict:
     """Build only from native files; no caller-supplied usage counts or verdicts."""
     parent_spec_binding, checkpoint_binding = binding(parent_spec_path), binding(checkpoint_path)
     parent_spec, checkpoint = bound(parent_spec_binding), bound(checkpoint_binding)
@@ -270,8 +284,9 @@ def build_source_checkpoint_parent(*, parent_spec_path: Path, checkpoint_path: P
     _need(checkpoint_path == native_files["source_checkpoint"], "CHECKPOINT_LOCATION_DRIFT")
     live_binding = binding(native_files["live_authority"])
     live = bound(live_binding)
-    artifacts, usage, usage_field = _derive(
-        parent_spec, checkpoint, live, accept_source_endpoint=accept_source_endpoint)
+    artifacts, usage, usage_field, pieces = _derive(
+        parent_spec, checkpoint, live,
+        restore_frozen_source=accept_source_endpoint or restore_source_checkpoint)
     padded = Path(artifacts["padded"]["path"])
     native = _native_budget_binding(parent_spec, native_files["native_budget"], artifacts["padded"])
     budget = bound(native)
@@ -283,7 +298,7 @@ def build_source_checkpoint_parent(*, parent_spec_path: Path, checkpoint_path: P
             if line.strip()]
     _need(all(_valid_cpa_journal_row(row) for row in rows),
           "CPA_JOURNAL_INVALID")
-    source_shas = [piece["source_media_sha256"] for piece in parent_spec["pieces"]]
+    source_shas = [piece["source_media_sha256"] for piece in pieces]
     result = {
         "schema_version": SCHEMA, "candidate_id": cid,
         "parent_spec": parent_spec_binding, "source_checkpoint": checkpoint_binding,
@@ -298,7 +313,7 @@ def build_source_checkpoint_parent(*, parent_spec_path: Path, checkpoint_path: P
         "source_media_sha256s": source_shas,
         "release_authorized": False,
     }
-    if accept_source_endpoint:
+    if accept_source_endpoint or restore_source_checkpoint:
         frozen = bound(artifacts["authority"])
         result["source_authority_observation"] = {
             "schema_version": "source-checkpoint-authority-observation.v1",
@@ -313,6 +328,35 @@ def build_source_checkpoint_parent(*, parent_spec_path: Path, checkpoint_path: P
     return result
 
 
+def build_source_checkpoint_successor(*, parent_spec_path: Path, output_root: Path) -> dict:
+    """Restore frozen SOURCE into a new attempt without changing its scope.
+
+    This is independent of the publication-endpoint rebuild lane: every
+    source window, owner, delivery and boundary field remains the parent's.
+    The live authority supplies accounting and disclosed CURRENT drift only.
+    """
+    parent = bound(binding(parent_spec_path))
+    cid = str(parent.get("candidate_id") or "")
+    native = checkpoint_parent_paths(Path(str(parent.get("output_root") or "")) / cid, cid)
+    retained = build_source_checkpoint_parent(
+        parent_spec_path=parent_spec_path, checkpoint_path=native["source_checkpoint"],
+        restore_source_checkpoint=True)
+    checkpoint = bound(retained["source_checkpoint"])
+    successor = copy.deepcopy(parent)
+    successor.update(
+        output_root=str(output_root), restore_source_checkpoint=True,
+        retained_source_input=retained,
+        source_text_checkpoint={key: retained["source_checkpoint"][key] for key in ("path", "sha256")},
+        existing_subtitle_surface={
+            "schema_version": "existing-subtitle-surface.v1", "candidate_id": cid,
+            **checkpoint["srt"], "source_media_sha256": checkpoint["padded"]["sha256"],
+            "time_domain": "padded_local",
+            "authority_kind": "PIPELINE_REVIEWED_CPA_SURFACE_NOT_HUMAN_TRUTH",
+        })
+    validate_source_checkpoint_parent(successor)
+    return successor
+
+
 def validate_source_checkpoint_parent(spec: Mapping, *, runtime=False) -> dict | None:
     config = spec.get("retained_source_input")
     if not isinstance(config, Mapping) or config.get("schema_version") != SCHEMA:
@@ -320,14 +364,25 @@ def validate_source_checkpoint_parent(spec: Mapping, *, runtime=False) -> dict |
     bound(config.get("parent_spec"))
     bound(config.get("source_checkpoint"))
     source_endpoint_rebuild = "accept_source_endpoint" in spec
+    from src.autoslice.producer_request import semantic_tail_trim_cap
     if source_endpoint_rebuild:
         _need(spec["accept_source_endpoint"] is True, "SPEC_SCOPE_DRIFT")
+    restore_source = "restore_source_checkpoint" in spec
+    if restore_source:
+        _need(spec["restore_source_checkpoint"] is True and not source_endpoint_rebuild,
+              "SPEC_SCOPE_DRIFT")
     rebuilt = build_source_checkpoint_parent(
         parent_spec_path=Path(config["parent_spec"]["path"]),
         checkpoint_path=Path(config["source_checkpoint"]["path"]),
-        accept_source_endpoint=source_endpoint_rebuild)
+        accept_source_endpoint=source_endpoint_rebuild, restore_source_checkpoint=restore_source)
     _need(dict(config) == rebuilt, "HISTORY_DRIFT")
     parent_spec = bound(config["parent_spec"])
+    if "profile_binding" not in parent_spec and "profile_binding" in spec:
+        # The ordinary request loader enriches legacy specs from its explicit
+        # parent selection. That selection, never the child's own declaration,
+        # is the compatibility authority for the missing field.
+        from src.autoslice.channel_profile import normalize_profile_binding, profile_binding_from_environment
+        parent_spec["profile_binding"] = normalize_profile_binding(profile_binding_from_environment())
     account_root = str(parent_spec.get("runtime_root") or "")
     _need(Path(account_root).is_absolute()
           and os.environ.get("AUTOSLICE_BASE", account_root) == account_root,
@@ -338,13 +393,15 @@ def validate_source_checkpoint_parent(spec: Mapping, *, runtime=False) -> dict |
                "given_end_mode", "given_end_authority", "semantic_tail_trim_cap_ms",
                "retained_source_input", "source_text_checkpoint",
                "existing_subtitle_surface", "source_witness_extension"}
+    if restore_source:
+        allowed.add("restore_source_checkpoint")
     if source_endpoint_rebuild:
         _need(not any(k in spec for k in SOURCE_ENDPOINT_DELIVERY_FIELDS), "SPEC_SCOPE_DRIFT")
         _need(not any(k in spec for k in SOURCE_ENDPOINT_BOUNDARY_FIELDS[:3]), "SPEC_SCOPE_DRIFT")
         # Normal producer preflight materializes this default after validation.
         _need("semantic_tail_trim_cap_ms" not in spec or (
             runtime and type(spec["semantic_tail_trim_cap_ms"]) is int
-            and spec["semantic_tail_trim_cap_ms"] == 0), "SPEC_SCOPE_DRIFT")
+            and spec["semantic_tail_trim_cap_ms"] == semantic_tail_trim_cap({})), "SPEC_SCOPE_DRIFT")
         _need("source_witness_extension" not in spec, "SPEC_SCOPE_DRIFT")
         _need(spec.get("recovery_publication_authority")
               == build_source_endpoint_rebuild_authority(parent_spec), "UNVERIFIED_BOUNDARY_CHANGE")
@@ -353,11 +410,25 @@ def validate_source_checkpoint_parent(spec: Mapping, *, runtime=False) -> dict |
         allowed.update({"source_piece_clock", "required_boundary_owners", "boundary_search_scope",
                         "existing_subtitle_surface_receipt"})
     def immutable(value):
-        return {k: v for k, v in value.items() if k not in allowed}
+        result = {k: copy.deepcopy(v) for k, v in value.items() if k not in allowed}
+        from src.autoslice.argon_escalation_defaults import apply_production_argon_default, is_production_runtime_spec
+        if is_production_runtime_spec(result):
+            apply_production_argon_default(result)
+        # Runtime source preparation adds its verified digest to in-memory
+        # pieces. Compare both stages using the rebuilt parent's identity;
+        # a supplied, different digest remains a scope mismatch.
+        for piece, digest in zip(result.get("pieces", []), rebuilt["source_media_sha256s"]):
+            if piece.get("source_media_sha256") is None:
+                piece["source_media_sha256"] = digest
+        return result
     _need(immutable(spec) == immutable(parent_spec), "SPEC_SCOPE_DRIFT")
     boundary_fields = {"recovery_publication_authority", "given_end_ms", "given_end_mode",
                        "given_end_authority", "semantic_tail_trim_cap_ms"}
-    if not source_endpoint_rebuild and any(spec.get(k) != parent_spec.get(k) for k in boundary_fields):
+    if restore_source:
+        _need(all(spec.get(key) == parent_spec.get(key)
+                  for key in boundary_fields - {"semantic_tail_trim_cap_ms"})
+              and semantic_tail_trim_cap(spec) == semantic_tail_trim_cap(parent_spec), "SPEC_SCOPE_DRIFT")
+    if not source_endpoint_rebuild and not restore_source and any(spec.get(k) != parent_spec.get(k) for k in boundary_fields):
         from src.autoslice.first_publication_boundary import bind_published_recall_to_spec
         _need(bind_published_recall_to_spec(dict(spec)), "UNVERIFIED_BOUNDARY_CHANGE")
     output = Path(str(spec.get("output_root") or ""))

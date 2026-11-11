@@ -79,8 +79,10 @@ def test_cached_small_receipts_remain_copy_isolated_and_same_json_budget():
 
 
 def test_ordinary_gate_logs_postreview_work_and_keeps_release_rejection(tmp_path, capsys):
-    from tests.continuation_support import assert_text_recovery_keeps_release_blocked
-    assert_text_recovery_keeps_release_blocked(tmp_path)
+    from tests.test_producer_package_finalization import (
+        test_text_recovery_never_grants_release_and_still_validates_current_bytes,
+    )
+    test_text_recovery_never_grants_release_and_still_validates_current_bytes(tmp_path)
     lines = capsys.readouterr().err.splitlines()
     for phase in ('span_obligations', 'convergence', 'persist', 'repairs', 'pass_receipt'):
         stage = 'exact_final_review.postprocess.' + phase

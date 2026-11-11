@@ -163,7 +163,8 @@ class FakeBili:
                             "tid": au.EXPECTED_TID,
                             "copyright": au.EXPECTED_COPYRIGHT,
                             "source": self.member_source,
-                        }
+                        },
+                        "videos": [{"cid": self._cid, "filename": "f0", "title": self._title}],
                     },
                 }
             if "creative/web/season/section?id=" in url:

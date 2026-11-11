@@ -1,12 +1,13 @@
-"""Opt-in native Gemini transport. CPA owns credential selection and retries.
+"""Default native Gemini transport. CPA owns credential selection and retries.
 
-The switch is read at dispatch, defaults off, and is never set by this module.
+The switch is read at dispatch, defaults on, and accepts an explicit ``0`` opt-out.
 Callers retain their model/provider/cache identity; transport evidence is separate.
 No Google key, OAuth file, management endpoint or attribution file is read here.
 """
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -18,7 +19,7 @@ from pathlib import Path
 import re
 import stat
 import time
-from typing import Any, Callable, Mapping, Sequence, TypeAlias, cast
+from typing import Any, Callable, Iterator, Mapping, Sequence, TypeAlias, cast
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -32,10 +33,69 @@ ENABLE_ENV = "AUTOSLICE_CPA_GEMINI_ENABLED"
 UNKNOWN = "UNKNOWN"
 MAX_REQUEST_BYTES = 20_000_000
 MAX_RESPONSE_BYTES = 8_000_000
+# Temporary protocol exceptions, removed when CPA supports these lifecycles.
+# This table is not an HTTP-error fallback: select the operation before dispatch.
+OPERATION_EXCEPTIONS = {
+    "argon_lifecycle": "CPA_UNSUPPORTED_ARGON_LIFECYCLE",
+    "files_upload": "CPA_UNSUPPORTED_FILES_UPLOAD",
+}
 
 
 def enabled(environment: Mapping[str, str] | None = None) -> bool:
-    return (os.environ if environment is None else environment).get(ENABLE_ENV, "") == "1"
+    return (os.environ if environment is None else environment).get(ENABLE_ENV, "1") == "1"
+
+
+def exception_receipt(operation: str, transport: str) -> JsonObject:
+    """Describe a registered protocol exception without changing model identity."""
+    return {"transport": transport, "cpa_exception": operation,
+            "cpa_exception_reason": OPERATION_EXCEPTIONS[operation]}
+
+
+def response_accounting(payload: JsonMap) -> JsonObject:
+    """Retain bounded usage values, without response text or credential data."""
+    usage = payload.get('usageMetadata')
+    return {'usage': {name: value for name, value in (usage if isinstance(usage, dict) else {}).items()
+                     if isinstance(value, int) and not isinstance(value, bool)},
+            'response_model': payload.get('modelVersion', UNKNOWN)}
+
+
+@contextmanager
+def legacy_attempt(*, operation: str, transport: str, model: str, purpose: str,
+                   request_sha256: str, environment: Mapping[str, str] | None = None,
+                   key_tier: str = UNKNOWN) -> Iterator[JsonObject]:
+    """COST-02 reservation and terminal record for one exception model call.
+
+    The caller supplies only non-secret identities. Existing paid admission
+    remains in the lifecycle owner; unavailable usage/cost stays UNKNOWN.
+    """
+    env = os.environ if environment is None else environment
+    row: JsonObject = exception_receipt(operation, transport)
+    if not enabled(env):
+        yield row
+        return
+    ledger = Path(env.get("AUTOSLICE_CPA_GEMINI_LEDGER") or
+                  str(Path(env.get("AUTOSLICE_BASE", "/opt/bilive/autoslice")) / "state/cpa-gemini/requests.jsonl"))
+    row.update(schema_version="cpa-gemini-attempt.v1", request_id=uuid.uuid4().hex,
+        recorded_at=datetime.now(timezone.utc).isoformat(), purpose=purpose,
+        identity_model=model, wire_model=wire_model(model), request_sha256=request_sha256,
+        key_tier=key_tier, auth_index=UNKNOWN, trace_id=UNKNOWN, cost_usd=UNKNOWN,
+        upstream_attempts=UNKNOWN, usage=UNKNOWN, status="DISPATCH_RESERVED")
+    _append(ledger, row)
+    started = time.monotonic()
+    try:
+        yield row
+        if row["status"] == "DISPATCH_RESERVED":
+            http_status = row.get('http_status')
+            row["status"] = "HTTP_ERROR" if isinstance(http_status, int) and http_status >= 400 else "RESPONDED"
+    except BaseException as exc:
+        row.update(status="FAILED_OR_AMBIGUOUS", error_type=type(exc).__name__)
+        status = getattr(exc, 'http_status', None)
+        if isinstance(status, int):
+            row['http_status'] = status
+        raise
+    finally:
+        row["elapsed_seconds"] = round(time.monotonic() - started, 3)
+        _append(ledger, row)
 
 
 def wire_model(model: str) -> str:

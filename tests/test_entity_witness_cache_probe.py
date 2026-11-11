@@ -3,12 +3,16 @@ from pathlib import Path
 
 import pytest
 
+
 from src.autoslice import entity_audio_verifier as verifier_module
 from src.autoslice.acoustic_witness_adjudication import build_witness_request
 from src.autoslice.read_aloud_llm_verifier import (
     build_cpa_read_aloud_verifier,
 )
 
+
+# These fixtures replace the original Google HTTP / AGY process boundary.
+pytestmark = pytest.mark.usefixtures("legacy_gemini_transport")
 
 class _Completed:
     def __init__(self, returncode=0, stdout="", stderr=""):

@@ -243,6 +243,6 @@ def test_lidousha_asset_is_the_generated_pilot_and_validator_reports_valid():
     profile = load_channel_profile(ROOT, profile_id='lidousha', environ={})
     assert asset not in profile.fingerprint_paths()
     result = subprocess.run([sys.executable, '-B', str(ROOT / 'scripts/validate_channel_profile.py'),
-                             '--profile', 'lidousha', '--config-only'], capture_output=True, text=True, timeout=30)
+                             '--profile', 'lidousha'], capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(result.stdout)['census_clues_status'] == 'VALID'

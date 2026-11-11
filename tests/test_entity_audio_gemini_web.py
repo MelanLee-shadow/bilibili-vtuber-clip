@@ -12,6 +12,7 @@ import subprocess
 
 import pytest
 
+
 from src.autoslice import agy_gemini_client
 from src.autoslice import entity_audio_verifier as verifier
 from src.autoslice.acoustic_witness_adjudication import build_witness_request
@@ -19,6 +20,9 @@ from src.autoslice.exact_source_transcript_contract import (
     build_exact_source_transcript_request,
 )
 
+
+# These fixtures replace the original Google HTTP / AGY process boundary.
+pytestmark = pytest.mark.usefixtures("legacy_gemini_transport")
 
 class _Completed:
     def __init__(self, returncode: int = 0):

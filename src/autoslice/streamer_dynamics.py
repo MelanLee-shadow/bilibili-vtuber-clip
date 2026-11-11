@@ -4,8 +4,10 @@ Not every stream is a game; the owner's own Bilibili dynamics (动态) may name
 the session's real theme when static context (game glossary/roster) is blind.
 This module resolves the channel owner's uid from the profile's live
 room_id, crawls a bounded window of recent dynamics text via Bilibili's
-signed WBI web-dynamic feed, and associates dynamics published near a
-recording date into a per-session receipt.
+public opus feed (the signed ``feed/space`` endpoint answers HTTP 412 to
+datacenter egress such as OCI3, even with a fresh visitor cookie, and
+intermittently returns an empty page elsewhere), and associates dynamics
+published near a recording date into a per-session receipt.
 
 Theme hints are candidates only: a hint's existence never proves a cue's
 occurrence and carries no mechanical mutation authority (sibling lane to
@@ -24,12 +26,9 @@ import urllib.parse
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping
 
-from src.autoslice.bilibili_wbi import signed_params as bilibili_wbi_signed_params
-from src.autoslice.community_comment_discovery import fetch_wbi_mixin_key
 from src.autoslice.runtime_candidate_asset import bind_runtime_candidate_asset
 from src.autoslice.timely_term_crawler import (
     BILIBILI_USER_AGENT,
-    BILIBILI_WBI_NAV_ENDPOINT,
     BoundedHttpClient,
     CrawlError,
 )
@@ -40,7 +39,17 @@ RECEIPT_SCHEMA = "session-theme-hints.v1"
 OCCURRENCE_POLICY = "THEME_HINT_NOT_CUE_OCCURRENCE_OR_MUTATION_AUTHORITY"
 ENV_SUFFIX = "SESSION_THEME_HINTS"
 ROOM_INFO_ENDPOINT = "https://api.live.bilibili.com/room/v1/Room/get_info"
-DYNAMIC_FEED_ENDPOINT = "https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space"
+OPUS_FEED_ENDPOINT = "https://api.bilibili.com/x/polymer/web-dynamic/v1/opus/feed/space"
+# Bilibili dynamic ids are snowflakes: the high bits count seconds since
+# 2017-07-01 00:00 +08:00.  The opus feed row carries no timestamp
+# (``pub_time`` is empty), so the publication time is derived from the id; the
+# derivation was checked row by row against ``feed/space`` ``pub_ts``.
+DYNAMIC_ID_EPOCH = 1498838400
+# Calls per run: room info + one opus feed page.  Each may spend one extra
+# request on the single visitor-cookie refresh after an HTTP 412
+# (BoundedHttpClient charges that retry to the budget).  Derived from the call
+# structure here, so the script has no second copy of the number.
+REQUEST_BUDGET = (1 + 1) * 2
 ALLOWED_HOSTS = frozenset({"api.live.bilibili.com", "api.bilibili.com"})
 MAX_ITEMS = 32
 MAX_TEXT_CHARS = 500
@@ -183,17 +192,24 @@ def resolve_uid(client: BoundedHttpClient, *, room_id: str) -> int:
     return uid
 
 
-def _dynamic_items(payload: Mapping[str, Any], *, uid: int) -> tuple[list[dict[str, Any]], int]:
+def _dynamic_items(
+    payload: Mapping[str, Any], *, now: dt.datetime
+) -> tuple[list[dict[str, Any]], int]:
     if payload.get("code") != 0:
-        raise CrawlError(f"Bilibili dynamic feed returned code {payload.get('code')}")
+        raise CrawlError(f"Bilibili opus feed returned code {payload.get('code')}")
     data = payload.get("data")
     rows = data.get("items") if isinstance(data, Mapping) else None
     if not isinstance(rows, list):
-        raise CrawlError("Bilibili dynamic feed returned an invalid item list")
+        raise CrawlError("Bilibili opus feed returned an invalid item list")
+    if not rows:
+        # An account with a posting history never has an empty first page: this
+        # is Bilibili's soft risk-control answer, and must not become a fresh
+        # (silently empty) snapshot.
+        raise CrawlError("Bilibili opus feed returned an empty first page (risk control)")
     items: list[dict[str, Any]] = []
     skipped = 0
     for row in rows[:MAX_ITEMS]:
-        parsed, malformed = _one_dynamic_item(row, uid=uid)
+        parsed, malformed = _one_dynamic_item(row, now=now)
         if malformed:
             skipped += 1
         if parsed is not None:
@@ -201,50 +217,44 @@ def _dynamic_items(payload: Mapping[str, Any], *, uid: int) -> tuple[list[dict[s
     return items, skipped
 
 
-def _one_dynamic_item(row: object, *, uid: int) -> tuple[dict[str, Any] | None, bool]:
+def _one_dynamic_item(row: object, *, now: dt.datetime) -> tuple[dict[str, Any] | None, bool]:
     """Return (item-or-None, malformed).
 
-    ``malformed`` only counts structurally broken rows (bad id/modules/pub_ts):
-    a live feed legitimately mixes text-less posts (images/video/forwards)
-    and other people's mid — those are normal filtering, not crawl failures,
-    and must not turn a healthy run into a false-positive partial exit.
+    ``malformed`` only counts structurally broken rows (bad id/content/derived
+    time): an opus row without text (image-only post) is normal filtering, not
+    a crawl failure, and must not turn a healthy run into a partial exit.  The
+    feed is requested per ``host_mid``, so every row is the owner's own.
     """
 
     if not isinstance(row, Mapping):
         return None, True
-    dynamic_id = str(row.get("id_str") or "")
-    modules = row.get("modules")
-    if not _DYNAMIC_ID_RX.fullmatch(dynamic_id) or not isinstance(modules, Mapping):
+    dynamic_id = str(row.get("opus_id") or "")
+    if not _DYNAMIC_ID_RX.fullmatch(dynamic_id):
         return None, True
-    author = modules.get("module_author")
-    dynamic = modules.get("module_dynamic")
-    if not isinstance(author, Mapping) or not isinstance(dynamic, Mapping):
+    seconds = (int(dynamic_id) >> 32) + DYNAMIC_ID_EPOCH
+    if not DYNAMIC_ID_EPOCH <= seconds <= now.timestamp() + 86400:
         return None, True
-    try:
-        published_at = dt.datetime.fromtimestamp(int(author.get("pub_ts") or 0), dt.timezone.utc)
-    except (OSError, OverflowError, TypeError, ValueError):
+    raw_text = row.get("content")
+    if raw_text is not None and not isinstance(raw_text, str):
         return None, True
-    if int(author.get("mid") or 0) != uid:
-        return None, False
-    desc = dynamic.get("desc")
-    raw_text = desc.get("text") if isinstance(desc, Mapping) else None
     text = _clean_text(raw_text, max_chars=MAX_TEXT_CHARS)
     if not text:
         return None, False
     return {
         "dynamic_id": dynamic_id,
-        "published_at": published_at.isoformat(timespec="seconds"),
+        "published_at": dt.datetime.fromtimestamp(seconds, dt.timezone.utc).isoformat(
+            timespec="seconds"
+        ),
         "text": text,
     }, False
 
 
 def fetch_recent_dynamics(
-    client: BoundedHttpClient, *, uid: int, mixin_key: str, now: dt.datetime
+    client: BoundedHttpClient, *, uid: int, now: dt.datetime
 ) -> tuple[list[dict[str, Any]], int]:
-    params = bilibili_wbi_signed_params({"host_mid": uid}, mixin_key=mixin_key, signed_at=now)
-    url = DYNAMIC_FEED_ENDPOINT + "?" + urllib.parse.urlencode(params)
+    query = urllib.parse.urlencode({"host_mid": uid, "page": 1, "type": "all"})
     response = client.fetch(
-        url,
+        f"{OPUS_FEED_ENDPOINT}?{query}",
         headers={
             "User-Agent": BILIBILI_USER_AGENT,
             "Referer": f"https://space.bilibili.com/{uid}/dynamic",
@@ -253,24 +263,23 @@ def fetch_recent_dynamics(
     try:
         payload = json.loads(response.body)
     except (UnicodeError, json.JSONDecodeError) as exc:
-        raise CrawlError("Bilibili dynamic feed returned invalid JSON") from exc
+        raise CrawlError("Bilibili opus feed returned invalid JSON") from exc
     if not isinstance(payload, Mapping):
-        raise CrawlError("Bilibili dynamic feed returned invalid JSON")
-    return _dynamic_items(payload, uid=uid)
+        raise CrawlError("Bilibili opus feed returned invalid JSON")
+    return _dynamic_items(payload, now=now)
 
 
 def build_snapshot(
     client: BoundedHttpClient, *, room_id: str, now: dt.datetime
 ) -> tuple[dict[str, Any], int]:
-    """Run the bounded 3-call crawl (room info, WBI nav, dynamic feed)."""
+    """Run the bounded 2-call crawl (room info, opus feed page)."""
 
     if now.tzinfo is None:
         raise StreamerDynamicsError("build_snapshot now must be timezone-aware")
     if not _ROOM_ID_RX.fullmatch(str(room_id)):
         raise StreamerDynamicsError("invalid room_id")
     uid = resolve_uid(client, room_id=str(room_id))
-    mixin_key, _fresh = fetch_wbi_mixin_key(client, endpoint=BILIBILI_WBI_NAV_ENDPOINT)
-    items, skipped = fetch_recent_dynamics(client, uid=uid, mixin_key=mixin_key, now=now)
+    items, skipped = fetch_recent_dynamics(client, uid=uid, now=now)
     snapshot = {
         "schema_version": SNAPSHOT_SCHEMA,
         "generated_at": now.isoformat(timespec="seconds"),

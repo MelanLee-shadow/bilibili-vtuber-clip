@@ -12,9 +12,7 @@ from src.autoslice import argon_comparison_policy as policy
 from src.autoslice.argon_escalation_contract import canonical, sha
 from tests.test_argon_regression_comparison import grant
 
-from tests.test_common_regression_execution import (  # noqa: F401
-    case, joint, offline, ordinary_case, plan_args, scene,
-)
+pytest_plugins = ["tests.test_common_regression_execution"]
 
 
 @pytest.fixture

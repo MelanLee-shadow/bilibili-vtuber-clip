@@ -15,6 +15,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from src.autoslice.subtitle_audio_correspondence import normalize_text, parse_timed_srt
+from .evidence_identity import EvidenceFileChangedError, read_file_bytes
 
 SCHEMA = "watched-media-caption-display-evidence.v1"
 POLICY = "synchronized-whole-cue-visual-dedup.v1"
@@ -34,7 +35,10 @@ def _file_bytes(path: Path, expected: object, code: str) -> bytes:
     if path.is_symlink() or not path.is_file():
         raise CaptionDedupError(code + "_UNAVAILABLE")
     before = path.stat()
-    data = path.read_bytes()
+    try:
+        data = read_file_bytes(path)
+    except EvidenceFileChangedError as exc:
+        raise CaptionDedupError(code + "_CHANGED_DURING_READ") from exc
     after = path.stat()
     def identity(stat):
         return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
@@ -42,8 +46,6 @@ def _file_bytes(path: Path, expected: object, code: str) -> bytes:
         raise CaptionDedupError(code + "_CHANGED_DURING_READ")
     if not isinstance(expected, str) or _sha(data) != expected.removeprefix("sha256:"):
         raise CaptionDedupError(code + "_HASH_MISMATCH")
-    from .validation_memo import note_hashed_file
-    note_hashed_file(path, _sha(data))
     return data
 
 

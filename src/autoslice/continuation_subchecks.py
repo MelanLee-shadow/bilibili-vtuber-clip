@@ -35,7 +35,8 @@ def cold_read_session():
     The same immutable persisted content is validated by several ingress
     validators (snapshot, source clock, current checkpoint, continuation).
     Inside one session a content-addressed replay that already passed is not
-    recomputed; a failure is never remembered. Provider stages run outside
+    recomputed. Only explicitly selected completed results (including typed
+    release blockers) are remembered, never exceptions. Provider stages run outside
     (:func:`end_cold_read`), so a live review revalidates everything.
     """
     if _SESSION.get() is not None:
@@ -70,36 +71,52 @@ def session_memo(kind: str) -> dict | None:
     return None if session is None else session.setdefault(kind, {})
 
 
-def session_validated(kind: str):
-    """Decorate a pure persisted-content validator that returns ``None``.
+def _session_validation_memo():
+    from .validation_memo import SessionValidationMemo
 
-    Inside a cold-read session an identical argument set that already passed
-    is not revalidated; outside a session, and for every failure, the
-    validator runs exactly as before.
+    session = session_memo('validation_results')
+    if session is None:
+        return None
+    if 'memo' not in session:
+        session['memo'] = SessionValidationMemo()
+    return session['memo']
+
+
+def session_cached_validation(kind: str, *, cache_result, evict=True, named_blobs=False):
+    """Reuse selected completed results with current content and dependencies.
+
+    A typed blocker is still a blocker, not permission to resume or release.
+    The original caller owns that decision and all its scope/binding checks.
     """
-    import hashlib
-    import json
     from functools import wraps
+    from .validation_memo import (validation_content_key,
+                                  capture_validation_dependencies)
 
     def decorate(function):
         @wraps(function)
         def validate(*args, **kwargs):
-            memo = session_memo(kind)
+            memo = _session_validation_memo()
             if memo is None:
                 return function(*args, **kwargs)
             try:
-                key = hashlib.sha256(json.dumps([args, kwargs], ensure_ascii=False, sort_keys=True,
-                                                separators=(",", ":"), allow_nan=False).encode()).hexdigest()
-            except (TypeError, ValueError):
+                key = (kind, function, validation_content_key((args, kwargs)))
+            except (TypeError, ValueError, RecursionError):
                 return function(*args, **kwargs)
-            if key in memo:
-                return None
-            result = function(*args, **kwargs)
-            if result is None:
-                memo[key] = True
+            hit, result = memo.recall(key)
+            if hit:
+                return result
+            with capture_validation_dependencies() as dependencies:
+                result = function(*args, **kwargs)
+            if cache_result(result):
+                memo.remember(key, result, tuple(dependencies.values()), evict=evict, named_blobs=named_blobs)
             return result
         return validate
     return decorate
+
+
+def session_validated(kind: str):
+    """Reuse only successful ``None`` validators; failures always run again."""
+    return session_cached_validation(kind, cache_result=lambda result: result is None)
 
 
 def _rchar() -> int | None:

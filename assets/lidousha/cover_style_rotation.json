@@ -1,0 +1,36 @@
+{
+  "schema_version": "lidousha-cover-style-rotation.v1",
+  "authority_note": "Single source for cover text palette, stroke recipes and per-cover style rotation. Read by src/autoslice/lidousha_cover_style.py and by the skill script scripts/render_cover.py (--styles). Neither side keeps its own copy. Basis: CVR-07 (2026-10-19 V1819: pink and blue mostly, change colour now and then) and owner request 2026-10-31 (cover style and size should rotate).",
+  "palette": {
+    "pink": {"top": [255, 138, 196], "bottom": [255, 40, 130]},
+    "blue": {"top": [110, 205, 255], "bottom": [30, 100, 255]},
+    "orange": {"top": [255, 230, 90], "bottom": [255, 130, 20]},
+    "purple": {"top": [205, 150, 255], "bottom": [125, 60, 235]},
+    "green": {"top": [150, 240, 120], "bottom": [20, 170, 90]},
+    "red": {"top": [255, 150, 120], "bottom": [230, 30, 50]},
+    "yellow": {"top": [255, 248, 140], "bottom": [255, 196, 0]}
+  },
+  "strokes": {
+    "white": {"inner": [255, 255, 255], "outer": null, "outer_extra_ratio": 0, "outer_extra_min": 0},
+    "dark": {"inner": null, "outer": [34, 24, 58], "outer_extra_ratio": 0, "outer_extra_min": 0},
+    "double": {"inner": [255, 255, 255], "outer": [34, 24, 58], "outer_extra_ratio": 0.05, "outer_extra_min": 5}
+  },
+  "allowed_tilts": [-4, -3, -2, 2, 3, 4],
+  "contrast": {"metric": "rgb distance between the background mean under the line box and the bottom colour of the line", "min_distance": 110},
+  "rotation": {
+    "index": "int(sha256(content)[:16], 16) % len(styles)",
+    "recent": "a style already used by the last covers is skipped; the walk continues to the next style in rotation order",
+    "contrast": "a style whose line colour is too close to the background is skipped the same way",
+    "all_rejected": "if every style is rejected, the hashed base style is used and the warning stays visible"
+  },
+  "styles": [
+    {"style_id": "s1-blue-pink-t4-r70-white", "colors": ["blue", "pink"], "tilt": 4, "size_ratio": 0.7, "stroke": "white"},
+    {"style_id": "s2-pink-blue-tm4-r55-dark", "colors": ["pink", "blue"], "tilt": -4, "size_ratio": 0.55, "stroke": "dark"},
+    {"style_id": "s3-blue-pink-t2-r85-double", "colors": ["blue", "pink"], "tilt": 2, "size_ratio": 0.85, "stroke": "double"},
+    {"style_id": "s4-orange-red-tm3-r70-dark", "colors": ["orange", "red"], "tilt": -3, "size_ratio": 0.7, "stroke": "dark"},
+    {"style_id": "s5-pink-blue-t3-r85-white", "colors": ["pink", "blue"], "tilt": 3, "size_ratio": 0.85, "stroke": "white"},
+    {"style_id": "s6-blue-purple-tm2-r55-white", "colors": ["blue", "purple"], "tilt": -2, "size_ratio": 0.55, "stroke": "white"},
+    {"style_id": "s7-green-pink-t4-r70-double", "colors": ["green", "pink"], "tilt": 4, "size_ratio": 0.7, "stroke": "double"},
+    {"style_id": "s8-yellow-red-t3-r55-dark", "colors": ["yellow", "red"], "tilt": 3, "size_ratio": 0.55, "stroke": "dark"}
+  ]
+}

@@ -15,6 +15,7 @@ from src.autoslice.native_audio_budget_receipt import resume_native_audio_budget
 from src.autoslice.prepared_native_audio_recovery import inherit_prepared_native_audio
 from src.autoslice.supplement_audio_budget import start_budget
 from tests.test_current_native_account_continuation import _offline, _kwargs
+from tests.test_publication_reconciliation import first_publication_registries  # noqa: F401  (fixture)
 from tests.test_native_audio_history_reconciliation import _fork, _auto, _observe
 from tests.test_gemini_range_context import _check_request, _range_request, _verifier
 from tests.test_native_context_witness import (
@@ -404,6 +405,7 @@ def test_range_alias_consumes_original_request_and_envelope_without_resigning(tm
 
 @pytest.mark.parametrize('route', ['copy', 'rebuild', 'unrecoverable', 'writer-error', 'receipt', 'both'])
 @pytest.mark.parametrize('status', ['OBSERVED', 'TEXT_UNLOCATED'])
+@pytest.mark.usefixtures('first_publication_registries')
 def test_inheritance_cache_loss_retains_original_account_and_only_complete_caches(
     tmp_path, monkeypatch, route, status,
 ):
@@ -540,6 +542,7 @@ def test_missing_incoming_cache_preserves_v3_branch_identity_and_reaches_ordinar
     assert calls == [('mai', 7000, 8000)]
 
 
+@pytest.mark.usefixtures('first_publication_registries')
 def test_registered_source_parent_consumes_inherited_unavailable_cache_without_losing_history(tmp_path, monkeypatch):
     from src.autoslice.supplement_audio_budget import get_budget
     from src.autoslice.source_checkpoint_parent import consume_source_checkpoint_parent
@@ -561,6 +564,7 @@ def test_registered_source_parent_consumes_inherited_unavailable_cache_without_l
 
 
 @pytest.mark.parametrize('schema', ['v2', 'v3'])
+@pytest.mark.usefixtures('first_publication_registries')
 def test_source_parent_qualifies_legacy_unregistered_range_hole_without_manual_inheritance(tmp_path, monkeypatch, schema):
     from src.autoslice.supplement_audio_budget import get_budget
     from src.autoslice.native_audio_budget_receipt import persist_native_audio_budget_receipt
@@ -1053,6 +1057,7 @@ def test_range_missing_cache_incoming_v3_keeps_branch_identity_and_pending(writt
 
 @pytest.mark.parametrize('role', ['audio_source', 'rendered_audio_clip'])
 @pytest.mark.parametrize('route', ['copy', 'rebuild'])
+@pytest.mark.usefixtures('first_publication_registries')
 def test_range_inheritance_recovers_bound_media_into_inventory(written, monkeypatch, role, route):
     w = written
     original = Path(w.metadata['paths'][role]['path'])

@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TypeAlias
 
 from src.autoslice.nested_media_caption_attribution import ACOUSTIC_SCHEMA
 from src.autoslice.package_import import atomic_write_json, exclusive_lock
@@ -39,6 +40,9 @@ VOICE_REFERENCE_METHOD = "HASH_BOUND_UNALIGNED_VOICE_REFERENCE"
 _ROLES = ("source_media_speech", "host_speech", "overlap_speech")
 _STATES = frozenset({"PRESENT", "ABSENT", "UNKNOWN"})
 _SAFE = re.compile(r"[A-Za-z0-9_.-]{1,180}\Z")
+
+Json: TypeAlias = "None | bool | int | float | str | list[Json] | dict[str, Json]"
+JsonMap: TypeAlias = dict[str, Json]
 
 
 class NestedMediaAcousticObserverError(ValueError):
@@ -66,7 +70,7 @@ LEGACY_TRANSPORT_CONTRACT = "agy-three-part.v1"
 LEGACY_WIRE_SCHEMA_SHA256 = "sha256:8c6476ce82729503ec7aba960df0e19d11f8a43c2cc0a47e0d38de7bd1f9f54c"
 
 
-def _transport_protocol(binding: Mapping[str, object]) -> dict[str, object]:
+def _transport_protocol(binding: Mapping[str, Json]) -> JsonMap:
     """Project the three-part wire contract; keep execution facts in PROCESS."""
     if binding.get("observer_transport") != "agy_three_part":
         # An unknown transport has no authority to discard binding fields.
@@ -99,7 +103,7 @@ def _transport_protocol(binding: Mapping[str, object]) -> dict[str, object]:
     return protocol
 
 
-def _protocol_identity(value: object) -> dict[str, object] | None:
+def _protocol_identity(value: object) -> JsonMap | None:
     """Compare protocols after validating each identity's original hash chain."""
     identity = _runtime_identity(value)
     if identity is None:
@@ -1197,8 +1201,8 @@ def _validate_cached_pass(
 
 
 def _compatible_receipt_request(
-    observation_dir: Path, request: Mapping[str, object],
-) -> tuple[dict[str, object], Path] | None:
+    observation_dir: Path, request: Mapping[str, Json],
+) -> tuple[JsonMap, Path] | None:
     """Locate immutable receipts by protocol, then use the ordinary validator.
 
     Never rewrite/re-sign a historical request or use its new projected hash

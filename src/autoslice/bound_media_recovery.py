@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import json
 import os
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+from threading import RLock
 from typing import TypeAlias, cast
 
 from .evidence_identity import regular_file_sha256, sha256_hex
@@ -22,6 +24,9 @@ Json: TypeAlias = 'None | bool | int | float | str | list[Json] | dict[str, Json
 _MEDIA_SUFFIXES = frozenset({'.mp4', '.mp3', '.wav', '.m4a', '.flac', '.aac', '.mkv'})
 _TEMP: list[tempfile.TemporaryDirectory[str]] = []
 _RESOLVED: dict[tuple[Path, str], Path] = {}
+_COPY_CANDIDATES: OrderedDict[tuple[Path, str], Path] = OrderedDict()
+_COPY_CANDIDATE_LOCK = RLock()
+_MAX_COPY_CANDIDATES = 1024
 
 
 class BoundMediaUnavailable(ValueError):
@@ -96,6 +101,44 @@ def runtime_root(path: Path) -> Path:
     return path.parent
 
 
+def _remember_copy(root: Path, digest: str, candidate: Path) -> None:
+    # This is only a positive observation made by the original search/hash
+    # owner, not a directory index or an assertion that other files are absent.
+    if not root.is_absolute() or not candidate.is_absolute():
+        return
+    key = (root, digest)
+    with _COPY_CANDIDATE_LOCK:
+        _COPY_CANDIDATES.pop(key, None)
+        _COPY_CANDIDATES[key] = candidate
+        while len(_COPY_CANDIDATES) > _MAX_COPY_CANDIDATES:
+            _COPY_CANDIDATES.popitem(last=False)
+
+
+def _usable_copy(candidate: Path, digest: str) -> bool:
+    try:
+        return _no_links(candidate) and regular_file_sha256(candidate) == digest
+    except OSError:
+        # An inaccessible cached hint must not veto the original search.
+        return False
+
+
+def _known_copy(root: Path, digest: str) -> Path | None:
+    key = (root, digest)
+    with _COPY_CANDIDATE_LOCK:
+        candidate = _COPY_CANDIDATES.get(key)
+    if candidate is None:
+        return None
+    # Recheck placement and bytes every time. regular_file_sha256 also forwards
+    # this actual file and its ancestors to an enclosing validation memo.
+    if _usable_copy(candidate, digest):
+        _remember_copy(root, digest, candidate)
+        return candidate
+    with _COPY_CANDIDATE_LOCK:
+        if _COPY_CANDIDATES.get(key) == candidate:
+            _COPY_CANDIDATES.pop(key, None)
+    return None
+
+
 def copies(path: Path, digest: str, root: Path) -> list[Path]:
     """Content-checked candidates; names/sidecars are discovery hints only."""
     result: list[Path] = []
@@ -116,9 +159,15 @@ def copies(path: Path, digest: str, root: Path) -> list[Path]:
                     if candidate.is_relative_to(root):
                         candidates.add(candidate)
         for candidate in sorted(candidates):
-            if (candidate != path and _no_links(candidate)
-                    and regular_file_sha256(candidate) == digest):
-                result.append(candidate)
+            if candidate != path and _no_links(candidate):
+                actual = regular_file_sha256(candidate)
+                if actual is not None:
+                    # A whole-tree search already checks other crops/providers.
+                    # Let their later ordinary consumers reuse those positive
+                    # observations instead of repeating the same discovery.
+                    _remember_copy(root, actual, candidate)
+                if actual == digest:
+                    result.append(candidate)
     return result
 
 
@@ -236,8 +285,12 @@ def resolve_bound_media(path: Path, expected: str, *, root: Path | None = None,
         raise BoundMediaUnavailable(path, digest)
     root = root or runtime_root(path)
     cached = _RESOLVED.get((path, digest))
-    if cached is not None and _no_links(cached) and regular_file_sha256(cached) == digest:
+    if cached is not None and _usable_copy(cached, digest):
         return cached
+    known = _known_copy(root, digest)
+    if known is not None:
+        _RESOLVED[path, digest] = known
+        return known
     found = copies(path, digest, root)
     if found:
         _RESOLVED[path, digest] = found[0]

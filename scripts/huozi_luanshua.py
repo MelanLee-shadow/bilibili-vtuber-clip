@@ -528,7 +528,10 @@ def render_plan(plan: Mapping[str, object], output: Path, *, work_dir: Path) -> 
         piece_records.append(
             {
                 "piece_id": piece["piece_id"],
-                "text": piece["text"],
+                "text": piece.get("display_text", piece["text"]),
+                **({"primary_asr_observed_text": piece["text"],
+                    "proper_name_review": piece["proper_name_review"]}
+                   if piece.get("proper_name_review") else {}),
                 "source_id": piece["source_id"],
                 "source_date": piece.get("source_date"),
                 "utterance_id": piece.get("utterance_id"),
@@ -537,11 +540,8 @@ def render_plan(plan: Mapping[str, object], output: Path, *, work_dir: Path) -> 
                 "source_media_sha256": media_hashes[media_path],
                 "source_core_interval_ms": [piece["core_start_ms"], piece["core_end_ms"]],
                 "source_interval_ms": [piece["cut_start_ms"], piece["cut_end_ms"]],
-                "terminal_tail_evidence": (
-                    dict(piece["terminal_tail_evidence"])
-                    if isinstance(piece.get("terminal_tail_evidence"), Mapping)
-                    else None
-                ),
+                "terminal_tail_evidence": (dict(piece["terminal_tail_evidence"])
+                    if isinstance(piece.get("terminal_tail_evidence"), Mapping) else None),
                 "transcript_authorities": list(piece.get("transcript_authorities") or []),
                 "speaker_authority": piece.get("speaker_authority"),
                 "speaker_confidence": piece.get("speaker_confidence"),

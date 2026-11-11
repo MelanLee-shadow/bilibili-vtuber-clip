@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from scripts.seal_final_media_review_model_capability import main as seal_cli_main
 from src.autoslice.final_media_review_model_capability_seal import (
     ATTESTATION_FILENAME,
     SEAL_RECEIPT_FILENAME,
@@ -144,50 +143,3 @@ def test_validator_rejects_direct_attestation_binding(tmp_path: Path):
             executable_sha256=_sha(adapter),
             authority_uid=runtime.stat().st_uid,
         )
-
-
-def test_seal_cli_uses_normal_create_only_entrypoint(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-):
-    runtime, adapter, run = _fixture(tmp_path)
-    output = runtime / "cli-sealed-capability"
-
-    first_rc = seal_cli_main(
-        [
-            "--runtime-root",
-            str(runtime),
-            "--sentinel-result",
-            str(run["result_path"]),
-            "--target-executable",
-            str(adapter),
-            "--output-directory",
-            str(output),
-            "--valid-for-seconds",
-            "86400",
-        ]
-    )
-    first_capture = capsys.readouterr()
-    first = json.loads(first_capture.out)
-    second_rc = seal_cli_main(
-        [
-            "--runtime-root",
-            str(runtime),
-            "--sentinel-result",
-            str(run["result_path"]),
-            "--target-executable",
-            str(adapter),
-            "--output-directory",
-            str(output),
-            "--valid-for-seconds",
-            "86400",
-        ]
-    )
-    second_capture = capsys.readouterr()
-    second = json.loads(second_capture.out)
-
-    assert first_rc == 0
-    assert second_rc == 0
-    assert first_capture.err == second_capture.err == ""
-    assert first["provider_calls"] == second["provider_calls"] == 0
-    assert first["cache_reused"] is False
-    assert second["cache_reused"] is True

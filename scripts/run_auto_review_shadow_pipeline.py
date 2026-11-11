@@ -1122,11 +1122,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             build_kugou_lrc_provider(),
         )
     intro_job = source_context_job if isinstance(source_context_job, Mapping) else {}
-    intro_form = clip_profile_from_spec(
-        intro_job, lane="song" if _job_is_song_candidate(intro_job) else "talk",
-    )
+    intro_form = clip_profile_from_spec(intro_job, lane="song" if _job_is_song_candidate(intro_job) else "talk")
     branding_intro = (
-        require_branding_intro(ROOT, manifest_path=args.branding_intro_manifest)
+        require_branding_intro(ROOT, manifest_path=args.branding_intro_manifest,
+            clip_identity={"recording_date": intro_job["date"], "candidate_id": intro_job["candidate_id"]}
+            if intro_job.get("date") is not None and intro_job.get("candidate_id") is not None else None)
         if args.branding_intro_manifest is not None and requires_intro(intro_form)
         else None
     )

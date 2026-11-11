@@ -54,6 +54,15 @@ def parse_args(
         ),
     )
     mk.add_argument(
+        "--description-extra",
+        default=None,
+        help=(
+            "finished-media review packages only: must equal the reviewed "
+            "member's description_extra (omit to use it); appended after the "
+            "related-streamer lines"
+        ),
+    )
+    mk.add_argument(
         "--tags",
         default="",
         help=(
@@ -301,15 +310,20 @@ def parse_args(
         "title-repair",
         help="same-BV title-only edit; resumed intent only observes",
     )
-    for name in (
-        "manifest",
-        "bvid",
-        "title-input",
-        "title-result",
-        "receipt",
-        "quote",
-    ):
+    for name in ("manifest", "bvid", "receipt", "quote"):
         tit.add_argument("--" + name, required=True)
+    # Source-fact lane: both are required; ``title_repair.run`` refuses a
+    # missing one.  Finished-media-review stories take ``--title-authority``
+    # instead and refuse both.
+    for name in ("title-input", "title-result"):
+        tit.add_argument(
+            "--" + name, default=None,
+            help="source-fact review artifact (not accepted for finished-media-review manifests)",
+        )
+    tit.add_argument(
+        "--title-authority", default=None,
+        help="fmr-title-authority.v1 JSON; finished-media-review manifests only",
+    )
     tit.add_argument("--authorized-by", default="维护者")
     tit.add_argument("--cookie-json", default=str(defaults["cookie_json"]))
     tit.add_argument("--lock", default=None)
@@ -321,11 +335,22 @@ def parse_args(
             "completion as the current title predecessor"
         ),
     )
+    tit.add_argument(
+        "--predecessor-repair-completed",
+        default=None,
+        help=(
+            "finished-media-review manifests only: replay this same-bv-repair-completed.v1 "
+            "(plan, journal, fresh live) as the current-publication predecessor"
+        ),
+    )
     tit.add_argument("--execute", action="store_true")
     for name in ("receipt", "input", "result"):
         tit.add_argument(
             "--predecessor-title-" + name, default=None,
-            help="explicit previous VERIFIED_TITLE_ONLY transaction (provide all three artifacts)",
+            help=(
+                "explicit previous VERIFIED_TITLE_ONLY transaction (provide all three artifacts; "
+                "finished-media-review manifests take --predecessor-title-receipt alone)"
+            ),
         )
     tit.add_argument("--wait", type=float, default=240.0)
     tit.add_argument("--poll", type=float, default=10.0)

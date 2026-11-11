@@ -160,9 +160,13 @@ def terminal_schema(policy=None, *, request=None):
         request = policy
     evidence_ref = S
     keep_routes = KEEP_ROUTES
+    fragment_contract = None
+    name_slot_contract = None
     if request is not None:
         policy = request['terminal_policy']
         materials, refs = terminal_materials(request)
+        fragment_contract = materials.get('reliable_fragments_contract')
+        name_slot_contract = materials.get('name_slot_contract')
         evidence_ref = enum(*list(refs))
         # The schema offers exactly the routes rendered in the same materials.
         keep_routes = offered_keep_contract(materials)[0]
@@ -180,6 +184,8 @@ def terminal_schema(policy=None, *, request=None):
         'literal_uncertainty': S, 'no_new_facts': B}
     from .answer_contract import TERMINAL
     fields['contract_version'] = enum(TERMINAL)
+    if isinstance(fragment_contract, dict):
+        fields['reliable_fragments']['description'] = fragment_contract['instructions']
     if request is not None:
         from .semantic_terminal_adjudication import grade_a_witness_contract
         import json
@@ -189,9 +195,24 @@ def terminal_schema(policy=None, *, request=None):
             + '. independence_fields are read from raw_observation. Repeated observations from '
             'the same provider/model count once; Argon is not a blind_range. '
             'If the selected citations do not meet this threshold, use another eligible grade.')
+        if 'grade_a_citation_contract' in materials:
+            fields['grade']['description'] += (
+                ' The exact eligible citation groups are '
+                + json.dumps(materials['grade_a_citation_contract'], sort_keys=True)
+                + '. Cite these in evidence_refs, not current_support_observation_refs or prose.')
     from src.autoslice.editorial_edit_contract import edit_schema
     fields.update(edit_schema(request.get('current_cue') if request is not None else None))
     fields.update(gift_thanks_confirmed=B, name_sources_exhausted=B, screen_index=INTEGER,
         event_index=INTEGER, event_field=enum('text', 'sender'), referent_basis=S, alternatives_considered=S,
         nonsemantic_vocalization_confirmed=B, spoken_or_lyric_content_absent=B, nonsemantic_audio_basis=S)
-    return obj(fields, required=['choice', 'grade', 'reason', 'evidence_refs'])
+    schema = obj(fields, required=['choice', 'grade', 'reason', 'evidence_refs'])
+    if isinstance(name_slot_contract, dict):
+        schema['description'] = name_slot_contract['schema_description']
+        descriptions = {'name_only': name_slot_contract['instructions'], **{
+            name: name_slot_contract[name + '_description'] for name in (
+                'name_span', 'name_source_ref', 'name_source_text', 'sourced_name')}}
+        for name, description in descriptions.items():
+            # S/B are shared schema constants. A current contract must never
+            # mutate the shape of a subsequent legacy schema.
+            schema['properties'][name] = {**schema['properties'][name], 'description': description}
+    return schema

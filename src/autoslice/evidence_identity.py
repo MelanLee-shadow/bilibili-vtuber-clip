@@ -122,6 +122,57 @@ class EvidenceFileChangedError(OSError):
     """The named file changed while resolving or hashing its contents."""
 
 
+def read_file_bytes(path: Path) -> bytes:
+    """Read stable bytes and register the exact content with validation owners.
+
+    The existing cold-read session may retain at most 32 MiB / 128 reads.
+    Reuse replays all file/ancestor dependencies through the shared hash owner;
+    ending the session drops bytes, not evidence or release checks. Large files
+    still read normally. Callers retain their own path and authority guards.
+    """
+    from .continuation_subchecks import session_memo
+    from .validation_memo import (capture_validation_dependencies,
+                                  capturing_validation, note_hashed_file,
+                                  replay_validation_dependencies)
+
+    source = Path(path).absolute()
+    memo = session_memo('evidence_file_bytes')
+    tracking = memo is not None or capturing_validation()
+    key = str(source)
+    previous = None if memo is None else memo.get(key)
+    if previous is not None:
+        raw, dependencies = previous
+        if replay_validation_dependencies(dependencies):
+            return raw
+        del memo[key]
+    with capture_validation_dependencies() as dependencies:
+        before = source.stat()
+        target = source.resolve(strict=True)
+        read_started_ns = time_ns()
+        raw = source.read_bytes()
+        if _placement(source.stat()) != _placement(before) or source.resolve(strict=True) != target:
+            raise EvidenceFileChangedError('evidence file changed during reading')
+        if not tracking:
+            return raw  # Live provider stages have no byte cache to populate.
+        digest = hashlib.sha256(raw).hexdigest()
+        # Populate the same racy-write-safe hash cache from the bytes actually
+        # consumed, rather than opening the medium again just to record a hash.
+        if stat.S_ISREG(before.st_mode):
+            hash_key = (str(target), *_placement(before))
+            with _MEMO_LOCK:
+                _MEMO[hash_key] = _HashMemoEntry(digest, read_started_ns, time_ns())
+        note_hashed_file(target, digest)
+        note_hashed_file(source, digest)
+    items = tuple(dependencies.values())
+    if memo is not None and len(raw) <= 32 * 1024 * 1024:
+        while memo and (len(memo) >= 128 or
+                sum(len(value[0]) for value in memo.values()) + len(raw) > 32 * 1024 * 1024):
+            del memo[next(iter(memo))]
+        if replay_validation_dependencies(items):
+            memo[key] = (raw, items)
+    return raw
+
+
 def file_sha256(path: Path, *, fresh: bool = False) -> str:
     """Raising adapter for ordinary file readers, including permitted symlinks.
 

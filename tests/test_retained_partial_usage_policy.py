@@ -49,6 +49,50 @@ def _soft(call,audit,source):
         source_media_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),candidate_id="candidate")
 
 
+@pytest.mark.parametrize("pressure", [0, 24])
+def test_partial_guard_preserves_native_dispatch_owner_live_and_cold(tmp_path, monkeypatch, pressure):
+    from types import SimpleNamespace
+    from src.autoslice import llm_client as llm, transcription_stage_cache as cache
+    from src.autoslice.cpa_model_ladder import TOP_CPA_MODEL
+    from src.autoslice.final_review_provider_budget import with_cpa_resource_pressure
+    from src.autoslice.semantic_retry_progress import SemanticAttemptRecorder
+    from tests.test_retained_semantic_history import _srt, _finding
+
+    source, parent, audit = _partial(tmp_path, monkeypatch)
+    originals = {p: p.read_bytes() for p in parent.rglob("*") if p.is_file()}
+    # Exercise the real flock. Only its clock advances, so a broken nested
+    # acquisition reports the normal timeout without waiting ten minutes.
+    ticks = iter(range(0, 100_000, 601))
+    monkeypatch.setattr(cache, "time", SimpleNamespace(monotonic=lambda: next(ticks), sleep=lambda _: None))
+    calls = []
+
+    def transport(prompt, config):
+        calls.append(prompt)
+        return llm.CpaCompletion('{"choice":"CURRENT","needs_audio":false}', TOP_CPA_MODEL)
+
+    monkeypatch.setattr(llm, "_call_direct_once", transport)
+    root = tmp_path / "runtime"
+    source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+
+    def consumer():
+        native = llm.build_llm_call(llm.LlmConfig(transport="direct",
+            api_base="https://fixture.invalid/v1", model=TOP_CPA_MODEL,
+            api_key_env="CPA_API_KEY", runtime_root=root))
+        guarded = _soft(native, audit, source)
+        pressured = with_cpa_resource_pressure(guarded, pressure, 12)
+        return SemanticAttemptRecorder(srt_text=_srt(), finding=_finding(),
+            clip_context=_context(source_sha), offset_ms=0).wrap(pressured)
+
+    prompt = "JSON: compare this independent current subtitle question"
+    first = consumer()(prompt)
+    assert consumer()(prompt) == first
+    assert len(calls) == 1
+    states = [json.loads(p.read_text()) for p in root.rglob("state")]
+    assert len(states) == 1 and states[0]["reserved_attempts"] == 1
+    assert [e["status"] for e in states[0]["events"]] == ["STARTED", "COMPLETED"]
+    assert all(p.read_bytes() == raw for p, raw in originals.items())
+
+
 def test_verified_unknown_partial_allows_soft_consumer_and_preserves_unknown_amount(tmp_path,monkeypatch):
     source,parent,audit = _partial(tmp_path,monkeypatch)
     before = {str(p):p.read_bytes() for p in parent.rglob("*") if p.is_file()}

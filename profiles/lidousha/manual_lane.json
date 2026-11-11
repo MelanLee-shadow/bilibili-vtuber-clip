@@ -1,0 +1,26 @@
+{
+  "schema": "manual-lane.runtime-layout.v1",
+  "_doc": "Where the manual lane runs for this channel (read by src/autoslice/manual_lane/layout.py; each key can be overridden by MANUAL_LANE_<KEY>, nested keys joined by _). Host facts only: the room id comes from profile.json, the emote media root from the emote library, the intro file names from the branding-intro manifest. The intro copies and the cover font are derived from work_root (<work_root>/assets/intro, <work_root>/assets/fonts/RuiZiZhenYan.ttf); set intro_dir / cover_font only to pin them elsewhere.",
+  "remote_host": "oci3",
+  "remote_user": "ubuntu",
+  "autoslice_base": "/opt/bilive/autoslice",
+  "work_root": "/home/user/manual-work",
+  "danmaku_host": "N100",
+  "danmaku_root": "/vol1/1000/vtuber-slice-recording/data/Videos",
+  "cover_skill_scripts": "../skills/lidousha-title-cover/scripts",
+  "search_mcp_url": "http://search-router.example:3310/mcp",
+  "speaker_v8": {
+    "_doc": "The frozen v8 speaker workspace (TASK-5 item 8): its code and classifier, the CAM++ venv, model copy and scorer. Frozen artefacts, not a session's work directory.",
+    "code_dir": "/home/user/diar-v8-20261031",
+    "python": "/home/user/truth-page-20261031/venv/bin/python",
+    "model": "/home/user/truth-page-20261031/model/campp",
+    "score": "/home/user/truth-page-20261031/score_oci3.py"
+  },
+  "free_asr": {
+    "_doc": "BCUT / jianying pacing (U152). Basis: round 0b sent 16 whole-clip jobs back to back to jianying and 3 stayed on HTTP 429; the client's own retry (scripts/free_asr_client.py: 4 tries, 2, 4, 8 s apart, about 14 s in all) is inside one call and does not reach across clips. One call per provider at a time, at least min_interval_s apart across every clip and process on the host; a rate-limited answer waits rate_limit_cooldown_s before that provider is asked again, at most rate_limit_attempts times; any other failure is retried attempts times with the old 10/20/30 s steps. A clip ASR job takes 1-3 min, so a 60 s gap keeps the rate at or below about one job per provider per 1.5-4 min.",
+    "min_interval_s": 60,
+    "rate_limit_cooldown_s": 900,
+    "attempts": 4,
+    "rate_limit_attempts": 3
+  }
+}

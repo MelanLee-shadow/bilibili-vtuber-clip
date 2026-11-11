@@ -83,6 +83,48 @@
           "reference_subject": "李豆沙"
         }
       ]
+    },
+    {
+      "canonical": "礼墨Sumi",
+      "account_name": "礼墨Sumi",
+      "official_mid": 435243735,
+      "homepage": "https://space.bilibili.com/435243735",
+      "affiliation": "psplive",
+      "verified_at": "2026-10-30T17:51:57+00:00",
+      "profile_evidence": {
+        "source_bvid": "BV1Vvxv64EDc",
+        "page_state_sha256": "cc606f3da0a664798fc98d46114c42ebf2fd3b608741dfc04f69c418ecf9c05d",
+        "affiliation_excerpt": "psplive所属"
+      },
+      "historical_events": []
+    },
+    {
+      "canonical": "安晚awa",
+      "account_name": "安晚aWa",
+      "official_mid": 1377219279,
+      "homepage": "https://space.bilibili.com/1377219279",
+      "affiliation": "psplive",
+      "verified_at": "2026-10-30T17:51:57+00:00",
+      "profile_evidence": {
+        "source_bvid": "BV19ZeM6NEM3",
+        "page_state_sha256": "52899510721284375b589c1b86d8141e0d4d4a80c41fd73528cf76efc58d1652",
+        "affiliation_excerpt": "psplive所属"
+      },
+      "historical_events": []
+    },
+    {
+      "canonical": "雾深Girimi",
+      "account_name": "雾深Girimi",
+      "official_mid": 1484169431,
+      "homepage": "https://space.bilibili.com/1484169431",
+      "affiliation": "virtuareal",
+      "verified_at": "2026-10-31T22:53:21+00:00",
+      "profile_evidence": {
+        "source_bvid": "BV1br4y1s7A4",
+        "page_state_sha256": "7fe20229711c14eedb85d525889d06c8c2872caf030bc6ce17ee57874625345b",
+        "affiliation_excerpt": "VirtuaReal所属成员"
+      },
+      "historical_events": []
     }
   ]
 }

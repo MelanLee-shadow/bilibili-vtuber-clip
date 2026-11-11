@@ -20,8 +20,6 @@ DEFAULT = (ROOT / 'profiles/lidousha/profile.json').read_bytes()
 
 @pytest.fixture(autouse=True)
 def isolated_profile_selectors(monkeypatch):
-    from src.autoslice import native_audio_runtime
-    monkeypatch.setattr(native_audio_runtime, "native_audio_readiness", lambda _root: [{"ready": True}])
     for name in ("AUTOSLICE_PROFILE", "AUTOSLICE_PROFILE_MANIFEST", "AUTOSLICE_PROFILE_BINDING",
                  "AUTOSLICE_PROFILE_MANIFEST_SNAPSHOT"):
         monkeypatch.setenv(name, os.environ.get(name, ''))
@@ -37,6 +35,14 @@ def selected(root, *, other=False, external=False):
         document['identity']['display_name'] = 'ISOLATED_TEST'
     path.write_bytes(json.dumps(document).encode() if other else DEFAULT)
     return load_channel_profile(root / 'repo', manifest_path=path, environ={})
+
+
+def test_binding_can_load_before_table_but_spelling_reader_fails_closed(tmp_path):
+    profile = selected(tmp_path)
+    assert binding_for_profile(profile)['profile_id'] == 'lidousha'
+    assert profile.spelling_table_path in profile.fingerprint_paths()
+    with pytest.raises(ChannelProfileError, match='cannot read canonical surface table'):
+        _ = profile.canonical_surface_rules
 
 
 def request_fixture(tmp_path, *, external=False):

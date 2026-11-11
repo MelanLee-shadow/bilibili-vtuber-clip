@@ -24,6 +24,7 @@ from typing import Any
 
 from src.autoslice.boundary_semantic_review import cue_grid_sha256
 from src.autoslice.clip_context import validate_clip_context
+from src.autoslice.continuation_subchecks import cold_read_session_scope
 from src.autoslice.jingting_chunker import SrtCue, parse_srt_cues
 from src.autoslice.retained_current_text_view import (
     RetainedCurrentTextViewError,
@@ -705,6 +706,7 @@ def _default_parent_validator(**_kwargs: object) -> Mapping[str, object]:
     raise RetainedReviewedDraftError("PARENT_VALIDATOR_REQUIRED")
 
 
+@cold_read_session_scope
 def load_retained_reviewed_draft(
     *,
     spec: Mapping[str, object],

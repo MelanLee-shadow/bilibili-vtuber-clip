@@ -20,6 +20,9 @@ from src.autoslice.visual_song_discovery import (
 )
 
 
+# These tests inject the original Google HTTP / AGY process boundary.
+pytestmark = pytest.mark.usefixtures("legacy_gemini_transport")
+
 def _response(*songs: dict) -> str:
     return json.dumps(
         {"schema_version": VISUAL_SONG_SCHEMA_VERSION, "songs": list(songs)},

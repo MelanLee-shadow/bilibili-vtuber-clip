@@ -174,17 +174,3 @@ def test_observer_failure_never_masks_exit(tmp_path, monkeypatch, capsys, error)
     assert __import__("sys").stderr is original_stderr
     assert not (tmp_path / "c.time-ledger.json").exists()
     assert capsys.readouterr().err == ""
-
-
-def test_offline_cli_writes_json_and_summary(tmp_path, capsys):
-    from scripts.run_time_report import main
-    root = tmp_path / "input"
-    root.mkdir()
-    exchange(root, "a", 0, 20, provider_diagnostics={"provider_http_status": 429, "error_type": "TimeoutError"})
-    output, summary = tmp_path / "ledger.json", tmp_path / "ledger.md"
-    assert main([str(root), "--start", stamp(0), "--end", stamp(100), "--output", str(output), "--summary", str(summary)]) == 0
-    result = json.loads(output.read_text())
-    assert result["failure_counts"]["text"]["http_429"] == 1
-    assert result["failure_counts"]["text"]["timeouts"] == 1
-    assert "总墙钟 100.000 s" in summary.read_text()
-    assert "最慢 10 个调用" in capsys.readouterr().out

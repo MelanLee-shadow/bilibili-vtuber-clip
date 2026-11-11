@@ -245,7 +245,7 @@ def test_real_helper_chain_records_phase_progress_and_cleanup(tmp_path):
 
 # ------------------------------------------------------------- helper originals
 
-def test_generate_without_text_keeps_returned_payload(tmp_path):
+def test_generate_without_text_keeps_returned_payload(tmp_path, legacy_gemini_transport):
     media = tmp_path / "a.wav"
     media.write_bytes(b"RIFF bytes")
 

@@ -7,6 +7,7 @@ never cue-occurrence evidence and never authorizes a subtitle rewrite.
 
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import hashlib
 import json
@@ -18,6 +19,7 @@ from typing import Any, Mapping
 
 SOURCE_SCHEMA = "vtuber-slice.streamer-registry-sources.v1"
 SNAPSHOT_SCHEMA = "vtuber-slice.streamer-registry.v1"
+SNAPSHOT_TTL = dt.timedelta(days=35)
 OCCURRENCE_POLICY = "ENTITY_EXISTENCE_ONLY_NOT_CUE_OCCURRENCE_EVIDENCE"
 _SPACE_URL_RX = re.compile(
     r"(?P<name>[^\s：:\n|]{1,64})[：:]\s*https?://space\.bilibili\.com/(?P<mid>[0-9]{1,32})"
@@ -97,6 +99,10 @@ def reviewed_account_records(
     This supplement is independent of the complete registry and its TTL/count
     gates. Recorded reactions are historical context, never live presence,
     community aliases, cue-occurrence evidence, or subtitle mutation authority.
+    An account with ``historical_events == []`` is identity-only: it asserts the
+    MID, account name and homepage and no relationship. Its identity is known
+    only from ``verified_at`` onward, so it is returned when ``verified_at`` is
+    on/before the as_of date and is never backfilled into earlier recordings.
     """
     records = config.get("reviewed_accounts", [])
     if not isinstance(records, list) or len(records) > 16:
@@ -130,7 +136,7 @@ def reviewed_account_records(
             raise StreamerRegistryError("reviewed account profile evidence is invalid")
         _safe_atom(evidence["affiliation_excerpt"], label="profile affiliation excerpt")
         events = row["historical_events"]
-        if not isinstance(events, list) or not events or len(events) > 8:
+        if not isinstance(events, list) or len(events) > 8:
             raise StreamerRegistryError("reviewed account historical events are invalid")
         event_ids: set[str] = set()
         eligible_events: list[dict[str, Any]] = []
@@ -167,7 +173,10 @@ def reviewed_account_records(
         # as_of is the production recording date, not the research date. An
         # eligible source replay also anchors this account's existence then;
         # a later profile review must not hide that historical evidence.
-        if not eligible_events:
+        if events and not eligible_events:
+            continue
+        # Identity-only: known from its verification date, not backfilled.
+        if not events and verified_at.date() > cutoff.date():
             continue
         result.append({
             "entity_id": f"bilibili:{mid}",
@@ -421,43 +430,103 @@ def _parse_virtuareal_announcements(
     }
 
 
+def _parse_source(
+    *,
+    kind: object,
+    payload: Mapping[str, Any],
+    source: Mapping[str, Any],
+    legacy_config: Mapping[str, Any],
+    generated_at: dt.datetime,
+    members: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    if kind == "psplive_bilibili_video":
+        return _parse_psplive(
+            payload=payload, source=source, legacy_config=legacy_config, members=members
+        )
+    if kind == "virtuareal_member_api":
+        return _parse_virtuareal_api(payload=payload, source=source, members=members)
+    if kind == "virtuareal_bilibili_announcements":
+        return _parse_virtuareal_announcements(
+            payload=payload, source=source, generated_at=generated_at, members=members
+        )
+    raise StreamerRegistryError(f"unsupported source kind: {kind}")
+
+
+def _within_snapshot_ttl(fetched_at: object, generated_at: dt.datetime) -> bool:
+    try:
+        parsed = dt.datetime.fromisoformat(str(fetched_at))
+    except ValueError:
+        return False
+    if parsed.tzinfo is None or parsed > generated_at:
+        return False
+    return generated_at - parsed <= SNAPSHOT_TTL
+
+
 def build_snapshot(
     *,
     payloads: Mapping[str, Mapping[str, Any]],
     config: Mapping[str, Any],
     legacy_psplive_config: Mapping[str, Any],
     generated_at: dt.datetime,
+    previous: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    """Build the registry per source.
+
+    Each source is parsed in isolation. A source whose fresh payload is missing
+    or fails its own minimum gates falls back to its last-good payload (``previous``,
+    keyed by source_id, ``{"fetched_at": iso, "payload": {...}}``) while that payload is
+    inside the snapshot TTL; the provenance row is then marked ``stale``. A source
+    with neither is marked ``unavailable``. The snapshot stays ``fresh`` overall.
+    """
     if generated_at.tzinfo is None or generated_at.utcoffset() is None:
         raise StreamerRegistryError("generated_at must be timezone-aware")
     members: dict[str, dict[str, Any]] = {}
     provenance: list[dict[str, Any]] = []
+    previous = previous or {}
     for source in config["sources"]:
         source_id = str(source["source_id"])
-        payload = payloads.get(source_id)
-        if not isinstance(payload, Mapping):
-            raise StreamerRegistryError(f"missing payload for {source_id}")
         kind = source["kind"]
-        if kind == "psplive_bilibili_video":
-            provenance.append(
-                _parse_psplive(
+        candidates: list[tuple[str, Mapping[str, Any], str]] = []
+        fresh = payloads.get(source_id)
+        if isinstance(fresh, Mapping):
+            candidates.append(("fresh", fresh, generated_at.isoformat(timespec="seconds")))
+        last_good = previous.get(source_id)
+        if (
+            isinstance(last_good, Mapping)
+            and isinstance(last_good.get("payload"), Mapping)
+            and _within_snapshot_ttl(last_good.get("fetched_at"), generated_at)
+        ):
+            candidates.append(("stale", last_good["payload"], str(last_good["fetched_at"])))
+        reasons: list[str] = []
+        for status, payload, fetched_at in candidates:
+            backup = copy.deepcopy(members)
+            try:
+                entry = _parse_source(
+                    kind=kind,
                     payload=payload,
                     source=source,
                     legacy_config=legacy_psplive_config,
-                    members=members,
-                )
-            )
-        elif kind == "virtuareal_member_api":
-            provenance.append(_parse_virtuareal_api(payload=payload, source=source, members=members))
-        elif kind == "virtuareal_bilibili_announcements":
-            provenance.append(
-                _parse_virtuareal_announcements(
-                    payload=payload,
-                    source=source,
                     generated_at=generated_at,
                     members=members,
                 )
-            )
+            except (StreamerRegistryError, KeyError, TypeError, ValueError) as exc:
+                members.clear()
+                members.update(backup)
+                reasons.append(f"{status}: {type(exc).__name__}: {exc}")
+                continue
+            entry.update({"status": status, "fetched_at": fetched_at})
+            provenance.append(entry)
+            break
+        else:
+            provenance.append({
+                "source_id": source_id,
+                "kind": str(kind),
+                "url": str(source.get("public_url") or source.get("api_url") or ""),
+                "status": "unavailable",
+                "reason": "; ".join(reasons) or "no payload and no last-good payload",
+            })
+    if not any(row["status"] in {"fresh", "stale"} for row in provenance):
+        raise StreamerRegistryError("no official source could be refreshed or reused")
     rendered_members: list[dict[str, Any]] = []
     for row in members.values():
         canonical = row["canonical"]
@@ -484,7 +553,7 @@ def build_snapshot(
     snapshot = {
         "schema_version": SNAPSHOT_SCHEMA,
         "generated_at": generated_at.isoformat(timespec="seconds"),
-        "expires_at": (generated_at + dt.timedelta(days=35)).isoformat(timespec="seconds"),
+        "expires_at": (generated_at + SNAPSHOT_TTL).isoformat(timespec="seconds"),
         "status": "fresh",
         "authority": "official_organization_sources",
         "occurrence_policy": OCCURRENCE_POLICY,

@@ -1,0 +1,2420 @@
+{
+  "schema_version": "manual-lane-mishearing-pairs.v2",
+  "generated_by": "python3.14 -m src.autoslice.manual_lane.mishearing",
+  "source_files": [
+    "assets/lidousha/entity_confusables.json",
+    "assets/lidousha/subtitle_truth_ledger.v1.json",
+    "assets/lidousha/speech_memory_ledger.v1.json",
+    "assets/lidousha/psplive_roster_sources.v1.json",
+    "assets/manual_lane/proper_nouns.json"
+  ],
+  "entries": [
+    {
+      "misheard": "KO 熊",
+      "standard": "kmx",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/3/entities/0/surfaces/20",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+          },
+          "authority": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "KO熊",
+      "standard": "kmx",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/3/entities/0/surfaces/19",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+          },
+          "authority": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "KY 小红",
+      "standard": "kmx",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/3/entities/0/surfaces/11",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+          },
+          "authority": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "KY小红",
+      "standard": "kmx",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/3/entities/0/surfaces/10",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+          },
+          "authority": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "Kimo熊",
+      "standard": "kmx",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/3/entities/0/surfaces/3",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+          },
+          "authority": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "K头头",
+      "standard": "kmx",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/3/entities/0/surfaces/15",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+          },
+          "authority": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+        },
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/37/replacements/0",
+          "origin": "ledger",
+          "authority": "公开规则-stated-20260719-review-round2(1:50 kmx)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260718-22-59-42.mp4",
+            "source_start_ms": 801900,
+            "source_end_ms": 802880,
+            "truth_id": "20260719-mc-kmx-ktoutou"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "K头小",
+      "standard": "kmx",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/3/entities/0/surfaces/14",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+          },
+          "authority": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+        },
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/36/replacements/0",
+          "origin": "ledger",
+          "authority": "公开规则-stated-20260719-review-round2(1:50 kmx)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260718-22-59-42.mp4",
+            "source_start_ms": 801020,
+            "source_end_ms": 801900,
+            "truth_id": "20260719-mc-kmx-ktouxiao"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "Mujica",
+      "standard": "Ave Mujica",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/1/entities/1/surfaces/1",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "Distinct BanG Dream entities. 梦限大 is time-sensitive in July 2026; recency raises candidate priority but never overrides incompatible syllables. 2026-07-14 kmx先例推广：文本已是规范形+音频拿不准(含断供)→保留不阻塞；误听面(梦现代/母鸡卡/木子卡等)UNCERTAIN 照旧阻塞——两组规范形间无互误听方向(音节差异大)。"
+          },
+          "authority": "Distinct BanG Dream entities. 梦限大 is time-sensitive in July 2026; recency raises candidate priority but never overrides incompatible syllables. 2026-07-14 kmx先例推广：文本已是规范形+音频拿不准(含断供)→保留不阻塞；误听面(梦现代/母鸡卡/木子卡等)UNCERTAIN 照旧阻塞——两组规范形间无互误听方向(音节差异大)。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "Q 我熊",
+      "standard": "kmx",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/3/entities/0/surfaces/17",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+          },
+          "authority": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "Q我熊",
+      "standard": "kmx",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/3/entities/0/surfaces/16",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+          },
+          "authority": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "Saki",
+      "standard": "祥子",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/2/entities/1/surfaces/2",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "Distinct BanG Dream characters. Resolve 立希 versus Saki/祥子 from actual syllables, not franchise membership alone. 2026-07-14 kmx先例推广：文本已是规范形+音频拿不准(含断供)→保留不阻塞；误听面(梦现代/母鸡卡/木子卡等)UNCERTAIN 照旧阻塞——两组规范形间无互误听方向(音节差异大)。"
+          },
+          "authority": "Distinct BanG Dream characters. Resolve 立希 versus Saki/祥子 from actual syllables, not franchise membership alone. 2026-07-14 kmx先例推广：文本已是规范形+音频拿不准(含断供)→保留不阻塞；误听面(梦现代/母鸡卡/木子卡等)UNCERTAIN 照旧阻塞——两组规范形间无互误听方向(音节差异大)。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "kimo 熊",
+      "standard": "kmx",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/3/entities/0/surfaces/2",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+          },
+          "authority": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "kimoxiong",
+      "standard": "kmx",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/3/entities/0/surfaces/4",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+          },
+          "authority": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "kimo熊",
+      "standard": "kmx",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/3/entities/0/surfaces/1",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+          },
+          "authority": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "saki",
+      "standard": "祥子",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/2/entities/1/surfaces/3",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "Distinct BanG Dream characters. Resolve 立希 versus Saki/祥子 from actual syllables, not franchise membership alone. 2026-07-14 kmx先例推广：文本已是规范形+音频拿不准(含断供)→保留不阻塞；误听面(梦现代/母鸡卡/木子卡等)UNCERTAIN 照旧阻塞——两组规范形间无互误听方向(音节差异大)。"
+          },
+          "authority": "Distinct BanG Dream characters. Resolve 立希 versus Saki/祥子 from actual syllables, not franchise membership alone. 2026-07-14 kmx先例推广：文本已是规范形+音频拿不准(含断供)→保留不阻塞；误听面(梦现代/母鸡卡/木子卡等)UNCERTAIN 照旧阻塞——两组规范形间无互误听方向(音节差异大)。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "丰川祥子",
+      "standard": "祥子",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/2/entities/1/surfaces/1",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "Distinct BanG Dream characters. Resolve 立希 versus Saki/祥子 from actual syllables, not franchise membership alone. 2026-07-14 kmx先例推广：文本已是规范形+音频拿不准(含断供)→保留不阻塞；误听面(梦现代/母鸡卡/木子卡等)UNCERTAIN 照旧阻塞——两组规范形间无互误听方向(音节差异大)。"
+          },
+          "authority": "Distinct BanG Dream characters. Resolve 立希 versus Saki/祥子 from actual syllables, not franchise membership alone. 2026-07-14 kmx先例推广：文本已是规范形+音频拿不准(含断供)→保留不阻塞；误听面(梦现代/母鸡卡/木子卡等)UNCERTAIN 照旧阻塞——两组规范形间无互误听方向(音节差异大)。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "做面粉",
+      "standard": "做面部",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/12/entities/1/surfaces/0",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "动捕彩排话题簇（2026-07-22/23 彩排；公开规则立项，误听面 2026-07-24/25 bcut 实测）：动物房=「动捕房」误听、做面粉=「做面部(表情)」误听，正是白色奶龙梗起源语境。误听面出现才触发音频二选一；真动物设施/真做饭食材语境 UNCERTAIN 保留原词，禁止全局替换。"
+          },
+          "authority": "动捕彩排话题簇（2026-07-22/23 彩排；公开规则立项，误听面 2026-07-24/25 bcut 实测）：动物房=「动捕房」误听、做面粉=「做面部(表情)」误听，正是白色奶龙梗起源语境。误听面出现才触发音频二选一；真动物设施/真做饭食材语境 UNCERTAIN 保留原词，禁止全局替换。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "动物房",
+      "standard": "动捕房",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/12/entities/0/surfaces/0",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "动捕彩排话题簇（2026-07-22/23 彩排；公开规则立项，误听面 2026-07-24/25 bcut 实测）：动物房=「动捕房」误听、做面粉=「做面部(表情)」误听，正是白色奶龙梗起源语境。误听面出现才触发音频二选一；真动物设施/真做饭食材语境 UNCERTAIN 保留原词，禁止全局替换。"
+          },
+          "authority": "动捕彩排话题簇（2026-07-22/23 彩排；公开规则立项，误听面 2026-07-24/25 bcut 实测）：动物房=「动捕房」误听、做面粉=「做面部(表情)」误听，正是白色奶龙梗起源语境。误听面出现才触发音频二选一；真动物设施/真做饭食材语境 UNCERTAIN 保留原词，禁止全局替换。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "卖批",
+      "standard": "奶P",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/7/entities/0/surfaces/1",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "奶P=李豆沙的粉丝梗称（百合/GL 语境「较奶的P」，公开规则确认专名）。她精心设计案：介绍自己/两个字形容/弹幕计数语境里 ASR 写成 奶皮子/奶瓶/卖批。误听面出现才触发音频二选一；真奶瓶（婴儿语境）/真奶皮子（食物）UNCERTAIN 保留。"
+          },
+          "authority": "奶P=李豆沙的粉丝梗称（百合/GL 语境「较奶的P」，公开规则确认专名）。她精心设计案：介绍自己/两个字形容/弹幕计数语境里 ASR 写成 奶皮子/奶瓶/卖批。误听面出现才触发音频二选一；真奶瓶（婴儿语境）/真奶皮子（食物）UNCERTAIN 保留。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "南天",
+      "standard": "南町",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/10/entities/0/surfaces/9",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则：南町在本场联动中可称大N或小N，连续混合专名为南町nightin。大恩老师/大卫老师/大黄老师/邓老师是高风险近音候选，只触发逐 mention 音频复核；不得把大恩大德、滴水之恩等普通短语全局替换。"
+          },
+          "authority": "公开规则：南町在本场联动中可称大N或小N，连续混合专名为南町nightin。大恩老师/大卫老师/大黄老师/邓老师是高风险近音候选，只触发逐 mention 音频复核；不得把大恩大德、滴水之恩等普通短语全局替换。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "南町nightin",
+      "standard": "南町",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/10/entities/0/surfaces/4",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则：南町在本场联动中可称大N或小N，连续混合专名为南町nightin。大恩老师/大卫老师/大黄老师/邓老师是高风险近音候选，只触发逐 mention 音频复核；不得把大恩大德、滴水之恩等普通短语全局替换。"
+          },
+          "authority": "公开规则：南町在本场联动中可称大N或小N，连续混合专名为南町nightin。大恩老师/大卫老师/大黄老师/邓老师是高风险近音候选，只触发逐 mention 音频复核；不得把大恩大德、滴水之恩等普通短语全局替换。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "只小的时候是这样的",
+      "standard": "是小的时候是这样的",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/226/replacements/0",
+          "origin": "ledger",
+          "authority": "公开规则direct source-bound listening confirmation 2026-10-16",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "padded_0_1800000.mp4",
+            "source_start_ms": 1531120,
+            "source_end_ms": 1532900,
+            "truth_id": "20261012-school-cue41-operator-word-r1"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "在黑那一",
+      "standard": "站Hina1",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/49/replacements/0",
+          "origin": "ledger",
+          "authority": "维护者-stated-20260719-conversation(HimeHina结婚照切片复审)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260719-13-48-19.mp4",
+            "source_start_ms": 373160,
+            "source_end_ms": 376140,
+            "truth_id": "20260719-himehina-standing-answer-hina1"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "基默熊",
+      "standard": "kmx",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/3/entities/0/surfaces/5",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+          },
+          "authority": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "大N",
+      "standard": "南町",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/10/entities/0/surfaces/1",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则：南町在本场联动中可称大N或小N，连续混合专名为南町nightin。大恩老师/大卫老师/大黄老师/邓老师是高风险近音候选，只触发逐 mention 音频复核；不得把大恩大德、滴水之恩等普通短语全局替换。"
+          },
+          "authority": "公开规则：南町在本场联动中可称大N或小N，连续混合专名为南町nightin。大恩老师/大卫老师/大黄老师/邓老师是高风险近音候选，只触发逐 mention 音频复核；不得把大恩大德、滴水之恩等普通短语全局替换。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "大N老师",
+      "standard": "南町",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/10/entities/0/surfaces/2",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则：南町在本场联动中可称大N或小N，连续混合专名为南町nightin。大恩老师/大卫老师/大黄老师/邓老师是高风险近音候选，只触发逐 mention 音频复核；不得把大恩大德、滴水之恩等普通短语全局替换。"
+          },
+          "authority": "公开规则：南町在本场联动中可称大N或小N，连续混合专名为南町nightin。大恩老师/大卫老师/大黄老师/邓老师是高风险近音候选，只触发逐 mention 音频复核；不得把大恩大德、滴水之恩等普通短语全局替换。"
+        }
+      ],
+      "formal_matches": [
+        {
+          "entity": "南町",
+          "source": "assets/lidousha/psplive_roster_sources.v1.json",
+          "pointer": "/member_overrides/南町Nightin"
+        }
+      ],
+      "conflicts": []
+    },
+    {
+      "misheard": "大卫老师",
+      "standard": "南町",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/10/entities/0/surfaces/6",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则：南町在本场联动中可称大N或小N，连续混合专名为南町nightin。大恩老师/大卫老师/大黄老师/邓老师是高风险近音候选，只触发逐 mention 音频复核；不得把大恩大德、滴水之恩等普通短语全局替换。"
+          },
+          "authority": "公开规则：南町在本场联动中可称大N或小N，连续混合专名为南町nightin。大恩老师/大卫老师/大黄老师/邓老师是高风险近音候选，只触发逐 mention 音频复核；不得把大恩大德、滴水之恩等普通短语全局替换。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "大恩",
+      "standard": "大N",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/125/replacements/0",
+          "origin": "ledger",
+          "authority": "维护者-stated-20260722-conversation(本场南町别名为大N；该逐mention字幕大恩为误写)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260722-19-35-15.mp4",
+            "source_start_ms": 5393000,
+            "source_end_ms": 5397200,
+            "truth_id": "20260722-nancho-signoff-dan-alias-r1"
+          }
+        }
+      ],
+      "memory_context": [
+        {
+          "source": "assets/lidousha/speech_memory_ledger.v1.json",
+          "pointer": "/entries/6",
+          "scope": {
+            "speaker_id": "lidousha",
+            "channel_id": "lidousha",
+            "date_start": "2026-07-22",
+            "date_end": "2026-07-22",
+            "relation_id": "20260722-lidousha-nancho-live-collaboration"
+          },
+          "evidence": [
+            {
+              "evidence_class": "ATOMIC_HUMAN_ALIAS_TRUTH",
+              "authority": "维护者-stated-20260722(南町别名可以叫小N，也可以叫大N)"
+            }
+          ],
+          "action": "CANDIDATE_ONLY"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "大恩老师",
+      "standard": "南町",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/10/entities/0/surfaces/5",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则：南町在本场联动中可称大N或小N，连续混合专名为南町nightin。大恩老师/大卫老师/大黄老师/邓老师是高风险近音候选，只触发逐 mention 音频复核；不得把大恩大德、滴水之恩等普通短语全局替换。"
+          },
+          "authority": "公开规则：南町在本场联动中可称大N或小N，连续混合专名为南町nightin。大恩老师/大卫老师/大黄老师/邓老师是高风险近音候选，只触发逐 mention 音频复核；不得把大恩大德、滴水之恩等普通短语全局替换。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "大白老师",
+      "standard": "南町",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/10/entities/0/surfaces/10",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则：南町在本场联动中可称大N或小N，连续混合专名为南町nightin。大恩老师/大卫老师/大黄老师/邓老师是高风险近音候选，只触发逐 mention 音频复核；不得把大恩大德、滴水之恩等普通短语全局替换。"
+          },
+          "authority": "公开规则：南町在本场联动中可称大N或小N，连续混合专名为南町nightin。大恩老师/大卫老师/大黄老师/邓老师是高风险近音候选，只触发逐 mention 音频复核；不得把大恩大德、滴水之恩等普通短语全局替换。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "大黄老师",
+      "standard": "南町",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/10/entities/0/surfaces/7",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则：南町在本场联动中可称大N或小N，连续混合专名为南町nightin。大恩老师/大卫老师/大黄老师/邓老师是高风险近音候选，只触发逐 mention 音频复核；不得把大恩大德、滴水之恩等普通短语全局替换。"
+          },
+          "authority": "公开规则：南町在本场联动中可称大N或小N，连续混合专名为南町nightin。大恩老师/大卫老师/大黄老师/邓老师是高风险近音候选，只触发逐 mention 音频复核；不得把大恩大德、滴水之恩等普通短语全局替换。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "奶瓶",
+      "standard": "奶P",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/27/replacements/0",
+          "origin": "ledger",
+          "authority": "公开规则-stated-20260719-review-round2(0:30 奶P)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260718-22-59-42.mp4",
+            "source_start_ms": 721390,
+            "source_end_ms": 723070,
+            "truth_id": "20260719-mc-naip-naiping"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "奶皮子",
+      "standard": "奶P",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/7/entities/0/surfaces/0",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "奶P=李豆沙的粉丝梗称（百合/GL 语境「较奶的P」，公开规则确认专名）。她精心设计案：介绍自己/两个字形容/弹幕计数语境里 ASR 写成 奶皮子/奶瓶/卖批。误听面出现才触发音频二选一；真奶瓶（婴儿语境）/真奶皮子（食物）UNCERTAIN 保留。"
+          },
+          "authority": "奶P=李豆沙的粉丝梗称（百合/GL 语境「较奶的P」，公开规则确认专名）。她精心设计案：介绍自己/两个字形容/弹幕计数语境里 ASR 写成 奶皮子/奶瓶/卖批。误听面出现才触发音频二选一；真奶瓶（婴儿语境）/真奶皮子（食物）UNCERTAIN 保留。"
+        },
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/26/replacements/0",
+          "origin": "ledger",
+          "authority": "公开规则-stated-20260719-review-round2(0:27 奶P)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260718-22-59-42.mp4",
+            "source_start_ms": 718670,
+            "source_end_ms": 721230,
+            "truth_id": "20260719-mc-naip-naipizi"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "子女",
+      "standard": "侄女",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/54/replacements/0",
+          "origin": "ledger",
+          "authority": "维护者-stated-20260719-conversation(HimeHina结婚照切片复审)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260719-13-48-19.mp4",
+            "source_start_ms": 487910,
+            "source_end_ms": 490560,
+            "truth_id": "20260719-himehina-zhinv-slot"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "封号封号",
+      "standard": "分号分号",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/9/replacements/1",
+          "origin": "ledger",
+          "authority": "公开规则-reviewed-emoticon-reading-2026-07-19",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260718-23-29-39.mp4",
+            "source_start_ms": 1677530,
+            "source_end_ms": 1686010,
+            "truth_id": "20260718-flower-basket-semicolon-emote"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "小N",
+      "standard": "南町",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/10/entities/0/surfaces/3",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则：南町在本场联动中可称大N或小N，连续混合专名为南町nightin。大恩老师/大卫老师/大黄老师/邓老师是高风险近音候选，只触发逐 mention 音频复核；不得把大恩大德、滴水之恩等普通短语全局替换。"
+          },
+          "authority": "公开规则：南町在本场联动中可称大N或小N，连续混合专名为南町nightin。大恩老师/大卫老师/大黄老师/邓老师是高风险近音候选，只触发逐 mention 音频复核；不得把大恩大德、滴水之恩等普通短语全局替换。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "小雨",
+      "standard": "小李",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/6/entities/1/surfaces/0",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "自称误听拯救（2026-07-14：0:26「理论上」实为李豆沙、生日案「留下」）：仅误听面出现才触发音频二选一，改写只在音频确证时；真句「留下来」「理论上」UNCERTAIN 保留绝不阻塞。与 witness_disagreement 自称组互补：那组管修正层引入，本组管双证人同错。 2026-07-14 增：小雨(旧五年之约案，真雨天语境 UNCERTAIN 保留)。2026-07-19 增（精心设计/七星案）：流沙、里头她、零三、李文轩、流下来；流沙/流下来/李文轩 真词语境 UNCERTAIN 保留。"
+          },
+          "authority": "自称误听拯救（2026-07-14：0:26「理论上」实为李豆沙、生日案「留下」）：仅误听面出现才触发音频二选一，改写只在音频确证时；真句「留下来」「理论上」UNCERTAIN 保留绝不阻塞。与 witness_disagreement 自称组互补：那组管修正层引入，本组管双证人同错。 2026-07-14 增：小雨(旧五年之约案，真雨天语境 UNCERTAIN 保留)。2026-07-19 增（精心设计/七星案）：流沙、里头她、零三、李文轩、流下来；流沙/流下来/李文轩 真词语境 UNCERTAIN 保留。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "希乃伊",
+      "standard": "Hina1",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/55/replacements/5",
+          "origin": "ledger",
+          "authority": "维护者-stated-20260719-conversation(HimeHina结婚照切片复审)+后续同类错误按此修复的授权",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260719-13-48-19.mp4",
+            "source_start_ms": 345870,
+            "source_end_ms": 506040,
+            "truth_id": "20260719-himehina-clip-surface-mopup"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "希娜",
+      "standard": "Hina",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/9/entities/4/surfaces/1",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "HimeHina 双人组（公开规则裁定，auto_134819_346_505 结婚照切片实案）：中文全名写田中姬/铃木雏，改姓玩笑混合名「田中雏」按玩笑保留不得纠正回铃木雏；罗马音单称写 Hime/Hina 首字母大写，站位语境 Hime1/Hina1。误听面（提美/黑妹/希娜/金娜/黑那/田中基/田中楚）只作方向候选，逐处须本句音频仲裁成立才按 canonical 改写；音频不确定时规范形保留、误听面照旧阻塞。"
+          },
+          "authority": "HimeHina 双人组（公开规则裁定，auto_134819_346_505 结婚照切片实案）：中文全名写田中姬/铃木雏，改姓玩笑混合名「田中雏」按玩笑保留不得纠正回铃木雏；罗马音单称写 Hime/Hina 首字母大写，站位语境 Hime1/Hina1。误听面（提美/黑妹/希娜/金娜/黑那/田中基/田中楚）只作方向候选，逐处须本句音频仲裁成立才按 canonical 改写；音频不确定时规范形保留、误听面照旧阻塞。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "希娜伊",
+      "standard": "Hina1",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/55/replacements/4",
+          "origin": "ledger",
+          "authority": "维护者-stated-20260719-conversation(HimeHina结婚照切片复审)+后续同类错误按此修复的授权",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260719-13-48-19.mp4",
+            "source_start_ms": 345870,
+            "source_end_ms": 506040,
+            "truth_id": "20260719-himehina-clip-surface-mopup"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "年上凌云",
+      "standard": "年上零",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/224/replacements/0",
+          "origin": "ledger",
+          "authority": "公开规则direct source-bound correction 2026-10-15",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20261011-20-03-11.flv",
+            "source_start_ms": 237650,
+            "source_end_ms": 240610,
+            "truth_id": "20261011-sister-cue11-operator-term-r1"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "往后",
+      "standard": "王后",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/227/replacements/0",
+          "origin": "ledger",
+          "authority": "公开规则direct source-bound listening confirmation 2026-10-21",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20261011-19-56-37.flv",
+            "source_start_ms": 98100,
+            "source_end_ms": 100240,
+            "truth_id": "20261011-guimi-cue31-operator-term-r1"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "很丑",
+      "standard": "很吵",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/50/replacements/0",
+          "origin": "ledger",
+          "authority": "维护者-stated-20260719-conversation(HimeHina结婚照切片复审)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260719-13-48-19.mp4",
+            "source_start_ms": 400950,
+            "source_end_ms": 405290,
+            "truth_id": "20260719-himehina-chao-not-chou"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "提美",
+      "standard": "Hime",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/9/entities/3/surfaces/1",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "HimeHina 双人组（公开规则裁定，auto_134819_346_505 结婚照切片实案）：中文全名写田中姬/铃木雏，改姓玩笑混合名「田中雏」按玩笑保留不得纠正回铃木雏；罗马音单称写 Hime/Hina 首字母大写，站位语境 Hime1/Hina1。误听面（提美/黑妹/希娜/金娜/黑那/田中基/田中楚）只作方向候选，逐处须本句音频仲裁成立才按 canonical 改写；音频不确定时规范形保留、误听面照旧阻塞。"
+          },
+          "authority": "HimeHina 双人组（公开规则裁定，auto_134819_346_505 结婚照切片实案）：中文全名写田中姬/铃木雏，改姓玩笑混合名「田中雏」按玩笑保留不得纠正回铃木雏；罗马音单称写 Hime/Hina 首字母大写，站位语境 Hime1/Hina1。误听面（提美/黑妹/希娜/金娜/黑那/田中基/田中楚）只作方向候选，逐处须本句音频仲裁成立才按 canonical 改写；音频不确定时规范形保留、误听面照旧阻塞。"
+        },
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/55/replacements/6",
+          "origin": "ledger",
+          "authority": "维护者-stated-20260719-conversation(HimeHina结婚照切片复审)+后续同类错误按此修复的授权",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260719-13-48-19.mp4",
+            "source_start_ms": 345870,
+            "source_end_ms": 506040,
+            "truth_id": "20260719-himehina-clip-surface-mopup"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "提莫怂",
+      "standard": "kmx",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/3/entities/0/surfaces/8",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+          },
+          "authority": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+        },
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/7/replacements/3",
+          "origin": "ledger",
+          "authority": "公开规则-reviewed-local-span-2026-07-19; 2026-07-20 增面:提问(r4 fresh 新变体)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260718-23-59-36.mp4",
+            "source_start_ms": 543230,
+            "source_end_ms": 545460,
+            "truth_id": "20260718-hecheng-kmx-slot"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "提莫熊",
+      "standard": "kmx",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/3/entities/0/surfaces/6",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+          },
+          "authority": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "提莫的熊",
+      "standard": "kmx",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/3/entities/0/surfaces/7",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+          },
+          "authority": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "提问",
+      "standard": "kmx",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/7/replacements/0",
+          "origin": "ledger",
+          "authority": "公开规则-reviewed-local-span-2026-07-19; 2026-07-20 增面:提问(r4 fresh 新变体)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260718-23-59-36.mp4",
+            "source_start_ms": 543230,
+            "source_end_ms": 545460,
+            "truth_id": "20260718-hecheng-kmx-slot"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "提防",
+      "standard": "kmx",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/7/replacements/1",
+          "origin": "ledger",
+          "authority": "公开规则-reviewed-local-span-2026-07-19; 2026-07-20 增面:提问(r4 fresh 新变体)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260718-23-59-36.mp4",
+            "source_start_ms": 543230,
+            "source_end_ms": 545460,
+            "truth_id": "20260718-hecheng-kmx-slot"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "新C",
+      "standard": "星汐",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/13/entities/0/surfaces/0",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "星汐（星汐Seki，PSPLive 同团，roster 已收录）自称/他称误听拯救（公开规则立项）：2026-07-24/25 bcut 实测 新C=星汐——xīng-xī 被拆成「新」+拉丁「C」，联动/彩排/同团语境按本句发音复核为 星汐；真「新C位」等游戏语境 UNCERTAIN 保留。词条只证明实体存在，禁止盲替。"
+          },
+          "authority": "星汐（星汐Seki，PSPLive 同团，roster 已收录）自称/他称误听拯救（公开规则立项）：2026-07-24/25 bcut 实测 新C=星汐——xīng-xī 被拆成「新」+拉丁「C」，联动/彩排/同团语境按本句发音复核为 星汐；真「新C位」等游戏语境 UNCERTAIN 保留。词条只证明实体存在，禁止盲替。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "新男一",
+      "standard": "Hina1",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/55/replacements/9",
+          "origin": "ledger",
+          "authority": "维护者-stated-20260719-conversation(HimeHina结婚照切片复审)+后续同类错误按此修复的授权",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260719-13-48-19.mp4",
+            "source_start_ms": 345870,
+            "source_end_ms": 506040,
+            "truth_id": "20260719-himehina-clip-surface-mopup"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "木子卡",
+      "standard": "Ave Mujica",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/1/entities/1/surfaces/3",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "Distinct BanG Dream entities. 梦限大 is time-sensitive in July 2026; recency raises candidate priority but never overrides incompatible syllables. 2026-07-14 kmx先例推广：文本已是规范形+音频拿不准(含断供)→保留不阻塞；误听面(梦现代/母鸡卡/木子卡等)UNCERTAIN 照旧阻塞——两组规范形间无互误听方向(音节差异大)。"
+          },
+          "authority": "Distinct BanG Dream entities. 梦限大 is time-sensitive in July 2026; recency raises candidate priority but never overrides incompatible syllables. 2026-07-14 kmx先例推广：文本已是规范形+音频拿不准(含断供)→保留不阻塞；误听面(梦现代/母鸡卡/木子卡等)UNCERTAIN 照旧阻塞——两组规范形间无互误听方向(音节差异大)。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "李文轩",
+      "standard": "李豆沙",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/6/entities/0/surfaces/5",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "自称误听拯救（2026-07-14：0:26「理论上」实为李豆沙、生日案「留下」）：仅误听面出现才触发音频二选一，改写只在音频确证时；真句「留下来」「理论上」UNCERTAIN 保留绝不阻塞。与 witness_disagreement 自称组互补：那组管修正层引入，本组管双证人同错。 2026-07-14 增：小雨(旧五年之约案，真雨天语境 UNCERTAIN 保留)。2026-07-19 增（精心设计/七星案）：流沙、里头她、零三、李文轩、流下来；流沙/流下来/李文轩 真词语境 UNCERTAIN 保留。"
+          },
+          "authority": "自称误听拯救（2026-07-14：0:26「理论上」实为李豆沙、生日案「留下」）：仅误听面出现才触发音频二选一，改写只在音频确证时；真句「留下来」「理论上」UNCERTAIN 保留绝不阻塞。与 witness_disagreement 自称组互补：那组管修正层引入，本组管双证人同错。 2026-07-14 增：小雨(旧五年之约案，真雨天语境 UNCERTAIN 保留)。2026-07-19 增（精心设计/七星案）：流沙、里头她、零三、李文轩、流下来；流沙/流下来/李文轩 真词语境 UNCERTAIN 保留。"
+        },
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/43/replacements/0",
+          "origin": "ledger",
+          "authority": "公开规则-stated-20260719-review-round2(2:36 李豆沙)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260718-22-59-42.mp4",
+            "source_start_ms": 846900,
+            "source_end_ms": 850420,
+            "truth_id": "20260719-mc-lidousha-liwenxuan"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "林墨",
+      "standard": "礼墨",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/187/replacements/0",
+          "origin": "ledger",
+          "authority": "公开规则-stated-20260728：7/24 1209切片公开0:36的「林墨」是礼墨专名误写；官方PSP名单与同段紧邻复述均绑定礼墨。该报告仅1处，整片必须重跑复审。",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260724-18-31-22.mp4",
+            "source_start_ms": 1236520,
+            "source_end_ms": 1239080,
+            "truth_id": "20260724-beans-limo-first-repeat-r1"
+          }
+        },
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/188/replacements/0",
+          "origin": "ledger",
+          "authority": "公开规则-stated-20260728近期多条「礼墨→林墨」系统性误写；已发布607切片的同事家语境、官方PSP名单与本场标题均绑定礼墨。",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260724-18-31-22.mp4",
+            "source_start_ms": 648620,
+            "source_end_ms": 650580,
+            "truth_id": "20260724-colleague-home-limo-first-r1"
+          }
+        },
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/189/replacements/0",
+          "origin": "ledger",
+          "authority": "公开规则-stated-20260728近期多条「礼墨→林墨」系统性误写；已发布607切片的同事家语境、官方PSP名单与本场标题均绑定礼墨。",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260724-18-31-22.mp4",
+            "source_start_ms": 679070,
+            "source_end_ms": 681950,
+            "truth_id": "20260724-colleague-home-limo-second-r1"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "林更多",
+      "standard": "ありがとう",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/8/entities/0/surfaces/0",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "两个高频日语插话（glossary 日语插话节）。2026-07-18 七星案（公开规则确认）：谢礼物语境的 ありがとう 被 ASR 写成人名「林更多」×3——不存在叫林更多的常客，谢礼/谢SC语境优先按 ありがとう 复核；おめでとう 误听面沿 glossary（没得到系）。误听面出现才触发音频复核，规范形 UNCERTAIN 保留。"
+          },
+          "authority": "两个高频日语插话（glossary 日语插话节）。2026-07-18 七星案（公开规则确认）：谢礼物语境的 ありがとう 被 ASR 写成人名「林更多」×3——不存在叫林更多的常客，谢礼/谢SC语境优先按 ありがとう 复核；おめでとう 误听面沿 glossary（没得到系）。误听面出现才触发音频复核，规范形 UNCERTAIN 保留。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "梦现代",
+      "standard": "梦限大",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/1/entities/0/surfaces/1",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "Distinct BanG Dream entities. 梦限大 is time-sensitive in July 2026; recency raises candidate priority but never overrides incompatible syllables. 2026-07-14 kmx先例推广：文本已是规范形+音频拿不准(含断供)→保留不阻塞；误听面(梦现代/母鸡卡/木子卡等)UNCERTAIN 照旧阻塞——两组规范形间无互误听方向(音节差异大)。"
+          },
+          "authority": "Distinct BanG Dream entities. 梦限大 is time-sensitive in July 2026; recency raises candidate priority but never overrides incompatible syllables. 2026-07-14 kmx先例推广：文本已是规范形+音频拿不准(含断供)→保留不阻塞；误听面(梦现代/母鸡卡/木子卡等)UNCERTAIN 照旧阻塞——两组规范形间无互误听方向(音节差异大)。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "椎名立希",
+      "standard": "立希",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/2/entities/0/surfaces/1",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "Distinct BanG Dream characters. Resolve 立希 versus Saki/祥子 from actual syllables, not franchise membership alone. 2026-07-14 kmx先例推广：文本已是规范形+音频拿不准(含断供)→保留不阻塞；误听面(梦现代/母鸡卡/木子卡等)UNCERTAIN 照旧阻塞——两组规范形间无互误听方向(音节差异大)。"
+          },
+          "authority": "Distinct BanG Dream characters. Resolve 立希 versus Saki/祥子 from actual syllables, not franchise membership alone. 2026-07-14 kmx先例推广：文本已是规范形+音频拿不准(含断供)→保留不阻塞；误听面(梦现代/母鸡卡/木子卡等)UNCERTAIN 照旧阻塞——两组规范形间无互误听方向(音节差异大)。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "欧美得多",
+      "standard": "おめでとう",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/8/entities/1/surfaces/2",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "两个高频日语插话（glossary 日语插话节）。2026-07-18 七星案（公开规则确认）：谢礼物语境的 ありがとう 被 ASR 写成人名「林更多」×3——不存在叫林更多的常客，谢礼/谢SC语境优先按 ありがとう 复核；おめでとう 误听面沿 glossary（没得到系）。误听面出现才触发音频复核，规范形 UNCERTAIN 保留。"
+          },
+          "authority": "两个高频日语插话（glossary 日语插话节）。2026-07-18 七星案（公开规则确认）：谢礼物语境的 ありがとう 被 ASR 写成人名「林更多」×3——不存在叫林更多的常客，谢礼/谢SC语境优先按 ありがとう 复核；おめでとう 误听面沿 glossary（没得到系）。误听面出现才触发音频复核，规范形 UNCERTAIN 保留。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "毁声",
+      "standard": "毁神",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/64/replacements/2",
+          "origin": "ledger",
+          "authority": "公开规则-stated-20260722-conversation(一句最最最喜欢切片复审；按读音最小落字，不主张身份)+BCUT同源草稿逐字为毁神(防AGY把shen鼻音漂成sheng后改写为绘声)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260722-19-35-15.mp4",
+            "source_start_ms": 748620,
+            "source_end_ms": 762740,
+            "truth_id": "20260722-nancho-confrontation-huishen-surface"
+          }
+        }
+      ],
+      "memory_context": [
+        {
+          "source": "assets/lidousha/speech_memory_ledger.v1.json",
+          "pointer": "/entries/8",
+          "scope": {
+            "speaker_id": "lidousha",
+            "channel_id": "lidousha",
+            "date_start": "2026-07-22",
+            "date_end": "2026-07-22",
+            "candidate_id": "auto_193450_672_945",
+            "relation_id": "20260722-lidousha-nancho-live-collaboration"
+          },
+          "evidence": [
+            {
+              "evidence_class": "ATOMIC_HUMAN_PHONETIC_TRUTH",
+              "authority": "维护者-stated-20260722(从读音看应该是毁神)",
+              "source_start_ms": 748620,
+              "source_end_ms": 752400
+            }
+          ],
+          "action": "CANDIDATE_ONLY"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "母鸡卡",
+      "standard": "Ave Mujica",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/1/entities/1/surfaces/2",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "Distinct BanG Dream entities. 梦限大 is time-sensitive in July 2026; recency raises candidate priority but never overrides incompatible syllables. 2026-07-14 kmx先例推广：文本已是规范形+音频拿不准(含断供)→保留不阻塞；误听面(梦现代/母鸡卡/木子卡等)UNCERTAIN 照旧阻塞——两组规范形间无互误听方向(音节差异大)。"
+          },
+          "authority": "Distinct BanG Dream entities. 梦限大 is time-sensitive in July 2026; recency raises candidate priority but never overrides incompatible syllables. 2026-07-14 kmx先例推广：文本已是规范形+音频拿不准(含断供)→保留不阻塞；误听面(梦现代/母鸡卡/木子卡等)UNCERTAIN 照旧阻塞——两组规范形间无互误听方向(音节差异大)。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "没得到",
+      "standard": "おめでとう",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/8/entities/1/surfaces/0",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "两个高频日语插话（glossary 日语插话节）。2026-07-18 七星案（公开规则确认）：谢礼物语境的 ありがとう 被 ASR 写成人名「林更多」×3——不存在叫林更多的常客，谢礼/谢SC语境优先按 ありがとう 复核；おめでとう 误听面沿 glossary（没得到系）。误听面出现才触发音频复核，规范形 UNCERTAIN 保留。"
+          },
+          "authority": "两个高频日语插话（glossary 日语插话节）。2026-07-18 七星案（公开规则确认）：谢礼物语境的 ありがとう 被 ASR 写成人名「林更多」×3——不存在叫林更多的常客，谢礼/谢SC语境优先按 ありがとう 复核；おめでとう 误听面沿 glossary（没得到系）。误听面出现才触发音频复核，规范形 UNCERTAIN 保留。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "没得多",
+      "standard": "おめでとう",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/8/entities/1/surfaces/1",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "两个高频日语插话（glossary 日语插话节）。2026-07-18 七星案（公开规则确认）：谢礼物语境的 ありがとう 被 ASR 写成人名「林更多」×3——不存在叫林更多的常客，谢礼/谢SC语境优先按 ありがとう 复核；おめでとう 误听面沿 glossary（没得到系）。误听面出现才触发音频复核，规范形 UNCERTAIN 保留。"
+          },
+          "authority": "两个高频日语插话（glossary 日语插话节）。2026-07-18 七星案（公开规则确认）：谢礼物语境的 ありがとう 被 ASR 写成人名「林更多」×3——不存在叫林更多的常客，谢礼/谢SC语境优先按 ありがとう 复核；おめでとう 误听面沿 glossary（没得到系）。误听面出现才触发音频复核，规范形 UNCERTAIN 保留。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "流下来",
+      "standard": "李豆沙",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/6/entities/0/surfaces/6",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "自称误听拯救（2026-07-14：0:26「理论上」实为李豆沙、生日案「留下」）：仅误听面出现才触发音频二选一，改写只在音频确证时；真句「留下来」「理论上」UNCERTAIN 保留绝不阻塞。与 witness_disagreement 自称组互补：那组管修正层引入，本组管双证人同错。 2026-07-14 增：小雨(旧五年之约案，真雨天语境 UNCERTAIN 保留)。2026-07-19 增（精心设计/七星案）：流沙、里头她、零三、李文轩、流下来；流沙/流下来/李文轩 真词语境 UNCERTAIN 保留。"
+          },
+          "authority": "自称误听拯救（2026-07-14：0:26「理论上」实为李豆沙、生日案「留下」）：仅误听面出现才触发音频二选一，改写只在音频确证时；真句「留下来」「理论上」UNCERTAIN 保留绝不阻塞。与 witness_disagreement 自称组互补：那组管修正层引入，本组管双证人同错。 2026-07-14 增：小雨(旧五年之约案，真雨天语境 UNCERTAIN 保留)。2026-07-19 增（精心设计/七星案）：流沙、里头她、零三、李文轩、流下来；流沙/流下来/李文轩 真词语境 UNCERTAIN 保留。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "流沙",
+      "standard": "李豆沙",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/6/entities/0/surfaces/2",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "自称误听拯救（2026-07-14：0:26「理论上」实为李豆沙、生日案「留下」）：仅误听面出现才触发音频二选一，改写只在音频确证时；真句「留下来」「理论上」UNCERTAIN 保留绝不阻塞。与 witness_disagreement 自称组互补：那组管修正层引入，本组管双证人同错。 2026-07-14 增：小雨(旧五年之约案，真雨天语境 UNCERTAIN 保留)。2026-07-19 增（精心设计/七星案）：流沙、里头她、零三、李文轩、流下来；流沙/流下来/李文轩 真词语境 UNCERTAIN 保留。"
+          },
+          "authority": "自称误听拯救（2026-07-14：0:26「理论上」实为李豆沙、生日案「留下」）：仅误听面出现才触发音频二选一，改写只在音频确证时；真句「留下来」「理论上」UNCERTAIN 保留绝不阻塞。与 witness_disagreement 自称组互补：那组管修正层引入，本组管双证人同错。 2026-07-14 增：小雨(旧五年之约案，真雨天语境 UNCERTAIN 保留)。2026-07-19 增（精心设计/七星案）：流沙、里头她、零三、李文轩、流下来；流沙/流下来/李文轩 真词语境 UNCERTAIN 保留。"
+        },
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/34/replacements/0",
+          "origin": "ledger",
+          "authority": "公开规则-stated-20260719-review-round2(1:26 李豆沙)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260718-22-59-42.mp4",
+            "source_start_ms": 774240,
+            "source_end_ms": 778160,
+            "truth_id": "20260719-mc-lidousha-liusha"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "灰神",
+      "standard": "毁神",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/64/replacements/0",
+          "origin": "ledger",
+          "authority": "公开规则-stated-20260722-conversation(一句最最最喜欢切片复审；按读音最小落字，不主张身份)+BCUT同源草稿逐字为毁神(防AGY把shen鼻音漂成sheng后改写为绘声)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260722-19-35-15.mp4",
+            "source_start_ms": 748620,
+            "source_end_ms": 762740,
+            "truth_id": "20260722-nancho-confrontation-huishen-surface"
+          }
+        }
+      ],
+      "memory_context": [
+        {
+          "source": "assets/lidousha/speech_memory_ledger.v1.json",
+          "pointer": "/entries/8",
+          "scope": {
+            "speaker_id": "lidousha",
+            "channel_id": "lidousha",
+            "date_start": "2026-07-22",
+            "date_end": "2026-07-22",
+            "candidate_id": "auto_193450_672_945",
+            "relation_id": "20260722-lidousha-nancho-live-collaboration"
+          },
+          "evidence": [
+            {
+              "evidence_class": "ATOMIC_HUMAN_PHONETIC_TRUTH",
+              "authority": "维护者-stated-20260722(从读音看应该是毁神)",
+              "source_start_ms": 748620,
+              "source_end_ms": 752400
+            }
+          ],
+          "action": "CANDIDATE_ONLY"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "灵感多",
+      "standard": "ありがとう",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/8/entities/0/surfaces/2",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "两个高频日语插话（glossary 日语插话节）。2026-07-18 七星案（公开规则确认）：谢礼物语境的 ありがとう 被 ASR 写成人名「林更多」×3——不存在叫林更多的常客，谢礼/谢SC语境优先按 ありがとう 复核；おめでとう 误听面沿 glossary（没得到系）。误听面出现才触发音频复核，规范形 UNCERTAIN 保留。"
+          },
+          "authority": "两个高频日语插话（glossary 日语插话节）。2026-07-18 七星案（公开规则确认）：谢礼物语境的 ありがとう 被 ASR 写成人名「林更多」×3——不存在叫林更多的常客，谢礼/谢SC语境优先按 ありがとう 复核；おめでとう 误听面沿 glossary（没得到系）。误听面出现才触发音频复核，规范形 UNCERTAIN 保留。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "理论上",
+      "standard": "李豆沙",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/6/entities/0/surfaces/1",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "自称误听拯救（2026-07-14：0:26「理论上」实为李豆沙、生日案「留下」）：仅误听面出现才触发音频二选一，改写只在音频确证时；真句「留下来」「理论上」UNCERTAIN 保留绝不阻塞。与 witness_disagreement 自称组互补：那组管修正层引入，本组管双证人同错。 2026-07-14 增：小雨(旧五年之约案，真雨天语境 UNCERTAIN 保留)。2026-07-19 增（精心设计/七星案）：流沙、里头她、零三、李文轩、流下来；流沙/流下来/李文轩 真词语境 UNCERTAIN 保留。"
+          },
+          "authority": "自称误听拯救（2026-07-14：0:26「理论上」实为李豆沙、生日案「留下」）：仅误听面出现才触发音频二选一，改写只在音频确证时；真句「留下来」「理论上」UNCERTAIN 保留绝不阻塞。与 witness_disagreement 自称组互补：那组管修正层引入，本组管双证人同错。 2026-07-14 增：小雨(旧五年之约案，真雨天语境 UNCERTAIN 保留)。2026-07-19 增（精心设计/七星案）：流沙、里头她、零三、李文轩、流下来；流沙/流下来/李文轩 真词语境 UNCERTAIN 保留。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "田中基",
+      "standard": "田中姬",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/9/entities/0/surfaces/1",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "HimeHina 双人组（公开规则裁定，auto_134819_346_505 结婚照切片实案）：中文全名写田中姬/铃木雏，改姓玩笑混合名「田中雏」按玩笑保留不得纠正回铃木雏；罗马音单称写 Hime/Hina 首字母大写，站位语境 Hime1/Hina1。误听面（提美/黑妹/希娜/金娜/黑那/田中基/田中楚）只作方向候选，逐处须本句音频仲裁成立才按 canonical 改写；音频不确定时规范形保留、误听面照旧阻塞。"
+          },
+          "authority": "HimeHina 双人组（公开规则裁定，auto_134819_346_505 结婚照切片实案）：中文全名写田中姬/铃木雏，改姓玩笑混合名「田中雏」按玩笑保留不得纠正回铃木雏；罗马音单称写 Hime/Hina 首字母大写，站位语境 Hime1/Hina1。误听面（提美/黑妹/希娜/金娜/黑那/田中基/田中楚）只作方向候选，逐处须本句音频仲裁成立才按 canonical 改写；音频不确定时规范形保留、误听面照旧阻塞。"
+        },
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/55/replacements/10",
+          "origin": "ledger",
+          "authority": "维护者-stated-20260719-conversation(HimeHina结婚照切片复审)+后续同类错误按此修复的授权",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260719-13-48-19.mp4",
+            "source_start_ms": 345870,
+            "source_end_ms": 506040,
+            "truth_id": "20260719-himehina-clip-surface-mopup"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "田中楚",
+      "standard": "田中雏",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/9/entities/2/surfaces/1",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "HimeHina 双人组（公开规则裁定，auto_134819_346_505 结婚照切片实案）：中文全名写田中姬/铃木雏，改姓玩笑混合名「田中雏」按玩笑保留不得纠正回铃木雏；罗马音单称写 Hime/Hina 首字母大写，站位语境 Hime1/Hina1。误听面（提美/黑妹/希娜/金娜/黑那/田中基/田中楚）只作方向候选，逐处须本句音频仲裁成立才按 canonical 改写；音频不确定时规范形保留、误听面照旧阻塞。"
+          },
+          "authority": "HimeHina 双人组（公开规则裁定，auto_134819_346_505 结婚照切片实案）：中文全名写田中姬/铃木雏，改姓玩笑混合名「田中雏」按玩笑保留不得纠正回铃木雏；罗马音单称写 Hime/Hina 首字母大写，站位语境 Hime1/Hina1。误听面（提美/黑妹/希娜/金娜/黑那/田中基/田中楚）只作方向候选，逐处须本句音频仲裁成立才按 canonical 改写；音频不确定时规范形保留、误听面照旧阻塞。"
+        },
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/55/replacements/11",
+          "origin": "ledger",
+          "authority": "维护者-stated-20260719-conversation(HimeHina结婚照切片复审)+后续同类错误按此修复的授权",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260719-13-48-19.mp4",
+            "source_start_ms": 345870,
+            "source_end_ms": 506040,
+            "truth_id": "20260719-himehina-clip-surface-mopup"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "留下",
+      "standard": "李豆沙",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/6/entities/0/surfaces/0",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "自称误听拯救（2026-07-14：0:26「理论上」实为李豆沙、生日案「留下」）：仅误听面出现才触发音频二选一，改写只在音频确证时；真句「留下来」「理论上」UNCERTAIN 保留绝不阻塞。与 witness_disagreement 自称组互补：那组管修正层引入，本组管双证人同错。 2026-07-14 增：小雨(旧五年之约案，真雨天语境 UNCERTAIN 保留)。2026-07-19 增（精心设计/七星案）：流沙、里头她、零三、李文轩、流下来；流沙/流下来/李文轩 真词语境 UNCERTAIN 保留。"
+          },
+          "authority": "自称误听拯救（2026-07-14：0:26「理论上」实为李豆沙、生日案「留下」）：仅误听面出现才触发音频二选一，改写只在音频确证时；真句「留下来」「理论上」UNCERTAIN 保留绝不阻塞。与 witness_disagreement 自称组互补：那组管修正层引入，本组管双证人同错。 2026-07-14 增：小雨(旧五年之约案，真雨天语境 UNCERTAIN 保留)。2026-07-19 增（精心设计/七星案）：流沙、里头她、零三、李文轩、流下来；流沙/流下来/李文轩 真词语境 UNCERTAIN 保留。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "白蛇奶龙",
+      "standard": "白色奶龙",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/11/entities/0/surfaces/0",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "奶龙家族梗（公开规则立项）：白色奶龙=李豆沙 2026-07-22/23 动捕彩排新 3D 白模 bug 外号（非官方新形象）、粉色奶龙=星汐既有梗、黑色奶龙=礼墨（粉丝盖章）。2026-07-24/25 bcut 实测误听面：白蛇奶龙——四字串无真实语境，音频不确定照旧阻塞；三个颜色规范形音节可分，互换须逐 mention 音节证据，禁止按身份映射盲替人名或反向展开。"
+          },
+          "authority": "奶龙家族梗（公开规则立项）：白色奶龙=李豆沙 2026-07-22/23 动捕彩排新 3D 白模 bug 外号（非官方新形象）、粉色奶龙=星汐既有梗、黑色奶龙=礼墨（粉丝盖章）。2026-07-24/25 bcut 实测误听面：白蛇奶龙——四字串无真实语境，音频不确定照旧阻塞；三个颜色规范形音节可分，互换须逐 mention 音节证据，禁止按身份映射盲替人名或反向展开。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "皮毛熊",
+      "standard": "kmx",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/3/entities/0/surfaces/13",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+          },
+          "authority": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+        },
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/35/replacements/0",
+          "origin": "ledger",
+          "authority": "公开规则-stated-20260719-review-round2(1:49 kmx)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260718-22-59-42.mp4",
+            "source_start_ms": 799300,
+            "source_end_ms": 801020,
+            "truth_id": "20260719-mc-kmx-pimaoxiong"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "破防破防",
+      "standard": "分号分号",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/9/replacements/2",
+          "origin": "ledger",
+          "authority": "公开规则-reviewed-emoticon-reading-2026-07-19",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260718-23-29-39.mp4",
+            "source_start_ms": 1677530,
+            "source_end_ms": 1686010,
+            "truth_id": "20260718-flower-basket-semicolon-emote"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "粉丝灯牌",
+      "standard": "粉丝团灯牌",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/126/replacements/1",
+          "origin": "ledger",
+          "authority": "公开规则-stated-20260724-conversation(该处二琳娜皮草致谢为粉丝团灯牌；粉团灯牌为误写。仅此窗口，邻近其他致谢cue的粉丝灯牌未裁定不动)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260724-18-31-22.mp4",
+            "source_start_ms": 686260,
+            "source_end_ms": 688360,
+            "truth_id": "20260724-erlinnapicao-fanclub-lightsign-r1"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "粉团灯牌",
+      "standard": "粉丝团灯牌",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/126/replacements/0",
+          "origin": "ledger",
+          "authority": "公开规则-stated-20260724-conversation(该处二琳娜皮草致谢为粉丝团灯牌；粉团灯牌为误写。仅此窗口，邻近其他致谢cue的粉丝灯牌未裁定不动)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260724-18-31-22.mp4",
+            "source_start_ms": 686260,
+            "source_end_ms": 688360,
+            "truth_id": "20260724-erlinnapicao-fanclub-lightsign-r1"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "纹熊",
+      "standard": "kmx",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/3/entities/0/surfaces/12",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+          },
+          "authority": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "绘声",
+      "standard": "毁神",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/64/replacements/1",
+          "origin": "ledger",
+          "authority": "公开规则-stated-20260722-conversation(一句最最最喜欢切片复审；按读音最小落字，不主张身份)+BCUT同源草稿逐字为毁神(防AGY把shen鼻音漂成sheng后改写为绘声)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260722-19-35-15.mp4",
+            "source_start_ms": 748620,
+            "source_end_ms": 762740,
+            "truth_id": "20260722-nancho-confrontation-huishen-surface"
+          }
+        }
+      ],
+      "memory_context": [
+        {
+          "source": "assets/lidousha/speech_memory_ledger.v1.json",
+          "pointer": "/entries/8",
+          "scope": {
+            "speaker_id": "lidousha",
+            "channel_id": "lidousha",
+            "date_start": "2026-07-22",
+            "date_end": "2026-07-22",
+            "candidate_id": "auto_193450_672_945",
+            "relation_id": "20260722-lidousha-nancho-live-collaboration"
+          },
+          "evidence": [
+            {
+              "evidence_class": "ATOMIC_HUMAN_PHONETIC_TRUTH",
+              "authority": "维护者-stated-20260722(从读音看应该是毁神)",
+              "source_start_ms": 748620,
+              "source_end_ms": 752400
+            }
+          ],
+          "action": "CANDIDATE_ONLY"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "给我修",
+      "standard": "kmx",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/3/entities/0/surfaces/18",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+          },
+          "authority": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+        },
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/29/replacements/0",
+          "origin": "ledger",
+          "authority": "公开规则-stated-20260719-review-round2(1:02 kmx)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260718-22-59-42.mp4",
+            "source_start_ms": 751050,
+            "source_end_ms": 754710,
+            "truth_id": "20260719-mc-kmx-geiwoxiu"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "能发挥",
+      "standard": "你的坏话",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/225/replacements/0",
+          "origin": "ledger",
+          "authority": "公开规则direct source-bound correction 2026-10-15",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20261011-19-56-37.flv",
+            "source_start_ms": 71910,
+            "source_end_ms": 75100,
+            "truth_id": "20261011-guimi-cue14-operator-phrase-r1"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "苏人",
+      "standard": "素惹",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/5/entities/0/surfaces/0",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "素惹=男同性恋刻板印象梗词（公开规则，0:51 案：语境可判）。ASR 常写 苏人/苏惹；su-re vs su-ren 音频可分。误听面触发二选一；UNCERTAIN 保留。"
+          },
+          "authority": "素惹=男同性恋刻板印象梗词（公开规则，0:51 案：语境可判）。ASR 常写 苏人/苏惹；su-re vs su-ren 音频可分。误听面触发二选一；UNCERTAIN 保留。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "苏惹",
+      "standard": "素惹",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/5/entities/0/surfaces/1",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "素惹=男同性恋刻板印象梗词（公开规则，0:51 案：语境可判）。ASR 常写 苏人/苏惹；su-re vs su-ren 音频可分。误听面触发二选一；UNCERTAIN 保留。"
+          },
+          "authority": "素惹=男同性恋刻板印象梗词（公开规则，0:51 案：语境可判）。ASR 常写 苏人/苏惹；su-re vs su-ren 音频可分。误听面触发二选一；UNCERTAIN 保留。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "解铃",
+      "standard": "姐零",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/223/replacements/0",
+          "origin": "ledger",
+          "authority": "公开规则direct source-bound correction 2026-10-15",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20261011-20-03-11.flv",
+            "source_start_ms": 232560,
+            "source_end_ms": 233700,
+            "truth_id": "20261011-sister-cue6-operator-term-r1"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "请问熊",
+      "standard": "kmx",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/3/entities/0/surfaces/9",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+          },
+          "authority": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+        },
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/7/replacements/2",
+          "origin": "ledger",
+          "authority": "公开规则-reviewed-local-span-2026-07-19; 2026-07-20 增面:提问(r4 fresh 新变体)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260718-23-59-36.mp4",
+            "source_start_ms": 543230,
+            "source_end_ms": 545460,
+            "truth_id": "20260718-hecheng-kmx-slot"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "谢谢天蓝青",
+      "standard": "谢谢-天蓝青-",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/133/replacements/0",
+          "origin": "ledger",
+          "authority": "SC记录证词2026-07-24：SUPER_CHAT_MESSAGE uname=-天蓝青-（SC正文好漂亮的大姐姐，心里没有李豆沙的位置了，与该处口播完全对应）；打赏者ID写法归平台记录所有。 surface带上下文锚谢谢前缀以保幂等（canonical含surface的裸替换会在已正确文本上产生双连字符）。 窗口修正2026-07-25：初版坐标误用交付轴少加final_start偏移(9.66s)套到矮人笑话句，现按本轮padded fresh网格精确重锚。",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260722-19-35-15.mp4",
+            "source_start_ms": 1964990,
+            "source_end_ms": 1967870,
+            "truth_id": "20260722-hotpot-tianlanqing-sc-id-r1"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "赞希娜伊",
+      "standard": "站Hina1",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/55/replacements/3",
+          "origin": "ledger",
+          "authority": "维护者-stated-20260719-conversation(HimeHina结婚照切片复审)+后续同类错误按此修复的授权",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260719-13-48-19.mp4",
+            "source_start_ms": 345870,
+            "source_end_ms": 506040,
+            "truth_id": "20260719-himehina-clip-surface-mopup"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "邓老师",
+      "standard": "南町",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/10/entities/0/surfaces/8",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "公开规则：南町在本场联动中可称大N或小N，连续混合专名为南町nightin。大恩老师/大卫老师/大黄老师/邓老师是高风险近音候选，只触发逐 mention 音频复核；不得把大恩大德、滴水之恩等普通短语全局替换。"
+          },
+          "authority": "公开规则：南町在本场联动中可称大N或小N，连续混合专名为南町nightin。大恩老师/大卫老师/大黄老师/邓老师是高风险近音候选，只触发逐 mention 音频复核；不得把大恩大德、滴水之恩等普通短语全局替换。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "里头她",
+      "standard": "李豆沙",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/6/entities/0/surfaces/3",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "自称误听拯救（2026-07-14：0:26「理论上」实为李豆沙、生日案「留下」）：仅误听面出现才触发音频二选一，改写只在音频确证时；真句「留下来」「理论上」UNCERTAIN 保留绝不阻塞。与 witness_disagreement 自称组互补：那组管修正层引入，本组管双证人同错。 2026-07-14 增：小雨(旧五年之约案，真雨天语境 UNCERTAIN 保留)。2026-07-19 增（精心设计/七星案）：流沙、里头她、零三、李文轩、流下来；流沙/流下来/李文轩 真词语境 UNCERTAIN 保留。"
+          },
+          "authority": "自称误听拯救（2026-07-14：0:26「理论上」实为李豆沙、生日案「留下」）：仅误听面出现才触发音频二选一，改写只在音频确证时；真句「留下来」「理论上」UNCERTAIN 保留绝不阻塞。与 witness_disagreement 自称组互补：那组管修正层引入，本组管双证人同错。 2026-07-14 增：小雨(旧五年之约案，真雨天语境 UNCERTAIN 保留)。2026-07-19 增（精心设计/七星案）：流沙、里头她、零三、李文轩、流下来；流沙/流下来/李文轩 真词语境 UNCERTAIN 保留。"
+        },
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/28/replacements/0",
+          "origin": "ledger",
+          "authority": "公开规则-stated-20260719-review-round2(0:41 李豆沙)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260718-22-59-42.mp4",
+            "source_start_ms": 731700,
+            "source_end_ms": 734700,
+            "truth_id": "20260719-mc-lidousha-litoutade"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "金娜",
+      "standard": "Hina",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/9/entities/4/surfaces/2",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "HimeHina 双人组（公开规则裁定，auto_134819_346_505 结婚照切片实案）：中文全名写田中姬/铃木雏，改姓玩笑混合名「田中雏」按玩笑保留不得纠正回铃木雏；罗马音单称写 Hime/Hina 首字母大写，站位语境 Hime1/Hina1。误听面（提美/黑妹/希娜/金娜/黑那/田中基/田中楚）只作方向候选，逐处须本句音频仲裁成立才按 canonical 改写；音频不确定时规范形保留、误听面照旧阻塞。"
+          },
+          "authority": "HimeHina 双人组（公开规则裁定，auto_134819_346_505 结婚照切片实案）：中文全名写田中姬/铃木雏，改姓玩笑混合名「田中雏」按玩笑保留不得纠正回铃木雏；罗马音单称写 Hime/Hina 首字母大写，站位语境 Hime1/Hina1。误听面（提美/黑妹/希娜/金娜/黑那/田中基/田中楚）只作方向候选，逐处须本句音频仲裁成立才按 canonical 改写；音频不确定时规范形保留、误听面照旧阻塞。"
+        },
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/55/replacements/8",
+          "origin": "ledger",
+          "authority": "维护者-stated-20260719-conversation(HimeHina结婚照切片复审)+后续同类错误按此修复的授权",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260719-13-48-19.mp4",
+            "source_start_ms": 345870,
+            "source_end_ms": 506040,
+            "truth_id": "20260719-himehina-clip-surface-mopup"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "阿里嘎多",
+      "standard": "ありがとう",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/8/entities/0/surfaces/1",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "两个高频日语插话（glossary 日语插话节）。2026-07-18 七星案（公开规则确认）：谢礼物语境的 ありがとう 被 ASR 写成人名「林更多」×3——不存在叫林更多的常客，谢礼/谢SC语境优先按 ありがとう 复核；おめでとう 误听面沿 glossary（没得到系）。误听面出现才触发音频复核，规范形 UNCERTAIN 保留。"
+          },
+          "authority": "两个高频日语插话（glossary 日语插话节）。2026-07-18 七星案（公开规则确认）：谢礼物语境的 ありがとう 被 ASR 写成人名「林更多」×3——不存在叫林更多的常客，谢礼/谢SC语境优先按 ありがとう 复核；おめでとう 误听面沿 glossary（没得到系）。误听面出现才触发音频复核，规范形 UNCERTAIN 保留。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "陆医生",
+      "standard": "露医生",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/108/replacements/0",
+          "origin": "ledger",
+          "authority": "维护者-stated-20260722-conversation(火锅切片2:43；露医生为露蒂斯在咕咕诊所医生形象的昵称，只钉此mention)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260722-19-35-15.mp4",
+            "source_start_ms": 2016790,
+            "source_end_ms": 2020810,
+            "truth_id": "20260722-nancho-hotpot-lu-doctor-r1"
+          }
+        },
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/217/replacements/0",
+          "origin": "ledger",
+          "authority": "维护者-stated-20261003(当前月饼片 cue 59：‘露医生’取露蒂丝/露蒂斯的露，指咕咕诊所医生形象昵称；只钉此 source interval)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "BV1DFh16ZEDh.mp4",
+            "source_start_ms": 585650,
+            "source_end_ms": 588580,
+            "truth_id": "20260925-monthcake-lu-doctor-r1"
+          }
+        }
+      ],
+      "memory_context": [
+        {
+          "source": "assets/lidousha/speech_memory_ledger.v1.json",
+          "pointer": "/entries/10",
+          "scope": {
+            "speaker_id": "lidousha",
+            "channel_id": "lidousha",
+            "date_start": "2026-07-22",
+            "date_end": "2026-07-22",
+            "candidate_id": "auto_193450_1863_2056",
+            "relation_id": "20260722-lidousha-nancho-live-collaboration"
+          },
+          "evidence": [
+            {
+              "evidence_class": "ATOMIC_HUMAN_NICKNAME_TRUTH",
+              "authority": "维护者-stated-20260722(露医生指代露蒂斯，咕咕诊所医生)",
+              "source_start_ms": 2016790,
+              "source_end_ms": 2020810
+            }
+          ],
+          "action": "CANDIDATE_ONLY"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "零三",
+      "standard": "李豆沙",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/6/entities/0/surfaces/4",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "自称误听拯救（2026-07-14：0:26「理论上」实为李豆沙、生日案「留下」）：仅误听面出现才触发音频二选一，改写只在音频确证时；真句「留下来」「理论上」UNCERTAIN 保留绝不阻塞。与 witness_disagreement 自称组互补：那组管修正层引入，本组管双证人同错。 2026-07-14 增：小雨(旧五年之约案，真雨天语境 UNCERTAIN 保留)。2026-07-19 增（精心设计/七星案）：流沙、里头她、零三、李文轩、流下来；流沙/流下来/李文轩 真词语境 UNCERTAIN 保留。"
+          },
+          "authority": "自称误听拯救（2026-07-14：0:26「理论上」实为李豆沙、生日案「留下」）：仅误听面出现才触发音频二选一，改写只在音频确证时；真句「留下来」「理论上」UNCERTAIN 保留绝不阻塞。与 witness_disagreement 自称组互补：那组管修正层引入，本组管双证人同错。 2026-07-14 增：小雨(旧五年之约案，真雨天语境 UNCERTAIN 保留)。2026-07-19 增（精心设计/七星案）：流沙、里头她、零三、李文轩、流下来；流沙/流下来/李文轩 真词语境 UNCERTAIN 保留。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "露蒂丝",
+      "standard": "露医生",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/108/replacements/1",
+          "origin": "ledger",
+          "authority": "维护者-stated-20260722-conversation(火锅切片2:43；露医生为露蒂斯在咕咕诊所医生形象的昵称，只钉此mention)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260722-19-35-15.mp4",
+            "source_start_ms": 2016790,
+            "source_end_ms": 2020810,
+            "truth_id": "20260722-nancho-hotpot-lu-doctor-r1"
+          }
+        }
+      ],
+      "memory_context": [
+        {
+          "source": "assets/lidousha/speech_memory_ledger.v1.json",
+          "pointer": "/entries/10",
+          "scope": {
+            "speaker_id": "lidousha",
+            "channel_id": "lidousha",
+            "date_start": "2026-07-22",
+            "date_end": "2026-07-22",
+            "candidate_id": "auto_193450_1863_2056",
+            "relation_id": "20260722-lidousha-nancho-live-collaboration"
+          },
+          "evidence": [
+            {
+              "evidence_class": "ATOMIC_HUMAN_NICKNAME_TRUTH",
+              "authority": "维护者-stated-20260722(露医生指代露蒂斯，咕咕诊所医生)",
+              "source_start_ms": 2016790,
+              "source_end_ms": 2020810
+            }
+          ],
+          "action": "CANDIDATE_ONLY"
+        }
+      ],
+      "formal_matches": [
+        {
+          "entity": "露蒂丝",
+          "source": "assets/lidousha/psplive_roster_sources.v1.json",
+          "pointer": "/member_overrides/露蒂丝"
+        }
+      ],
+      "conflicts": [
+        {
+          "entity": "露蒂丝",
+          "source": "assets/lidousha/psplive_roster_sources.v1.json",
+          "pointer": "/member_overrides/露蒂丝"
+        }
+      ]
+    },
+    {
+      "misheard": "露蒂斯",
+      "standard": "露医生",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/108/replacements/2",
+          "origin": "ledger",
+          "authority": "维护者-stated-20260722-conversation(火锅切片2:43；露医生为露蒂斯在咕咕诊所医生形象的昵称，只钉此mention)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260722-19-35-15.mp4",
+            "source_start_ms": 2016790,
+            "source_end_ms": 2020810,
+            "truth_id": "20260722-nancho-hotpot-lu-doctor-r1"
+          }
+        }
+      ],
+      "memory_context": [
+        {
+          "source": "assets/lidousha/speech_memory_ledger.v1.json",
+          "pointer": "/entries/10",
+          "scope": {
+            "speaker_id": "lidousha",
+            "channel_id": "lidousha",
+            "date_start": "2026-07-22",
+            "date_end": "2026-07-22",
+            "candidate_id": "auto_193450_1863_2056",
+            "relation_id": "20260722-lidousha-nancho-live-collaboration"
+          },
+          "evidence": [
+            {
+              "evidence_class": "ATOMIC_HUMAN_NICKNAME_TRUTH",
+              "authority": "维护者-stated-20260722(露医生指代露蒂斯，咕咕诊所医生)",
+              "source_start_ms": 2016790,
+              "source_end_ms": 2020810
+            }
+          ],
+          "action": "CANDIDATE_ONLY"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "领个多",
+      "standard": "ありがとう",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/8/entities/0/surfaces/3",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "两个高频日语插话（glossary 日语插话节）。2026-07-18 七星案（公开规则确认）：谢礼物语境的 ありがとう 被 ASR 写成人名「林更多」×3——不存在叫林更多的常客，谢礼/谢SC语境优先按 ありがとう 复核；おめでとう 误听面沿 glossary（没得到系）。误听面出现才触发音频复核，规范形 UNCERTAIN 保留。"
+          },
+          "authority": "两个高频日语插话（glossary 日语插话节）。2026-07-18 七星案（公开规则确认）：谢礼物语境的 ありがとう 被 ASR 写成人名「林更多」×3——不存在叫林更多的常客，谢礼/谢SC语境优先按 ありがとう 复核；おめでとう 误听面沿 glossary（没得到系）。误听面出现才触发音频复核，规范形 UNCERTAIN 保留。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "题",
+      "standard": "kmx",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/7/replacements/4",
+          "origin": "ledger",
+          "authority": "公开规则-reviewed-local-span-2026-07-19; 2026-07-20 增面:提问(r4 fresh 新变体)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260718-23-59-36.mp4",
+            "source_start_ms": 543230,
+            "source_end_ms": 545460,
+            "truth_id": "20260718-hecheng-kmx-slot"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "风光风光",
+      "standard": "分号分号",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/9/replacements/0",
+          "origin": "ledger",
+          "authority": "公开规则-reviewed-emoticon-reading-2026-07-19",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260718-23-29-39.mp4",
+            "source_start_ms": 1677530,
+            "source_end_ms": 1686010,
+            "truth_id": "20260718-flower-basket-semicolon-emote"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "香香烧烤",
+      "standard": "邪恶守宫",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/120/replacements/0",
+          "origin": "ledger",
+          "authority": "维护者-stated-20260722-conversation(这里说的是邪恶守宫；邪恶守宫是南町nightin的昵称指代); only the nickname surface is pinned because the rest of the danmaku-derived line is partially occluded",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260722-19-35-15.mp4",
+            "source_start_ms": 2062300,
+            "source_end_ms": 2064990,
+            "truth_id": "20260722-hotpot-evil-gecko-nickname-first-r1"
+          }
+        },
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/121/replacements/0",
+          "origin": "ledger",
+          "authority": "维护者-stated-20260722-conversation(两句原版弹幕指代均为邪恶守宫); only the recurring nickname surface is pinned",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260722-19-35-15.mp4",
+            "source_start_ms": 2080360,
+            "source_end_ms": 2084520,
+            "truth_id": "20260722-hotpot-evil-gecko-nickname-callback-r1"
+          }
+        }
+      ],
+      "memory_context": [
+        {
+          "source": "assets/lidousha/speech_memory_ledger.v1.json",
+          "pointer": "/entries/11",
+          "scope": {
+            "speaker_id": "lidousha",
+            "channel_id": "lidousha",
+            "date_start": "2026-07-22",
+            "date_end": "2026-07-22",
+            "candidate_id": "auto_193450_1863_2056",
+            "relation_id": "20260722-lidousha-nancho-live-collaboration"
+          },
+          "evidence": [
+            {
+              "evidence_class": "ATOMIC_HUMAN_NICKNAME_TRUTH",
+              "authority": "维护者-stated-20260722(邪恶守宫是南町nightin昵称；原弹幕当前缺失)"
+            }
+          ],
+          "action": "CANDIDATE_ONLY"
+        }
+      ],
+      "formal_matches": [
+        {
+          "entity": "星汐",
+          "source": "assets/lidousha/psplive_roster_sources.v1.json",
+          "pointer": "/member_overrides/星汐Seki"
+        }
+      ],
+      "conflicts": [
+        {
+          "entity": "星汐",
+          "source": "assets/lidousha/psplive_roster_sources.v1.json",
+          "pointer": "/member_overrides/星汐Seki"
+        }
+      ]
+    },
+    {
+      "misheard": "黑妹",
+      "standard": "Hime",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/9/entities/3/surfaces/2",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "HimeHina 双人组（公开规则裁定，auto_134819_346_505 结婚照切片实案）：中文全名写田中姬/铃木雏，改姓玩笑混合名「田中雏」按玩笑保留不得纠正回铃木雏；罗马音单称写 Hime/Hina 首字母大写，站位语境 Hime1/Hina1。误听面（提美/黑妹/希娜/金娜/黑那/田中基/田中楚）只作方向候选，逐处须本句音频仲裁成立才按 canonical 改写；音频不确定时规范形保留、误听面照旧阻塞。"
+          },
+          "authority": "HimeHina 双人组（公开规则裁定，auto_134819_346_505 结婚照切片实案）：中文全名写田中姬/铃木雏，改姓玩笑混合名「田中雏」按玩笑保留不得纠正回铃木雏；罗马音单称写 Hime/Hina 首字母大写，站位语境 Hime1/Hina1。误听面（提美/黑妹/希娜/金娜/黑那/田中基/田中楚）只作方向候选，逐处须本句音频仲裁成立才按 canonical 改写；音频不确定时规范形保留、误听面照旧阻塞。"
+        },
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/55/replacements/7",
+          "origin": "ledger",
+          "authority": "维护者-stated-20260719-conversation(HimeHina结婚照切片复审)+后续同类错误按此修复的授权",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260719-13-48-19.mp4",
+            "source_start_ms": 345870,
+            "source_end_ms": 506040,
+            "truth_id": "20260719-himehina-clip-surface-mopup"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "黑妹衣",
+      "standard": "Hime1",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/55/replacements/0",
+          "origin": "ledger",
+          "authority": "维护者-stated-20260719-conversation(HimeHina结婚照切片复审)+后续同类错误按此修复的授权",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260719-13-48-19.mp4",
+            "source_start_ms": 345870,
+            "source_end_ms": 506040,
+            "truth_id": "20260719-himehina-clip-surface-mopup"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "黑娜一",
+      "standard": "Hina1",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/55/replacements/1",
+          "origin": "ledger",
+          "authority": "维护者-stated-20260719-conversation(HimeHina结婚照切片复审)+后续同类错误按此修复的授权",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260719-13-48-19.mp4",
+            "source_start_ms": 345870,
+            "source_end_ms": 506040,
+            "truth_id": "20260719-himehina-clip-surface-mopup"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "黑那",
+      "standard": "Hina",
+      "evidence": [
+        {
+          "source": "assets/lidousha/entity_confusables.json",
+          "pointer": "/groups/9/entities/4/surfaces/3",
+          "origin": "entity_confusables",
+          "scope": {
+            "kind": "context",
+            "description": "HimeHina 双人组（公开规则裁定，auto_134819_346_505 结婚照切片实案）：中文全名写田中姬/铃木雏，改姓玩笑混合名「田中雏」按玩笑保留不得纠正回铃木雏；罗马音单称写 Hime/Hina 首字母大写，站位语境 Hime1/Hina1。误听面（提美/黑妹/希娜/金娜/黑那/田中基/田中楚）只作方向候选，逐处须本句音频仲裁成立才按 canonical 改写；音频不确定时规范形保留、误听面照旧阻塞。"
+          },
+          "authority": "HimeHina 双人组（公开规则裁定，auto_134819_346_505 结婚照切片实案）：中文全名写田中姬/铃木雏，改姓玩笑混合名「田中雏」按玩笑保留不得纠正回铃木雏；罗马音单称写 Hime/Hina 首字母大写，站位语境 Hime1/Hina1。误听面（提美/黑妹/希娜/金娜/黑那/田中基/田中楚）只作方向候选，逐处须本句音频仲裁成立才按 canonical 改写；音频不确定时规范形保留、误听面照旧阻塞。"
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    },
+    {
+      "misheard": "黑那一",
+      "standard": "Hina1",
+      "evidence": [
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/49/replacements/1",
+          "origin": "ledger",
+          "authority": "维护者-stated-20260719-conversation(HimeHina结婚照切片复审)",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260719-13-48-19.mp4",
+            "source_start_ms": 373160,
+            "source_end_ms": 376140,
+            "truth_id": "20260719-himehina-standing-answer-hina1"
+          }
+        },
+        {
+          "source": "assets/lidousha/subtitle_truth_ledger.v1.json",
+          "pointer": "/entries/55/replacements/2",
+          "origin": "ledger",
+          "authority": "维护者-stated-20260719-conversation(HimeHina结婚照切片复审)+后续同类错误按此修复的授权",
+          "scope": {
+            "kind": "recording_interval",
+            "recording_basename": "22966160_20260719-13-48-19.mp4",
+            "source_start_ms": 345870,
+            "source_end_ms": 506040,
+            "truth_id": "20260719-himehina-clip-surface-mopup"
+          }
+        }
+      ],
+      "formal_matches": [],
+      "conflicts": []
+    }
+  ]
+}

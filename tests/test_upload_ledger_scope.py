@@ -46,9 +46,15 @@ def test_frozen_identity_keeps_alias_and_source_holds_after_files_disappear(tmp_
     assert row_matches_target(row, 'new-video', alias)
     moved_alias = bound_manifest(tmp_path, 'moved-render', date='2026-10-14', source_candidate_id='original')
     assert row_matches_target(row, 'moved-video', moved_alias)
+    # Basically the same video (re-cut with 500 ms shifted ends): 7500/8000 on both sides.
     overlap = bound_manifest(tmp_path, 'different-name', pieces=[{
-        'source_media_sha256': 'sha256:' + 'a' * 64, 'start_ms': 8000, 'end_ms': 12000}])
+        'source_media_sha256': 'sha256:' + 'a' * 64, 'start_ms': 1500, 'end_ms': 9500}])
     assert row_matches_target(row, 'different-video', overlap)
+    # A different video that only partly quotes the published one (50% of the old
+    # clip, 67% of the new one) is not a duplicate.
+    quote = bound_manifest(tmp_path, 'quote', pieces=[{
+        'source_media_sha256': 'sha256:' + 'a' * 64, 'start_ms': 5000, 'end_ms': 11000}])
+    assert not row_matches_target(row, 'quote-video', quote)
     disjoint = bound_manifest(tmp_path, 'next-clip', pieces=[{
         'source_media_sha256': 'sha256:' + 'a' * 64, 'start_ms': 9000, 'end_ms': 12000}])
     assert not row_matches_target(row, 'next-video', disjoint)

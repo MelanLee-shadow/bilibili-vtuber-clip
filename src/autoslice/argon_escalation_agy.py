@@ -105,8 +105,6 @@ def validate_execution(engine, task, manifest, inner, snapshot, *, binding_task=
 
 
 def advance(engine, task_id, *, expected, request_timeout_s=60):
-    if agy.cpa_gemini_client.enabled():
-        agy.cpa_gemini_client.require_operation('argon_attested_agy_lifecycle')
     require(not engine.read_only, "READ_ONLY_ENGINE")
     require(valid_sha(task_id), "TASK_ID_INVALID")
     require(type(request_timeout_s) in (int, float) and math.isfinite(request_timeout_s)
@@ -193,7 +191,15 @@ def advance(engine, task_id, *, expected, request_timeout_s=60):
             dispatched = True
             return execute_command(command, **kwargs, umask=0o077)
 
-        run = agy.run_local_agy(argv, cwd=job, timeout=request_timeout_s, command_runner=send)
+        with agy.cpa_gemini_client.legacy_attempt(operation='argon_lifecycle', transport='agy_cli',
+                model=MODEL, purpose='argon_attested_agy', request_sha256=sha(native_body)) as transport_row:
+            run = agy.run_local_agy(argv, cwd=job, timeout=request_timeout_s, command_runner=send,
+                **({'cpa_operation': 'argon_lifecycle'} if agy.cpa_gemini_client.enabled() else {}))
+            transport_row['returncode'] = run.returncode
+            if not dispatched:
+                transport_row['status'] = 'NOT_DISPATCHED'
+            elif run.returncode != 0:
+                transport_row['status'] = 'FAILED_OR_AMBIGUOUS'
         if not dispatched:
             require(run.completed is None, "ARGON_AGY_UNRESERVED_RESULT")
             return engine._view(task, manifest, inner, ledger, "agy", "ADMISSION_PENDING",
@@ -206,6 +212,8 @@ def advance(engine, task_id, *, expected, request_timeout_s=60):
             "launch_error_type": run.launch_error_type,
             "stdout_sha256": store.blob(task, stdout.encode()),
             "stderr_sha256": store.blob(task, stderr.encode())}
+        if agy.cpa_gemini_client.enabled():
+            receipt.update(agy.cpa_gemini_client.exception_receipt('argon_lifecycle', 'agy_cli'))
         if run.completed is None:
             store.put_json(task / "agy-run.json", receipt)
             ledger.transition("SUBMIT_AMBIGUOUS", event="ARGON_AGY_TERMINAL_UNKNOWN",

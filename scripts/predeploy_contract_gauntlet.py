@@ -1189,12 +1189,14 @@ def continuation_phase(args):
     work.mkdir(parents=True)
     p = subprocess.run(['sudo', '-n', 'unshare', '-m', '-n', '--propagation', 'private', 'bash',
         str(args.repo / 'scripts/continuation_authority_preflight_sandbox.sh'), str(work), args.snapshot,
-        str(args.repo), str(args.repo / 'scripts/continuation_authority_preflight.py'), str(args.slices)],
+        str(args.repo), str(args.repo / 'scripts/continuation_authority_preflight.py'), str(args.slices),
+        *sandbox_env_argv(args)],
         text=True, capture_output=True)
     (args.state / 'continuation.log').write_text(p.stdout + p.stderr)
     rows = [json.loads(path.read_text()) for path in sorted((work / 'reports').glob('*.json'))]
     write_json(args.state / 'continuation.json', [
-        {key: row.get(key) for key in ('candidate_id', 'outcome', 'reason_code', 'elapsed_s', 'rchar_bytes')}
+        {key: row.get(key) for key in ('candidate_id', 'outcome', 'reason_code', 'elapsed_s', 'rchar_bytes',
+                                     'sandbox_env_keys', 'final_review_mode')}
         for row in rows])
     expected = sum(1 for line in args.slices.read_text().splitlines() if line.strip())
     return int(p.returncode != 0 or len(rows) != expected
@@ -1221,6 +1223,7 @@ def whole_path_phase(args):
     command = ['sudo', '-n', 'unshare', '-m', '-n', '--propagation', 'private', 'bash',
         str(args.repo / 'scripts/continuation_authority_preflight_sandbox.sh'), str(work), args.snapshot,
         str(args.repo), str(args.repo / 'src/autoslice/whole_path_observation.py'), '--exec',
+        *sandbox_env_argv(args), '--',
         '--slices', str(args.slices.absolute()), '--report-dir', str(work / 'reports'),
         '--time-budget-s', str(args.time_budget_s)]
     if args.exchange_window:
@@ -1234,6 +1237,10 @@ def whole_path_phase(args):
     expected = sum(1 for line in args.slices.read_text().splitlines() if line.strip())
     return int(p.returncode != 0 or len(rows) != expected
                or any(str(row.get('outcome', '')).startswith('REFUSED') for row in rows))
+
+
+def sandbox_env_argv(args):
+    return [part for assignment in args.sandbox_env for part in ('--sandbox-env', assignment)]
 
 
 def main():
@@ -1260,12 +1267,27 @@ def main():
         help='continuation/whole-path phase: lines "<spec path> <existing_srt|aggregate_asr>" of every in-flight slice')
     parser.add_argument('--snapshot', default='-',
         help='continuation/whole-path phase: snapshot root overlaid on its live roots, or - for the live state')
+    parser.add_argument('--sandbox-env', action='append', default=[], metavar='NAME=VALUE',
+        help='continuation/whole-path: explicit AUTOSLICE_/LIDOUSHA_ variable (repeatable; no credential paths)')
+    parser.add_argument('--final-review-mode', choices=('legacy', 'per_finding'),
+        help='Sugar for --sandbox-env AUTOSLICE_FINAL_REVIEW_MODE=MODE')
     parser.add_argument('--exchange-window', default='',
         help='whole-path phase: <iso>..<iso> start window of the observed production run; only its '
              'archived COMPLETED text exchanges are replayed (empty: none)')
     parser.add_argument('--time-budget-s', type=int, default=0,
         help='whole-path phase: per-slice wall-clock budget (0: the observation default)')
     args = parser.parse_args()
+    sys.path.insert(0, str(ROOT))
+    from scripts.continuation_authority_preflight import validate_sandbox_env
+    if args.final_review_mode:
+        args.sandbox_env.append('AUTOSLICE_FINAL_REVIEW_MODE=' + args.final_review_mode)
+    try:
+        selected = validate_sandbox_env(args.sandbox_env)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if selected and args.phase not in ('continuation', 'whole-path'):
+        parser.error('--sandbox-env/--final-review-mode require continuation or whole-path')
+    args.sandbox_env = [name + '=' + value for name, value in selected.items()]
     if not 1 <= args.max_calls <= 120 or args.batch_size < 1:
         parser.error('--max-calls must be 1..120 and --batch-size must be positive')
     args.state.mkdir(parents=True, exist_ok=True)

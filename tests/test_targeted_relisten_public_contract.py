@@ -134,6 +134,9 @@ def rig(tmp_path, monkeypatch, request):
 def build_offline_rig(tmp_path, monkeypatch, *, srt=SRT, finding=FINDING,
                       offset_ms=0, source_duration_ms=10000):
     """Synthetic media with complete raw replies at the normal send boundary."""
+    # This shared fixture checks legacy AGY argv/process artifacts. Select the
+    # emergency path explicitly; native default routing has separate fake-HTTP tests.
+    monkeypatch.setenv("AUTOSLICE_CPA_GEMINI_ENABLED", "0")
     tmp_path.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("AUTOSLICE_BASE", str(tmp_path / "base"))
     monkeypatch.delenv(audio.ENTITY_AUDIO_DISABLE_AGY_ENV, raising=False)

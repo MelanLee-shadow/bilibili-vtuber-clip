@@ -4,13 +4,12 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-from ops.recording.record_health_audit import ROOM_ID
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "ops" / "recording" / "record_health_audit.py"
 NOW = 1_788_393_600.0  # T00:00:00Z
-RELATIVE = f"2026-09-02/{ROOM_ID}_20260902-23-59-00.flv"
+RELATIVE = "2026-09-02/22966160_20260902-23-59-00.flv"
 
 
 def test_local_capture_health_reports_archive_backlog_without_cloud_probe(tmp_path: Path) -> None:
@@ -64,7 +63,7 @@ def _write_ledgers(
         json.dumps(
             {
                 "schema_version": "recorder-neutral-status.v1",
-                "room_id": ROOM_ID,
+                "room_id": "22966160",
                 "generated_at_epoch": generated,
                 "service_reachable": True,
                 "streaming": recording,
@@ -166,7 +165,7 @@ def test_health_audit_fails_unresolved_closed_and_open_recording_mismatch(
     assert result.returncode == 1
     assert "OPEN source is not currently recording" in " ".join(payload["unresolved"])
 
-    second = f"2026-09-02/{ROOM_ID}_20260902-23-58-00.flv"
+    second = "2026-09-02/22966160_20260902-23-58-00.flv"
     status, state = _write_ledgers(
         tmp_path,
         recording=True,
@@ -201,7 +200,7 @@ def test_health_audit_accepts_typed_connection_stub_disposition(tmp_path: Path) 
 def test_health_audit_allows_only_same_session_closed_pending_while_recording(
     tmp_path: Path,
 ) -> None:
-    open_relative = f"2026-09-02/{ROOM_ID}_20260902-23-58-00.flv"
+    open_relative = "2026-09-02/22966160_20260902-23-58-00.flv"
     session_id = "active-session"
     status, state = _write_ledgers(
         tmp_path,

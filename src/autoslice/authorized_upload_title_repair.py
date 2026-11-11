@@ -21,10 +21,14 @@ from src.autoslice.addressee_attribution import (
     build_addressee_evidence,
 )
 from src.autoslice.authorized_upload_recovery_cli import write_json_sidecar
+from src.autoslice.channel_envelope import accepted_talk_title_prefix
 from src.autoslice.jingting_chunker import parse_srt_cues
+from src.autoslice.part_name_contract import part_name_is_title, same_stable
+from src.autoslice.publication_identity import publication_identity
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.same_bv_repair import normalise_creator_snapshot, snapshots_equivalent
 from src.autoslice.source_fact_review import validate_source_fact_review
+from src.autoslice.title_cover_quotes import check_title_quotes
 from src.autoslice.title_policy import publish_title_lane, publish_title_policy_violations
 
 
@@ -381,6 +385,24 @@ def _stable_without_title(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     return value
 
 
+def _stable_without_title_and_desc(snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    """Like ``_stable_without_title`` but also ignoring the description.
+
+    Only the FMR predecessor comparison uses it: 维护者 may hand-edit a
+    description in the Bilibili backend between two transactions, and the
+    next title edit then starts from the live description.  Identity (CID,
+    aid, section), tags, cover and every other field stay compared.
+    """
+
+    value = _stable_without_title(snapshot)
+    for surface_name in ("creator", "public"):
+        surface = value.get(surface_name)
+        metadata = surface.get("metadata") if isinstance(surface, dict) else None
+        if isinstance(metadata, dict):
+            metadata.pop("desc", None)
+    return value
+
+
 def _snapshot_sha(snapshot: Mapping[str, Any]) -> str:
     return _sha256_json(snapshot)
 
@@ -487,6 +509,11 @@ def _title_only_payload(
         raise TitleRepairError("TITLE_REPAIR_EDIT_PAYLOAD_IDENTITY_INVALID")
     for key in set(baseline) | set(payload):
         if key in {"title", "csrf"}:
+            continue
+        if key == "videos" and len(payload["videos"]) == 1:
+            # The sole part name may move to the final title, nothing else.
+            if payload["videos"][0] != {**baseline["videos"][0], "title": final_title}:
+                raise TitleRepairError("TITLE_REPAIR_NON_TITLE_PAYLOAD_DRIFT")
             continue
         if payload.get(key) != baseline.get(key):
             raise TitleRepairError("TITLE_REPAIR_NON_TITLE_PAYLOAD_DRIFT")
@@ -722,6 +749,12 @@ def _validate_title_repair_successor(
         validate_new_bv_repair_authority,
     )
 
+    if isinstance(reference, Mapping) and set(reference) == {"receipt"}:
+        _validate_fmr_title_repair_successor(
+            reference["receipt"], authority=authority, candidate_id=candidate_id,
+            title=title, visited=_visited,
+        )
+        return
     if not isinstance(reference, Mapping) or set(reference) != {
         "receipt", "title_input", "title_result"
     }:
@@ -866,15 +899,13 @@ def _validate_title_repair_successor(
         _surface_identity(snapshot, bvid=bvid, aid=aid, cid=cid, title=expected)
         and snapshot["section"].get("section_id") == section_id
         for snapshot, expected in ((before, proposal["original_title"]), (after, title))
-    ) or _stable_without_title(before) != _stable_without_title(after):
+    ) or not same_stable(before, after, _stable_without_title):
         raise TitleRepairError("TITLE_REPAIR_SUCCESSOR_NON_TITLE_DRIFT")
     if cover_mode:
         assert cover_proof is not None
-        if _stable_without_title(before) != _stable_without_title(
-            cover_proof["live_snapshot"]
-        ):
+        if not same_stable(cover_proof["live_snapshot"], before, _stable_without_title):
             raise TitleRepairError("TITLE_REPAIR_PREDECESSOR_COVER_LIVE_DRIFT")
-    if previous_title is not None and _stable_without_title(before) != _stable_without_title(previous_title["after"]):
+    if previous_title is not None and not same_stable(previous_title["after"], before, _stable_without_title):
         raise TitleRepairError("TITLE_REPAIR_PREDECESSOR_TITLE_NON_TITLE_DRIFT")
 
 
@@ -954,10 +985,10 @@ def _title_predecessor_proof(
         _surface_identity(snapshot, bvid=proposal["bvid"], aid=aid, cid=cid, title=title)
         and snapshot["section"].get("section_id") == section_id
         for snapshot, title in ((before, proposal["original_title"]), (after, proposal["final_title"]))
-    ) or _stable_without_title(before) != _stable_without_title(after):
+    ) or not same_stable(before, after, _stable_without_title):
         raise TitleRepairError("TITLE_REPAIR_SUCCESSOR_NON_TITLE_DRIFT")
     prior_snapshot = previous["after"] if previous else cover["live_snapshot"] if cover_reference is not None else None
-    if prior_snapshot is not None and _stable_without_title(before) != _stable_without_title(prior_snapshot):
+    if prior_snapshot is not None and not same_stable(prior_snapshot, before, _stable_without_title):
         raise TitleRepairError("TITLE_REPAIR_PREDECESSOR_TITLE_NON_TITLE_DRIFT")
     return {
         **proposal, "after": after, "aid": aid, "cid": cid, "section_id": section_id,
@@ -969,11 +1000,11 @@ def _title_predecessor_proof(
 def validate_title_repair_successor(
     reference: object, *, authority: Mapping[str, Any], candidate_id: str, title: str
 ) -> None:
-    """Replay a completed title-only transaction before a later cover repair.
+    """Replay a completed title-only transaction before a media/cover successor.
 
-    The original publication stays immutable.  This reads the normal proposal,
-    source-fact review and transaction rather than trusting a new title label.
-    The cover transaction still checks the current live surfaces itself.
+    Ordinary references bind receipt/input/result; FMR references bind only
+    ``receipt`` and replay the existing recursive FMR proof.  The immutable
+    publication manifest selects the lane.  Live successor gates stay separate.
     """
 
     _validate_title_repair_successor(
@@ -982,6 +1013,443 @@ def validate_title_repair_successor(
         candidate_id=candidate_id,
         title=title,
         _visited=set(),
+    )
+
+
+# --- finished-media review lane (FMR) --------------------------------------
+#
+# An FMR-published BV has no story_contract, selection scorecard or joint QC;
+# its publication basis is the hash-bound finished-media review receipt
+# (docs/pipeline/85-finished-media-review.md).  The branch is chosen from the
+# manifest alone, never from a flag, so a non-FMR manifest cannot opt into it.
+FMR_AUTHORITY_SCHEMA = "fmr-title-authority.v1"
+FMR_AUTHORITY_FIELDS = frozenset(
+    {
+        "schema_version",
+        "bvid",
+        "candidate_id",
+        "original_title",
+        "final_title",
+        "authorized_by",
+        "context",
+        "authorizations",
+    }
+)
+FMR_AUTHORIZATION_FIELDS = frozenset({"id", "quote", "session", "line", "at", "origin"})
+FMR_RECEIPT_SCHEMA = "finished-media-review-receipt.v2"
+FMR_RECORD_KIND = "FINISHED_MEDIA_REVIEW"
+FMR_AUTHORIZED_BY = "维护者"
+FMR_QUOTE_SEPARATOR = " / "
+
+
+def _is_fmr_manifest(manifest: Mapping[str, Any]) -> bool:
+    attestation = manifest.get("package_attestation")
+    return isinstance(attestation, Mapping) and "finished_media_review" in attestation
+
+
+def _fmr_reject_foreign_arguments(args: Any) -> None:
+    """FMR repairs take the authority file and at most one explicit predecessor."""
+
+    if getattr(args, "title_input", None) or getattr(args, "title_result", None):
+        raise TitleRepairError("TITLE_REPAIR_FMR_SOURCE_FACT_ARGUMENTS_UNSUPPORTED")
+    # The FMR lane has no TITLE-INPUT/RESULT artifacts, so its title predecessor
+    # is the receipt alone; the cover predecessor stays a non-FMR route.
+    if getattr(args, "predecessor_cover_completed", None) or any(
+        getattr(args, "predecessor_title_" + key, None) for key in ("input", "result")
+    ):
+        raise TitleRepairError("TITLE_REPAIR_FMR_PREDECESSOR_UNSUPPORTED")
+    if getattr(args, "predecessor_title_receipt", None) and getattr(
+        args, "predecessor_repair_completed", None
+    ):
+        raise TitleRepairError("TITLE_REPAIR_FMR_PREDECESSOR_AMBIGUOUS")
+
+
+def _load_fmr_artifacts(
+    *, manifest_path: Path, manifest: Mapping[str, Any]
+) -> tuple[Path, str, str, str, str, str]:
+    """Bind the manifest to its record, subtitle and FMR receipt.
+
+    Returns ``(subtitle_path, subtitle_sha, record_sha, manifest_sha,
+    receipt_sha, candidate_id)``.  ``load_and_verify`` has already replayed the
+    full FMR attestation; this re-reads the receipt so the title receipt binds
+    to the same bytes and the lane evidence cannot be swapped between the two.
+    """
+
+    attestation = manifest.get("package_attestation")
+    if not isinstance(attestation, Mapping):
+        raise TitleRepairError("TITLE_REPAIR_MANIFEST_ATTESTATION_MISSING")
+    manifest_sha = _sha256_file(manifest_path)
+    record_path, record_sha = _entry_path(attestation.get("record"), label="RECORD")
+    subtitle_path, subtitle_sha = _entry_path(attestation.get("subtitle"), label="SRT")
+    receipt_path, receipt_sha = _entry_path(
+        attestation.get("finished_media_review"), label="FMR_RECEIPT"
+    )
+    if attestation.get("title_cover_qc") != attestation.get("finished_media_review"):
+        raise TitleRepairError("TITLE_REPAIR_FMR_RECEIPT_BINDING_INVALID")
+    record = _read_json(record_path, "RECORD")
+    receipt = _read_json(receipt_path, "FMR_RECEIPT")
+    if record.get("record_kind") != FMR_RECORD_KIND:
+        raise TitleRepairError("TITLE_REPAIR_FMR_RECORD_KIND_INVALID")
+    try:
+        candidate_id = publication_identity(record).candidate_id
+    except ValueError as exc:
+        raise TitleRepairError("TITLE_REPAIR_FMR_CANDIDATE_INVALID") from exc
+    _required_text(candidate_id, "TITLE_REPAIR_FMR_CANDIDATE_INVALID")
+    bindings = receipt.get("bindings")
+    if (
+        receipt.get("schema_version") != FMR_RECEIPT_SCHEMA
+        or receipt.get("verdict") != "PASS"
+        or receipt.get("candidate_id") != candidate_id
+        or not isinstance(bindings, Mapping)
+        or not isinstance(bindings.get("record"), Mapping)
+        or not isinstance(bindings.get("srt"), Mapping)
+        or not _sha_matches(bindings["record"].get("sha256"), record_sha)
+        or not _sha_matches(bindings["srt"].get("sha256"), subtitle_sha)
+    ):
+        raise TitleRepairError("TITLE_REPAIR_FMR_RECEIPT_BINDING_INVALID")
+    return subtitle_path, subtitle_sha, record_sha, manifest_sha, receipt_sha, candidate_id
+
+
+def _fmr_reference(path: Path, sha: str) -> dict[str, str]:
+    return {"path": str(path), "sha256": sha}
+
+
+def _fmr_repair_completed_proof(
+    *, completed_path: Path, manifest_path: Path, manifest: Mapping[str, Any],
+    context: Mapping[str, str], expected_bvid: str,
+) -> dict[str, Any]:
+    """Replay a same-BV replacement as the proof of the *current* publication.
+
+    A BV whose video was replaced in place has no uploaded sidecar for its
+    current manifest; ``same-bv-repair-completed.v1`` is that manifest's
+    publication proof.  The normal completed-predecessor replay (plan hash,
+    plan envelope, hash-chained journal, terminal VERIFIED row, snapshot
+    equality) is reused; this adds the bindings a title edit relies on:
+    same manifest bytes, same replacement media, same candidate, one live
+    title that is the manifest title.
+    """
+
+    from src.autoslice import same_bv_repair as repair
+
+    completed_path = _regular_path(completed_path, label="PREDECESSOR_REPAIR_COMPLETED")
+    completed = _read_json(completed_path, "PREDECESSOR_REPAIR_COMPLETED")
+    authority = manifest.get("recovery_publication_authority")
+    snapshot = completed.get("live_snapshot")
+    if not isinstance(authority, Mapping) or not isinstance(snapshot, Mapping):
+        raise TitleRepairError("TITLE_REPAIR_PREDECESSOR_REPAIR_COMPLETED_INVALID")
+    try:
+        repair._predecessor_completion_attestation(
+            completed_path, authority=authority, bvid=expected_bvid, snapshot=snapshot,
+        )
+    except (repair.RepairError, OSError, TypeError, ValueError, KeyError, AttributeError) as exc:
+        raise TitleRepairError(
+            "TITLE_REPAIR_PREDECESSOR_REPAIR_COMPLETED_INVALID:" + str(exc)
+        ) from exc
+    completed_manifest = completed.get("manifest")
+    replacement = completed.get("replacement")
+    if (
+        not isinstance(completed_manifest, Mapping)
+        or not _sha_matches(completed_manifest.get("sha256"), context["manifest_sha256"])
+        or not isinstance(replacement, Mapping)
+        or any(
+            not isinstance(replacement.get(kind), Mapping)
+            or not isinstance(manifest.get(kind), Mapping)
+            or replacement[kind].get("sha256") != manifest[kind].get("sha256")
+            for kind in ("video", "cover")
+        )
+    ):
+        raise TitleRepairError("TITLE_REPAIR_PREDECESSOR_REPAIR_COMPLETED_MANIFEST_DRIFT")
+    aid, cid = completed.get("aid"), completed.get("new_cid")
+    section = snapshot.get("section")
+    section_id = section.get("section_id") if isinstance(section, Mapping) else None
+    if (
+        completed.get("bvid") != expected_bvid
+        or completed.get("candidate_id") != context["candidate_id"]
+        or not _positive_int(aid) or not _positive_int(cid) or not _positive_int(section_id)
+    ):
+        raise TitleRepairError("TITLE_REPAIR_PREDECESSOR_REPAIR_COMPLETED_IDENTITY_INVALID")
+    title = _required_text(manifest.get("title"), "TITLE_REPAIR_MANIFEST_TITLE_MISSING")
+    if not _surface_identity(snapshot, bvid=expected_bvid, aid=aid, cid=cid, title=title):
+        raise TitleRepairError("TITLE_REPAIR_PREDECESSOR_REPAIR_COMPLETED_IDENTITY_INVALID")
+    sha = _sha256_file(completed_path)
+    return {
+        "bvid": expected_bvid, "candidate_id": context["candidate_id"], "final_title": title,
+        "after": copy.deepcopy(dict(snapshot)), "aid": int(aid), "cid": int(cid),
+        "section_id": int(section_id),
+        # Same convention as the cover predecessor: both historical field names
+        # bind the real completion receipt; no uploaded sidecar is invented.
+        "published_sha256": sha, "public_verify_sha256": sha,
+        "binding_ref": {"predecessor_repair_completed": _fmr_reference(completed_path, sha)},
+    }
+
+
+def _fmr_title_receipt_proof(
+    reference: object, *, manifest_path: Path, manifest: Mapping[str, Any],
+    context: Mapping[str, str], visited: set[tuple[str, str]],
+) -> dict[str, Any]:
+    """Replay a completed FMR ``VERIFIED_TITLE_ONLY`` receipt, recursively.
+
+    The receipt binding is rebuilt from the current immutable package plus the
+    receipt's own predecessor (a repair-completed, another FMR title receipt,
+    or the original ``uploaded`` + ``public_verify`` pair) and must match
+    byte-for-byte.  Authorization fields and the authority file hash are
+    taken from the receipt, as the non-FMR replay does.
+    """
+
+    invalid = "TITLE_REPAIR_PREDECESSOR_TITLE_RECEIPT_BINDING_INVALID"
+    if not isinstance(reference, Mapping) or set(reference) != {"path", "sha256"}:
+        raise TitleRepairError("TITLE_REPAIR_PREDECESSOR_TITLE_RECEIPT_REFERENCE_INVALID")
+    receipt_path, receipt_sha = _entry_path(reference, label="PREDECESSOR_TITLE_RECEIPT")
+    visit = (str(receipt_path), receipt_sha)
+    if visit in visited:
+        raise TitleRepairError("TITLE_REPAIR_SUCCESSOR_REFERENCE_CYCLE")
+    visited.add(visit)
+    receipt = _read_json(receipt_path, "PREDECESSOR_TITLE_RECEIPT")
+    recorded = _binding_from_receipt(receipt)
+    bvid = _required_text(recorded.get("bvid"), invalid)
+    prior_receipt_ref = recorded.get("predecessor_title_receipt")
+    prior_completed_ref = recorded.get("predecessor_repair_completed")
+    if prior_receipt_ref is not None and prior_completed_ref is not None:
+        raise TitleRepairError("TITLE_REPAIR_FMR_PREDECESSOR_AMBIGUOUS")
+    prior: dict[str, Any] | None = None
+    if prior_receipt_ref is not None:
+        prior = _fmr_title_receipt_proof(
+            prior_receipt_ref, manifest_path=manifest_path, manifest=manifest,
+            context=context, visited=visited,
+        )
+    elif prior_completed_ref is not None:
+        prior_path, _prior_sha = _entry_path(
+            prior_completed_ref, label="PREDECESSOR_REPAIR_COMPLETED"
+        )
+        prior = _fmr_repair_completed_proof(
+            completed_path=prior_path, manifest_path=manifest_path, manifest=manifest,
+            context=context, expected_bvid=bvid,
+        )
+    if prior is not None:
+        aid, cid, section_id = (prior[key] for key in ("aid", "cid", "section_id"))
+        published_sha, public_verify_sha = prior["published_sha256"], prior["public_verify_sha256"]
+        expected_original = prior["final_title"]
+    else:
+        uploaded, aid, cid, section_id = _published_identity(
+            manifest_path=manifest_path, manifest=manifest, bvid=bvid,
+        )
+        published_sha = _sha256_file(_uploaded_sidecar_path(manifest_path))
+        public_verify_sha = _sha256_file(
+            _regular_path(uploaded.get("public_verify"), label="PUBLIC_PROOF")
+        )
+        expected_original = _required_text(
+            manifest.get("title"), "TITLE_REPAIR_MANIFEST_TITLE_MISSING"
+        )
+    original_title = _required_text(recorded.get("original_title"), invalid)
+    final_title = _required_text(recorded.get("final_title"), invalid)
+    if original_title != expected_original or final_title == original_title:
+        raise TitleRepairError("TITLE_REPAIR_PREDECESSOR_TITLE_RECEIPT_TITLE_CHAIN_INVALID")
+    expected_binding: dict[str, Any] = {
+        "manifest_sha256": context["manifest_sha256"],
+        "record_sha256": context["record_sha256"],
+        "srt_sha256": context["srt_sha256"],
+        "published_sha256": published_sha,
+        "public_verify_sha256": public_verify_sha,
+        "title_input_sha256": None,
+        "title_result_sha256": None,
+        "source_fact_review_sha256": None,
+        "finished_media_review_sha256": context["finished_media_review_sha256"],
+        "title_authority_sha256": _required_text(
+            recorded.get("title_authority_sha256"), "TITLE_REPAIR_AUTHORIZATION_MISSING"
+        ),
+        "bvid": bvid, "aid": aid, "cid": cid, "section_id": section_id,
+        "original_title": original_title, "final_title": final_title,
+        "candidate_id": context["candidate_id"],
+        "authorized_by": _required_text(
+            recorded.get("authorized_by"), "TITLE_REPAIR_AUTHORIZATION_MISSING"
+        ),
+        "quote": _required_text(recorded.get("quote"), "TITLE_REPAIR_AUTHORIZATION_MISSING"),
+    }
+    if prior is not None:
+        expected_binding.update(prior["binding_ref"])
+    before, after = receipt.get("before"), receipt.get("after")
+    if not isinstance(before, Mapping) or not isinstance(after, Mapping):
+        raise TitleRepairError("TITLE_REPAIR_SUCCESSOR_SNAPSHOTS_MISSING")
+    _validate_receipt(receipt, binding=expected_binding, before=before)
+    if receipt.get("status") != "VERIFIED_TITLE_ONLY":
+        raise TitleRepairError("TITLE_REPAIR_SUCCESSOR_NOT_VERIFIED")
+    if not all(
+        _surface_identity(snapshot, bvid=bvid, aid=aid, cid=cid, title=title)
+        and snapshot["section"].get("section_id") == section_id
+        for snapshot, title in ((before, original_title), (after, final_title))
+    ) or not same_stable(before, after, _stable_without_title):
+        raise TitleRepairError("TITLE_REPAIR_SUCCESSOR_NON_TITLE_DRIFT")
+    if prior is not None and not same_stable(prior["after"], before, _stable_without_title_and_desc):
+        raise TitleRepairError("TITLE_REPAIR_PREDECESSOR_TITLE_NON_TITLE_DRIFT")
+    return {
+        "bvid": bvid, "candidate_id": context["candidate_id"], "final_title": final_title,
+        "after": copy.deepcopy(dict(after)), "aid": aid, "cid": cid, "section_id": section_id,
+        "published_sha256": published_sha, "public_verify_sha256": public_verify_sha,
+        "binding_ref": {"predecessor_title_receipt": _fmr_reference(receipt_path, receipt_sha)},
+    }
+
+
+def _validate_fmr_title_repair_successor(
+    reference: object, *, authority: Mapping[str, Any], candidate_id: str,
+    title: str, visited: set[tuple[str, str]],
+) -> None:
+    """Adapt a receipt-only reference to the existing FMR title-chain replay.
+
+    The lane comes from the immutable publication manifest, not the reference
+    shape, a CLI flag, or the successor record.  All consumers (package builder,
+    auditor, media successor and reconciliation) share this boundary.
+    """
+
+    from src.autoslice.new_bv_repair_authority import (
+        replay_first_publication_manifest, validate_new_bv_repair_authority,
+    )
+
+    validated = validate_new_bv_repair_authority(
+        authority, candidate_id=candidate_id, expected_final_title=title,
+    )
+    manifest = replay_first_publication_manifest(validated)
+    if not _is_fmr_manifest(manifest):
+        raise TitleRepairError("TITLE_REPAIR_FMR_REFERENCE_REQUIRES_FMR_MANIFEST")
+    # The authority replay above validated this exact source/evidence closure.
+    # Use its real manifest locator, never the changed successor package.
+    source_path, _ = _entry_path(validated.get("source_publication"), label="SOURCE_PUBLICATION")
+    source = _read_json(source_path, "SOURCE_PUBLICATION")
+    manifest_path, _ = _entry_path(
+        (source.get("evidence") or {}).get("manifest"), label="MANIFEST",
+    )
+    if _read_json(manifest_path, "MANIFEST") != manifest:
+        raise TitleRepairError("TITLE_REPAIR_SUCCESSOR_ORIGINAL_MANIFEST_DRIFT")
+    _, subtitle_sha, record_sha, manifest_sha, receipt_sha, original_candidate = (
+        _load_fmr_artifacts(manifest_path=manifest_path, manifest=manifest)
+    )
+    if original_candidate != candidate_id:
+        raise TitleRepairError("TITLE_REPAIR_SUCCESSOR_IDENTITY_DRIFT")
+    proof = _fmr_title_receipt_proof(
+        reference, manifest_path=manifest_path, manifest=manifest,
+        context={
+            "manifest_sha256": manifest_sha, "record_sha256": record_sha,
+            "srt_sha256": subtitle_sha, "finished_media_review_sha256": receipt_sha,
+            "candidate_id": candidate_id,
+        },
+        visited=visited,
+    )
+    if (
+        proof["final_title"] != title
+        or any(proof[key] != validated[key] for key in ("bvid", "aid", "cid", "candidate_id"))
+    ):
+        raise TitleRepairError("TITLE_REPAIR_SUCCESSOR_IDENTITY_DRIFT")
+
+
+def _fmr_title_quote_record(final_title: str, subtitle_path: Path) -> dict[str, Any]:
+    """Record the title-quote check; the FMR lane never lets it block (A9)."""
+
+    try:
+        result = check_title_quotes(final_title, subtitle_path.read_text(encoding="utf-8"))
+        # Round-trip so the record is exactly what the receipt will store.
+        result = json.loads(json.dumps(result, ensure_ascii=False, allow_nan=False))
+    except Exception as exc:  # recorded, never raised
+        return {"enforced": False, "status": "CHECK_ERROR", "error": type(exc).__name__}
+    return {"enforced": False, "result": result}
+
+
+def _load_fmr_proposal(
+    *,
+    args: Any,
+    manifest: Mapping[str, Any],
+    authority_path: Path,
+    candidate_id: str,
+    subtitle_path: Path,
+    receipt_sha: str,
+    current_title: str | None = None,
+) -> dict[str, Any]:
+    """Validate the 维护者-authored title authority and the new title.
+
+    ``current_title`` is the title the predecessor proof says is live; without
+    a predecessor it is the manifest title (the first publication).
+    """
+
+    authority = _read_json(authority_path, "TITLE_AUTHORITY")
+    if set(authority) != FMR_AUTHORITY_FIELDS or authority.get("schema_version") != FMR_AUTHORITY_SCHEMA:
+        raise TitleRepairError("TITLE_REPAIR_TITLE_AUTHORITY_SCHEMA_INVALID")
+    rows = authority.get("authorizations")
+    if not isinstance(rows, list) or not rows:
+        raise TitleRepairError("TITLE_REPAIR_AUTHORIZATION_MISSING")
+    for row in rows:
+        if (
+            not isinstance(row, Mapping)
+            or set(row) != FMR_AUTHORIZATION_FIELDS
+            or not _positive_int(row.get("line"))
+            or row.get("origin") != "human"
+            or any(
+                not isinstance(row.get(key), str) or not row[key].strip()
+                for key in ("id", "quote", "session", "at")
+            )
+        ):
+            raise TitleRepairError("TITLE_REPAIR_AUTHORIZATION_MISSING")
+    quotes = [str(row["quote"]) for row in rows]
+    if (
+        authority.get("authorized_by") != FMR_AUTHORIZED_BY
+        or str(args.authorized_by or "") != FMR_AUTHORIZED_BY
+        or str(args.quote or "") != FMR_QUOTE_SEPARATOR.join(quotes)
+        or not isinstance(authority.get("context"), str)
+        or not authority["context"].strip()
+    ):
+        raise TitleRepairError("TITLE_REPAIR_AUTHORIZATION_MISSING")
+    original_title = _required_text(
+        authority.get("original_title"), "TITLE_REPAIR_ORIGINAL_TITLE_MISSING"
+    )
+    if (manifest.get("title") if current_title is None else current_title) != original_title:
+        raise TitleRepairError("TITLE_REPAIR_MANIFEST_TITLE_DRIFT")
+    final_title = _required_text(authority.get("final_title"), "TITLE_REPAIR_FINAL_TITLE_MISSING")
+    if final_title == original_title:
+        raise TitleRepairError("TITLE_REPAIR_TITLE_UNCHANGED")
+    if authority.get("bvid") != args.bvid:
+        raise TitleRepairError("TITLE_REPAIR_BVID_BINDING_INVALID")
+    if authority.get("candidate_id") != candidate_id:
+        raise TitleRepairError("TITLE_REPAIR_CANDIDATE_BINDING_INVALID")
+    lane = publish_title_lane(original_title)
+    if lane != "talk":
+        raise TitleRepairError("TITLE_REPAIR_FMR_LANE_UNSUPPORTED")
+    if publish_title_policy_violations(final_title, lane=lane):
+        raise TitleRepairError("TITLE_REPAIR_FINAL_TITLE_POLICY_INVALID")
+    # The description's partner lines derive from the prefix and a title-only
+    # edit leaves the description untouched, so the envelope must not change.
+    prefix = accepted_talk_title_prefix(original_title)
+    if prefix is None or accepted_talk_title_prefix(final_title) != prefix:
+        raise TitleRepairError("TITLE_REPAIR_TITLE_PREFIX_ENVELOPE_DRIFT")
+    return {
+        "bvid": str(args.bvid),
+        "candidate_id": candidate_id,
+        "original_title": original_title,
+        "final_title": final_title,
+        "binding_evidence": {
+            "title_input_sha256": None,
+            "title_result_sha256": None,
+            "source_fact_review_sha256": None,
+            "finished_media_review_sha256": receipt_sha,
+            "title_authority_sha256": _sha256_file(authority_path),
+        },
+        "title_quote_check": _fmr_title_quote_record(final_title, subtitle_path),
+    }
+
+
+def _original_publication_replay(manifest_path: Path) -> bool:
+    """Whether ``load_and_verify`` must replay an original publication.
+
+    The historical replay needs the manifest's own ``uploaded`` sidecar.  An
+    FMR manifest that was published by a same-BV replacement has none: its
+    publication proof is the explicit repair-completed chain, replayed (and
+    required) later in :func:`run`.  Everything else keeps the replay.
+    """
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return True
+    return not (
+        isinstance(manifest, Mapping)
+        and _is_fmr_manifest(manifest)
+        and not _uploaded_sidecar_path(manifest_path).is_file()
     )
 
 
@@ -998,57 +1466,113 @@ def run(
     """Plan, execute, or reconcile one title-only same-BV edit."""
 
     manifest_path = Path(args.manifest).resolve()
-    title_input_path = Path(args.title_input).resolve()
-    title_result_path = Path(args.title_result).resolve()
+    title_input_path = Path(args.title_input).resolve() if getattr(args, "title_input", None) else None
+    title_result_path = Path(args.title_result).resolve() if getattr(args, "title_result", None) else None
+    title_authority_arg = getattr(args, "title_authority", None)
     receipt_path = Path(args.receipt).resolve()
     lock_path = Path(args.lock).resolve() if args.lock else Path(default_lock)
     with upload_lock(lock_path):
         manifest, problems = load_and_verify(
-            manifest_path, frozen_plan_resume=True, published_title_only_replay=True,
+            manifest_path, frozen_plan_resume=True,
+            published_title_only_replay=_original_publication_replay(manifest_path),
         )
         if problems or manifest is None:
             raise TitleRepairError("TITLE_REPAIR_MANIFEST_INVALID:" + ";".join(problems))
-        title_input = _read_json(title_input_path, "TITLE_INPUT")
-        predecessor_paths = {
-            key: getattr(args, "predecessor_title_" + key, None)
-            for key in ("receipt", "input", "result")
-        }
+        fmr_lane = _is_fmr_manifest(manifest)
         predecessor_reference = None
         predecessor_title = None
-        if any(predecessor_paths.values()):
-            if not all(predecessor_paths.values()) or getattr(args, "predecessor_cover_completed", None):
-                raise TitleRepairError("TITLE_REPAIR_PREDECESSOR_TITLE_ARGUMENTS_INVALID")
-            predecessor_reference = {}
-            for key, value in predecessor_paths.items():
-                path = _regular_path(value, label="PREDECESSOR_TITLE_" + key.upper())
-                predecessor_reference["title_" + key if key != "receipt" else key] = {
-                    "path": str(path), "sha256": _sha256_file(path),
-                }
-            predecessor_title = _title_predecessor_proof(
-                predecessor_reference, manifest_path=manifest_path, manifest=manifest,
-                visited={(str(receipt_path), "CURRENT")},
-            )
-            if predecessor_title["bvid"] != args.bvid or str(receipt_path) == predecessor_reference["receipt"]["path"]:
+        fmr_predecessor = None
+        if fmr_lane:
+            _fmr_reject_foreign_arguments(args)
+            if not title_authority_arg:
+                raise TitleRepairError("TITLE_REPAIR_AUTHORIZATION_MISSING")
+            (
+                subtitle_path, subtitle_sha, record_sha, manifest_sha,
+                fmr_receipt_sha, fmr_candidate_id,
+            ) = _load_fmr_artifacts(manifest_path=manifest_path, manifest=manifest)
+            fmr_context = {
+                "manifest_sha256": manifest_sha, "record_sha256": record_sha,
+                "srt_sha256": subtitle_sha, "finished_media_review_sha256": fmr_receipt_sha,
+                "candidate_id": fmr_candidate_id,
+            }
+            repair_completed_arg = getattr(args, "predecessor_repair_completed", None)
+            title_receipt_arg = getattr(args, "predecessor_title_receipt", None)
+            if repair_completed_arg:
+                fmr_predecessor = _fmr_repair_completed_proof(
+                    completed_path=Path(repair_completed_arg), manifest_path=manifest_path,
+                    manifest=manifest, context=fmr_context, expected_bvid=str(args.bvid),
+                )
+            elif title_receipt_arg:
+                title_receipt = _regular_path(title_receipt_arg, label="PREDECESSOR_TITLE_RECEIPT")
+                if title_receipt == receipt_path:
+                    raise TitleRepairError("TITLE_REPAIR_PREDECESSOR_TITLE_IDENTITY_DRIFT")
+                fmr_predecessor = _fmr_title_receipt_proof(
+                    _fmr_reference(title_receipt, _sha256_file(title_receipt)),
+                    manifest_path=manifest_path, manifest=manifest, context=fmr_context,
+                    visited={(str(receipt_path), "CURRENT")},
+                )
+            if fmr_predecessor is not None and fmr_predecessor["bvid"] != args.bvid:
                 raise TitleRepairError("TITLE_REPAIR_PREDECESSOR_TITLE_IDENTITY_DRIFT")
-        record, subtitle_path, subtitle_sha, record_path, record_sha, manifest_sha, _attestation = (
-            _load_original_artifacts(
+            proposal = _load_fmr_proposal(
+                args=args,
+                manifest=manifest,
+                authority_path=_regular_path(title_authority_arg, label="TITLE_AUTHORITY"),
+                candidate_id=fmr_candidate_id,
+                subtitle_path=subtitle_path,
+                receipt_sha=fmr_receipt_sha,
+                current_title=fmr_predecessor["final_title"] if fmr_predecessor else None,
+            )
+            # Same shape as the non-FMR title predecessor, so the identity,
+            # published-sha and live-before handling below is shared.
+            predecessor_title = fmr_predecessor
+        else:
+            if getattr(args, "predecessor_repair_completed", None):
+                raise TitleRepairError(
+                    "TITLE_REPAIR_PREDECESSOR_REPAIR_COMPLETED_REQUIRES_FMR_MANIFEST"
+                )
+            if title_authority_arg:
+                raise TitleRepairError("TITLE_REPAIR_TITLE_AUTHORITY_REQUIRES_FMR_MANIFEST")
+            if title_input_path is None or title_result_path is None:
+                raise TitleRepairError("TITLE_REPAIR_TITLE_INPUT_REQUIRED")
+            title_input = _read_json(title_input_path, "TITLE_INPUT")
+            predecessor_paths = {
+                key: getattr(args, "predecessor_title_" + key, None)
+                for key in ("receipt", "input", "result")
+            }
+            if any(predecessor_paths.values()):
+                if not all(predecessor_paths.values()) or getattr(args, "predecessor_cover_completed", None):
+                    raise TitleRepairError("TITLE_REPAIR_PREDECESSOR_TITLE_ARGUMENTS_INVALID")
+                predecessor_reference = {}
+                for key, value in predecessor_paths.items():
+                    path = _regular_path(value, label="PREDECESSOR_TITLE_" + key.upper())
+                    predecessor_reference["title_" + key if key != "receipt" else key] = {
+                        "path": str(path), "sha256": _sha256_file(path),
+                    }
+                predecessor_title = _title_predecessor_proof(
+                    predecessor_reference, manifest_path=manifest_path, manifest=manifest,
+                    visited={(str(receipt_path), "CURRENT")},
+                )
+                if predecessor_title["bvid"] != args.bvid or str(receipt_path) == predecessor_reference["receipt"]["path"]:
+                    raise TitleRepairError("TITLE_REPAIR_PREDECESSOR_TITLE_IDENTITY_DRIFT")
+            record, subtitle_path, subtitle_sha, record_path, record_sha, manifest_sha, _attestation = (
+                _load_original_artifacts(
+                    manifest_path=manifest_path,
+                    manifest=manifest,
+                    title_input=title_input,
+                )
+            )
+            proposal = _load_and_validate_proposal(
                 manifest_path=manifest_path,
                 manifest=manifest,
-                title_input=title_input,
+                title_input_path=title_input_path,
+                title_result_path=title_result_path,
+                record=record,
+                subtitle_path=subtitle_path,
+                subtitle_sha=subtitle_sha,
+                record_sha=record_sha,
+                manifest_sha=manifest_sha,
+                predecessor_title=predecessor_title["final_title"] if predecessor_title else None,
             )
-        )
-        proposal = _load_and_validate_proposal(
-            manifest_path=manifest_path,
-            manifest=manifest,
-            title_input_path=title_input_path,
-            title_result_path=title_result_path,
-            record=record,
-            subtitle_path=subtitle_path,
-            subtitle_sha=subtitle_sha,
-            record_sha=record_sha,
-            manifest_sha=manifest_sha,
-            predecessor_title=predecessor_title["final_title"] if predecessor_title else None,
-        )
         if proposal["bvid"] != args.bvid:
             raise TitleRepairError("TITLE_REPAIR_BVID_BINDING_INVALID")
         if not str(args.authorized_by or "").strip() or not str(args.quote or "").strip():
@@ -1101,15 +1625,18 @@ def run(
             public_verify_sha = _sha256_file(
                 _regular_path(uploaded.get("public_verify"), label="PUBLIC_PROOF")
             )
+        lane_binding = proposal.get("binding_evidence") or {
+            "title_input_sha256": proposal["title_input_sha256"],
+            "title_result_sha256": proposal["title_result_sha256"],
+            "source_fact_review_sha256": proposal["source_fact_review_sha256"],
+        }
         binding = {
             "manifest_sha256": manifest_sha,
             "record_sha256": record_sha,
             "srt_sha256": subtitle_sha,
             "published_sha256": published_sha,
             "public_verify_sha256": public_verify_sha,
-            "title_input_sha256": proposal["title_input_sha256"],
-            "title_result_sha256": proposal["title_result_sha256"],
-            "source_fact_review_sha256": proposal["source_fact_review_sha256"],
+            **lane_binding,
             "bvid": args.bvid,
             "aid": aid,
             "cid": cid,
@@ -1122,16 +1649,22 @@ def run(
         }
         if predecessor_cover is not None:
             binding.update(_cover_predecessor_binding(predecessor_cover))
-            if _stable_without_title(before) != _stable_without_title(
-                predecessor_cover["live_snapshot"]
-            ):
+            if not same_stable(predecessor_cover["live_snapshot"], before, _stable_without_title):
                 raise TitleRepairError("TITLE_REPAIR_PREDECESSOR_COVER_LIVE_DRIFT")
         if predecessor_title is not None:
             if (aid, cid, section_id) != tuple(predecessor_title[key] for key in ("aid", "cid", "section_id")):
                 raise TitleRepairError("TITLE_REPAIR_PREDECESSOR_TITLE_IDENTITY_DRIFT")
-            if _stable_without_title(before) != _stable_without_title(predecessor_title["after"]):
-                raise TitleRepairError("TITLE_REPAIR_PREDECESSOR_TITLE_NON_TITLE_DRIFT")
-            binding["predecessor_title_repair"] = predecessor_reference
+            if fmr_predecessor is not None:
+                # Live must still be the predecessor's terminal publication; a
+                # hand-edited description is the one tolerated difference and
+                # is carried over verbatim by the title-only payload.
+                if not same_stable(predecessor_title["after"], before, _stable_without_title_and_desc):
+                    raise TitleRepairError("TITLE_REPAIR_PREDECESSOR_TITLE_NON_TITLE_DRIFT")
+                binding.update(fmr_predecessor["binding_ref"])
+            else:
+                if not same_stable(predecessor_title["after"], before, _stable_without_title):
+                    raise TitleRepairError("TITLE_REPAIR_PREDECESSOR_TITLE_NON_TITLE_DRIFT")
+                binding["predecessor_title_repair"] = predecessor_reference
         receipt_exists = receipt_path.exists()
         if receipt_exists:
             receipt = _validate_receipt(
@@ -1155,8 +1688,11 @@ def run(
                 "edit_calls": 0,
                 "section_sync_calls": 0,
             }
+            if fmr_lane:
+                # Audit record only (A9 parity); deliberately outside the binding.
+                receipt["title_quote_check"] = proposal["title_quote_check"]
             write_json_sidecar(receipt_path, receipt)
-        if _stable_without_title(before) != _stable_without_title(receipt["before"]):
+        if not same_stable(receipt["before"], before, _stable_without_title):
             code, receipt = _blocked(receipt, reason="live non-title drift before repair", after=before)
             write_json_sidecar(receipt_path, receipt)
             return code, receipt
@@ -1226,7 +1762,7 @@ def run(
                     return 6, receipt
                 sleeper(float(args.poll))
                 continue
-            if _stable_without_title(current) != _stable_without_title(receipt["before"]):
+            if not same_stable(receipt["before"], current, _stable_without_title):
                 code, receipt = _blocked(receipt, reason="live non-title drift", after=current)
                 write_json_sidecar(receipt_path, receipt)
                 return code, receipt
@@ -1235,7 +1771,9 @@ def run(
             matches = current["section"].get("matches") or []
             section_title = matches[0].get("title") if len(matches) == 1 else None
             if creator_title == proposal["final_title"] and public_title == proposal["final_title"]:
-                if section_title == proposal["final_title"] and _surface_identity(
+                if section_title == proposal["final_title"] and part_name_is_title(
+                    current["creator"], proposal["final_title"]
+                ) and _surface_identity(
                     current,
                     bvid=args.bvid,
                     aid=aid,

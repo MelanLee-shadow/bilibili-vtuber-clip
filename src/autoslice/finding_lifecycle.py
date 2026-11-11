@@ -59,7 +59,10 @@ ACTIONS = {
 # Re-entry means revalidating saved evidence, never clearing an original bill,
 # answer or UNKNOWN dispatch. Edits create a new current-text review obligation.
 TRANSITIONS = {
-    State.AWAITING_EVIDENCE: frozenset({State.AWAITING_DECISION, *TERMINAL_STATES}),
+    # The ordinary evidence owner can also complete its context decision in
+    # the same call. Its CONTEXT_REVIEW result still requires the terminal
+    # owner; routing it there confers neither KEEP nor mutation authority.
+    State.AWAITING_EVIDENCE: frozenset({State.AWAITING_DECISION, State.AWAITING_TERMINAL, *TERMINAL_STATES}),
     State.AWAITING_DECISION: frozenset({State.AWAITING_EVIDENCE, State.AWAITING_TERMINAL, *TERMINAL_STATES}),
     State.AWAITING_TERMINAL: TERMINAL_STATES,
     State.EDIT_REVIEW: frozenset({State.AWAITING_DECISION, State.CONTRACT_ERROR, State.CALL_FAILURE}),
@@ -128,6 +131,22 @@ _LEGACY_CALL_ERRORS = frozenset({"LlmCallError", "TimeoutError", "ConnectionErro
     "EDITORIAL_PROVIDER_UNAVAILABLE", "EDITORIAL_AUDIO_UNAVAILABLE",
     "SEMANTIC_RANGE_OBSERVER_UNAVAILABLE", "SEMANTIC_RANGE_OBSERVATION_FAILED",
     "ARGON_INFRASTRUCTURE_BLOCKED"})
+
+
+def adjudication_failure_layer(adjudication):
+    """Project a rejected provider response without calling it pending hearing.
+
+    Old Argon bridges retained RESPONSE_REJECTED under an UNCERTAIN wrapper.
+    The original raw response stays rejected; this is only workflow routing.
+    In-flight, UNKNOWN and valid uncertain/no-speech hearings keep their lanes.
+    """
+    layer = adjudication.get('failure_layer')
+    argon = adjudication.get('argon_escalation')
+    if (layer is None and adjudication.get('status') == 'UNCERTAIN'
+            and adjudication.get('reason_code') == 'ARGON_ESCALATION_PENDING_OR_UNRESOLVED'
+            and isinstance(argon, Mapping) and argon.get('status') == 'RESPONSE_REJECTED'):
+        return 'CONTRACT_ERROR'
+    return layer
 
 
 def _view(selected, reason, detail=None, *, terminal=False, retry=None):
@@ -210,6 +229,11 @@ def classify(finding, *, terminal=False):
             raise LifecycleError("FINDING_LIFECYCLE_SCHEMA_INVALID")
         state(saved.get("state"))
     adjudication = finding.get("exact_release_adjudication") or finding.get("context_audio_adjudication")
+    span_recovery = finding.get("span_obligation_recovery")
+    if span_recovery is not None and not isinstance(span_recovery, Mapping):
+        raise LifecycleError("FINDING_SPAN_RECOVERY_INVALID")
+    span_detail = ({k: v for k, v in span_recovery.items() if k != "latest_adjudication"}
+                   if span_recovery is not None else None)
     error = finding.get("terminal_funnel_error")
     if isinstance(error, Mapping):
         if "status" not in error:
@@ -229,7 +253,8 @@ def classify(finding, *, terminal=False):
         return _view(selected, Reason.CALL_NOT_COMPLETED if selected == State.CALL_FAILURE
                      else Reason.CONSUMER_REJECTED, dict(error), terminal=terminal)
     if adjudication is None:
-        return _view(State.AWAITING_EVIDENCE, Reason.EVIDENCE_REQUIRED, terminal=terminal)
+        return _view(State.AWAITING_EVIDENCE, Reason.EVIDENCE_REQUIRED,
+                     span_detail, terminal=terminal)
     if not isinstance(adjudication, Mapping):
         raise LifecycleError("FINDING_LIFECYCLE_RECEIPT_INVALID")
     status = adjudication.get("status")
@@ -237,6 +262,8 @@ def classify(finding, *, terminal=False):
         raise LifecycleError("FINDING_LIFECYCLE_UNKNOWN_RECEIPT_STATUS:" + str(status))
     detail = {"status": status, "reason_code": adjudication.get("reason_code"),
               "policy_branch": adjudication.get("policy_branch")}
+    if span_recovery is not None:
+        detail["span_obligation_recovery"] = span_detail
     if is_release_resolved_keep(finding):
         return _view(State.KEEP, Reason.VALIDATED_KEEP)
     retry = _answer_contract_retry(adjudication)
@@ -259,7 +286,7 @@ def classify(finding, *, terminal=False):
             return _view(State.CONTRACT_ERROR, Reason.CONSUMER_REJECTED,
                          {**detail, "validation_error": str(exc)}, retry=retry)
         return _view(State.TRUE_BLOCK, Reason.WRITTEN_MEANING_ERROR, evidence)
-    layer = adjudication.get("failure_layer")
+    layer = adjudication_failure_layer(adjudication)
     if layer is not None and layer not in {"CONTRACT_ERROR", "CALL_FAILURE", "PROVIDER",
                                           "LOCAL_AFTER_PROVIDER_RETURN", "LOCAL_RETRY_ADMISSION"}:
         raise LifecycleError("FINDING_LIFECYCLE_UNKNOWN_FAILURE_LAYER:" + str(layer))

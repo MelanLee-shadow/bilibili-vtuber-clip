@@ -38,6 +38,7 @@ from src.autoslice.structured_output import call_json
 import hashlib
 import json
 import math
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -759,6 +760,39 @@ used by the CPA judge.
 
     def verify(request: Mapping[str, Any]) -> Any:
         schema = request.get("schema_version")
+        if schema == 'chat-source-owner-reevaluation-request.v1':
+            # This is an explicit source-owner call, not the ordinary
+            # detection fast path. Reopen all original bindings before the
+            # provider sees any material; preserve a returned raw answer even
+            # when the shared terminal contract rejects it.
+            from .chat_authority_reconciliation import validate_owner_request
+            from .semantic_terminal_adjudication import (terminal_prompt,
+                request_terminal_answer, validate_terminal_answer)
+            terminal_request = request.get('terminal_request')
+            validate_owner_request(terminal_request)
+            if llm_call is None:
+                return None
+            prompt = terminal_prompt(terminal_request)
+            completion, checkpoint_hit = request_terminal_answer(
+                llm_call, prompt, terminal_request, _return_checkpoint=True)
+            receipt = {
+                'schema_version': 'chat-source-owner-reevaluation-answer.v1',
+                'terminal_request': deepcopy(terminal_request),
+                'prompt': prompt, 'prompt_sha256': hashlib.sha256(prompt.encode()).hexdigest(),
+                'raw_completion': completion,
+                'completion_sha256': hashlib.sha256(completion.encode()).hexdigest(),
+                'checkpoint_hit': checkpoint_hit,
+                'status': 'UNCERTAIN', 'mutation_authorized': False,
+            }
+            from .llm_client import LlmJsonParseError
+            try:
+                answer = extract_json_object(completion)
+                receipt['choice'] = validate_terminal_answer(terminal_request, answer,
+                    prompt=prompt, _source_owner_reconciliation=True)
+                receipt['status'] = 'VALIDATED'
+            except (ValueError, KeyError, TypeError, LlmJsonParseError) as exc:
+                receipt['reason_code'] = str(exc)
+            return receipt
         if schema in _ENTITY_REQUEST_SCHEMAS:
             if llm_call is None:
                 return None

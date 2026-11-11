@@ -29,6 +29,7 @@ import html
 import json
 import re
 import secrets
+import time
 import unicodedata
 import urllib.parse
 from typing import Any, Callable, Mapping
@@ -1730,6 +1731,42 @@ def _refresh_mappings(
         community_plan.bounded_mappings(refreshed),
         key=lambda row: (str(row["entity_id"]), str(row["normalized_key"])),
     )
+
+
+class RuntimeBudgetedLlmCall:
+    """Refuse a CPA request once the run's wall-clock budget is spent.
+
+    ``max_runtime_seconds`` paces the HTTP phase only.  CPA batches run serially
+    after it, each with its own subprocess ceiling, so every dispatch consults
+    the same deadline.  A refused batch goes through the existing per-batch error
+    path: its cards stay unreviewed and a later run retries them, as with a failed
+    CPA request.
+    """
+
+    def __init__(
+        self,
+        call: Callable[[str], str],
+        *,
+        deadline: float,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._call = call
+        self._deadline = deadline
+        self._clock = clock
+
+    def __getattr__(self, name: str) -> Any:
+        # call_json reads provider metadata (for example cpa_cache_identity) from
+        # the callable; keep it visible so the ruling cache behaves as before.
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return getattr(self._call, name)
+
+    def __call__(self, prompt: str) -> str:
+        if self._clock() >= self._deadline:
+            raise CommunityNameError(
+                "community-name runtime budget exhausted before CPA request"
+            )
+        return self._call(prompt)
 
 
 def crawl(

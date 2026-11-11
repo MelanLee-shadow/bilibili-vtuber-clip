@@ -607,7 +607,7 @@ def discover_priority_findings(
             restatement_receipt = out_root / f"{cid}.restatement-candidates.json"
             if restatement_receipt.is_file():
                 audit["restatement_discovery_status"] = json.loads(restatement_receipt.read_text()).get("status")
-            from src.autoslice.discovery_channels import SourceIdentity, prefetch_fullclip
+            from src.autoslice.discovery_channels import SourceIdentity, prefetch_fullclip, fullclip_scan_complete
             identity_reader = getattr(entity_verifier, "span_termination_source_identity", None)
             source_sha = identity_reader() if callable(identity_reader) else None
             if isinstance(source_sha, str):
@@ -615,8 +615,7 @@ def discover_priority_findings(
                 observations = prefetch_fullclip(final_srt_text, verifier=entity_verifier,
                     source=source, source_offset_ms=timeline_offset_ms)
                 audit["fullclip_discovery_observations"] = list(observations)
-                audit["fullclip_discovery_status"] = "OBSERVED" if observations and all(
-                    row.get("status") == "OBSERVED" for row in observations) else "INCOMPLETE"
+                audit["fullclip_discovery_status"] = "OBSERVED" if fullclip_scan_complete(observations) else "INCOMPLETE"
             else:
                 audit["fullclip_discovery_status"] = "SOURCE_OR_NATIVE_ADAPTER_UNAVAILABLE"
         return findings, audit

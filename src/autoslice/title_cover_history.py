@@ -33,6 +33,33 @@ def source_session_key(record: Mapping) -> str:
     return "UNRESOLVED"
 
 
+RECENT_COVER_STYLE_WINDOW = 3
+
+
+def recent_cover_style_ids(history_root: Path, candidate_id: str) -> list[str]:
+    """Style ids of the most recent delivered covers (oldest first). Rows from before the rotation carry none."""
+
+    found: list[tuple[str, str, str]] = []
+    if history_root.exists():
+        for path in sorted(history_root.glob("**/choose.json")):
+            if path.is_symlink():
+                raise ValueError("COVER_HISTORY_SYMLINK")
+            value = json.loads(path.read_text())
+            if value.get("schema_version") != SCHEMA or value.get("candidate_id") == candidate_id:
+                continue
+            if "selected" not in value:
+                continue
+            selected = next(
+                (row for row in value.get("candidates", []) if row.get("id") == value["selected"]),
+                {},
+            )
+            style = (selected.get("render") or {}).get("cover_style") or {}
+            if isinstance(style.get("style_id"), str):
+                found.append((str(value.get("created_at") or ""), str(path), style["style_id"]))
+    found.sort()
+    return [style_id for _, _, style_id in found[-RECENT_COVER_STYLE_WINDOW:]]
+
+
 def recent_choices(history_root: Path, source_session: str, candidate_id: str) -> dict:
     rows: dict[str, tuple] = {}
     if history_root.exists():

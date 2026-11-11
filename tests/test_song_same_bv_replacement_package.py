@@ -16,7 +16,13 @@ from src.autoslice.subtitle_rendering import _write_sapphire_ass_from_srt
 from tests.test_build_song_review_manifest import (
     CANDIDATE_ID, TITLE, _fixture, _build, _write_json, _sha,
 )
-from tests.test_publication_reconciliation import _new_bv_fixture, _entry, _reconcile_new, TAGS
+from tests.test_publication_reconciliation import (  # noqa: F401  (first_publication_registries: fixture)
+    _new_bv_fixture, _entry, _reconcile_new, _registry_kw, TAGS, first_publication_registries,
+)
+
+# The song replacement builder / authorized CLI validate the first-publication authority through the
+# default registry read and take no registry parameter: use this test's tmp registry.
+pytestmark = pytest.mark.usefixtures("first_publication_registries")
 
 
 def _media(path: Path, frequency: int = 440) -> None:
@@ -25,13 +31,6 @@ def _media(path: Path, frequency: int = 440) -> None:
         "-f", "lavfi", "-i", f"sine=frequency={frequency}:duration=1",
         "-c:v", "libx264", "-threads", "1", "-c:a", "aac", "-shortest", "-y", str(path),
     ], check=True, capture_output=True)
-
-
-@pytest.fixture(autouse=True)
-def _synthetic_season_routes(monkeypatch):
-    monkeypatch.setenv('AUTOSLICE_SEASON_IDS', json.dumps({
-        lane: {'season_id': 8110000 + index, 'section_id': 9110000 + index}
-        for index, lane in enumerate(('talk', 'song', 'independent_related'), 1)}))
 
 
 def _case(tmp_path: Path, monkeypatch, *, bvid="BV1FBGw6uE6i", completion_ready=True, long_observation=False):
@@ -131,7 +130,8 @@ def _case(tmp_path: Path, monkeypatch, *, bvid="BV1FBGw6uE6i", completion_ready=
     _write_json(pub["uploaded_path"],pub["uploaded"])
     _reconcile_new(pub)
     authority = authority_module.build_new_bv_repair_authority(
-        reconciliation.authority_sidecar_path(pub["manifest_path"]),candidate_id=CANDIDATE_ID,title=TITLE)
+        reconciliation.authority_sidecar_path(pub["manifest_path"]),candidate_id=CANDIDATE_ID,title=TITLE,
+        **_registry_kw(pub))
     authority_path=tmp_path/"authority.json"; _write_json(authority_path,authority)
     new_lines=replacement_ass.read_text().splitlines(keepends=True)
     changed=[i for i,(a,b) in enumerate(zip(lines,new_lines),1) if a!=b]

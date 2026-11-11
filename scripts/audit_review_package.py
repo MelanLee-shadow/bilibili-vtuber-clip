@@ -2041,6 +2041,10 @@ def audit_package(
     if (c9_issues := audit_c9_successor(root, manifest)) is not None:
         issues.extend(c9_issues)
         return _audit_result(root, issues)
+    from src.autoslice.finished_media_review.audit import audit_if_finished_media
+    if (fmr_issues := audit_if_finished_media(root, manifest)) is not None:
+        issues.extend(fmr_issues)
+        return _audit_result(root, issues)
     if _formal_fastlane_audited(root, manifest, issues):
         return _audit_result(root, issues)
     (

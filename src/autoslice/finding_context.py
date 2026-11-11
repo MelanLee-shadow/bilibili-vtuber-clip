@@ -15,6 +15,7 @@ import json
 from typing import TypeAlias, TypedDict, cast
 
 from .audio_question_identity import physical_target, source_binding
+from .canonical_json_hash import canonical_sha256
 from .jingting_chunker import parse_srt_cues
 
 JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
@@ -128,10 +129,7 @@ class MaterialVersion:
             'contracts': _object(json.loads(self.contracts_json), 'FINDING_MATERIALS_BINDING_DRIFT'),
             'model_identity': _object(json.loads(self.model_identity_json), 'FINDING_MATERIALS_BINDING_DRIFT'),
             'physical_question_sha256': '', 'materials_sha256': ''}
-        value['physical_question_sha256'] = digest(value['physical_question'])
-        value['materials_sha256'] = digest({k:v for k,v in value.items()
-            if k not in {'physical_question_sha256', 'materials_sha256'}})
-        return validate_materials(value)
+        return _finalize_materials(value)
 
 
 def _snapshot(value: object) -> str:
@@ -142,28 +140,39 @@ def _snapshot(value: object) -> str:
 def digest(value: object) -> str:
     if isinstance(value, (PhysicalQuestion, MaterialVersion)):
         value = value.to_document()
-    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
-        separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+    return canonical_sha256(value)
 
 
 def json_value(value: object) -> JsonValue:
     """Validate the serialization boundary instead of propagating untyped JSON."""
+    return _json_value(value, None)
+
+
+def _json_value(value: object, memo: dict[int, JsonValue] | None) -> JsonValue:
+    """Internal readers may retain sharing; public values remain independent trees."""
     if value is None or isinstance(value, (str, bool, int, float)):
         return value
+    identity = id(value)
+    if memo is not None and identity in memo:
+        return memo[identity]
     if isinstance(value, Mapping):
         result: dict[str, JsonValue] = {}
         for key, child in value.items():
             if not isinstance(key, str):
                 raise ContractRejection('FINDING_JSON_INVALID')
-            result[key] = json_value(child)
-        return result
-    if isinstance(value, (list, tuple)):
-        return [json_value(child) for child in value]
-    raise ContractRejection('FINDING_JSON_INVALID')
+            result[key] = _json_value(child, memo)
+        copied: JsonValue = result
+    elif isinstance(value, (list, tuple)):
+        copied = [_json_value(child, memo) for child in value]
+    else:
+        raise ContractRejection('FINDING_JSON_INVALID')
+    if memo is not None:
+        memo[identity] = copied
+    return copied
 
 
-def _object(value: object, reason: str) -> dict[str, JsonValue]:
-    result = json_value(value)
+def _object(value: object, reason: str, *, read_only: bool = False) -> dict[str, JsonValue]:
+    result = _json_value(value, {} if read_only else None)
     if not isinstance(result, dict):
         raise ContractRejection(reason)
     return result
@@ -202,7 +211,7 @@ def _indices(values: object, count: int) -> list[int]:
 
 
 def physical_question_value(check: object, *, codepoint_span: object = None) -> PhysicalQuestion:
-    request = _object(check, 'PHYSICAL_TARGET_DIFFERS')
+    request = _object(check, 'PHYSICAL_TARGET_DIFFERS', read_only=True)
     target, source = physical_target(request), source_binding(request)
     if target is None:
         raise ContractRejection('PHYSICAL_TARGET_DIFFERS')
@@ -324,10 +333,10 @@ def _graph(value: object) -> DependencyGraph:
 
 def context_for_check(check: object, *, finding: object = None, graph: object = None,
                       relations: Iterable[object] = ()) -> FindingContext:
-    request = _object(check, 'FINDING_CONTEXT_BINDING_DRIFT')
+    request = _object(check, 'FINDING_CONTEXT_BINDING_DRIFT', read_only=True)
     text = _text(request.get('whole_clip_current_srt'), 'FINDING_CONTEXT_BINDING_DRIFT')
     cues = [c for c in parse_srt_cues(text) if c.text.strip()]
-    finding_row = _object(finding or {}, 'FINDING_CONTEXT_BINDING_DRIFT')
+    finding_row = _object(finding or {}, 'FINDING_CONTEXT_BINDING_DRIFT', read_only=True)
     graph_row = relation_graph(text, relations=relations) if graph is None else _graph(graph)
     if (graph_row['cue_count'] != len(cues)
             or graph_row['text_sha256'] != hashlib.sha256(text.encode()).hexdigest()):
@@ -391,7 +400,7 @@ def cue_projection(context: object) -> dict[str, str]:
 
 
 def validate_context_for_check(check: object, context: object) -> FindingContext:
-    request = _object(check, 'FINDING_CONTEXT_BINDING_DRIFT')
+    request = _object(check, 'FINDING_CONTEXT_BINDING_DRIFT', read_only=True)
     bound = validate_context(context)
     cues = [c for c in parse_srt_cues(_text(request.get('whole_clip_current_srt'),
                                          'FINDING_CONTEXT_BINDING_DRIFT')) if c.text.strip()]
@@ -423,11 +432,12 @@ def local_material_view(context: object) -> LocalMaterials:
             'relations': sorted(relations, key=digest)}
 
 
-def material_version_for_check(check: object, *, finding: object = None, graph: object = None,
+def _material_parts_for_check(check: object, *, finding: object = None, graph: object = None,
                         relations: Iterable[object] = (), candidates: Iterable[str | None] | None = None,
                         observation_ids: Iterable[str] = (), contracts: object,
-                        model_identity: object) -> MaterialVersion:
-    request = _object(check, 'FINDING_MATERIALS_BINDING_DRIFT')
+                        model_identity: object) -> tuple[PhysicalQuestion, LocalMaterials, tuple[str, ...],
+                            tuple[str, ...], dict[str, JsonValue], dict[str, JsonValue]]:
+    request = _object(check, 'FINDING_MATERIALS_BINDING_DRIFT', read_only=True)
     relation_rows = tuple(relations)
     context = (validate_context_for_check(request, request['finding_context'])
         if request.get('finding_context') is not None and graph is None and finding is None and not relation_rows
@@ -435,70 +445,116 @@ def material_version_for_check(check: object, *, finding: object = None, graph: 
     if candidates is None:
         candidates = [candidate_text for key in ('current_cue', 'proposed_cue')
                       if isinstance(candidate_text := request.get(key), str)]
-    return MaterialVersion(physical_question_value(request), _snapshot(local_material_view(context)),
+    return (physical_question_value(request), local_material_view(context),
         tuple(sorted({s for s in candidates if isinstance(s, str)})), tuple(sorted(set(observation_ids))),
-        _snapshot(_object(contracts, 'FINDING_MATERIALS_BINDING_DRIFT')),
-        _snapshot(_object(model_identity, 'FINDING_MATERIALS_BINDING_DRIFT')))
+        _object(contracts, 'FINDING_MATERIALS_BINDING_DRIFT', read_only=True),
+        _object(model_identity, 'FINDING_MATERIALS_BINDING_DRIFT', read_only=True))
+
+
+def material_version_for_check(check: object, *, finding: object = None, graph: object = None,
+                        relations: Iterable[object] = (), candidates: Iterable[str | None] | None = None,
+                        observation_ids: Iterable[str] = (), contracts: object,
+                        model_identity: object) -> MaterialVersion:
+    question, local, choices, observations, versions, model = _material_parts_for_check(
+        check, finding=finding, graph=graph, relations=relations, candidates=candidates,
+        observation_ids=observation_ids, contracts=contracts, model_identity=model_identity)
+    return MaterialVersion(question, _snapshot(local), choices, observations,
+                           _snapshot(versions), _snapshot(model))
 
 
 def materials_for_check(check: object, *, finding: object = None, graph: object = None,
                         relations: Iterable[object] = (), candidates: Iterable[str | None] | None = None,
                         observation_ids: Iterable[str] = (), contracts: object,
-                        model_identity: object) -> FindingMaterials:
+                        model_identity: object, _read_only: bool = False) -> FindingMaterials:
     """The existing JSON adapter; native P/M users retain immutable values."""
+    if _read_only:
+        question, local, choices, observations, versions, model = _material_parts_for_check(
+            check, finding=finding, graph=graph, relations=relations, candidates=candidates,
+            observation_ids=observation_ids, contracts=contracts, model_identity=model_identity)
+        value: FindingMaterials = {'schema_version': MATERIAL_SCHEMA,
+            'physical_question': question.to_document(), 'local_context': local,
+            'candidates': list(choices), 'bound_observation_ids': list(observations),
+            'contracts': versions, 'model_identity': model,
+            'physical_question_sha256': '', 'materials_sha256': ''}
+        return _finalize_materials(value, _read_only=True)
     return material_version_for_check(check, finding=finding, graph=graph, relations=relations,
         candidates=candidates, observation_ids=observation_ids, contracts=contracts,
         model_identity=model_identity).to_document()
 
 
-def model_data(value: object, *, _path: tuple[str, ...] = (), source_offset_ms: int = 0) -> JsonValue:
+def model_data(value: object, *, _path: tuple[str, ...] = (), source_offset_ms: int = 0,
+               _read_only: bool = False) -> JsonValue:
     """The v2 model and its key share this view; receipts are never rewritten.
 
     Only explicitly named audit addresses/hashes are omitted. Source/audio
     identity, readings, uncertain outcomes and normative content are retained.
     """
-    parsed = json_value(value)
-    if isinstance(parsed, dict):
-        if _path and _path[-1] == 'structured_chat_sender_context' and parsed.get('clock') != 'SOURCE':
+    # Validate every original field, including fields excluded from the model.
+    # The projection depends only on the immediate field role, not its full
+    # address. Repeated immutable histories need one projection per role.
+    parsed = _json_value(value, {})
+    memo: dict[tuple[int, str], tuple[JsonValue, JsonValue]] = {}
+    def project(item: JsonValue, role: str) -> JsonValue:
+        if not isinstance(item, (dict, list)):
+            return item
+        mode = role if role in {'structured_chat_sender_context', 'edit_span_binding',
+            'declared_edit_scope', 'closed_set_structured_evidence'} else ''
+        memo_key = (id(item), mode)
+        if memo_key in memo:
+            return memo[memo_key][1]
+        if isinstance(item, list):
+            result: JsonValue = [project(child, role) for child in item]
+            memo[memo_key] = (item, result)
+            return result
+        row = dict(item)
+        if role == 'structured_chat_sender_context' and row.get('clock') != 'SOURCE':
             for key in ('window_start_ms', 'window_end_ms', 'target_start_ms', 'target_end_ms'):
-                timestamp = parsed.get(key)
+                timestamp = row.get(key)
                 if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool):
-                    parsed[key] = timestamp + source_offset_ms
-            rows = parsed.get('rows')
+                    row[key] = timestamp + source_offset_ms
+            rows = row.get('rows')
             if isinstance(rows, list):
-                for row in rows:
-                    if isinstance(row, dict):
-                        timestamp = row.get('offset_ms')
+                copied_rows: list[JsonValue] = []
+                for child in rows:
+                    if isinstance(child, dict):
+                        child = dict(child)
+                        timestamp = child.get('offset_ms')
                         if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool):
-                            row['offset_ms'] = timestamp + source_offset_ms
-            parsed['clock'] = 'SOURCE'
+                            child['offset_ms'] = timestamp + source_offset_ms
+                    copied_rows.append(child)
+                row['rows'] = copied_rows
+            row['clock'] = 'SOURCE'
         # The existing span owner binds both full-SRT/local-clock audit data
         # and the actual edit. M retains the latter on its source clock; the
         # signed original span/request remains intact for cold validation.
-        span = bool(_path and _path[-1] in {'edit_span_binding', 'declared_edit_scope'})
-        return {key: model_data(child, _path=(*_path, key), source_offset_ms=source_offset_ms)
-                for key, child in parsed.items() if key not in MODEL_AUDIT_KEYS
-                and (not span or key in SPAN_MATERIAL_FIELDS)
-                and not (_path and _path[-1] == 'closed_set_structured_evidence' and key == 'evidence_sha256')}
-    if isinstance(parsed, list):
-        return [model_data(child, _path=_path, source_offset_ms=source_offset_ms) for child in parsed]
-    return parsed
+        span = role in {'edit_span_binding', 'declared_edit_scope'}
+        result = {field: project(child, field)
+                for field, child in row.items() if field not in MODEL_AUDIT_KEYS
+                and (not span or field in SPAN_MATERIAL_FIELDS)
+                and not (role == 'closed_set_structured_evidence' and field == 'evidence_sha256')}
+        memo[memo_key] = (item, result)
+        return result
+    try:
+        projected = project(parsed, _path[-1] if _path else '')
+        return projected if _read_only else json_value(projected)
+    finally:
+        memo.clear()
 
 
 def decision_materials(check: object, *, data: object, contracts: object, model_identity: object,
                        candidates: Iterable[str | None] | None = None,
-                       observation_ids: Iterable[str] = ()) -> FindingMaterials:
+                       observation_ids: Iterable[str] = (), _read_only: bool = False) -> FindingMaterials:
     """Bind every actually rendered non-cue dependency, not a prompt hash."""
-    versions = _object(contracts, 'FINDING_MATERIALS_BINDING_DRIFT')
-    request = _object(check, 'FINDING_MATERIALS_BINDING_DRIFT')
+    versions = _object(contracts, 'FINDING_MATERIALS_BINDING_DRIFT', read_only=True)
+    request = _object(check, 'FINDING_MATERIALS_BINDING_DRIFT', read_only=True)
     versions['decision_materials'] = model_data(data, source_offset_ms=_integer(
-        request.get('source_media_timeline_offset_ms'), 'FINDING_MATERIALS_BINDING_DRIFT'))
+        request.get('source_media_timeline_offset_ms'), 'FINDING_MATERIALS_BINDING_DRIFT'),
+        _read_only=True)
     return materials_for_check(check, candidates=candidates, observation_ids=observation_ids,
-                               contracts=versions, model_identity=model_identity)
+                               contracts=versions, model_identity=model_identity, _read_only=_read_only)
 
 
-def validate_materials(value: object) -> FindingMaterials:
-    raw = _object(value, 'FINDING_MATERIALS_BINDING_DRIFT')
+def _validate_material_shape(raw: dict[str, JsonValue]) -> None:
     if (set(raw) != set(FindingMaterials.__annotations__) or raw.get('schema_version') != MATERIAL_SCHEMA
             or any(not isinstance(raw.get(k), dict) or not raw[k]
                    for k in ('physical_question', 'local_context', 'contracts', 'model_identity'))
@@ -506,37 +562,59 @@ def validate_materials(value: object) -> FindingMaterials:
                    or any(not isinstance(s, str) for s in _array(raw[k], 'FINDING_MATERIALS_BINDING_DRIFT'))
                    or raw[k] != sorted(set(_text(s, 'FINDING_MATERIALS_BINDING_DRIFT')
                        for s in _array(raw[k], 'FINDING_MATERIALS_BINDING_DRIFT')))
-                   for k in ('candidates', 'bound_observation_ids'))
-            or raw['physical_question_sha256'] != digest(raw['physical_question'])
+                   for k in ('candidates', 'bound_observation_ids'))):
+        raise ContractRejection('FINDING_MATERIALS_BINDING_DRIFT')
+
+
+def _finalize_materials(value: object, *, _read_only: bool = False) -> FindingMaterials:
+    """Validate a newly generated snapshot and compute its bindings once."""
+    raw = _object(value, 'FINDING_MATERIALS_BINDING_DRIFT', read_only=_read_only)
+    _validate_material_shape(raw)
+    raw['physical_question_sha256'] = digest(raw['physical_question'])
+    raw['materials_sha256'] = digest({k:v for k,v in raw.items()
+        if k not in {'physical_question_sha256', 'materials_sha256'}})
+    return cast(FindingMaterials, raw)
+
+
+def validate_materials(value: object, *, _read_only: bool = False) -> FindingMaterials:
+    raw = _object(value, 'FINDING_MATERIALS_BINDING_DRIFT', read_only=_read_only)
+    _validate_material_shape(raw)
+    if (raw['physical_question_sha256'] != digest(raw['physical_question'])
             or raw['materials_sha256'] != digest({k:v for k,v in raw.items()
                 if k not in {'physical_question_sha256', 'materials_sha256'}})):
         raise ContractRejection('FINDING_MATERIALS_BINDING_DRIFT')
     return cast(FindingMaterials, raw)
 
 
-def materials_for_model(value: object, model_identity: object) -> FindingMaterials:
-    updated: FindingMaterials = {**validate_materials(value),
+def materials_for_model(value: object, model_identity: object, *,
+                        _read_only: bool = False) -> FindingMaterials:
+    updated: FindingMaterials = {**validate_materials(value, _read_only=_read_only),
         'model_identity': _object(model_identity, 'FINDING_MATERIALS_BINDING_DRIFT')}
-    updated['materials_sha256'] = digest({k:v for k,v in updated.items()
-        if k not in {'physical_question_sha256', 'materials_sha256'}})
-    return validate_materials(updated)
+    return _finalize_materials(updated, _read_only=_read_only)
 
 
-def materials_for_origin(value: object, origin_check: object) -> FindingMaterials:
+def materials_for_origin(value: object, origin_check: object, *,
+                         _read_only: bool = False) -> FindingMaterials:
     """Freeze P's original codepoint anchor; keep the actual edit in M's data."""
-    material = validate_materials(value)
+    material = validate_materials(value, _read_only=_read_only)
     origin = physical_question_value(origin_check)
     actual = material['physical_question']
     physical = origin.to_document()
     if actual['source'] != physical['source'] or actual['source_window_ms'] != physical['source_window_ms']:
         raise ContractRejection('FINDING_ORIGIN_PHYSICAL_DRIFT')
+    if _read_only:
+        # The consumed-ruling writer retains a validated graph. Rebinding its
+        # physical anchor only replaces these two fields; a JSON round trip
+        # would duplicate every historical occurrence without changing M.
+        updated: FindingMaterials = {**material, 'physical_question': physical}
+        return _finalize_materials(updated, _read_only=True)
     return MaterialVersion(origin, _snapshot(material['local_context']),
         tuple(material['candidates']), tuple(material['bound_observation_ids']),
         _snapshot(material['contracts']), _snapshot(material['model_identity'])).to_document()
 
 
 def effect_key(materials: object, *, channel: str, provider: str, model: object) -> str:
-    value = materials_for_model(materials, model)
+    value = materials_for_model(materials, model, _read_only=True)
     return digest({'physical_question_sha256': value['physical_question_sha256'],
         'materials_sha256': value['materials_sha256'], 'channel': channel,
         'provider': provider, 'model': model})

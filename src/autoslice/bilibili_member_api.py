@@ -156,6 +156,62 @@ def is_quota_rejection(payload: Mapping[str, Any] | None) -> bool:
     return bool(payload) and payload.get("code") == QUOTA_FREQUENCY_CODE
 
 
+def build_edit_payload(
+    view_data: Mapping[str, Any],
+    *,
+    csrf: str,
+    title: str | None = None,
+    cover_url: str | None = None,
+    keep_only_cid: int | None = None,
+    tag: str | None = None,
+    video_title: str | None = None,
+) -> dict[str, Any]:
+    """从 view 数据构造 edit 载荷；纯函数，离线可测；全仓唯一的 videos 载荷构造处。
+
+    keep_only_cid：videos 只留这个 cid（append 后换源的关键一步）；
+    None = 原样回传全部 P。单 P 稿件的分 P 名一律写成编辑后的稿件标题
+    （传了 title 用新标题，否则用线上标题）；video_title 与之不同则报错。
+    多 P 时 video_title 显式传入才覆盖，否则保留线上分 P 名。
+    """
+
+    archive = view_data["archive"]
+    videos = view_data.get("videos") or []
+    if keep_only_cid is not None:
+        videos = [v for v in videos if v.get("cid") == keep_only_cid]
+        if not videos:
+            raise ValueError(f"cid {keep_only_cid} not among archive videos")
+    if len(videos) == 1:
+        final_title = title if title is not None else archive["title"]
+        if video_title is not None and video_title != final_title:
+            raise ValueError("single-P part name must equal the final archive title")
+        video_title = final_title
+    payload: dict[str, Any] = {key: archive[key] for key in EDIT_CLONE_FIELDS if key in archive}
+    payload.update(
+        {
+            "aid": archive["aid"],
+            "bvid": archive.get("bvid"),
+            "videos": [
+                {
+                    "filename": v["filename"],
+                    "title": video_title
+                    if video_title is not None
+                    else (v.get("title") or "P1"),
+                    "cid": v.get("cid"),
+                }
+                for v in videos
+            ],
+            "csrf": csrf,
+        }
+    )
+    if title is not None:
+        payload["title"] = title
+    if cover_url is not None:
+        payload["cover"] = cover_url
+    if tag is not None:
+        payload["tag"] = tag
+    return payload
+
+
 @dataclass
 class BiliSession:
     """一个登录态 + 传输层。transport 可注入用于离线测试。"""
@@ -231,54 +287,8 @@ class BiliSession:
             raise RuntimeError(f"cover up failed: {payload}")
         return str(payload["data"]["url"])
 
-    def build_edit_payload(
-        self,
-        view_data: Mapping[str, Any],
-        *,
-        title: str | None = None,
-        cover_url: str | None = None,
-        keep_only_cid: int | None = None,
-        tag: str | None = None,
-        video_title: str | None = None,
-    ) -> dict[str, Any]:
-        """从 view 数据构造 edit 载荷；纯函数，离线可测。
-
-        keep_only_cid：videos 只留这个 cid（append 后换源的关键一步）；
-        None = 原样回传全部 P。video_title 显式覆盖保留分 P 的标题，避免
-        biliup append 的技术文件名泄露到公开稿件元数据。
-        """
-
-        archive = view_data["archive"]
-        videos = view_data.get("videos") or []
-        if keep_only_cid is not None:
-            videos = [v for v in videos if v.get("cid") == keep_only_cid]
-            if not videos:
-                raise ValueError(f"cid {keep_only_cid} not among archive videos")
-        payload: dict[str, Any] = {key: archive[key] for key in EDIT_CLONE_FIELDS if key in archive}
-        payload.update(
-            {
-                "aid": archive["aid"],
-                "bvid": archive.get("bvid"),
-                "videos": [
-                    {
-                        "filename": v["filename"],
-                        "title": video_title
-                        if video_title is not None
-                        else (v.get("title") or "P1"),
-                        "cid": v.get("cid"),
-                    }
-                    for v in videos
-                ],
-                "csrf": self.csrf,
-            }
-        )
-        if title is not None:
-            payload["title"] = title
-        if cover_url is not None:
-            payload["cover"] = cover_url
-        if tag is not None:
-            payload["tag"] = tag
-        return payload
+    def build_edit_payload(self, view_data: Mapping[str, Any], **kwargs: Any) -> dict[str, Any]:
+        return build_edit_payload(view_data, csrf=self.csrf, **kwargs)
 
     def edit_archive(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         response = self.post_json(f"{ARCHIVE_EDIT}?csrf={urllib.parse.quote(self.csrf)}", payload)

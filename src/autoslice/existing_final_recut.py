@@ -135,8 +135,19 @@ def select_accurate_recut_command(
             or final_end_ms != config.get("final_end_ms")
         ):
             raise ValueError("existing final recut boundary does not match")
-        if os.path.lexists(output_media):
-            raise ValueError("existing final recut destination already exists")
+        already_materialized = os.path.lexists(output_media)
+        if already_materialized:
+            # A resumed ordinary attempt may already own the validated link.
+            # Never adopt an unrelated equal-byte file or follow a symlink.
+            if (
+                output_media.is_symlink()
+                or not output_media.is_file()
+                or not os.path.samefile(media, output_media)
+            ):
+                raise ValueError("existing final recut destination already exists")
+            _load_contract(spec, padded=padded)
+            if _digest(output_media) != media_sha:
+                raise ValueError("existing final recut media sha256 does not match")
         if media.stat().st_dev != output_media.parent.stat().st_dev:
             raise ValueError("existing final recut hardlink device does not match")
         chat_authority_audit["existing_final_recut_receipt"] = {
@@ -154,6 +165,10 @@ def select_accurate_recut_command(
             "ffmpeg_calls": 0,
             "provider_calls": 0,
         }
-        return ["/bin/ln", str(media), str(output_media)]
+        return (
+            ["/bin/true"]
+            if already_materialized
+            else ["/bin/ln", str(media), str(output_media)]
+        )
 
     return command_builder

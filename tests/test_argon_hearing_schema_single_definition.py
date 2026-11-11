@@ -25,8 +25,8 @@ from test_argon_escalation_witness import (
 )
 
 
-@pytest.fixture
-def wire():
+def make_wire():
+    """Replace the connection boundary without opening any socket."""
     captured = SimpleNamespace(requests=[], plan=lambda _: {'body': b'{}'})
 
     class Response:
@@ -58,7 +58,7 @@ def wire():
             pass  # The real HTTP request builder runs; the socket boundary is fictional.
 
         def request(self, method, path, *, body, headers):
-            self.record = {'method': method, 'path': path, 'body': body, 'headers': headers}
+            self.record = {'method': method, 'path': path, 'body': body or b'', 'headers': headers}
             captured.requests.append(self.record)
 
         def getresponse(self):
@@ -76,6 +76,16 @@ def wire():
     return captured
 
 
+@pytest.fixture
+def wire(tmp_path, monkeypatch):
+    monkeypatch.delenv('AUTOSLICE_CPA_GEMINI_ENABLED', raising=False)
+    ledger = tmp_path / 'cpa-exception-ledger.jsonl'
+    monkeypatch.setenv('AUTOSLICE_CPA_GEMINI_LEDGER', str(ledger))
+    captured = make_wire()
+    captured.ledger = ledger
+    return captured
+
+
 def transport(wire):
     resolutions = []
 
@@ -83,7 +93,8 @@ def transport(wire):
         resolutions.append(deepcopy(route))
         return 'fictional-key-' + str(route['accepted_key_ordinal'])
 
-    return ArgonHttpTransport(resolver, connection_factory=wire.factory), resolutions
+    return ArgonHttpTransport(resolver, connection_factory=wire.factory,
+        cpa_operation='argon_lifecycle'), resolutions
 
 
 HISTORICAL_CASES = [{'cue': 6, 'response_sha256': 'c9af76392f6ba8479b05357f209e2b6864aaa0f331198227e1fcbff2703bfd18', 'binding': {'channels': 2, 'clock_mapping': {'source_ms_equals_audio_ms_plus': 20560, 'source_ms_equals_source_file_ms_plus': 0}, 'context_audio_ms': [0, 12199], 'context_source_ms': [20560, 32759], 'extraction': 'ffmpeg-contiguous-pcm16-stereo-16k.v1', 'finding_id': '5ef9c67fc540a0d54176ab40af1705453c2595c982d0c171ba522f1d2b3793e0', 'input_audio_bytes': 780780, 'input_audio_mime': 'audio/wav', 'input_audio_sha256': 'df2019a7065046ad27062cef95cac9e5f9fcd60f4b0702b078e01a3ed7e88bcf', 'minimum_context_ms': 400, 'pcm_sha256': 'b0fd0ad124830be91242e0a0c7173eb5bf58dd006211100995400015ff76bc8d', 'sample_count': 195184, 'sample_rate': 16000, 'sample_width': 2, 'source_duration_ms': 195134.0, 'source_media_sha256': 'fdd1c75dd8338a709b9b1399250de432a7761ef90a2b4e6e42557ca1a94d9f1f', 'source_origin_ms': 0, 'target_audio_ms': [3340, 4380], 'target_pcm_is_digital_silence': False, 'target_source_ms': [23900, 24940]}, 'text': '{"schema_version":"argon-blind-hearing.v1","binding_sha256":"fc4879cc746963c0881b2593445c451fb2ebb6fc90f06b0e94506b4f458ea2d3","target_window_ms":[3340,4380],"context_window_ms":[0,12199],"status":"UNCERTAIN","transcript":null,"uncertainties":["start_ms: 3450, end_ms: 4280, reason: low volume mumbled speech trailing into a whisper"],"speech_role":"spontaneous","reason":"The short utterance in the target window is mumbled and trails off into a whisper, making the exact words indistinguishable."}', 'reason': 'HEARING_UNCERTAINTIES_INVALID'}, {'cue': 42, 'response_sha256': '0a867fce0cccfb09249e50bb671f0edb477115c5f69572b6a95a91aa147d4a9a', 'binding': {'channels': 2, 'clock_mapping': {'source_ms_equals_audio_ms_plus': 108410, 'source_ms_equals_source_file_ms_plus': 0}, 'context_audio_ms': [0, 7060], 'context_source_ms': [108410, 115470], 'extraction': 'ffmpeg-contiguous-pcm16-stereo-16k.v1', 'finding_id': '951f8e5c7ba06403e8592331631b941dbb6dc78c2a9562817c10e677f413cec5', 'input_audio_bytes': 451884, 'input_audio_mime': 'audio/wav', 'input_audio_sha256': '83942d1363b3d84d0e62cb18e8da6e74bc445db98552b8060bf5e51c855d402d', 'minimum_context_ms': 400, 'pcm_sha256': 'e2355cd8e583cb402913552f2502ad5347b04d90e65df604a75396fd2dc44f69', 'sample_count': 112960, 'sample_rate': 16000, 'sample_width': 2, 'source_duration_ms': 195134.0, 'source_media_sha256': 'fdd1c75dd8338a709b9b1399250de432a7761ef90a2b4e6e42557ca1a94d9f1f', 'source_origin_ms': 0, 'target_audio_ms': [2840, 4000], 'target_pcm_is_digital_silence': False, 'target_source_ms': [111250, 112410]}, 'text': '{"schema_version":"argon-blind-hearing.v1","binding_sha256":"274b1ac372e5a9276515e9063b3356124fe8b1f47b5f4cd35c2fd70376dca9f3","target_window_ms":[2840,4000],"context_window_ms":[0,7060],"status":"UNCERTAIN","transcript":"啊你要吃亲","uncertainties":\ntrue}', 'reason': 'HEARING_SCHEMA_INVALID'}]
@@ -239,6 +250,7 @@ def test_single_definition_reaches_prompt_http_bytes_persistence_and_consumer(ca
         contract.KeyPolicy(1).select(handle['task_id']), 5, time.time)
     assert outcome['http_status'] == 200 and outcome['response_complete']
     assert len(wire.requests) == len(resolutions) == 1
+    assert json.loads(wire.ledger.read_text().splitlines()[-1])['transport'] == 'google_argon_rest'
     request = wire.requests[0]
     decoded = json.loads(request['body'])
     if mode == 'batch':

@@ -268,12 +268,21 @@ def test_bcut_adapter_uses_existing_client_without_fallback(monkeypatch, tmp_pat
     assert seen == [path, b"audio"]
 
 
+def test_template_export_classification_config_and_no_fingerprint_registration(tmp_path, monkeypatch):
+    from scripts import export_oss_snapshot as exporter
 
-
-
-def test_template_config_and_no_fingerprint_registration(tmp_path):
-    config = json.loads((ROOT / 'profiles/_template/channel_census_config.v1.json').read_text())
-    assert cc.parse_census_config(config, profile_id='REPLACE_ME').audience_interests == ()
+    for path in ("scripts/channel_census.py", "profiles/_template/channel_census_config.v1.json",
+                 "tests/test_channel_census_cli.py", "tests/fixtures/channel_census/census_fake_provider.py"):
+        assert exporter.classify(path) == "keep"
+    # This unit exercises the new census branch independently of existing
+    # channel-rubric rewrite drift. The unmodified full exporter is also tested
+    # in test_export_oss_snapshot.py and compared with the live baseline.
+    monkeypatch.setattr(exporter, "_TEMPLATE_COPY_DEFAULT", tuple(
+        key for key in exporter._TEMPLATE_COPY_DEFAULT if key != "slice_selection_metric"))
+    exporter.build_template_assets(tmp_path)
+    config = json.loads((tmp_path / "assets/_template/channel_census_config.v1.json").read_text())
+    assert cc.parse_census_config(config, profile_id="REPLACE_ME").audience_interests == ()
+    assert not (tmp_path / "assets/_template/selection_census_clues.v1.json").exists()
     doc = json.loads((ROOT / "profiles/_template/profile.json").read_text())
     assert not {cc.CENSUS_CLUES_ASSET_KEY, cc.CENSUS_CONFIG_ASSET_KEY} & set(
         doc["assets"]["pipeline_fingerprint_files"])

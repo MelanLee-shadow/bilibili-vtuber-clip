@@ -25,6 +25,7 @@ import urllib.request
 import uuid
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
+from collections.abc import Sequence
 from typing import Iterator
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,7 +41,7 @@ from src.autoslice.authorized_upload_artifact_bindings import (
     sha256_file, _strip_sha_prefix, _record_artifact_hash_problems,
     _subtitle_audio_correspondence_problems,
 )
-from src.autoslice import authorized_upload_cli_parser
+from src.autoslice import authorized_upload_cli_parser, part_name_contract
 from src.autoslice.authorized_upload_metadata import (
     normalise_tags as _normalise_tags,
     validate_tags,
@@ -181,7 +182,11 @@ TITLE_COVER_QC_WITNESS_SCHEMA_VERSION = "cpa-frame-witness.v1"
 DEFAULT_DESCRIPTION = EXPECTED_SOURCE + "\n" + SUBMISSION_DESCRIPTION
 from src.autoslice.audience_text import assert_audience_text as _assert_audience_text
 _assert_audience_text(DEFAULT_DESCRIPTION, surface='description')
-from src.autoslice.channel_envelope import EnvelopeError, publish_description_for_title
+from src.autoslice.channel_envelope import (
+    EnvelopeError,
+    append_description_extra,
+    publish_description_for_title,
+)
 from src.autoslice.clip_profile import (
     CLIP_PROFILE_FIELD,
     SEASON_TITLES,
@@ -193,9 +198,19 @@ from src.autoslice.clip_profile import (
 )
 
 
-def description_for_title(title: str, *, submission: bool = False) -> str:
-    """Archive description = channel lines + the title partners' related lines."""
-    return publish_description_for_title(SUBMISSION_DESCRIPTION if submission else DEFAULT_DESCRIPTION, title)
+def description_for_title(
+    title: str, *, submission: bool = False, extra: str | Sequence[str] | None = None
+) -> str:
+    """Archive description = channel lines + the title partners' related lines.
+
+    ``extra`` (finished-media review lane ``description_extra``: a string, or a
+    list of strings that each take one line) is appended after the
+    related-streamer lines; ``None`` leaves the description byte-identical.
+    """
+    description = publish_description_for_title(
+        SUBMISSION_DESCRIPTION if submission else DEFAULT_DESCRIPTION, title
+    )
+    return append_description_extra(description, extra)
 _BROWSER_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
@@ -724,7 +739,8 @@ def _validate_v3_package_attestation(
                 subtitle=subtitle_path,
                 title=str(manifest.get("title") or ""),
                 story_contract_required=not verified_song
-                and c2_upload.verified_c2_release_candidate_id(root, record) is None,
+                and c2_upload.verified_c2_release_candidate_id(root, record) is None
+                and "finished_media_review" not in attestation,
             )
         )
         # Fresh talk releases must carry a real post-burn witness. Existing
@@ -783,6 +799,16 @@ def _title_cover_qc_attestation_problems(
     attestation = manifest.get("package_attestation")
     if not isinstance(attestation, dict):
         return ["manifest v3 has no package_attestation object"]
+    if "finished_media_review" in attestation:
+        # Finished-media review lane: the hash-bound lightweight receipt replaces
+        # the CPA title+cover QC receipt; every other gate is unchanged.
+        from src.autoslice.finished_media_review.audit import attestation_problems as fmr_problems
+
+        problems.extend(fmr_problems(manifest))
+        qc_entry = attestation.get("title_cover_qc")
+        if qc_entry != attestation.get("finished_media_review"):
+            problems.append("finished-media review receipt must be the bound title/cover review")
+        return problems
     entry = attestation.get("title_cover_qc")
     must_exist = _title_cover_qc_required(manifest) if required is None else required
     if not isinstance(entry, dict):
@@ -969,7 +995,39 @@ def _attach_title_cover_qc(
         if not receipt_path.is_file():
             return [f"title+cover joint-QC receipt missing: {receipt_path}"]
         attestation["title_cover_qc"] = _sha_entry(receipt_path)
+        if _finished_media_receipt_schema(receipt_path):
+            # The finished-media review receipt covers title/cover review; the
+            # same entry is bound under its own key and the legacy QC slot.
+            attestation["finished_media_review"] = _sha_entry(receipt_path)
     return []
+
+
+def _finished_media_receipt_schema(path: Path) -> bool:
+    from src.autoslice.finished_media_review.common import RECEIPT_SCHEMA
+
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("schema_version") == RECEIPT_SCHEMA
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def _is_finished_media_package(review_manifest: Path) -> bool:
+    from src.autoslice.finished_media_review.common import PACKAGE_SCHEMA
+
+    try:
+        return json.loads(review_manifest.read_text(encoding="utf-8")).get("schema_version") == PACKAGE_SCHEMA
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def _fmr_member_description_extra(package_root: Path, video: Path) -> str | list[str] | None:
+    """The reviewed member's description_extra; the member copy is hash-bound by the receipt."""
+    member_path = package_root / (video.stem + ".member.json")
+    try:
+        member = json.loads(member_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return member.get("description_extra") if isinstance(member, dict) else None
 
 
 def _attach_cover_only_audit_scope(
@@ -1340,12 +1398,12 @@ def _section_ids(payload: object) -> set[int]:
 def public_verify_flow(
     manifest: dict,
     bvid: str,
-    *,
-    http,
+    *, http,
     season_result: dict,
-    wait_seconds: float = 240.0,
-    poll_seconds: float = 30.0,
+    wait_seconds: float = 240.0, poll_seconds: float = 30.0,
     sleeper=time.sleep,
+    csrf: str | None = None,
+    part_name: bool = True,
 ) -> dict:
     """Verify the public/member/tag/EXACT-section surfaces as one contract."""
     policy = archive_policy.checked_policy(manifest.get("publish_policy") or archive_policy.new_upload_policy())
@@ -1367,6 +1425,7 @@ def public_verify_flow(
         "verified_at": now(),
     }
     deadline = time.monotonic() + max(0.0, wait_seconds)
+    part = part_name_contract.PartNameCheck(http=http, csrf=csrf, now=now, enabled=part_name)
     while True:
         problems: list[str] = []
         public: dict = {}
@@ -1477,6 +1536,7 @@ def public_verify_flow(
             elif _section_episode_title(membership[0]) != expected_title:
                 problems.append("exact section episode title mismatch")
 
+        problems += part.check(None if problems else member_data, expected_title, result=result)
         result["problems"] = problems
         if not problems:
             result["status"] = "VERIFIED_PUBLIC"
@@ -1785,12 +1845,10 @@ def _run_postpublish_verification(
         return 6, blocked
 
     public_result = public_verify_flow(
-        manifest,
-        bvid,
-        http=http,
-        season_result=season_result,
-        wait_seconds=args.public_wait,
-        poll_seconds=args.season_poll,
+        manifest, bvid,
+        http=http, season_result=season_result,
+        wait_seconds=args.public_wait, poll_seconds=args.season_poll,
+        csrf=csrf, part_name=not historical,
     )
     if quota_evidence is not None:
         public_result["preupload_quota_evidence"] = quota_evidence
@@ -1972,8 +2030,22 @@ def make_manifest(args: argparse.Namespace) -> int:
         print("season: EXPLICITLY none — this archive will not join a collection", file=sys.stderr)
     else:
         print(f"season: {season['season_title']} ({season['source']})", file=sys.stderr)
+    is_fmr_package = _is_finished_media_package(review_manifest)
+    description_extra = args.description_extra
+    if is_fmr_package:
+        member_extra = _fmr_member_description_extra(package_root, video)
+        if description_extra is None:
+            description_extra = member_extra
+        elif description_extra != member_extra:
+            print("REFUSE: --description-extra must equal the reviewed member description_extra",
+                  file=sys.stderr)
+            return 2
+    elif description_extra is not None:
+        print("REFUSE: --description-extra is only supported for finished-media review packages",
+              file=sys.stderr)
+        return 2
     try:
-        description = description_for_title(args.title)
+        description = description_for_title(args.title, extra=description_extra)
     except EnvelopeError as exc:
         print(f"REFUSE: title partner envelope cannot render its description: {exc}", file=sys.stderr)
         return 2
@@ -2009,6 +2081,8 @@ def make_manifest(args: argparse.Namespace) -> int:
         "tags": tags,
         "tags_source": tags_source,
     }
+    if description_extra is not None:
+        manifest["description_extra"] = description_extra
     if clip_profile_document is not None:
         # Transcribe before recovery checks so every consumer sees the same form.
         manifest[CLIP_PROFILE_FIELD] = clip_profile_document
@@ -2052,7 +2126,11 @@ def make_manifest(args: argparse.Namespace) -> int:
     package_problems.extend(
         human_review.attach_final_human_review(manifest, args.final_human_review)
     )
-    package_problems.extend(_attach_title_cover_qc(manifest, args.title_cover_qc))
+    package_problems.extend(_attach_title_cover_qc(
+        manifest,
+        args.title_cover_qc
+        or (str(video.with_name(video.stem + ".finished-media-review.json")) if is_fmr_package else None),
+    ))
     try:
         manifest["content_identity"] = content_identity(manifest)
         package_problems.extend(identity_problems(manifest["content_identity"]))
@@ -2259,7 +2337,9 @@ def load_and_verify(
         if not manifest.get("tags"):
             problems.append("manifest v3 requires non-empty tags")
         try:
-            if manifest.get("description") != description_for_title(title):
+            if manifest.get("description") != description_for_title(
+                title, extra=manifest.get("description_extra")
+            ):
                 problems.append("manifest v3 description drifted from the uploader contract")
         except EnvelopeError as exc:
             problems.append(f"manifest title partner envelope cannot render its description: {exc}")
@@ -2676,7 +2756,9 @@ def upload(args: argparse.Namespace) -> int:
         # v3 always has a reviewed, record-bound tag line.
         cmd.append(",".join(manifest_tags))
         # The uploader holds no description; send the one load_and_verify bound.
-        cmd.append(description_for_title(manifest["title"], submission=True))
+        cmd.append(description_for_title(
+            manifest["title"], submission=True, extra=manifest.get("description_extra")
+        ))
         env = os.environ.copy()
         env["AUTHORIZED_UPLOAD"] = "1"
         attempt_id = uuid.uuid4().hex

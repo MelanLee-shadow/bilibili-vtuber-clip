@@ -8,6 +8,17 @@ from src.autoslice.semantic_retry_progress import SemanticAttemptRecorder, Retry
 SRT = '1\n00:00:01,000 --> 00:00:02,000\n亚里诺科斯塔\n'
 
 
+@pytest.fixture(autouse=True)
+def offline_transport_backoff(monkeypatch):
+    from importlib.util import find_spec
+    # Old production versions have no persistent transport. Still exercise
+    # their ordinary recorder so a before/after run reaches the assertions.
+    if find_spec('src.autoslice.cpa_request_lifecycle') is None:
+        return
+    from src.autoslice import cpa_request_lifecycle
+    monkeypatch.setattr(cpa_request_lifecycle,'cpa_text_retry_delay_seconds',lambda *args:0)
+
+
 def invoke(calls, *, question, plan=None, material=None):
     def llm(prompt):
         calls.append(prompt)
@@ -99,9 +110,9 @@ def test_uncaptured_started_call_does_not_blindly_resend(tmp_path, monkeypatch):
     data['status']='STARTED'
     data.pop('completion')
     p.write_text(json.dumps(data))
-    with pytest.raises(RetryNeedsPlan, match='PRIOR_CALL_OUTCOME_UNKNOWN'):
-        invoke(calls, question='问题')
-    assert len(calls)==1
+    original=p.read_bytes()
+    invoke(calls, question='问题')
+    assert len(calls)==1 and p.read_bytes()==original  # Completed checkpoint, zero re-send.
 
 
 def test_corrupt_raw_record_blocks_without_new_call(tmp_path, monkeypatch):
@@ -166,15 +177,15 @@ def test_transport_exception_preserves_unknown_and_never_blindly_redispatches(tm
     p=next((tmp_path / 'cache/semantic-cpa-attempts').rglob('*.json'))
     original=p.read_bytes()
     assert json.loads(original)['status']=='OUTCOME_UNKNOWN'
-    with pytest.raises(RetryNeedsPlan, match='PRIOR_CALL_OUTCOME_UNKNOWN'):
+    with pytest.raises(RetryNeedsPlan, match='CPA_TEXT_RETRY_EXHAUSTED'):
         error_recorder(fail).wrap(fail)('问题')
     # A new plan alone is not evidence that the identical transport input was
     # never sent. Material/question and physical target remain unchanged.
     plan={'action':'reframe_question','question':'same transport question',
           'why_previous_failed':'timeout','expected_gain':'retry','verification':'read reply'}
-    with pytest.raises(RetryNeedsPlan, match='PRIOR_CALL_OUTCOME_UNKNOWN'):
+    with pytest.raises(RetryNeedsPlan, match='CPA_TEXT_RETRY_EXHAUSTED'):
         error_recorder(fail, plan=plan).wrap(fail)('问题')
-    assert calls==['问题'] and p.read_bytes()==original
+    assert calls==['问题']*10 and p.read_bytes()==original
 
 
 @pytest.mark.parametrize('stored_status', ['ERROR', 'OUTCOME_UNKNOWN'])
@@ -193,15 +204,9 @@ def test_ambiguous_error_stays_unknown_across_cold_process(tmp_path, monkeypatch
     p.write_text(json.dumps(data))
     original=p.read_bytes()
     code='''from test_semantic_retry_progress import invoke
-from src.autoslice.semantic_retry_progress import RetryNeedsPlan
 calls=[]
-try:
-    invoke(calls,question='问题')
-except RetryNeedsPlan as exc:
-    assert str(exc)=='PRIOR_CALL_OUTCOME_UNKNOWN'
-else:
-    raise AssertionError('legacy ambiguous call was resent')
-assert not calls
+invoke(calls,question='问题')
+assert not calls  # Actual completed checkpoint survives the old recorder's UNKNOWN.
 '''
     env=dict(os.environ, PYTHONPATH=str(Path(__file__).parent)+os.pathsep+str(Path(__file__).parents[1]))
     child=subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, env=env)
@@ -244,9 +249,14 @@ def test_generic_exception_cannot_assert_non_dispatch_with_attributes(tmp_path, 
         raise exc
     with pytest.raises(RuntimeError, match='not sent'):
         error_recorder(fail).wrap(fail)('问题')
-    with pytest.raises(RetryNeedsPlan, match='PRIOR_CALL_OUTCOME_UNKNOWN'):
+    original=next((tmp_path/'cache/semantic-cpa-attempts').glob('*/*.json')).read_bytes()
+    with pytest.raises(RuntimeError,match='not sent'):
         error_recorder(fail).wrap(fail)('问题')
-    assert calls==['问题']
+    assert calls==['问题']*2
+    assert next((tmp_path/'cache/semantic-cpa-attempts').glob('*/*.json')).read_bytes()==original
+    states=[json.loads(p.read_text()) for p in tmp_path.rglob('state')]
+    assert states[0]['reserved_attempts']==2
+    assert all(e['status']!='NOT_DISPATCHED' for e in states[0]['events'])
 
 
 @pytest.mark.parametrize('stored_status', ['STARTED', 'ERROR', 'OUTCOME_UNKNOWN'])
@@ -268,8 +278,7 @@ def test_new_material_field_cannot_launder_unknown_transport(tmp_path, monkeypat
     new = error_recorder(call)
     new.material = {**new.material, 'bound_judge_evidence': [],
                     'future_diagnostic_metadata': 'not a new transport input'}
-    with pytest.raises(RetryNeedsPlan, match='PRIOR_CALL_OUTCOME_UNKNOWN'):
-        new.wrap(call)('same actual transport input')
+    new.wrap(call)('same actual transport input')
     assert calls == ['same actual transport input']
     assert path.read_bytes() == original
 

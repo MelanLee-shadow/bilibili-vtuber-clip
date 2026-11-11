@@ -81,7 +81,7 @@ def park_for_manual_review(
     一个说话人，我才能审查」）带来的：停泊件现在**有成品**了。两个字段各有硬用途——
     ``guess`` 让报表一眼说清"这条的说话人是猜的、哪几句最可能错"；``artifacts``
     把成品路径写进 state，free 的容量清理在删 out/媒体前会扫 state 引用，不写
-    进去的成品会被当孤儿清掉（2026-07/08 两次误删的血泪）。
+    进去的成品会被当孤儿清掉（/08 两次误删的血泪）。
     """
 
     existing = record.get("speaker_manual_review")

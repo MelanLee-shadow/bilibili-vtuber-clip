@@ -40,7 +40,44 @@ TAGS="${4:-${AUTOSLICE_FALLBACK_TAGS:-虚拟主播,直播切片}}"
 # + 相关主播行）后传入；本脚本不持有简介的第二份定义。
 DESC="$5"
 [ -n "$DESC" ] || not_dispatched 64 "REFUSE: description unavailable"
-"$biliup_binary" -u biliup_cookies.json upload "$VIDEO" \
+# biliup 0.2.4 has no part-name option: the single part is named after the file
+# name it is given.  So the part name (= the archive title) is carried by a
+# hard link "<title>.mp4" to the reviewed video, in a hidden temp directory on
+# the video's own filesystem.  Never a copy, never a symlink; the package file
+# is untouched; the directory is removed on every exit path (incl. signals).
+part_tmp=""
+cleanup_part_link() {
+  if [ -n "$part_tmp" ]; then rm -rf -- "$part_tmp"; fi
+  part_tmp=""
+}
+trap cleanup_part_link EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+title_filename_problem() {
+  local title="$1" stripped bytes
+  [ -n "$title" ] || { echo "title is empty"; return; }
+  case "$title" in
+    */*) echo "title contains '/'"; return ;;
+    -*) echo "title starts with '-'"; return ;;
+    .*) echo "title starts with '.'"; return ;;
+  esac
+  stripped=$(printf %s "$title" | LC_ALL=C tr -d '[:cntrl:]'; printf x)
+  [ "$stripped" = "${title}x" ] || { echo "title contains a control character"; return; }
+  bytes=$(printf %s "$title" | LC_ALL=C wc -c)
+  bytes=$((bytes))
+  [ $((bytes + 4)) -le 255 ] || echo "title is $bytes bytes; with .mp4 it exceeds the 255-byte file name limit"
+}
+problem=$(title_filename_problem "$TITLE")
+[ -z "$problem" ] || not_dispatched 65 "REFUSE: title cannot be the part file name: $problem"
+video_dir=$(cd -- "$(dirname -- "$VIDEO")" && pwd -P) || not_dispatched 74 "REFUSE: video directory unavailable"
+part_tmp=$(mktemp -d "$video_dir/.upload-XXXXXX") || not_dispatched 74 "REFUSE: cannot create the part-name link directory beside the video"
+part_link="$part_tmp/$TITLE.mp4"
+ln -- "$VIDEO" "$part_link" 2>/dev/null \
+  || not_dispatched 74 "REFUSE: cannot hard-link the video as the part-name file (same filesystem required; no symlink or copy fallback)"
+{ [ -f "$part_link" ] && [ ! -L "$part_link" ] && [ "$part_link" -ef "$VIDEO" ]; } \
+  || not_dispatched 74 "REFUSE: part-name link is not a hard link to the video"
+"$biliup_binary" -u biliup_cookies.json upload "$part_link" \
   --cover "$COVER" --copyright 2 --source "https://live.bilibili.com/" --tid 27 \
   --title "$TITLE" --tag "$TAGS" \
   --desc "$DESC" --submit app 2>&1 | tee "$upload_log"

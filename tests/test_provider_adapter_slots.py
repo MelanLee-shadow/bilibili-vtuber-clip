@@ -16,6 +16,9 @@ from src.autoslice.provider_slots import provider_slot
 from src.autoslice.qixi_transaction_core import exclusive_runner_commit
 
 
+# These tests inject the original Google HTTP / AGY process boundary.
+pytestmark = pytest.mark.usefixtures("legacy_gemini_transport")
+
 class _Response(io.BytesIO):
     status = 200
 

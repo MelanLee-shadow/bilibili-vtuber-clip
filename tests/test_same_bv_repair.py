@@ -98,10 +98,13 @@ def _stub_final_media_review_contract(tmp_path, monkeypatch):
     )
 
 
-def _before_snapshot() -> dict:
+DEFAULT_DESC = "https://live.bilibili.com/\n简介"
+
+
+def _before_snapshot(desc: str = DEFAULT_DESC) -> dict:
     creator_metadata = {
         "title": "旧标题",
-        "desc": "https://live.bilibili.com/\n简介",
+        "desc": desc,
         "tags": [CHANNEL_PROFILE.display_name, "直播切片"],
         "tid": 21,
         "copyright": 2,
@@ -142,7 +145,7 @@ def _before_snapshot() -> dict:
     }
 
 
-def _manifest(tmp_path: Path) -> tuple[Path, dict]:
+def _manifest(tmp_path: Path, description: str = DEFAULT_DESC) -> tuple[Path, dict]:
     video = tmp_path / "new.mp4"
     cover = tmp_path / "new.png"
     subtitle = tmp_path / "new.srt"
@@ -399,7 +402,7 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
             "bytes": cover.stat().st_size,
         },
         "title": FINAL_TITLE,
-        "description": "https://live.bilibili.com/\n简介",
+        "description": description,
         "tags": [CHANNEL_PROFILE.display_name, "直播切片"],
         "publish_policy": {
             "tid": 21,
@@ -438,13 +441,13 @@ def _manifest(tmp_path: Path) -> tuple[Path, dict]:
     return path, manifest
 
 
-def _plan_authority(tmp_path: Path, *, initialise: bool = True):
-    manifest_path, manifest = _manifest(tmp_path)
+def _plan_authority(tmp_path: Path, *, initialise: bool = True, desc: str = DEFAULT_DESC):
+    manifest_path, manifest = _manifest(tmp_path, desc)
     plan = create_plan(
         manifest_path=manifest_path,
         manifest=manifest,
         bvid=BVID,
-        snapshot=_before_snapshot(),
+        snapshot=_before_snapshot(desc),
     )
     plan_path = tmp_path / "repair.plan.json"
     write_plan(plan_path, plan)

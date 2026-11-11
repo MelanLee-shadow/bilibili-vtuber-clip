@@ -11,6 +11,7 @@ import pytest
 from scripts import llm_via_runtime_cpa_ssh as bridge
 from src.autoslice.deployed_code_root import deployed_code_root
 from src.autoslice import llm_client, provider_slots
+import src.autoslice.deployed_code_root as roots
 
 SHA = "a" * 40
 
@@ -111,3 +112,59 @@ def test_invalid_current_cannot_silently_bypass_provider_permit(tmp_path, monkey
     monkeypatch.setattr(provider_slots, "_CANONICAL_PRODUCTION_ROOT", base)
     with pytest.raises(ValueError, match="deployed code root:"):
         provider_slots.configured_runtime_root()
+
+
+@pytest.mark.parametrize("width", [40, 64])
+@pytest.mark.parametrize("source", ["lease", "physical_module", "remote_bootstrap"])
+def test_process_version_wins_without_switching_current(tmp_path, monkeypatch, width, source):
+    from src.autoslice.deployed_code_root import deployed_code_root_bootstrap
+    base, current = deployment(tmp_path)
+    selected = base / "versions" / ("d" * width) / "repo"
+    selected.mkdir(parents=True)
+    (selected / "DEPLOYED_COMMIT").write_text("d" * 40 + "\n")
+    (selected / "DEPLOYED_MANIFEST.json").write_text("{}")
+    if width == 64:
+        (selected / "OVERFLOW_RELEASE_SHA256").write_text("d" * width + "\n")
+    monkeypatch.delenv("AUTOSLICE_RUNTIME_VERSION_ROOT", raising=False)
+    if source == "physical_module":
+        # Execute the shipped stdlib resolver from the physical staged tree.
+        import runpy
+        resolver = selected / "src/autoslice/deployed_code_root.py"
+        resolver.parent.mkdir(parents=True)
+        resolver.write_bytes(Path(roots.__file__).read_bytes())
+        resolve = runpy.run_path(str(resolver))["deployed_code_root"]
+    else:
+        monkeypatch.setenv("AUTOSLICE_RUNTIME_VERSION_ROOT", str(selected))
+        resolve = deployed_code_root
+    if source == "remote_bootstrap":
+        namespace = {}
+        exec(deployed_code_root_bootstrap(base), namespace)
+        assert namespace["repo"] == selected
+    else:
+        assert resolve(base) == selected
+        assert resolve(base, require_current=True) == current
+    assert (base / "current").readlink() == Path("versions") / SHA
+    (selected / "DEPLOYED_MANIFEST.json").unlink()
+    with pytest.raises(ValueError, match="incomplete"):
+        resolve(base)
+
+
+@pytest.mark.parametrize("damage", ["outside", "wrong_commit", "symlink", "running_mismatch"])
+def test_explicit_process_root_never_falls_back_on_invalid_binding(tmp_path, monkeypatch, damage):
+    base, current = deployment(tmp_path)
+    selected = base / "versions" / ("d" * 40) / "repo"
+    selected.mkdir(parents=True)
+    (selected / "DEPLOYED_COMMIT").write_text("d" * 40 + "\n")
+    (selected / "DEPLOYED_MANIFEST.json").write_text("{}")
+    if damage == "outside":
+        selected = tmp_path / "outside/repo"
+    elif damage == "wrong_commit":
+        (selected / "DEPLOYED_COMMIT").write_text(SHA + "\n")
+    elif damage == "symlink":
+        (selected / "DEPLOYED_MANIFEST.json").unlink()
+        (selected / "DEPLOYED_MANIFEST.json").symlink_to(current / "DEPLOYED_COMMIT")
+    else:
+        monkeypatch.setattr(roots, "_EXECUTING_REPO", current)
+    monkeypatch.setenv("AUTOSLICE_RUNTIME_VERSION_ROOT", str(selected))
+    with pytest.raises(ValueError):
+        deployed_code_root(base)

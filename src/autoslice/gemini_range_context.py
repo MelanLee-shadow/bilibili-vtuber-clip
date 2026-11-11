@@ -25,10 +25,10 @@ from pathlib import Path
 from typing import Any, NotRequired, TypedDict, cast
 
 from src.autoslice.acoustic_witness_adjudication import build_witness_request
-from src.autoslice.evidence_identity import recorded_source_stat_matches
+from src.autoslice.evidence_identity import recorded_source_stat_matches, sha256_ref
 from src.autoslice.entity_audio_verifier import (
     _LocalAudioVerifier,
-    _crop_black_frame_audio,
+    _render_black_frame_audio as _crop_black_frame_audio,
     _entity_api_model,
     _observe_entity_audio,
     _sha256,
@@ -48,7 +48,7 @@ from src.autoslice.native_audio_budget_receipt import (
 )
 from src.autoslice.native_context_witness import _prepare_request
 from src.autoslice.native_foreign_witness import _extract_exact_mp3, _persist_budget_receipt
-from src.autoslice.supplement_audio_budget import ensure_budget
+from src.autoslice.supplement_audio_budget import SupplementAudioBudget, ensure_budget
 from scripts.gemini_slice_jingting import strip_markdown_fence
 
 
@@ -1053,7 +1053,7 @@ def _find_cache(
         if metadata is None:
             eligible = (inherited is not None and any(
                 (a['provider'], a['model']) == identity for a in inherited['attempts'])
-                and inherited.get('unusable_acquisitions', {}).get(str(path)) == 'sha256:' + _sha256(path))
+                and inherited.get('unusable_acquisitions', {}).get(str(path)) == sha256_ref(_sha256(path)))
             inherited_missing: set[str] | None = set() if eligible else None
             unavailable: set[str] = set()
             intact_without_media = _cache_metadata_valid(path, verifier=verifier,
@@ -1111,7 +1111,7 @@ def _record_cache_hit(
 
 
 def _finish_attempts(
-    *, attempts: list[dict[str, Any]], budget: Any, verifier: _LocalAudioVerifier,
+    *, attempts: list[_DispatchAttempt], budget: Any, verifier: _LocalAudioVerifier,
     receipt_path: Path, accepted: bool, observed: bool, response_rejected: bool = False,
     reason: str,
 ) -> None:
@@ -1476,6 +1476,64 @@ def _augment_uncertain(
     return result
 
 
+class _DispatchAttempt(TypedDict):
+    attempt_id: int
+    provider: str
+    model: str
+
+
+def _reserve_range_dispatch(
+    *, budget: SupplementAudioBudget, verifier: _LocalAudioVerifier,
+    budget_receipt_path: Path, claim_directories: list[Path],
+    provider: str, model: str, start_ms: int, end_ms: int, identity: str,
+    prompt_sha: str, input_audio_sha: str, run_dir: Path,
+    attempts: list[_DispatchAttempt],
+) -> None:
+    """Reserve and persist one dispatched provider identity under the shared lock."""
+    with budget.lock, exclusive_native_audio_budget(Path(budget_receipt_path).absolute()):
+        resume_native_audio_budget(
+            source_media=verifier.source_media,
+            source_media_sha256=verifier.source_sha256,
+            receipt_path=Path(budget_receipt_path).absolute(),
+            require_existing=True,
+        )
+        try:
+            basis = _resend_basis(
+                budget, directories=claim_directories,
+                source_sha256=str(verifier.source_sha256), provider=provider,
+                model=model, start_ms=start_ms, end_ms=end_ms, identity=identity,
+            )
+        except _PriorRequestUnknown as refusal:
+            budget.record_refusal(provider=provider, model=model, start_ms=start_ms,
+                                  end_ms=end_ms, reason_code=refusal.reason_code)
+            _persist_budget_receipt(
+                source_media=verifier.source_media,
+                source_sha256=verifier.source_sha256,
+                receipt_path=Path(budget_receipt_path).absolute(),
+            )
+            raise
+        attempt_id = budget.consume(provider, model, start_ms, end_ms)
+        attempts.append({"attempt_id": attempt_id, "provider": provider, "model": model})
+        _persist_budget_receipt(
+            source_media=verifier.source_media,
+            source_sha256=verifier.source_sha256,
+            receipt_path=Path(budget_receipt_path).absolute(),
+        )
+        # The request identity is recorded beside the account it
+        # occupies, so every later output root sees the claim.
+        _write_json(
+            claim_directories[0] / f"{identity}.{attempt_id}.json",
+            {"schema_version": DISPATCH_CLAIM_SCHEMA,
+             "request_identity_sha256": identity, "attempt_id": attempt_id,
+             "provider": provider, "model": model,
+             "source_media_sha256": str(verifier.source_sha256),
+             "start_ms": start_ms, "end_ms": end_ms,
+             "prompt_sha256": prompt_sha, "input_audio_sha256": input_audio_sha,
+             # Diagnostic locator of the original run, not identity.
+             "run_dir": str(run_dir), "resend_basis": basis},
+        )
+
+
 def observe_gemini_range_context(
     *,
     verifier: _LocalAudioVerifier,
@@ -1490,7 +1548,7 @@ def observe_gemini_range_context(
     provider_hint = "gemini_api"
     model_hint = str(getattr(verifier, "model", "") or "")
     geometry: dict[str, Any] | None = None
-    attempts: list[dict[str, Any]] = []
+    attempts: list[_DispatchAttempt] = []
     dispatch_persist_failed = False
     attempts_finished = False
     budget = None
@@ -1625,7 +1683,8 @@ def observe_gemini_range_context(
             ]
 
         def on_provider_dispatch(provider: str, model: str) -> None:
-            nonlocal dispatch_persist_failed
+            nonlocal dispatch_persist_failed, provider_hint, model_hint
+            provider_hint, model_hint = provider, model
             start_ms = int(geometry["source_target_start_ms"])
             end_ms = int(geometry["source_target_end_ms"])
             identity = _range_request_identity(
@@ -1634,48 +1693,13 @@ def observe_gemini_range_context(
                 input_audio_sha256=input_audio_sha,
             )
             try:
-                with budget.lock, exclusive_native_audio_budget(Path(budget_receipt_path).absolute()):
-                    resume_native_audio_budget(
-                        source_media=verifier.source_media,
-                        source_media_sha256=verifier.source_sha256,
-                        receipt_path=Path(budget_receipt_path).absolute(),
-                        require_existing=True,
-                    )
-                    try:
-                        basis = _resend_basis(
-                            budget, directories=claim_directories,
-                            source_sha256=str(verifier.source_sha256), provider=provider,
-                            model=model, start_ms=start_ms, end_ms=end_ms, identity=identity,
-                        )
-                    except _PriorRequestUnknown as refusal:
-                        budget.record_refusal(provider=provider, model=model, start_ms=start_ms,
-                                              end_ms=end_ms, reason_code=refusal.reason_code)
-                        _persist_budget_receipt(
-                            source_media=verifier.source_media,
-                            source_sha256=verifier.source_sha256,
-                            receipt_path=Path(budget_receipt_path).absolute(),
-                        )
-                        raise
-                    attempt_id = budget.consume(provider, model, start_ms, end_ms)
-                    attempts.append({"attempt_id": attempt_id, "provider": provider, "model": model})
-                    _persist_budget_receipt(
-                        source_media=verifier.source_media,
-                        source_sha256=verifier.source_sha256,
-                        receipt_path=Path(budget_receipt_path).absolute(),
-                    )
-                    # The request identity is recorded beside the account it
-                    # occupies, so every later output root sees the claim.
-                    _write_json(
-                        claim_directories[0] / f"{identity}.{attempt_id}.json",
-                        {"schema_version": DISPATCH_CLAIM_SCHEMA,
-                         "request_identity_sha256": identity, "attempt_id": attempt_id,
-                         "provider": provider, "model": model,
-                         "source_media_sha256": str(verifier.source_sha256),
-                         "start_ms": start_ms, "end_ms": end_ms,
-                         "prompt_sha256": prompt_sha, "input_audio_sha256": input_audio_sha,
-                         # Diagnostic locator of the original run, not identity.
-                         "run_dir": str(run_dir), "resend_basis": basis},
-                    )
+                _reserve_range_dispatch(
+                    budget=budget, verifier=verifier, budget_receipt_path=budget_receipt_path,
+                    claim_directories=claim_directories, provider=provider, model=model,
+                    start_ms=start_ms, end_ms=end_ms, identity=identity,
+                    prompt_sha=prompt_sha, input_audio_sha=input_audio_sha,
+                    run_dir=run_dir, attempts=attempts,
+                )
             except _PriorRequestUnknown:
                 raise
             except Exception as exc:

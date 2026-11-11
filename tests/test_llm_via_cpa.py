@@ -71,6 +71,7 @@ capture = {{
     "header_mode": stat.S_IMODE(os.stat(header_path).st_mode) if header_path else None,
     "authorization_ok": f"Authorization: Bearer {{SECRET}}" in headers,
     "content_type_ok": "Content-Type: application/json" in headers,
+    "idempotency_keys": previous.get("idempotency_keys", []) + [line.split(": ",1)[1] for line in headers if line.startswith("Idempotency-Key: ")],
     "user_agent_ok": any(line.startswith("User-Agent: Mozilla/5.0") for line in headers),
     "body_paths": body_refs,
 }}
@@ -874,6 +875,10 @@ def test_actual_cpa_bridge_failure_survives_command_diagnostic_reader(
     assert completed.returncode == 1
     _assert_secret_is_not_observable(completed, capture)
     monkeypatch.setattr(llm_client.subprocess, "run", lambda *_args, **_kwargs: completed)
+    # This diagnostic-reader test repeats one fixed recorded failure. Exercise
+    # its bounded outer policy without sleeping through real exponential time.
+    from src.autoslice import infra_retry_policy
+    monkeypatch.setattr(infra_retry_policy.time, 'sleep', lambda _delay: None)
     call = llm_client.build_llm_call(llm_client.LlmConfig(
         transport="command", command_template="bridge {prompt_file} {completion_file}",
         command_diagnostic_context={"provider_transport": "runtime_cpa"},
@@ -884,6 +889,13 @@ def test_actual_cpa_bridge_failure_survives_command_diagnostic_reader(
     assert raised.value.provider_diagnostics["provider_http_status"] == http_status
     assert raised.value.provider_diagnostics["provider_error_code"] == code
     assert SENTINEL_SECRET not in json.dumps(raised.value.provider_diagnostics)
+
+
+def test_idempotency_header_stays_equal_across_actual_shell_attempts(tmp_path):
+    completed,capture,_,_=_run_bridge(tmp_path,status_sequence=('429','200'),
+        env_overrides={'AUTOSLICE_CPA_LOGICAL_REQUEST_ID':'b'*64})
+    assert completed.returncode==0
+    assert capture['idempotency_keys']==['b'*64,'b'*64]
 
 
 def test_successful_cpa_retry_does_not_retain_previous_failure(tmp_path):

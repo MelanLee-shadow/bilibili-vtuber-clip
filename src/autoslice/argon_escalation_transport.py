@@ -59,6 +59,7 @@ class ArgonHttpTransport:
         *,
         connection_factory: ConnectionFactory | None = None,
         max_response_bytes: int = MAX_ARTIFACT_BYTES,
+        cpa_operation: str = "generateContent",
     ):
         require(callable(key_resolver), "KEY_RESOLVER_REQUIRED")
         require(
@@ -68,6 +69,8 @@ class ArgonHttpTransport:
         self._key_resolver = key_resolver
         self._factory = connection_factory or http.client.HTTPSConnection
         self._max_response_bytes = max_response_bytes
+        require(cpa_operation in {'generateContent', 'argon_lifecycle'}, 'HTTP_OPERATION_INVALID')
+        self._cpa_operation = cpa_operation
 
     @staticmethod
     def _validate_request(method: str, path: str, body: bytes | None) -> None:
@@ -139,12 +142,28 @@ class ArgonHttpTransport:
 
     def _exchange(self, method, path, body, route_copy, timeout_s):
         from . import cpa_gemini_client
-        if cpa_gemini_client.enabled():
-            if method != 'POST' or path != f'models/{MODEL}:generateContent':
-                cpa_gemini_client.require_operation('argon_' + method + '_' + path.split('?')[0])
+        if (cpa_gemini_client.enabled() and self._cpa_operation == 'generateContent'
+                and method == 'POST' and path == f'models/{MODEL}:generateContent'):
             completion = cpa_gemini_client.generate_native(
                 model=MODEL, body=strict_json(body), purpose='argon_realtime', timeout_seconds=timeout_s)
             return HttpResponse(200, canonical(completion.payload))
+        from .argon_escalation_contract import sha
+        with cpa_gemini_client.legacy_attempt(operation='argon_lifecycle', transport='google_argon_rest',
+                model=MODEL, purpose='argon_' + method + '_' + path.split('?')[0],
+                request_sha256=sha(canonical({'method': method, 'path': path, 'body_sha256': sha(body or b'')})),
+                key_tier={'free': 'free', 'paid_backup': 'paid'}.get(route_copy.get('accepted_key_tier'),
+                    cpa_gemini_client.UNKNOWN)) as row:
+            response = self._direct_exchange(method, path, body, route_copy, timeout_s)
+            row.update(http_status=response.status, response_sha256=sha(response.body))
+            try:
+                payload = strict_json(response.body)
+                if isinstance(payload, dict):
+                    row.update(cpa_gemini_client.response_accounting(payload))
+            except (ValueError, UnicodeError):
+                pass  # Preserve exact native HTTP bytes, including non-JSON failures.
+            return response
+
+    def _direct_exchange(self, method, path, body, route_copy, timeout_s):
         require(
             type(timeout_s) in (int, float) and math.isfinite(timeout_s) and 0 < timeout_s <= 600,
             "HTTP_TIMEOUT_INVALID",

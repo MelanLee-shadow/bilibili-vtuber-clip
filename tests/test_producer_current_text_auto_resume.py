@@ -9,6 +9,71 @@ import pytest
 from src.autoslice import producer_text_pipeline as pipeline
 
 
+@pytest.mark.parametrize('mode,initial_observed,recovers', [
+    ('legacy', False, False), ('per_finding', True, True),
+    ('per_finding', False, True), ('per_finding', False, False),
+])
+def test_source_resume_finishes_required_language_scan_once_without_reasking_text(
+    tmp_path, monkeypatch, mode, initial_observed, recovers,
+):
+    checkpoint = _checkpoint(tmp_path)
+    _make_source_stage_checkpoint(checkpoint)
+    _stub_source_stage_reconstruction(monkeypatch, checkpoint)
+    monkeypatch.setenv('AUTOSLICE_FINAL_REVIEW_MODE', mode)
+    authority = json.loads(checkpoint['authority_path'].read_bytes())
+    original = tmp_path/'original-asr.srt'
+    original.write_text(checkpoint['srt'])
+    authority['input_srt_sha256'] = _sha(original.read_bytes())
+    checkpoint['spec']['candidate_id'] = checkpoint['cid']
+    checkpoint['spec']['existing_subtitle_surface'] = {
+        'candidate_id': checkpoint['cid'], 'path': str(original),
+        'sha256': 'sha256:'+_sha(original.read_bytes()),
+        'source_media_sha256': 'sha256:'+_sha(checkpoint['padded'].read_bytes()),
+        'time_domain': 'padded_local'}
+    from src.autoslice.producer_source_truth_checkpoint import _preview
+    authority['source_truth_preview_receipts'] = {
+        stage: _preview(checkpoint['srt'], stage=stage, path=None,
+                        spec=checkpoint['spec'], durations=[100])
+        for stage in ('pre_entity_arbitration', 'pre_correction_review')}
+    authority['audio_language_discovery_audit'] = ({'scan': {'status': 'OBSERVED'}}
+        if initial_observed else {'status': 'OBSERVATION_UNAVAILABLE', 'disclosures': [
+            {'reason': 'AUDIO_LANGUAGE_DISCOVERY_UNAVAILABLE'}]})
+    checkpoint['authority_path'].write_text(json.dumps(authority))
+    finalized = []
+
+    def no_text_reask(**_kwargs):
+        raise AssertionError('completed source text must not be re-asked')
+
+    def finalize(**kwargs):
+        finalized.append(kwargs)
+        assert kwargs['srt_text'] == checkpoint['srt']
+        (checkpoint['out_root']/'padded.fresh.srt').write_text(kwargs['srt_text'])
+        checkpoint['authority_path'].write_text(json.dumps(kwargs['chat_authority_audit']))
+        _make_source_stage_checkpoint(checkpoint)
+        current = json.loads(checkpoint['authority_path'].read_bytes())
+        current['source_truth_preview_receipts'] = kwargs['chat_authority_audit']['source_truth_preview_receipts']
+        current['final_output_srt_sha256'] = _sha(checkpoint['srt'].encode())
+        current['audio_language_discovery_audit'] = ({'scan': {'status': 'OBSERVED'}} if recovers
+            else {'status': 'OBSERVATION_UNAVAILABLE', 'disclosures': [
+                {'reason': 'AUDIO_LANGUAGE_DISCOVERY_UNAVAILABLE'}]})
+        checkpoint['authority_path'].write_text(json.dumps(current))
+        return pipeline.TextEvidenceResult(srt_text=checkpoint['srt'],
+            cues=pipeline.parse_srt_cues(checkpoint['srt']), chat_authority_path=checkpoint['authority_path'])
+
+    monkeypatch.setattr(pipeline, '_run_final_review', no_text_reask)
+    monkeypatch.setattr(pipeline, '_finalize_text_evidence', finalize)
+    if mode == 'per_finding' and not initial_observed and not recovers:
+        with pytest.raises(pipeline.CurrentTextContinuationError, match='AUDIO_LANGUAGE_DISCOVERY_UNAVAILABLE'):
+            pipeline.run_text_pipeline(**_pipeline_kwargs(checkpoint))
+        assert len(finalized) == 1
+    else:
+        result = pipeline.run_text_pipeline(**_pipeline_kwargs(checkpoint))
+        assert result.srt_text == checkpoint['srt']
+        assert len(finalized) == int(mode == 'per_finding' and not initial_observed)
+    if mode == 'per_finding' and not initial_observed:
+        assert (checkpoint['out_root']/f"{checkpoint['cid']}.source-text-checkpoint.json").is_file()
+
+
 @pytest.mark.parametrize('damage', [None, 'source_usage_missing', 'new_usage', 'word', 'timing', 'source_review', 'content', 'usage', 'code_error'])
 def test_transport_only_delivery_can_replay_exact_completed_source_and_timing(tmp_path, damage):
     source = '1\n00:00:00,000 --> 00:00:01,000\n准备\n\n2\n00:00:01,100 --> 00:00:01,500\n懂了\n\n3\n00:00:02,100 --> 00:00:03,000\n下一话题\n'

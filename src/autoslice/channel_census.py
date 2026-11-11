@@ -573,7 +573,7 @@ def adapt_legacy_census_label(
     end_s: int,
     summary: str,
 ) -> CensusWindow:
-    """Map one 2026-10 legacy label row onto ``CensusWindow`` (pilot only).
+    """Map one legacy label row onto ``CensusWindow`` (pilot only).
 
     Every produced grade carries ``basis="LEGACY_LABEL_PROXY"``; dimensions
     the legacy labels never measured stay ``None``.

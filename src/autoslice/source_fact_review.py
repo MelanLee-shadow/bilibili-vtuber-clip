@@ -650,7 +650,9 @@ def _prompt(
         "支持的改动，就可以继续 REPAIR，直到明确 KEEP。最多复审 5 轮；不得为了"
         "结束复审而放弃仍然存在的事实问题，也不得在不同文案之间来回振荡。\n"
         + addressee_prompt_block(speaker_transcript)
-        + f"投稿标题总长度必须为 {title_policy._TITLE_MIN_LEN}–{title_policy._TITLE_MAX_LEN} 个字符并满足下方 deterministic title policy。"
+        + f"投稿标题整条（含频道前缀）不少于 {title_policy._TITLE_MIN_LEN} 个字符，"
+        f"正文（不含频道前缀）不超过 {title_policy._TITLE_MAX_LEN} 个字符，"
+        f"整条含前缀不超过 {title_policy._TITLE_PLATFORM_MAX_LEN} 个字符，并满足下方 deterministic title policy。"
         "若 violations 非空，当前标题不能 KEEP；必须在不丢失核心事实与事实模态的"
         "前提下压缩或修正完整标题，并用 REPAIR 返回。只有 violations 为空且所有"
         "source facts 都正确时才能 KEEP。\n"

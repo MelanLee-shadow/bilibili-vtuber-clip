@@ -516,7 +516,7 @@ def _census_recall_diagnostics(provenance: RecallClueProvenance) -> dict[str, st
 # 共用评分卡量化规则段：既是整场召回 prompt 的一部分，也是狍哥案有界重
 # 评分车道（``rescore_candidate_scorecard``）单候选提卡 prompt 的核心——
 # 两处必须逐字同一份规则，不许各自维护一份漂移的拷贝（design §3.5「复用」）。
-_SCORECARD_RUBRIC_BLOCK = """选片量化表（talk 必填，song 可省略；新卡使用 selection-scorecard-admission.v3）：
+_SCORECARD_RUBRIC_BLOCK = """选片量化表（talk 必填，song 可省略；新卡使用 selection-scorecard-admission.v4）：
 - tier 是硬层级 1/2/3。当前 Tier 1 先过共同实质内容门：candidate_quality 必须是
   watchability=STRONG、differentiation=DISTINCTIVE、production_disposition=PRODUCTION，
   reason 非空且 evidence_cues 全在候选窗内；同时 audience_salience>=2、self_contained>=3、
@@ -529,15 +529,15 @@ _SCORECARD_RUBRIC_BLOCK = """选片量化表（talk 必填，song 可省略；�
 - personal_stance / generic_event 也可以进入 Tier 1：共同实质内容门通过后，
   lidousha_centrality>=3 或 stance_intensity>=3，且至少一个 tier_evidence_cues 能定位真实观点、
   选择、拒绝或结果。单次鲜明观点/拒绝可以兑现题目，不要求两次事件或人为升级；泛泛事件、
-  弱 CP 或普通可爱互动仍不能晋级。
-- audience_driven_performance 的最高级继续要求 relationship_interaction/persona_reversal 各至少3、
-  audience_salience至少2、self_contained至少3、comedic_payoff=4，并由至少两条 cue 组成
-  “观众起哄→她照做→人设反差”的完整互动链。可爱、普通抱抱或普通反差可以是第二层看点，
-  不因有请求和回应就给落点4；4须有不可替代、完整的渐进表演或强收束证据。
+  弱 CP 不能仅凭关键词或高分格式晋级。
+- 纯撒娇、卖萌或可爱回应本身也是重要看点；清楚具体、片内能看懂且满足共同内容门时，
+  audience_driven_performance 或自主的 cute_performance 至少一条窗内 cue 可进 Tier 1，
+  无须关系链、观众起哄、反差、渐进升级或 comedic_payoff=4。distinctive 可由具体可复述的
+  可爱时刻支持，不要求罕见反转；只写「可爱」而说不清看点仍不够。不要为了晋级虚增各维度分数。
   仅字幕中的“抱抱”“咬一下”等口头说法不能证明发生了实际动作，理由不得补写未证实的表演。
 - tier_basis 只能按事实选择 relationship_chain / explicit_gl_stance / cp_positioning /
-  audience_driven_performance / personal_stance / generic_event。
-- dimensions 七项都打 0..4 整数：lidousha_centrality（主播不可替代性）、stance_intensity、
+  audience_driven_performance / cute_performance / personal_stance / generic_event。
+- dimensions 七项都打 0..4 整数：lidousha_centrality（{CHANNEL_PROFILE.display_name}不可替代性）、stance_intensity、
   audience_salience（频道受众/人物题材显著度）、relationship_interaction、persona_reversal、
   comedic_payoff、self_contained。不要把 ASR/证据可靠性混进内容质量分。
   comedic_payoff 同时评价喜剧与情绪/观点兑现：2是明确但普通的收口，3是强且构成这个主事件主要看点的
@@ -550,10 +550,10 @@ _SCORECARD_RUBRIC_BLOCK = """选片量化表（talk 必填，song 可省略；�
   立场；依实际声源、主语、时间和模态区分被引用内容与她的真实评价/回应。
 - uncertainty_penalty 0..15，证据/指代/身份不确定才扣；fatigue_penalty 0..10，同场高度同质才扣。
 - 系统按固定 25/20/15/15/10/10/5 权重计算 effective_score，confidence 不再代替内容价值。
-- 历史无 policy 字段的卡和 selection-scorecard-admission.v2 卡按原准入规则验证并保留原字节；
-  不要把历史 Tier 或分数静默重算成 v3。只有本次新召回或明确 rescore 才生成 v3 卡。
+- 历史无 policy 字段及 v2/v3 卡按原准入规则验证并保留原字节；
+  不要把历史 Tier 或分数静默重算成 v4。只有本次新召回或明确 rescore 才生成 v4 卡。
 - 另为每个 talk 候选填写 candidate_quality。这是候选级的制作资格判断，不是第八个维度，不参与
-  七维算术或另加分；但在 v3 中它属于 Tier 1 共同准入，准入结果可以改变 Tier，并因此改变最终排序：
+  七维算术或另加分；在 v4 中它属于 Tier 1 共同准入，准入结果可以改变 Tier，并因此改变最终排序：
   watchability 只能是 STRONG/ORDINARY/THIN，
   differentiation 只能是 DISTINCTIVE/ORDINARY/THIN，production_disposition 只能是
   PRODUCTION/RESERVE/HOLD，reason 说明路人实际能看见的看点，evidence_cues 只能引用候选窗内 cue。
@@ -636,7 +636,8 @@ event_key（简短中文，如“妈感姐妹分类”）；不同事件的 even
 1. 讲故事/完整叙事:主播在讲一件事,有起因和结局。
 2. 弹幕互动打闹:某条弹幕起了头,主播读出/复述弹幕后接梗、吐槽、破防。读弹幕/复述问题的那句就是上下文起点,必须包含在片段里。
 3. 玩梗/绕口令/翻车/爆笑反应:包括对屏幕上正在看的图、玩的游戏的连续反应。
-4. {CHANNEL_PROFILE.display_name}本人现场唱歌:kind 填 "song",范围大致覆盖整首歌即可(后续有专门的歌词边界+本人声纹硬门)。只播放原唱、片尾曲、待机/下播画面的音乐、游戏或视频背景音乐都不是歌切，禁止选为 song。
+4. 现场突发/第三方介入:有人闯入或串线、被当场点名或追问、被抓包、事故式的连锁反应。选它的前提是李豆沙是事件当事方且窗内有她本人的反应。候选必须同时包含三部分:触发(什么打破了原有进程)、她的反应、收束(包括事件结束后的议论,或之后又回到她身上的反应);收束依赖前面的铺垫时一并框入,不要只截最响的一句。
+5. {CHANNEL_PROFILE.display_name}本人现场唱歌:kind 填 "song",范围大致覆盖整首歌即可(后续有专门的歌词边界+本人声纹硬门)。只播放原唱、片尾曲、待机/下播画面的音乐、游戏或视频背景音乐都不是歌切，禁止选为 song。
 
 对每个候选片段必须做上下文检查(观众视角):
 - 如果片段开头是悬空的(接续语、回应某个看不到的东西),往前找触发点(弹幕、话题开始、开始看某个东西的时刻),把 start_cue 前移到触发点,或填 context_trigger_cue。

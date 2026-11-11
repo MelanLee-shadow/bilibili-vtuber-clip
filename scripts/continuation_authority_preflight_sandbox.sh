@@ -11,10 +11,20 @@
 #           (each top-level root listed in SNAPSHOT/ROOTS, one absolute path per line)
 # CODE      code root to test: a deployed /opt/bilive/autoslice/versions/<sha>/repo,
 #           or any tree, which is installed as a versioned repo inside the overlay
-# TOOL      path of continuation_authority_preflight.py (run with python -I)
+# TOOL      path of the slices consumer or --exec tool (run with python -I)
 # SLICES    file with lines: <spec path> <existing_srt|aggregate_asr>
+# Optional argv after SLICES: [--sandbox-env NAME=VALUE]... [-- EXEC_TOOL_ARGS...]
+# The preflight tool owns the single validation policy; ambient env is never copied.
 set -euo pipefail
 WORK=$1; SNAP=$2; CODE=$3; TOOL=$4; SLICES=$5
+PREFLIGHT_HELPER="$(dirname "${BASH_SOURCE[0]}")/continuation_authority_preflight.py"
+shift 5
+ENV_ARGS=()
+while [ "${1:-}" = --sandbox-env ]; do
+    [ "$#" -ge 2 ] || { echo "refuse: --sandbox-env needs NAME=VALUE" >&2; exit 2; }
+    ENV_ARGS+=("$2"); shift 2
+done
+[ "${1:-}" != -- ] || shift
 [ "$(readlink /proc/self/ns/net)" != "$(readlink /proc/1/ns/net)" ] || { echo "refuse: no private network namespace" >&2; exit 2; }
 [ "$(readlink /proc/self/ns/mnt)" != "$(readlink /proc/1/ns/mnt)" ] || { echo "refuse: no private mount namespace" >&2; exit 2; }
 case "$WORK" in /opt/*) echo "refuse: WORK under /opt" >&2; exit 2;; esac
@@ -22,6 +32,9 @@ case "$WORK" in /opt/*) echo "refuse: WORK under /opt" >&2; exit 2;; esac
 RT=/opt/bilive/autoslice
 mount --make-rprivate /
 mkdir -p "$WORK"/rt-upper "$WORK"/rt-work "$WORK"/reports "$WORK"/tmp "$WORK"/home
+/usr/bin/python3 -I -B "$PREFLIGHT_HELPER" \
+    --validate-sandbox-env "${ENV_ARGS[@]}" > "$WORK/sandbox-env.nul"
+mapfile -d '' -t SANDBOX_ENV < "$WORK/sandbox-env.nul"
 mount --bind /opt /opt
 mount -o remount,bind,ro /opt
 mount -t overlay overlay -o "lowerdir=$RT,upperdir=$WORK/rt-upper,workdir=$WORK/rt-work" "$RT"
@@ -41,7 +54,7 @@ if [[ "$CODE" != "$RT"/versions/*/repo ]]; then
     mkdir -p "$RT/versions/$VID"
     cp -a "$CODE" "$RT/versions/$VID/repo"
     cp "$RT/current/repo/DEPLOYED_MANIFEST.json" "$RT/versions/$VID/repo/DEPLOYED_MANIFEST.json"
-    env -i PATH=/usr/bin:/bin "$RT/venv-main/bin/python" -I -B "$TOOL" --seal-version "$RT/versions/$VID/repo" "$VID" \
+    env -i PATH=/usr/bin:/bin "$RT/venv-main/bin/python" -I -B "$PREFLIGHT_HELPER" --seal-version "$RT/versions/$VID/repo" "$VID" \
         "$RT/current/repo/DEPLOYED_AUTHORITY_MANIFEST.json"
     cp "$(dirname "$(readlink -f "$RT/current/repo")")/runtime-code-lease.py" "$RT/versions/$VID/runtime-code-lease.py"
     CODE="$RT/versions/$VID/repo"
@@ -50,10 +63,9 @@ echo "code_root=$CODE"
 if [ "$SLICES" = --exec ]; then
     # Diagnose inside the identical view: TOOL is a read-only script, the
     # remaining arguments are its own.
-    shift 5
     exec env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$WORK/home" TMPDIR="$WORK/tmp" LANG=C.UTF-8 \
         CONTINUATION_PREFLIGHT_SANDBOX=1 AUTOSLICE_BASE="$RT" AUTOSLICE_FINAL_REVIEW_RUNTIME_ROOT="$RT" \
-        AUTOSLICE_PROFILE=lidousha "$RT/venv-main/bin/python" -I -B "$TOOL" "$CODE" "$@"
+        AUTOSLICE_PROFILE=lidousha "${SANDBOX_ENV[@]}" "$RT/venv-main/bin/python" -I -B "$TOOL" "$CODE" "$@"
 fi
 if [ "$SLICES" = --canary ]; then
     # Negative canaries: every forbidden effect must fail or stay in WORK.
@@ -71,6 +83,7 @@ while read -r spec substrate; do
     env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$WORK/home" TMPDIR="$WORK/tmp" LANG=C.UTF-8 \
         CONTINUATION_PREFLIGHT_SANDBOX=1 AUTOSLICE_BASE="$RT" AUTOSLICE_FINAL_REVIEW_RUNTIME_ROOT="$RT" \
         AUTOSLICE_PROFILE=lidousha GEMINI_PAID_BACKUP_DEV_EXCEPTION=0 PYTHONDONTWRITEBYTECODE=1 \
+        "${SANDBOX_ENV[@]}" \
         ionice -c 3 nice -n 10 "$RT/venv-main/bin/python" -I -B "$TOOL" --spec "$spec" --code-root "$CODE" \
         --substrate "$substrate" --report "$WORK/reports/$cid.json" \
         --time-budget-s "${PREFLIGHT_TIME_BUDGET_S:-0}" || rc=1

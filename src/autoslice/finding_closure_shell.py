@@ -34,6 +34,8 @@ from .finding_closure_ports import (ArtifactSet, ClosurePorts, ConfirmationReque
     ReviewRequest, ReviewResult, ScanRequest, ScanResult, ValidationRequest, ConsumedRuling, ProjectionBasis,
     InputUpdateResult)
 
+from .finding_closure_result_routing import consumed_decision_state, validate_cold_review_result
+
 
 def _object(value: JsonValue) -> dict[str, JsonValue]:
     if not isinstance(value, dict):
@@ -191,6 +193,8 @@ class FileLedger:
 
     def __init__(self, root: Path, initial: ClosureState, *, create: bool = True) -> None:
         self.root = root
+        from .validation_memo import RetainedLedgerCache
+        self._retained_cache = RetainedLedgerCache()
         if create:
             root.mkdir(parents=True, exist_ok=True)
         wire = core.state_bytes(initial)
@@ -213,18 +217,20 @@ class FileLedger:
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             # Use WP-A's one writer, including whole SRT and nested originals.
-            cast(Callable[[Path, object], object], persist_document)(path, document.value())
+            cast(Callable[[Path, object], object], persist_document)(path, document.read_view())
         return digest
 
     def get(self, digest: str) -> RetainedObject:
-        from .review_evidence_store import load_review
+        from .review_evidence_store import load_retained_review
         if not core.valid_sha(digest):
             raise ClosureContractError("FINDING_CLOSURE_ARTIFACT_REFERENCE_INVALID")
         path = self.root / "objects" / (digest + ".json")
-        document = RetainedObject.from_value(cast(Callable[[Path], object], load_review)(path))
-        if document.sha256 != digest:
-            raise ClosureContractError("FINDING_CLOSURE_ARTIFACT_HASH_DRIFT")
-        return document
+        def load() -> RetainedObject:
+            document = cast(Callable[[Path], RetainedObject], load_retained_review)(path)
+            if document.sha256 != digest:
+                raise ClosureContractError("FINDING_CLOSURE_ARTIFACT_HASH_DRIFT")
+            return document
+        return self._retained_cache.get((str(path.absolute()), digest), load)
 
     def events(self) -> tuple[RetainedObject, ...]:
         paths = sorted((self.root / "events").glob("*.json"))
@@ -270,29 +276,28 @@ class FileLedger:
             os.fsync(stream.fileno())
 
     def summarize(self, initial: ClosureState) -> None:
-        from .run_time_ledger import timestamp, collect_sources, build_ledger
+        from .run_time_ledger import timestamp, collect_sources, build_ledger, recorded_dependency_path
         spans = self.root/'time-spans.jsonl'
         if not spans.exists():
             return
-        weights: dict[str, float] = {}
+        durations: list[tuple[str,float]] = []
         for line in spans.read_text(encoding='utf-8').splitlines():
             row = RetainedObject(line).value()
             begin, end = timestamp(row.get('started_utc')), timestamp(row.get('ended_utc'))
-            if begin is not None and end is not None:
-                weights[_text(row['span_id'])] = max(0.0,end-begin)
-        path: dict[str, float] = {}
-        state = initial
-        for envelope in self.events():
-            event = decode_event(RetainedObject.from_value(envelope.value()['event']))
-            if not isinstance(event, Start):
-                work = control_work(state,event) if isinstance(event,(RevalidateRequested,InputsAdvanced)) else next(
-                    w for w in state.pending if w.work_id == event.work_id)
-                path[work.work_id] = weights.get(work.work_id,0.0) + max(
-                    (path.get(dep,0.0) for dep in work.dependencies), default=0.0)
-            state,_ = core.step(state,event)
+            if begin is not None and end is not None and end >= begin:
+                durations.append((_text(row['span_id']),end-begin))
+        def effects() -> Iterator[tuple[str,tuple[str,...],bool]]:
+            state = initial
+            for envelope in self.events():
+                event = decode_event(RetainedObject.from_value(envelope.value()['event']))
+                if not isinstance(event, Start):
+                    work = control_work(state,event) if isinstance(event,(RevalidateRequested,InputsAdvanced)) else next(
+                        w for w in state.pending if w.work_id == event.work_id)
+                    yield work.work_id,work.dependencies,not isinstance(event,(RevalidateRequested,InputsAdvanced))
+                state,_ = core.step(state,event)
         sources = _legacy(collect_sources,self.root)
         result = RetainedObject.from_value(_legacy(build_ledger,sources)).value()
-        result['workflow_critical_path_s'] = max(path.values(),default=0.0)
+        result.update(RetainedObject.from_value(_legacy(recorded_dependency_path,durations,effects())).value())
         result['provider_call_source_scope'] = 'Original exchange/native ledgers remain with their owners; these spans are workflow stages.'
         _atomic(self.root/'timing-summary.json',(RetainedObject.from_value(result).json_text+'\n').encode())
 
@@ -379,7 +384,8 @@ def replay_journal(initial: ClosureState, ledger: Ledger, ports: ClosurePorts) -
                 (w for w in state.pending if w.work_id == event.work_id), None)
             if work is None:
                 raise ClosureContractError("FINDING_CLOSURE_EVENT_WITHOUT_PENDING_WORK")
-            ports.revalidate(ValidationRequest(state, work, event, event_artifacts(ledger, event, work, state)))
+            ports.revalidate(ValidationRequest(state, work, event,
+                event_artifacts(ledger, event, work, state), historical=True))
         state, _ = core.step(state, event)
         if obj["after"] != core.sha(core.state_bytes(state).decode()):
             raise ClosureContractError("FINDING_CLOSURE_EVENT_AFTER_DRIFT")
@@ -636,7 +642,8 @@ def consumer_revision() -> RetainedObject:
     names = ('finding_closure_shell.py','finding_lifecycle.py','final_review_contract.py',
              'semantic_terminal_adjudication.py','closed_set_proposal_rebuild.py','targeted_relisten.py',
              'finding_context.py','acoustic_witness_adjudication.py','editorial_subtitle.py',
-             'completed_review_checkpoint.py','producer_final_review_transport.py')
+             'completed_review_checkpoint.py','producer_final_review_transport.py',
+             'finding_closure_result_routing.py')
     return RetainedObject.from_value({'consumer_modules': {name: core.sha((root/name).read_text(encoding='utf-8'))
                                                             for name in names}})
 
@@ -780,7 +787,10 @@ class ExistingFindingOwners:
         from .exact_final_terminal_funnel import terminal_check
         from . import finding_context as context
         from .targeted_relisten import evidence_projection
-        row = original.value()
+        row = original.read_view()
+        # RetainedObject already validated the complete JSON graph. Context only
+        # consumes this field; historical rulings remain in the original record.
+        context_finding = {'evidence_cue_ids': row.get('evidence_cue_ids', [])}
         variants=tuple(_object(v) for v in _array(row.get('discovery_candidates',[])))
         check = RetainedObject.from_value(_legacy(terminal_check, text, row,
             clip_context=self.inputs.clip_context.value(), offset_ms=self.inputs.timeline_offset_ms,
@@ -809,7 +819,7 @@ class ExistingFindingOwners:
                            if _object(v).get('kind') in {'speaker_turn','pronoun_chain','evidence'}]
         graph = _legacy(context.relation_graph, text, relations=owner_relations)
         check['finding_context'] = RetainedObject.from_value(_legacy(context.context_for_check,
-            check, finding=row, graph=graph)).value()
+            check, finding=context_finding, graph=graph)).value()
         check.pop('request_sha256', None)
         check['request_sha256'] = cast(str, _legacy(context.digest, check))
         projection = RetainedObject.from_value(_legacy(evidence_projection, check, include_target_text=True)).value()
@@ -830,7 +840,7 @@ class ExistingFindingOwners:
             if RetainedObject.from_value(_legacy(context.physical_question,identity)).value() != physical:
                 raise ClosureContractError('FINDING_CLOSURE_REENTRY_PHYSICAL_DRIFT')
         materials = RetainedObject.from_value(_legacy(context.materials_for_check, identity,
-            finding=row, graph=graph, observation_ids=ids, contracts=self.inputs.contracts.value(),
+            finding=context_finding, graph=graph, observation_ids=ids, contracts=self.inputs.contracts.value(),
             model_identity=self.inputs.model_identity.value(),
             candidates=[check.get('current_cue'),check.get('proposed_cue'),
                         *(v.get('proposed_full_cue') for v in variants)]))
@@ -907,6 +917,10 @@ class ExistingFindingOwners:
         return PreparedFinding(spec,retained,projection,material,origin,projection)
 
     def rebase(self, request: RebaseRequest) -> tuple[PreparedFinding, ...]:
+        return self._rebase(request, historical_audio_proofs=False)
+
+    def _rebase(self, request: RebaseRequest, *,
+                historical_audio_proofs: bool) -> tuple[PreparedFinding, ...]:
         from . import finding_context as context
         from .jingting_chunker import parse_srt_cues
         cues=[c for c in parse_srt_cues(request.srt_text) if c.text.strip()]
@@ -919,7 +933,7 @@ class ExistingFindingOwners:
             if finding.spec.presence=='ABSENT':
                 output.append(self._absent_finding(request.srt_text,finding,None))
                 continue
-            old=finding.check.value()
+            old=finding.check.read_view()
             old_cues=[c for c in parse_srt_cues(_text(old['whole_clip_current_srt'])) if c.text.strip()]
             start,end=_integer(old['matched_start_ms']),_integer(old['matched_end_ms'])
             index=by_window.get((start,end))
@@ -951,15 +965,25 @@ class ExistingFindingOwners:
             if _legacy(context.local_material_view,projected)==_legacy(context.local_material_view,old['finding_context']):
                 # Cue ordinals are addresses. Preserve the answered M and raw
                 # originals when only those addresses changed after a drop.
-                output.append(replace(finding,spec=replace(finding.spec,scope_cues=scope,
+                retained=finding.finding
+                if not historical_audio_proofs and request.srt_text != old['whole_clip_current_srt']:
+                    row=retained.read_view()
+                    if '_audio_gain_termination' in row:
+                        row.pop('_audio_gain_termination')
+                        row['previous_finding_ref']=retained.sha256
+                        retained=RetainedObject.from_value(row)
+                output.append(replace(finding,finding=retained,spec=replace(finding.spec,
+                    finding_ref=retained.sha256,scope_cues=scope,
                     local_text_sha256=core.local_text_sha(request.srt_text,scope))))
                 continue
-            row=finding.finding.value()
+            row=finding.finding.read_view()
             changed=cues[index-1].text != old['current_cue']
             for key in ('exact_release_adjudication','context_audio_adjudication','terminal_funnel_error',
                         'lifecycle','current_content_risk','candidate_content_risk','consumed_ruling',
                         'consumed_rulings','next_finding','next_finding_materials'):
                 row.pop(key,None)
+            if not historical_audio_proofs:
+                row.pop('_audio_gain_termination',None)
             row['previous_finding_ref']=finding.finding.sha256
             row['cue_index']=index
             row['base_text_sha256']=core.sha(cues[index-1].text)
@@ -975,9 +999,47 @@ class ExistingFindingOwners:
                 origin_check=finding.origin_check or finding.check))
         return tuple(output)
 
+    def _validate_projection(self, projection: RebaseRequest,
+            actual: tuple[PreparedFinding, ...], expected: tuple[TaskSpec, ...],
+            request: ValidationRequest, reason: str) -> None:
+        # Old events retain the exact old projection, including inert proofs.
+        # Only journal replay may reconstruct it. New commits require the current
+        # projection; both paths still reapply the complete typed repair first.
+        if tuple(f.spec for f in actual) != expected and request.historical:
+            actual = self._rebase(projection, historical_audio_proofs=True)
+        if tuple(f.spec for f in actual) != expected:
+            raise ClosureContractError(reason)
+        for finding in actual:
+            for document in finding_documents(finding):
+                if request.artifacts.get(document.sha256) != document:
+                    raise ClosureContractError(reason)
+
+    def _current_review(self, request: ReviewRequest) -> ReviewRequest:
+        row = request.finding.finding.read_view()
+        proof = row.get('_audio_gain_termination')
+        bound = proof.get('anchor') if isinstance(proof,dict) else None
+        if not isinstance(bound,dict) or not isinstance(bound.get('current_srt_sha256'),str):
+            return request
+        old_text = _text(bound['current_srt_sha256'])
+        if not core.valid_sha(old_text) or old_text == core.sha(request.srt_text):
+            return request
+        from .review_errors import validated_audio_anchor
+        anchor = RetainedObject.from_value(_legacy(validated_audio_anchor,
+            request.finding.check.read_view())).read_view()
+        physical = ('candidate_id','source_media_sha256s','physical_target_ms',
+                    'source_media_timeline_offset_ms','clip_context_binding')
+        if any(bound.get(key) != anchor[key] for key in physical):
+            return request  # A foreign/malformed proof remains a strict rejection.
+        row.pop('_audio_gain_termination')
+        row['previous_finding_ref'] = request.finding.finding.sha256
+        retained = RetainedObject.from_value(row)
+        finding = replace(request.finding,finding=retained,
+            spec=replace(request.finding.spec,finding_ref=retained.sha256))
+        return replace(request,finding=finding)
+
     def _bound_owner_materials(self, row: RetainedObject, finding: PreparedFinding) -> None:
         """An unported owner cannot claim that its whole-prompt key is local M."""
-        value = row.value()
+        value = row.read_view()
         adjudication = _object(value.get('exact_release_adjudication'))
         terminal = adjudication.get('terminal_review')
         request = _object(_object(terminal).get('request')) if isinstance(terminal, dict) else _object(adjudication.get('request'))
@@ -985,18 +1047,20 @@ class ExistingFindingOwners:
         if not isinstance(bound, dict):
             raise ClosureContractError('FINDING_CLOSURE_OWNER_TYPED_MATERIALS_REQUIRED')
         from .finding_context import validate_materials
-        actual = RetainedObject.from_value(_legacy(validate_materials, bound)).value()
+        actual = RetainedObject.from_value(_legacy(validate_materials, bound, _read_only=True)).read_view()
         if (actual['physical_question_sha256'] != finding.spec.key.physical
                 or actual['materials_sha256'] != finding.spec.key.materials):
             raise ClosureContractError('FINDING_CLOSURE_OWNER_MATERIAL_DRIFT')
 
     def _result(self, text: str, row: RetainedObject, *, terminal: bool = False,
-                origin_check: RetainedObject | None = None) -> ReviewResult:
+                origin_check: RetainedObject | None = None, work: Work | None = None) -> ReviewResult:
         from .finding_lifecycle import classify
         finding = self.prepare_finding(text, row,origin_check=origin_check)
-        view = RetainedObject.from_value(_legacy(classify, row.value(), terminal=terminal)).value()
+        # Classification and binding readers do not mutate the original history.
+        value = row.read_view()
+        view = RetainedObject.from_value(_legacy(classify, value, terminal=terminal)).value()
         selected = State(_text(view['state']))
-        members=_array(row.value().get('related_question_results',[]))
+        members=_array(value.get('related_question_results',[]))
         if members:
             states=[State(_text(RetainedObject.from_value(_legacy(classify,member,terminal=terminal)).value()['state']))
                     for member in members]
@@ -1005,13 +1069,13 @@ class ExistingFindingOwners:
             else:
                 if State.TRUE_BLOCK in states:selected=State.TRUE_BLOCK
                 elif any(s not in {State.KEEP,State.EDIT_REVIEW} for s in states):selected=State.AWAITING_TERMINAL
-        consumed=row.value().get('consumed_ruling')
+        consumed=value.get('consumed_ruling')
         if isinstance(consumed,dict):
             record=consumed_ruling_from_document(RetainedObject.from_value(consumed))
-            if record.raw_completion not in original_ruling_bytes(row.value()):
+            if record.raw_completion not in original_ruling_bytes(value):
                 raise ClosureContractError('FINDING_CLOSURE_RULING_RAW_NOT_CONSUMED')
             from .finding_context import local_material_view
-            material=record.materials.value()
+            material=record.materials.read_view()
             current=RetainedObject.from_value(_legacy(local_material_view,
                 finding.check.value()['finding_context'])).value()
             if material['local_context']!=current or _text(material['physical_question_sha256'])!=finding.spec.key.physical:
@@ -1022,16 +1086,17 @@ class ExistingFindingOwners:
                 _text(material['materials_sha256'])),check_ref=record.check.sha256,
                 materials_ref=record.materials.sha256,origin_check_ref=record.origin_check.sha256)
             finding=PreparedFinding(spec,row,record.check,record.materials,record.origin_check)
-            proposals={_text(_object(v)['proposed_full_cue']) for v in _array(row.value().get('discovery_candidates',[]))
+            proposals={_text(_object(v)['proposed_full_cue']) for v in _array(value.get('discovery_candidates',[]))
                        if isinstance(_object(v).get('proposed_full_cue'),str)}
             if (selected in {State.KEEP,State.EDIT_REVIEW,State.TRUE_BLOCK}
                     and not proposals.issubset(set(_text(v) for v in _array(material['candidates'])))):
                 selected=State.AWAITING_TERMINAL
             nomination_ids={_text(_object(v)['observation_id'])
-                for v in _array(row.value().get('discovery_nominations',[]))}
+                for v in _array(value.get('discovery_nominations',[]))}
             if (selected in {State.KEEP,State.EDIT_REVIEW,State.TRUE_BLOCK} and not nomination_ids.issubset(
                     set(_text(v) for v in _array(material['bound_observation_ids'])))):
                 selected=State.AWAITING_TERMINAL
+            selected = consumed_decision_state(selected, finding.spec.key, work)
             return ReviewResult(finding,selected,row)
         if selected in {State.KEEP, State.EDIT_REVIEW, State.TRUE_BLOCK}:
             try:
@@ -1040,11 +1105,12 @@ class ExistingFindingOwners:
                 # Retain the actual answer and expose a missing owner interface
                 # as engineering failure; never resample it or turn it into D.
                 return ReviewResult(finding, State.CONTRACT_ERROR,
-                    RetainedObject.from_value({'finding': row.value(), 'owner_error': str(exc)}))
+                    RetainedObject.from_value({'finding': value, 'owner_error': str(exc)}))
         return ReviewResult(finding, selected, row)
 
     def _adjudicate(self, request: ReviewRequest, *, terminal: bool = False,
                     provider_calls_allowed: bool = True) -> ReviewResult:
+        request = self._current_review(request)
         with provider_permission(provider_calls_allowed), ruling_capture(self.inputs.judge_llm_call,request.finding) as captured:
             result=self._adjudicate_captured(request,terminal=terminal,
                                             provider_calls_allowed=provider_calls_allowed)
@@ -1059,14 +1125,14 @@ class ExistingFindingOwners:
         # checkpoints. C never makes its own audio or model request.
         with cast(AbstractContextManager[object], _legacy(capture_terminal_adapters)) as adapters:
             result = _legacy(adjudicate_exact_release_findings, request.srt_text,
-                [request.finding.finding.value()], entity_verifier=(self.inputs.entity_verifier
+                [request.finding.finding.read_view()], entity_verifier=(self.inputs.entity_verifier
                     if provider_calls_allowed else CacheOnlyVerifier(self.inputs.entity_verifier)),
                 clip_context=self.inputs.clip_context.value(),
                 source_media_timeline_offset_ms=self.inputs.timeline_offset_ms,
                 judge_llm_call=self.inputs.judge_llm_call, screen_read_probe=self.inputs.screen_read_probe,
                 provider_calls_allowed=provider_calls_allowed,
-                prior_range_acoustic_observations=[d.value() for d in self.inputs.ranges],
-                prior_secondary_audio_observations=[d.value() for d in self.inputs.secondary],
+                prior_range_acoustic_observations=[d.read_view() for d in self.inputs.ranges],
+                prior_secondary_audio_observations=[d.read_view() for d in self.inputs.secondary],
                 caption_audio_roles=self.inputs.caption_audio_roles.value() if self.inputs.caption_audio_roles else None)
             if not isinstance(result, tuple) or len(result) != 2:
                 raise ClosureContractError('FINDING_CLOSURE_OWNER_RESULT_INVALID')
@@ -1079,7 +1145,7 @@ class ExistingFindingOwners:
                 if selected.state in core.TERMINAL_STATES:
                     return selected
                 return self._terminal_from_snapshot(request.srt_text,row,adapters,request.finding.origin_check)
-        return self._result(request.srt_text,row,origin_check=request.finding.origin_check)
+        return self._result(request.srt_text,row,origin_check=request.finding.origin_check,work=request.work)
 
     def evidence(self, request: ReviewRequest) -> ReviewResult:
         return self._adjudicate(request)
@@ -1090,7 +1156,10 @@ class ExistingFindingOwners:
     def recover(self, request: ReviewRequest) -> ReviewResult:
         # Consumers may have been repaired since the original answer. The
         # ordinary owner reopens its original cache with all new calls disabled.
-        cleaned = request.finding.finding.value()
+        request = self._current_review(request)
+        # Only top-level recovery markers change. Keep immutable history
+        # shared within this detached view instead of expanding every occurrence.
+        cleaned = request.finding.finding.read_view()
         cleaned.pop('terminal_funnel_error',None)
         cleaned['revalidated_original_ref'] = request.finding.finding.sha256
         current = self._result(request.srt_text,RetainedObject.from_value(cleaned),terminal=True,
@@ -1101,7 +1170,7 @@ class ExistingFindingOwners:
                                   provider_calls_allowed=False)
         if result.state not in core.TERMINAL_STATES:
             return ReviewResult(result.finding, State.CALL_FAILURE, RetainedObject.from_value({
-                'finding': result.finding.finding.value(),
+                'finding': result.finding.finding.read_view(),
                 'owner_error': 'FINDING_CLOSURE_ORIGINAL_CALL_OWNER_RECOVERY_REQUIRED'}))
         return result
 
@@ -1186,13 +1255,9 @@ class ExistingFindingOwners:
             originals=tuple(prepared_from_refs(spec,request.artifacts.get) for spec in event.findings)
             basis=tuple(ProjectionBasis(core.text_at(request.state,p.before_sha256),core.text_at(request.state,p.after_sha256),
                 request.artifacts.get(p.repair_ref),request.artifacts.get(p.ruling_ref)) for p in request.state.patches)
-            rebased_findings=self.rebase(RebaseRequest(request.state.current_srt,originals,basis))
-            if tuple(f.spec for f in rebased_findings)!=event.rebased:
-                raise ClosureContractError('FINDING_CLOSURE_STALE_SCAN_PROJECTION_DRIFT')
-            for finding in rebased_findings:
-                for document in finding_documents(finding):
-                    if request.artifacts.get(document.sha256)!=document:
-                        raise ClosureContractError('FINDING_CLOSURE_STALE_SCAN_PROJECTION_DRIFT')
+            projection=RebaseRequest(request.state.current_srt,originals,basis)
+            self._validate_projection(projection,self.rebase(projection),event.rebased,request,
+                'FINDING_CLOSURE_STALE_SCAN_PROJECTION_DRIFT')
         elif isinstance(event, PrefetchCompleted):
             from .independent_context_adjudication import validate_range_acoustic_observation
             from .native_audio_budget_receipt import _require_budget_history_extension
@@ -1227,27 +1292,19 @@ class ExistingFindingOwners:
             prepared = prepared_from_refs(event.spec,request.artifacts.get)
             text = core.text_at(request.state, request.work.text_sha256)
             rebuilt = (self._result(text,prepared.finding,terminal=request.work.kind=='task_stop',
-                       origin_check=prepared.origin_check).finding
-                       if isinstance(prepared.finding.value().get('consumed_ruling'),dict)
+                       origin_check=prepared.origin_check,work=request.work).finding
+                       if isinstance(prepared.finding.read_view().get('consumed_ruling'),dict)
                        else self.prepare_finding(text,prepared.finding,origin_check=prepared.origin_check))
             if rebuilt != prepared:
                 raise ClosureContractError('FINDING_CLOSURE_COLD_MATERIAL_DRIFT')
-            if event.state in {State.CONTRACT_ERROR,State.CALL_FAILURE}:
-                # Historical engineering outcomes are not content authority.
-                # Retain the original answer even when today's consumer can
-                # now validate it; only a new revalidation event can close P.
-                receipt = request.artifacts.get(event.receipt_ref)
-                value = receipt.value()
-                if 'owner_error' in value:
-                    if RetainedObject.from_value(value.get('finding')) != prepared.finding:
-                        raise ClosureContractError('FINDING_CLOSURE_COLD_FAILURE_ORIGINAL_DRIFT')
-                elif receipt != prepared.finding:
-                    raise ClosureContractError('FINDING_CLOSURE_COLD_FAILURE_ORIGINAL_DRIFT')
-                return
-            actual = self._result(text,prepared.finding,terminal=request.work.kind == 'task_stop',
-                                  origin_check=prepared.origin_check)
-            if actual.state != event.state or actual.receipt != request.artifacts.get(event.receipt_ref):
-                raise ClosureContractError('FINDING_CLOSURE_COLD_RULING_DRIFT')
+            validate_cold_review_result(
+                event, prepared.finding,
+                load_receipt=lambda: request.artifacts.get(event.receipt_ref),
+                current_result=lambda: self._result(
+                    text, prepared.finding, terminal=request.work.kind == 'task_stop',
+                    origin_check=prepared.origin_check, work=request.work),
+                legacy=_legacy,
+            )
         elif isinstance(event, PatchCompleted):
             if request.work.task is None:
                 raise ClosureContractError('FINDING_CLOSURE_PATCH_TASK_REQUIRED')
@@ -1258,8 +1315,15 @@ class ExistingFindingOwners:
             actual_patch = self.patch(PatchRequest(request.work, request.state.current_srt, finding,
                 request.artifacts.get(event.patch.ruling_ref),
                 tuple(prepared_from_refs(t.spec,request.artifacts.get) for t in request.state.tasks)))
-            if actual_patch.patch != event.patch or tuple(f.spec for f in actual_patch.findings) != event.findings:
+            if actual_patch.patch != event.patch:
                 raise ClosureContractError('FINDING_CLOSURE_COLD_PATCH_DRIFT')
+            projection=RebaseRequest(core.apply_patch(request.state.current_srt,event.patch),
+                tuple(prepared_from_refs(t.spec,request.artifacts.get) for t in request.state.tasks),
+                (ProjectionBasis(request.state.current_srt,
+                    core.apply_patch(request.state.current_srt,event.patch),actual_patch.repair,
+                    request.artifacts.get(event.patch.ruling_ref)),))
+            self._validate_projection(projection,actual_patch.findings,event.findings,request,
+                'FINDING_CLOSURE_COLD_PATCH_DRIFT')
         elif isinstance(event, TextReady):
             validate_text_ready(request.artifacts.get(event.receipt_ref), event.output_sha256)
         elif isinstance(event, Confirmed):
@@ -1628,11 +1692,17 @@ def run_package_closure(call: PackageCall) -> dict[str, JsonValue]:
             expected_srt_sha256='sha256:' + core.sha(initial_text), allow_pending=True)
 
     def project(state: ClosureState) -> None:
-        staged = read_authority().value()
+        # Progress-only commits change top-level markers. Keep untouched audit
+        # history shared instead of expanding every occurrence after each event.
+        # A real repair can mutate nested surface-owner rows, so it still gets
+        # the original independently mutable staging tree.
+        staged = dict(authority)
         marker = staged.get('finding_closure_progress')
         done = _integer(_object(marker)['applied_patch_count']) if isinstance(marker, dict) else 0
         if not 0 <= done <= len(state.patches):
             raise ClosureContractError('FINDING_CLOSURE_AUTHORITY_PROJECTION_DRIFT')
+        if done < len(state.patches):
+            staged = read_authority().value()
         for patch in state.patches[done:]:
             repairs = _array(ledger.get(patch.repair_ref).value()['repairs'])
             _legacy(_register_exact_final_cpa_repairs, staged, repairs, delivery_start_ms=call.timeline_offset_ms)
@@ -1641,7 +1711,8 @@ def run_package_closure(call: PackageCall) -> dict[str, JsonValue]:
         staged['final_output_srt_sha256'] = core.sha(state.current_srt)
         _legacy(persist_document, call.authority_path, staged)
         if isinstance(call.baseline, dict):
-            baseline = RetainedObject.from_value(call.baseline).value()
+            # Baseline projection only replaces these two top-level fields.
+            baseline = dict(call.baseline)
             baseline['post_exact_final_cpa_output_sha256'] = core.sha(state.current_srt)
             baseline['finding_closure_progress'] = staged['finding_closure_progress']
             if call.baseline_path is not None:
@@ -1858,6 +1929,7 @@ class CanonicalCheckpoint(Protocol):
     hit: bool
     def load(self) -> str | None: ...
     def response(self, call: Callable[[str], str], *, preserve_raw: bool = True) -> str: ...
+    def response_checkpoint(self, raw: str) -> CanonicalCheckpoint: ...
 
 
 @dataclass(frozen=True)
@@ -1901,7 +1973,7 @@ def current_ruling_capture() -> RulingCapture | None:
 
 
 def _input_check(inputs: RetainedObject) -> RetainedObject | None:
-    value=inputs.value()
+    value=inputs.read_view()
     material=value.get('material')
     if isinstance(material,dict):
         value={**value,**material}
@@ -1913,7 +1985,7 @@ def _input_check(inputs: RetainedObject) -> RetainedObject | None:
 
 
 def _input_materials(inputs: RetainedObject) -> RetainedObject | None:
-    value=inputs.value()
+    value=inputs.read_view()
     material=value.get('material')
     if isinstance(material,dict):
         value={**value,**material}
@@ -1935,7 +2007,9 @@ def consumed_ruling(*, invocation: RulingInvocation, raw: str, identity: object,
         raise ClosureContractError('FINDING_CLOSURE_ANSWER_MODEL_UNKNOWN')
     model=RetainedObject.from_value(identity).value()
     model['models']=[actual]
-    bound=_legacy(materials_for_origin,_legacy(materials_for_model,material.value(),model),origin.value())
+    bound=_legacy(materials_for_origin,
+        _legacy(materials_for_model,material.read_view(),model,_read_only=True),
+        origin.read_view(),_read_only=True)
     return ConsumedRuling(invocation.stage,check,RetainedObject.from_value(bound),invocation.inputs,
         RetainedObject.from_value(model),invocation.prompt,str(raw),origin,checkpoint)
 
@@ -1954,7 +2028,7 @@ def note_consumed_ruling(*, invocation: RulingInvocation, raw: str, identity: ob
 
 
 def consumed_ruling_from_document(document: RetainedObject) -> ConsumedRuling:
-    value=document.value()
+    value=document.read_view()
     if value.get('schema_version')!='consumed-ruling.v1':
         raise ClosureContractError('FINDING_CLOSURE_CONSUMED_SCHEMA_INVALID')
     record=ConsumedRuling(_text(value['stage']),RetainedObject.from_value(value['check']),
@@ -1987,6 +2061,7 @@ class FinalReviewCall:
         self.provider_diagnostics=getattr(primary,'provider_diagnostics',None)
         self.semantic_policy_version=getattr(primary,'semantic_policy_version','producer-final-review-ruling.v1')
         self.terminal_retry_capable=getattr(primary,'terminal_retry_capable',False)
+        self.durable_text_transport=getattr(primary,'durable_text_transport',False)
         self.timeout_seconds=getattr(primary,'timeout_seconds',None)
         self.provider,self.key_id=provider,key_id
         self.condition=Condition()
@@ -2088,7 +2163,8 @@ class FinalReviewCall:
         self.raw_call(alternate,dispatch=True)
         directory.mkdir(parents=True,exist_ok=True)
         lock=Condition()
-        def record(receipt: AttemptReceipt) -> None:
+        timing=first.root/'finding-closure-routing'/'time-spans.jsonl'
+        def record(receipt: AttemptReceipt, *, stage: str = invocation.stage) -> None:
             from .review_evidence_store import persist_document
             if receipt.raw_completion is not None and not retention(receipt.raw_completion):
                 capture=_RULING_CAPTURE.get()
@@ -2096,20 +2172,19 @@ class FinalReviewCall:
                     capture.retention_declined=True
                 raise ClosureContractError('FINDING_CLOSURE_RETENTION_DECLINED')
             document=RetainedObject.from_value({**asdict(receipt),'requested_model':receipt.route.model})
-            _legacy(persist_document,directory/(document.sha256+'.json'),document.value())
+            _legacy(persist_document,directory/(document.sha256+'.json'),document.read_view())
             with lock:
                 install_first_document(selection,document)
                 span=RetainedObject.from_value({'schema_version':'run-time-span.v1',
-                    'span_id':receipt.effect_key,'kind':'wait','name':'ruling.'+invocation.stage,
+                    'span_id':receipt.effect_key,'kind':'wait','name':'ruling.'+stage,
                     'started_utc':receipt.started_utc,'ended_utc':receipt.ended_utc,
                     'wait_reason':'CANONICAL_PROVIDER_OWNER','status':receipt.status,
-                    'model':receipt.answering_model,'stage':invocation.stage,
+                    'model':receipt.answering_model,'stage':stage,
                     'cache_hit':receipt.cache_hit})
-                with (first.root/'finding-closure-routing'/'time-spans.jsonl').open('ab') as stream:
+                with timing.open('ab') as stream:
                     stream.write((span.json_text+'\n').encode());stream.flush();os.fsync(stream.fileno())
         executor=HedgedExecutor(controller=self.controller,record=record,retention=retention)
         # p95 comes from retained run-time-span.v1 pairs, not audio duration.
-        timing=first.root/'finding-closure-routing'/'time-spans.jsonl'
         if timing.exists():
             from .run_time_ledger import timestamp
             for line in timing.read_text().splitlines():
@@ -2148,7 +2223,8 @@ class FinalReviewCall:
             cp=checkpoint(route)
             if cp is None:
                 raise ClosureContractError('FINDING_CLOSURE_CANONICAL_CHECKPOINT_REQUIRED')
-            return RetainedObject.from_value(_legacy(_request_material_binding,cp.binding,invocation.prompt)).sha256
+            view = cp._binding_view() if hasattr(cp, '_binding_view') else cp.binding
+            return RetainedObject.from_value(_legacy(_request_material_binding,view,invocation.prompt)).sha256
         material=_input_materials(invocation.inputs) or invocation.inputs
         answer=executor.invoke(materials=material,channel=invocation.stage,primary=primary,
             alternate=alternate,call=send,key_for_route=effect)
@@ -2193,20 +2269,21 @@ def attach_consumed_rulings(row: RetainedObject, owners: ExistingFindingOwners,
         return row
     if capture.retention_declined:
         raise ClosureContractError('FINDING_CLOSURE_RETENTION_DECLINED')
-    value=row.value()
+    value=row.read_view()
     records=[record for record in capture.records if record.raw_completion in original_ruling_bytes(value)]
     if not records:
         return row
     original=owners.prepare_finding(text,row,origin_check=(capture.finding.origin_check or capture.finding.check)
                                    if capture.finding else None)
-    value['next_finding_materials']={'check':original.check.value(),'materials':original.materials.value()}
-    value['consumed_rulings']=[record.document().value() for record in capture.records]
-    value['consumed_ruling']=records[-1].document().value()
+    value['next_finding_materials']={'check':original.check.read_view(),'materials':original.materials.read_view()}
+    value['consumed_rulings']=[record.document().read_view() for record in capture.records]
+    value['consumed_ruling']=records[-1].document().read_view()
     return RetainedObject.from_value(value)
 
 
-def attach_f2_consumption(value: object) -> dict[str,JsonValue]:
-    row=RetainedObject.from_value(value).value()
+def attach_f2_consumption(value: object, *, _read_only: bool = False) -> dict[str,JsonValue]:
+    retained=RetainedObject.from_value(value)
+    row=retained.read_view() if _read_only else retained.value()
     capture=_RULING_CAPTURE.get()
     if capture is None:
         return row
@@ -2215,21 +2292,23 @@ def attach_f2_consumption(value: object) -> dict[str,JsonValue]:
     matches=[record for record in capture.records if record.raw_completion in original_ruling_bytes(row)]
     if matches:
         next_finding=RetainedObject.from_value(row)
-        row['consumed_rulings']=[r.document().value() for r in capture.records]
-        row['consumed_ruling']=matches[-1].document().value()
-        row['next_finding']=next_finding.value()
+        documents=[r.document() for r in capture.records]
+        row['consumed_rulings']=[d.read_view() if _read_only else d.value() for d in documents]
+        matched=matches[-1].document()
+        row['consumed_ruling']=matched.read_view() if _read_only else matched.value()
+        row['next_finding']=next_finding.read_view() if _read_only else next_finding.value()
     return row
 
 
 def bind_ruling_inputs(inputs: RetainedObject, finding: PreparedFinding | None) -> RetainedObject:
     from .finding_context import materials_for_origin
-    value=inputs.value()
-    origin=(finding.origin_check or finding.check).value() if finding is not None else None
+    value=inputs.read_view()
+    origin=(finding.origin_check or finding.check).read_view() if finding is not None else None
     def anchored(row: dict[str,JsonValue]) -> dict[str,JsonValue]:
         row=dict(row)
         if origin is not None and isinstance(row.get('finding_materials'),dict):
             row['finding_materials']=RetainedObject.from_value(_legacy(
-                materials_for_origin,row['finding_materials'],origin)).value()
+                materials_for_origin,row['finding_materials'],origin,_read_only=True)).read_view()
         return row
     value=anchored(value)
     for key in ('material','request'):
@@ -2249,7 +2328,7 @@ def note_checkpoint_ruling(*, invocation: RulingInvocation, raw: str, identity: 
     if not retention_allowed or checkpoint is None:
         if capture is not None:capture.retention_declined=True
         return None
-    from .completed_review_checkpoint import CompletedReviewCheckpoint, _request_material_binding
+    from .completed_review_checkpoint import _request_material_binding
     from .qixi_transaction_core import stable_regular_snapshot
     from .llm_client import completion_identity, cached_completion
     cp=cast(CanonicalCheckpoint,checkpoint)
@@ -2262,14 +2341,9 @@ def note_checkpoint_ruling(*, invocation: RulingInvocation, raw: str, identity: 
             'response_sha256':core.sha(raw),'checkpoint_directory':str(cp.directory)}).json_text+'\n').encode())
         if capture is None or capture.finding is None:return None
         raise ClosureContractError('FINDING_CLOSURE_ANSWER_MODEL_UNKNOWN')
-    binding=RetainedObject.from_value(cp.binding).value()
-    provider=_object(binding['provider'])
     actual_identity=RetainedObject.from_value(_legacy(completion_identity,identity,raw)).value()
-    provider['routing']=actual_identity
-    runtime=provider.get('runtime')
-    if isinstance(runtime,dict) and 'provider_model' in runtime:runtime['provider_model']=actual_identity['models']
-    binding['provider']=provider
-    actual=cast(CanonicalCheckpoint,_legacy(CompletedReviewCheckpoint,cp.root,binding,invocation.prompt))
+    actual=cp.response_checkpoint(raw)
+    binding=actual._binding_view() if hasattr(actual,'_binding_view') else RetainedObject.from_value(actual.binding).read_view()
     loaded=actual.load()
     if loaded is None or core.sha(loaded)!=core.sha(raw):
         raise ClosureContractError('FINDING_CLOSURE_CONSUMED_CHECKPOINT_MISSING')
@@ -2278,12 +2352,14 @@ def note_checkpoint_ruling(*, invocation: RulingInvocation, raw: str, identity: 
         snapshot=_legacy(stable_regular_snapshot,path,label='consumed original ruling')
         payload=getattr(snapshot,'payload',None)
         if not isinstance(payload,bytes):continue
-        doc=RetainedObject.from_value(json.loads(payload))
-        original=doc.value()
+        from .review_evidence_store import expand, evidence_store_root
+        decoded=_legacy(expand,json.loads(payload), store_root=_legacy(evidence_store_root,actual.directory), _shared=True)
+        doc=RetainedObject.from_value(decoded)
+        original=doc.read_view()
         if original.get('response_sha256')==core.sha(raw):originals[doc.sha256]=doc
     if len(originals)!=1:
         raise ClosureContractError('FINDING_CLOSURE_CONSUMED_CHECKPOINT_AMBIGUOUS')
-    original=next(iter(originals.values())).value()
+    original=next(iter(originals.values())).read_view()
     saved_binding=_object(original['binding'])
     original_prompt=_text(original['request'])
     if (RetainedObject.from_value(_legacy(_request_material_binding,saved_binding,original_prompt))
@@ -2297,14 +2373,14 @@ def note_checkpoint_ruling(*, invocation: RulingInvocation, raw: str, identity: 
         raise ClosureContractError('FINDING_CLOSURE_OWNER_TYPED_MATERIALS_REQUIRED')
     record=consumed_ruling(invocation=original_invocation,
         raw=cast(str,_legacy(cached_completion,str(raw),actual_identity)),identity=actual_identity,
-        origin=origin,checkpoint=RetainedObject.from_value({'root':str(cp.root),'original':original}))
+        origin=origin,checkpoint=RetainedObject.from_value({'root':str(actual.root),'original':original}))
     if capture is not None and capture.finding is not None:capture.records.append(record)
     return record
 
 
 def validate_consumed_checkpoint(record: ConsumedRuling) -> None:
     from .completed_review_checkpoint import CompletedReviewCheckpoint
-    data=record.checkpoint.value()
+    data=record.checkpoint.read_view()
     root=Path(_text(data['root']))
     original=_object(data['original'])
     binding=_object(original['binding'])
@@ -2323,11 +2399,12 @@ def validate_consumed_checkpoint(record: ConsumedRuling) -> None:
 def validate_ruling_materials(record: ConsumedRuling) -> None:
     """Rebuild actual stage materials from its inputs, never a returned row."""
     from .finding_context import materials_for_origin, decision_materials
-    value=record.inputs.value()
+    value=record.inputs.read_view()
     material: object
     if record.stage=='semantic-terminal':
         from .semantic_terminal_adjudication import terminal_finding_materials
-        material=_legacy(terminal_finding_materials,_object(value['request']),record.model_identity.value())
+        material=_legacy(terminal_finding_materials,_object(value['request']),record.model_identity.value(),
+                         _read_only=True)
     elif record.stage=='word-choice':
         from .acoustic_witness_adjudication import _semantic_fingerprint_payload,WordChoiceDependencies
         kwargs=dict(_object(value['consumption_input']))
@@ -2344,25 +2421,25 @@ def validate_ruling_materials(record: ConsumedRuling) -> None:
             allowed_choices=set(_text(v) for v in _array(kwargs['allowed_choices'])),
             candidates=kwargs['candidates'],require_complete_support=kwargs['require_complete_support'],
             policy_version=kwargs['policy_version'],model_identity=record.model_identity.value(),
-            dependencies=dependencies)).value()
+            dependencies=dependencies,_read_only=True)).read_view()
         material=payload['finding_materials']
     elif record.stage=='proposal-rebuild':
         from .closed_set_proposal_rebuild import (_PROPOSAL_REBUILD_SCHEMA,
             _PROPOSAL_REBUILD_PROMPT,TOPIC_PHONEME_POLICY)
-        material=decision_materials(record.check.value(),data=value['consumption_input'],
+        material=decision_materials(record.check.read_view(),data=value['consumption_input'],
             contracts={'proposal_schema':_PROPOSAL_REBUILD_SCHEMA,'instructions':_PROPOSAL_REBUILD_PROMPT,
-                       'policy':TOPIC_PHONEME_POLICY},model_identity=record.model_identity.value())
+                       'policy':TOPIC_PHONEME_POLICY},model_identity=record.model_identity.value(),_read_only=True)
     elif record.stage=='editorial-rendering':
         from .editorial_subtitle import editorial_model_data,SCHEMA,PROMPT,OMISSION_PROMPT,REFERENCE_PROMPT
         from .editorial_edit_contract import edit_contract
         request=_object(value['request'])
-        material=decision_materials(record.check.value(),data=_legacy(editorial_model_data,request),
+        material=decision_materials(record.check.read_view(),data=_legacy(editorial_model_data,request),
             contracts={'editorial_schema':SCHEMA,'instructions':PROMPT+OMISSION_PROMPT+REFERENCE_PROMPT,
                        'edit_contract':_legacy(edit_contract,request['current_cue'])},
-            model_identity=record.model_identity.value())
+            model_identity=record.model_identity.value(),_read_only=True)
     else:
         raise ClosureContractError('FINDING_CLOSURE_UNKNOWN_RULING_CONSUMER')
-    rebuilt=RetainedObject.from_value(materials_for_origin(material,record.origin_check.value()))
+    rebuilt=RetainedObject.from_value(materials_for_origin(material,record.origin_check.read_view(),_read_only=True))
     if rebuilt!=record.materials or _input_check(record.inputs)!=record.check:
         raise ClosureContractError('FINDING_CLOSURE_RULING_MATERIAL_CONSUMER_REJECTED')
 

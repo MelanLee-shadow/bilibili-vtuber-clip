@@ -28,7 +28,7 @@ from typing import Callable, Mapping
 from . import argon_escalation_storage as store
 from . import gemini_backup_policy as paid
 from .argon_escalation_contract import (
-    AudioSpec, KeyPolicy, ROUTE_UNSERVABLE, classify_provider_rejection, require, sha,
+    AudioSpec, KeyPolicy, ROUTE_UNSERVABLE, classify_provider_rejection, require, sha, valid_sha,
 )
 from . import argon_model_capability as capability
 from .argon_escalation_transport import ArgonHttpTransport
@@ -103,7 +103,7 @@ def load_credentials() -> dict[str, str]:
 
     loaded = load_gemini_credentials()
     return {
-        name: os.environ.get(name) or loaded.get(name, "")
+        name: (os.environ.get(name) if os.environ.get(name) != 'CPA_MANAGED' else '') or loaded.get(name, "")
         for name in (*FREE_NAMES, "GEMINI_KEY_BACKUP")
     }
 
@@ -133,27 +133,162 @@ class ArgonRuntime:
         self.base = Path(runtime_root).absolute()
         self.config = dict(config)
         self.loader = credential_loader or load_credentials
-        self.transport_factory = transport_factory or ArgonHttpTransport
+        # One existing batch lifecycle owns route/key identity, paid reservation
+        # and realtime continuation. Keep that whole operation on its exception
+        # until CPA can represent the lifecycle; a standalone realtime call can
+        # still use CPA without claiming the lifecycle's selected Google key.
+        from .cpa_gemini_client import enabled
+        self.transport_factory = transport_factory or (
+            lambda resolver: ArgonHttpTransport(resolver,
+                **({'cpa_operation': 'argon_lifecycle'} if enabled() else {})))
 
     def advance(self, *, root: Path, spec: AudioSpec) -> dict:
-        from . import cpa_gemini_client
-        if cpa_gemini_client.enabled():
-            cpa_gemini_client.require_operation('batch_lifecycle')
         store.directory(root)
         with store.locked(root):
             # Bounded: one pass per configured route plus the paid route. Only
             # an iteration that reserved no new inference may continue, so a
             # refusal received in this call still ends this call.
             outcome, dispatches = None, 0
+            authorization = self.config.get("format_recovery_authorization",
+                                            self.config.get("format_recovery"))
             for _ in range(len(FREE_NAMES) + 2):
-                outcome = self._advance_locked(root, spec)
+                outcome = self._advance_locked(
+                    root, spec, format_recovery_authorization=authorization
+                )
                 dispatches += outcome["dispatches_this_advance"]
                 if (outcome["result"]["status"] not in NEXT_ROUTE_STATUSES
                         or outcome["dispatches_this_advance"]):
                     break
             return {**outcome, "dispatches_this_advance": dispatches}
 
-    def _advance_locked(self, root: Path, spec: AudioSpec) -> dict:
+    def _run_format_recovery(
+        self,
+        *,
+        root: Path,
+        engine: ArgonEscalationWitness,
+        spec: AudioSpec,
+        original_result: Mapping,
+        authorization: Mapping | None,
+        provider: object,
+        slot_wait_s: float,
+    ) -> dict:
+        """Run one authorized successor through the ordinary provider slot."""
+        selected = authorization is not None
+        if selected:
+            require(isinstance(authorization, Mapping), "FORMAT_AUTH_INVALID")
+            target = authorization.get("original")
+            require(isinstance(target, Mapping)
+                    and isinstance(target.get("engine_root"), str)
+                    and Path(target["engine_root"]).is_absolute()
+                    and valid_sha(target.get("task_id")), "FORMAT_AUTH_TARGET_INVALID")
+            # Config is shared by all findings in a clip; only the exact
+            # original task may use this separately granted successor.
+            selected = (target["engine_root"] == str(engine.root)
+                        and target["task_id"] == original_result.get("task_id"))
+        if (
+            not selected
+            or original_result.get("status") != "RESPONSE_REJECTED"
+            or original_result.get("raw_replay") is not None
+        ):
+            return {
+                "result": original_result,
+                "format_recovery": None,
+                "dispatches_this_advance": 0,
+                "new_usable_observations_this_recovery": 0,
+            }
+        from .argon_format_recovery import RECOVERY_SCHEMA, recover
+
+        try:
+            # The successor is still an ordinary Argon call and must acquire
+            # the same process-wide provider slot.  The injected Slotted
+            # transport retains this lane's key, capability proof and normal
+            # transport accounting.
+            with runtime_provider_slot(
+                runtime_root=self.base,
+                timeout_seconds=slot_wait_s,
+                provider="gemini",
+                modality="audio",
+            ) as lease:
+                require(lease is not None, "ARGON_PROVIDER_SLOT_REQUIRED")
+                recovered = recover(
+                    parent_root=root,
+                    original_engine=engine,
+                    original_result=original_result,
+                    expected=spec,
+                    authorization=authorization,
+                    provider=provider,
+                    request_timeout_s=self.config.get("request_timeout_s", 60),
+                    max_batch_wait_s=86400,
+                    max_recovery_pages=1,
+                )
+            return {
+                "result": recovered["result"],
+                "format_recovery": recovered["format_recovery"],
+                "dispatches_this_advance": recovered["dispatches_this_advance"],
+                "new_usable_observations_this_recovery": recovered[
+                    "new_usable_observations_this_recovery"
+                ],
+            }
+        except ProviderSlotBusy:
+            return {
+                "result": original_result,
+                "format_recovery": {
+                    "schema_version": RECOVERY_SCHEMA,
+                    "status": "ADMISSION_PENDING",
+                    "reason": "ARGON_PROVIDER_SLOT_BUSY",
+                    "dispatches_this_recovery": 0,
+                },
+                "dispatches_this_advance": 0,
+                "new_usable_observations_this_recovery": 0,
+            }
+
+    def _finish_advance(
+        self,
+        *,
+        engine: ArgonEscalationWitness,
+        original_result: Mapping,
+        recovered: Mapping,
+        before_accounting: Mapping,
+        prior_attempts: int,
+        retrieving: bool,
+        slot_wait_s: float,
+    ) -> dict:
+        result = recovered["result"]
+        recovery = recovered["format_recovery"]
+        original_dispatches = max(
+            0,
+            original_result["accounting"]["inference_reservations"]
+            - before_accounting["inference_reservations"],
+        )
+        new_observation = int(
+            original_result.get("status") == "OBSERVED"
+            and not any(
+                h["state"] == "COMPLETED"
+                for h in before_accounting["histories"]
+            )
+        ) + recovered["new_usable_observations_this_recovery"]
+        effective_engine_root = str(engine.root)
+        if recovery is not None and recovery.get("successor_engine_root"):
+            effective_engine_root = recovery["successor_engine_root"]
+        return {
+            "engine_root": effective_engine_root,
+            "result": result,
+            "prior_key_attempts": prior_attempts,
+            "dispatches_this_advance": (
+                original_dispatches + recovered["dispatches_this_advance"]
+            ),
+            "new_usable_observations_this_advance": new_observation,
+            "advance_operation": (
+                "RAW_REPLAY" if result.get("raw_replay") is not None else
+                "FORMAT_RECOVERY" if recovery is not None else
+                "RETRIEVE_RETAINED_BATCH" if retrieving else "ADVANCE_ROUTE"
+            ),
+            "provider_slot_wait_s": slot_wait_s,
+            **({"format_recovery": recovery} if recovery is not None else {}),
+        }
+
+    def _advance_locked(self, root: Path, spec: AudioSpec, *,
+                        format_recovery_authorization: Mapping | None = None) -> dict:
         if True:
             # Only the normal runtime config owns production scope. A planner
             # cannot lift a comparison grant, and cold recovery cannot turn an
@@ -602,14 +737,13 @@ class ArgonRuntime:
                         # The paid key is the last route: the refusal stays a
                         # terminal FAILED receipt; nothing is replayed.
                         result = {**result, "route_refusal": rejection["classification"]}
-            return {
-                "engine_root": str(engine.root),
-                "result": result,
-                "prior_key_attempts": prior_attempts,
-                "dispatches_this_advance": max(0, result["accounting"]["inference_reservations"]
-                                               - before_accounting["inference_reservations"]),
-                "new_usable_observations_this_advance": int(result["status"] == "OBSERVED"
-                    and not any(h["state"] == "COMPLETED" for h in before_accounting["histories"])),
-                'advance_operation': 'RETRIEVE_RETAINED_BATCH' if retrieving else 'ADVANCE_ROUTE',
-                'provider_slot_wait_s': slot_wait_s,
-            }
+            original_result = result
+            recovered = self._run_format_recovery(root=root, engine=engine, spec=spec,
+                original_result=original_result, authorization=format_recovery_authorization,
+                provider=Slotted(),
+                slot_wait_s=slot_wait_s)
+            return self._finish_advance(
+                engine=engine, original_result=original_result, recovered=recovered,
+                before_accounting=before_accounting, prior_attempts=prior_attempts,
+                retrieving=retrieving, slot_wait_s=slot_wait_s,
+            )

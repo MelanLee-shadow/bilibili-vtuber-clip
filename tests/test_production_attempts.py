@@ -191,7 +191,7 @@ def test_package_stages_require_both_current_audit_and_qc_and_do_not_hide_a_late
     assert not (tmp_path/'state').exists()
 
 
-def test_uncovered_command_http_is_unknown_and_audio_http_is_independently_counted(tmp_path):
+def test_uncovered_command_http_is_unknown_and_audio_http_is_independently_counted(tmp_path, legacy_gemini_transport):
     import urllib.error
     from src.autoslice import agy_gemini_client as audio
     from contextlib import nullcontext

@@ -177,6 +177,55 @@ def _row_identity(row: Mapping) -> dict:
             "source_windows": [], "package_locator": str(path.parent) if candidate else ""}
 
 
+
+
+
+
+
+
+
+
+SOURCE_OVERLAP_SAME_VIDEO_MIN_PERCENT = 80
+
+
+def _merged_windows(windows) -> dict[str, list[list[int]]]:
+    """Union of windows per source_sha256, so overlapping pieces count once."""
+    by_source: dict[str, list[tuple[int, int]]] = {}
+    for window in windows:
+        by_source.setdefault(window["source_sha256"], []).append(
+            (window["start_ms"], window["end_ms"]))
+    merged: dict[str, list[list[int]]] = {}
+    for source, spans in by_source.items():
+        out: list[list[int]] = []
+        for start, end in sorted(spans):
+            if out and start <= out[-1][1]:
+                out[-1][1] = max(out[-1][1], end)
+            else:
+                out.append([start, end])
+        merged[source] = out
+    return merged
+
+
+def _total_ms(merged) -> int:
+    return sum(end - start for spans in merged.values() for start, end in spans)
+
+
+def _source_overlap_is_same_content(target_windows, previous_windows) -> bool:
+    target = _merged_windows(target_windows)
+    previous = _merged_windows(previous_windows)
+    target_total = _total_ms(target)
+    previous_total = _total_ms(previous)
+    if target_total <= 0 or previous_total <= 0:
+        return False
+    overlap = 0
+    for source, spans in target.items():
+        for a_start, a_end in spans:
+            for b_start, b_end in previous.get(source, ()):
+                overlap += max(0, min(a_end, b_end) - max(a_start, b_start))
+    minimum = SOURCE_OVERLAP_SAME_VIDEO_MIN_PERCENT
+    return overlap * 100 >= target_total * minimum and overlap * 100 >= previous_total * minimum
+
+
 def row_matches_target(
     row: Mapping, video_sha256: str, manifest: Mapping | None, *, identity: dict | None = None,
 ) -> bool:
@@ -208,11 +257,8 @@ def row_matches_target(
     # generic candidate intersection and accidentally accept it there.
     if (not all(dates) or dates[0] == dates[1]) and shared - same_day:
         return True
-    return any(
-        a["source_sha256"] == b["source_sha256"]
-        and max(a["start_ms"], b["start_ms"]) < min(a["end_ms"], b["end_ms"])
-        for a in target["source_windows"] for b in previous.get("source_windows") or []
-    )
+    return _source_overlap_is_same_content(
+        target.get("source_windows") or [], previous.get("source_windows") or [])
 
 
 def guard_manifest(guard, ledger: Path, video_sha256: str, manifest: Mapping):

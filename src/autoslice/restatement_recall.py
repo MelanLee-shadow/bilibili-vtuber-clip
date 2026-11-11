@@ -301,11 +301,19 @@ def discover_restatement_findings(
         early_prefix, _early_label, _early_rest = _split_label_prefix(early_raw)
         _late_prefix, _late_label, late_rest = _split_label_prefix(late_raw)
         proposed_full_cue = f"{early_prefix} {late_rest}" if early_prefix else late_rest
+        # Reuse the consumer's exact bounded edit geometry. A restatement can
+        # nominate missing/extra spoken units as well as a substitution; it
+        # still grants no mutation and must pass the ordinary acoustic judge.
+        from src.autoslice.final_review_auditor import _derive_single_span_edit
+        suspect, replacement, _start, _end, geometry_error = _derive_single_span_edit(
+            early_raw, proposed_full_cue, allow_insertion=True, allow_deletion=True)
+        repair_class = ("spoken_unit" if geometry_error is None
+                        and (not suspect.strip() or not replacement.strip()) else "phonetic")
         finding = {
             "cue": pair.early_index,
             "kind": "context",
             "proposed_full_cue": proposed_full_cue,
-            "repair_class": "phonetic",
+            "repair_class": repair_class,
             "source_surface": None,
             "candidate_memory_id": None,
             "evidence_cue_ids": [pair.late_index],

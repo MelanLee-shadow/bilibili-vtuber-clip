@@ -18,6 +18,7 @@ import pytest
 
 from src.autoslice import runtime_gc as gc
 from src.autoslice.first_publication_boundary import published_recall_inputs
+from tests.test_publication_reconciliation import first_publication_registries  # noqa: F401  (fixture)
 
 RUN = "private-runs/c20-oct12-201517-normal-20261013"
 CID = "semantictalk_1438010_1548390"
@@ -201,6 +202,8 @@ class OpenedFiles:
                 OpenedFiles.active.add(path.resolve())
 
 
+# recall_authority validates through the default registry read; point it at published_fixture's tmp registry.
+@pytest.mark.usefixtures("first_publication_registries")
 def test_round_trip_every_file_the_recall_replay_opens_is_protected(tmp_path):
     from tests.test_first_publication_boundary import CANDIDATE, published_fixture, recall_authority
     fixture = published_fixture(tmp_path)
@@ -208,7 +211,10 @@ def test_round_trip_every_file_the_recall_replay_opens_is_protected(tmp_path):
         recall_authority(fixture)
     files, complete = published_recall_inputs(fixture["publication"], {CANDIDATE}, within=tmp_path)
     assert complete and opened
-    assert {path for path in opened if tmp_path in path.parents} <= {p.resolve() for p in files}
+    # The authority witness also reads the publication registry (static + runtime); it is never a GC target.
+    registries = {fixture["registry_path"].resolve(),
+                  (fixture["base"] / "state" / "publication_registry.runtime.v1.json").resolve()}
+    assert {path for path in opened if tmp_path in path.parents} - registries <= {p.resolve() for p in files}
 
 
 def test_round_trip_every_file_the_checkpoint_parent_opens_is_protected(tmp_path, monkeypatch):

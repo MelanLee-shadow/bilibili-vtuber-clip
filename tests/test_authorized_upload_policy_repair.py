@@ -93,6 +93,7 @@ def setup(tmp_path, *, desc_wrong=False):
                         if field == "desc" and value != self.raw["archive"]["desc"]:
                             value = self.raw["archive"]["source"] + "\n" + value
                         self.raw["archive"][field] = value
+                self.raw["videos"] = copy.deepcopy(payload["videos"])
             if self.ambiguous:
                 raise TimeoutError("ambiguous synthetic edit")
             return {"code": 0}
@@ -151,7 +152,8 @@ def test_policy_edit_only_changed_fields_and_preserves_clone_bytes(tmp_path, des
     assert {key for key in payload if payload[key] != original_payload[key]} == set(receipt["changes"])
     for field in ("title", "tag", "cover", "videos", "dynamic", "subtitle", "no_reprint"):
         assert json.dumps(payload[field], ensure_ascii=False) == json.dumps(original_payload[field], ensure_ascii=False)
-    assert adapter.session.raw["videos"] == before["videos"]
+    # Only the sole part's name moves: upload file name -> the archive title.
+    assert adapter.session.raw["videos"] == [{**before["videos"][0], "title": before["archive"]["title"]}]
     if desc_wrong:
         assert payload["desc"] == au.description_for_title(manifest["title"], submission=True)
         assert adapter.session.raw["archive"]["desc"] == manifest["description"]

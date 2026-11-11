@@ -5,20 +5,26 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import types
 
 import pytest
 
 import scripts.session_autoslice as runner
 import scripts.gemini_slice_jingting as jingting
 from src.autoslice.streamer_dynamics import (
+    OPUS_FEED_ENDPOINT,
+    REQUEST_BUDGET,
+    ROOM_INFO_ENDPOINT,
     StreamerDynamicsError,
     _dynamic_items,
+    build_snapshot,
     bind_session_theme_hints,
     render_theme_hints_context,
     session_theme_hints,
     validate_dynamics_snapshot,
     validate_session_theme_hints,
 )
+from src.autoslice.timely_term_crawler import CrawlError
 
 
 def _item(dynamic_id: str, published_at: str, text: str = "今晚聊聊新活动") -> dict:
@@ -103,31 +109,42 @@ def test_validate_dynamics_snapshot_accepts_not_yet_expired_snapshot():
 
 
 # ---------------------------------------------------------------------------
-# _dynamic_items: skipped must count structurally malformed rows only, not
-# normal live-feed filtering (other people's mid, text-less image/video/
-# forward posts) — those are routine, not crawl failures.
+# _dynamic_items / build_snapshot: the opus feed is requested per host_mid, so
+# every row is the owner's own.  skipped counts structurally malformed rows
+# only; image-only (text-less) posts are routine filtering, not failures.
+# An empty first page is Bilibili's soft risk-control answer and must fail
+# loudly instead of becoming a fresh empty snapshot.
 # ---------------------------------------------------------------------------
 
+_NOW = dt.datetime(2026, 11, 10, 6, 47, tzinfo=dt.timezone.utc)
+# Real opus id: (id >> 32) + 1498838400 == T08:30:26Z (checked against
+# the signed feed/space pub_ts of the same dynamic).
+_OPUS_ID = "1268624358748717078"
 
-def test_dynamic_items_does_not_count_text_less_or_foreign_mid_rows_as_skipped():
-    healthy_no_text_post = {
-        "id_str": "1",
-        "modules": {
-            "module_author": {"mid": 999, "pub_ts": 1754470800},
-            "module_dynamic": {"desc": None, "major": {"type": "MAJOR_TYPE_ARCHIVE"}},
-        },
-    }
-    forwarded_from_someone_else = {
-        "id_str": "2",
-        "modules": {
-            "module_author": {"mid": 111, "pub_ts": 1754470800},
-            "module_dynamic": {"desc": {"text": "别人的动态"}},
-        },
-    }
 
+def _opus_payload(*rows, code=0):
+    return {"code": code, "data": {"items": list(rows), "has_more": True}}
+
+
+def test_dynamic_items_derive_publication_time_from_the_opus_id():
     items, skipped = _dynamic_items(
-        {"code": 0, "data": {"items": [healthy_no_text_post, forwarded_from_someone_else]}},
-        uid=999,
+        _opus_payload({"opus_id": _OPUS_ID, "content": "九点来九点来", "pub_time": ""}),
+        now=_NOW,
+    )
+
+    assert skipped == 0
+    assert items == [
+        {
+            "dynamic_id": _OPUS_ID,
+            "published_at": "2026-11-09T08:30:26+00:00",
+            "text": "九点来九点来",
+        }
+    ]
+
+
+def test_dynamic_items_does_not_count_text_less_rows_as_skipped():
+    items, skipped = _dynamic_items(
+        _opus_payload({"opus_id": _OPUS_ID, "content": "", "pub_time": ""}), now=_NOW
     )
 
     assert items == []
@@ -135,12 +152,66 @@ def test_dynamic_items_does_not_count_text_less_or_foreign_mid_rows_as_skipped()
 
 
 def test_dynamic_items_counts_structurally_malformed_rows_as_skipped():
+    far_future_id = str((int(_NOW.timestamp()) + 10 * 86400 - 1498838400) << 32)
     items, skipped = _dynamic_items(
-        {"code": 0, "data": {"items": [{"id_str": "not-numeric", "modules": {}}]}}, uid=999
+        _opus_payload(
+            {"opus_id": "not-numeric", "content": "x"},
+            {"opus_id": far_future_id, "content": "时间不可信"},
+            "not-a-row",
+        ),
+        now=_NOW,
     )
 
     assert items == []
-    assert skipped == 1
+    assert skipped == 3
+
+
+def test_dynamic_items_rejects_an_empty_first_page_as_risk_control():
+    with pytest.raises(CrawlError, match="empty first page"):
+        _dynamic_items(_opus_payload(), now=_NOW)
+
+
+def test_dynamic_items_rejects_a_nonzero_feed_code():
+    with pytest.raises(CrawlError, match="code -352"):
+        _dynamic_items(_opus_payload(code=-352), now=_NOW)
+
+
+class _ScriptedClient:
+    """Stands in for BoundedHttpClient: returns canned bodies per endpoint."""
+
+    def __init__(self, bodies):
+        self.bodies = bodies
+        self.urls = []
+
+    def fetch(self, url, **kwargs):
+        self.urls.append(url)
+        for prefix, body in self.bodies.items():
+            if url.startswith(prefix):
+                return types.SimpleNamespace(body=json.dumps(body).encode())
+        raise AssertionError(f"unexpected endpoint {url}")
+
+
+def test_build_snapshot_uses_two_calls_and_no_wbi_signing():
+    client = _ScriptedClient(
+        {
+            ROOM_INFO_ENDPOINT: {"code": 0, "data": {"uid": 12345}},
+            OPUS_FEED_ENDPOINT: _opus_payload({"opus_id": _OPUS_ID, "content": "新活动预告"}),
+        }
+    )
+
+    snapshot, skipped = build_snapshot(client, room_id="22966160", now=_NOW)
+
+    assert skipped == 0
+    assert snapshot["uid"] == 12345
+    assert [item["text"] for item in snapshot["items"]] == ["新活动预告"]
+    assert len(client.urls) == 2
+    assert "w_rid" not in client.urls[1] and "host_mid=12345" in client.urls[1]
+
+
+def test_request_budget_covers_both_calls_with_one_visitor_cookie_refresh_each():
+    # room info + opus feed page, each allowed the single 412 refresh that
+    # BoundedHttpClient charges to the budget.
+    assert REQUEST_BUDGET == 4
 
 
 # ---------------------------------------------------------------------------

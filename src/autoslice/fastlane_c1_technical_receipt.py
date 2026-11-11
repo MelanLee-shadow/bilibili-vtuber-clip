@@ -20,4 +20,3 @@ validate_authorized_projection_manifest = _unavailable
 validate_completed = _unavailable
 template = _unavailable
 load_formal_authority = _unavailable
-frozen_publish_policy = _unavailable

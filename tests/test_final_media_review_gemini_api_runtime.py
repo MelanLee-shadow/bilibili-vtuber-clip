@@ -76,6 +76,7 @@ def _runtime_tree(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     _fake_tool(ffmpeg)
     _fake_tool(ffprobe)
     return root, {
+        "AUTOSLICE_CPA_GEMINI_ENABLED": "0",
         ENABLED_ENV: "1",
         MODEL_ENV: MODEL,
         "GEMINI_API_KEY": "free-key-one",

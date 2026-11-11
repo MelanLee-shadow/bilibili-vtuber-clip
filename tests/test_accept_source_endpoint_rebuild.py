@@ -10,6 +10,7 @@ import shutil
 
 import pytest
 
+
 from src.autoslice.first_publication_boundary import bind_published_recall_to_spec
 from src.autoslice.new_bv_repair_authority import (
     build_new_bv_repair_authority, validate_new_bv_repair_authority,
@@ -28,8 +29,14 @@ from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.boundary_semantic_review import cue_grid_sha256
 from src.autoslice.subtitle_timing_qa import SpeechSpan
 from tests.test_first_publication_boundary import published_fixture, recall_authority
+from tests.test_publication_reconciliation import first_publication_registries  # noqa: F401  (fixture)
 from tests.test_retained_source_input import _files, _forbidden, _seed_native
 
+
+# These fixtures replace the original Google HTTP / AGY process boundary.
+# first_publication_registries: the source-checkpoint parent chain validates the repair authority through
+# the default registry read; point it at this test's tmp registry (the chain has no registry parameter).
+pytestmark = pytest.mark.usefixtures("legacy_gemini_transport", "first_publication_registries")
 
 ROOT = Path(__file__).resolve().parents[1]
 _module_spec = importlib.util.spec_from_file_location(

@@ -24,6 +24,8 @@ from src.autoslice.argon_escalation_contract import KeyPolicy, MODEL, canonical,
 from src.autoslice.argon_escalation_transport import ArgonHttpTransport, API_BASE
 from src.autoslice.argon_escalation_witness import ProviderTransportError
 
+pytestmark = pytest.mark.usefixtures("legacy_gemini_transport")
+
 
 @pytest.fixture(autouse=True)
 def external_network_and_credentials_forbidden(monkeypatch, request):

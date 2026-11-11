@@ -335,3 +335,97 @@ def talk_envelope_violations(
     except EnvelopeError:
         violations.append("talk_partner_unresolved")
     return violations
+
+
+
+
+
+
+
+
+DESCRIPTION_EXTRA_MAX_CHARS = 300
+
+
+def description_extra_lines(extra: object) -> tuple[str, ...] | None:
+    """The lines ``extra`` declares, or None when it is not a string / list of strings.
+
+    The one definition of the shape, shared by render, validation and parse: a
+    string is one line, a list/tuple is one line per item.  Item validity is
+    not checked here.
+    """
+
+    if isinstance(extra, str):
+        return (extra,)
+    if isinstance(extra, (list, tuple)) and all(isinstance(item, str) for item in extra):
+        return tuple(extra)
+    return None
+
+
+def description_extra_problems(extra: object) -> list[str]:
+    """Problems with an extra description block; an empty list means valid.
+
+    Every line gets the same audience-text prohibitions as the fixed description
+    lines: non-empty, one line only, no control characters, no outer whitespace.
+    A list must be non-empty and hold only strings, and the joined block must
+    fit ``DESCRIPTION_EXTRA_MAX_CHARS``.
+    """
+
+    import unicodedata
+
+    lines = description_extra_lines(extra)
+    if lines is None:
+        return ["DESCRIPTION_EXTRA_NOT_TEXT"]
+    if not lines:
+        return ["DESCRIPTION_EXTRA_EMPTY"]
+    problems: list[str] = []
+    for line in lines:
+        if not line.strip():
+            problems.append("DESCRIPTION_EXTRA_EMPTY")
+        if line != line.strip():
+            problems.append("DESCRIPTION_EXTRA_OUTER_WHITESPACE")
+        if any(unicodedata.category(ch) in {"Cc", "Zl", "Zp"} for ch in line):
+            problems.append("DESCRIPTION_EXTRA_CONTROL_OR_LINE_BREAK")
+        try:
+            from src.autoslice.audience_text import assert_audience_text
+
+            assert_audience_text(line, surface="description")
+        except Exception as exc:  # ContractRejection: internal disclosure forbidden
+            problems.append(str(exc) or "DESCRIPTION_EXTRA_AUDIENCE_TEXT_REJECTED")
+    if len("\n".join(lines)) > DESCRIPTION_EXTRA_MAX_CHARS:
+        problems.append("DESCRIPTION_EXTRA_TOO_LONG")
+    return list(dict.fromkeys(problems))
+
+
+def append_description_extra(description: str, extra: object) -> str:
+    """``description`` unchanged when ``extra`` is None; otherwise validated and appended."""
+
+    if extra is None:
+        return description
+    problems = description_extra_problems(extra)
+    if problems:
+        raise EnvelopeError("DESCRIPTION_EXTRA_INVALID:" + ",".join(problems))
+    return description + "\n" + "\n".join(description_extra_lines(extra) or ())
+
+
+def parse_description_extra(description: object, base_description: str) -> tuple[str, ...] | None:
+    """Invert ``append_description_extra``: the extra lines that follow ``base_description``.
+
+    ``base_description`` is the description rendered without extra (fixed lines
+    plus related-streamer lines).  Returns ``()`` when nothing follows it, the
+    lines when ``append_description_extra(base_description, lines)`` reproduces
+    ``description`` exactly, and None for anything else.  A one-item list and
+    the bare string render identically, so the parse yields the line tuple, not
+    the declared form; compare it with ``description_extra_lines(declared)``.
+    """
+
+    if not isinstance(description, str):
+        return None
+    if description == base_description:
+        return ()
+    prefix = base_description + "\n"
+    if not description.startswith(prefix):
+        return None
+    lines = tuple(description[len(prefix) :].split("\n"))
+    if description_extra_problems(lines):
+        return None
+    return lines if append_description_extra(base_description, lines) == description else None

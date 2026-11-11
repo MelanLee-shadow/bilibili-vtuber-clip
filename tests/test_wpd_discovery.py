@@ -218,7 +218,7 @@ def test_prefetch_uses_existing_owner_and_real_source_identity(monkeypatch, tmp_
     calls = []
     def observe(**kwargs):
         calls.append(kwargs)
-        return [{'status': 'OBSERVED', 'provider': kwargs['provider']}]
+        return [{'status': 'OBSERVED', 'provider': kwargs['provider'], 'model': kwargs['provider']}]
     observe.available_providers = ('native', 'mai', 'moss', 'gemini')
     def verifier(_):
         pytest.fail('C0 must use range owner, never narrow direct witness')
@@ -348,8 +348,13 @@ def test_bound_language_scan_can_preserve_real_japanese_over_han_surface():
     (True, 'PASS', True, True), (False, 'PASS', True, False),
     (True, 'PARTIAL', True, False), (True, 'PASS', False, False),
 ])
+@pytest.mark.parametrize('routes', [
+    (('mai', 'mai'), ('moss', 'moss')),
+    (('mai', 'mai'), ('agy', 'gemini-test')),
+    (('agy', 'gemini-test'), ('gemini_api', 'gemini-test')),
+])
 def test_producer_coverage_requires_current_completed_channel_receipts(
-    monkeypatch, fullclip_available, blind_status, blind_current, complete,
+    monkeypatch, fullclip_available, blind_status, blind_current, complete, routes,
 ):
     import hashlib
     from src.autoslice import discovery_channels as channels
@@ -369,9 +374,10 @@ def test_producer_coverage_requires_current_completed_channel_receipts(
         acoustic_discovery_audit={'status': blind_status, 'restatement_discovery_status': 'PASS',
             'srt_sha256': 'sha256:' + hashlib.sha256((srt('一句') if blind_current else srt('旧句')).encode()).hexdigest(),
             'fullclip_discovery_status': 'OBSERVED' if fullclip_available else 'INCOMPLETE',
-            'fullclip_discovery_observations': [{'provider': 'mai'}, {'provider': 'moss'}] if fullclip_available else []},
+            'fullclip_discovery_observations': [{'status': 'OBSERVED', 'provider': p, 'model': m}
+                for p, m in routes] if fullclip_available else []},
         final_review_llm=lambda _: '{"findings":[]}', pronoun_audit_llm=lambda _: '{}')
-    assert receipt['scan_coverage_complete'] is complete
+    assert receipt['scan_coverage_complete'] is (complete and len({m for _, m in routes}) > 1)
 
 
 def test_open_ledger_transport_cannot_turn_asr_origins_into_a_non_asr_vote():

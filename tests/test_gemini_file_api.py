@@ -20,6 +20,8 @@ from src.autoslice.gemini_file_api import (
 
 MODEL = "gemini-3.8-flash"
 
+pytestmark = pytest.mark.usefixtures("legacy_gemini_transport")
+
 
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -234,6 +236,7 @@ def test_free_key_ladder_rotates_only_explicit_auth_or_quota(
         model=MODEL,
         video_fps=5.0,
         environment={
+            "AUTOSLICE_CPA_GEMINI_ENABLED": "0",
             "GEMINI_API_KEY": "free-one",
             "GEMINI_API_KEY_2": "free-two",
             "GEMINI_KEY_BACKUP": "paid-must-not-be-read",
@@ -281,6 +284,7 @@ def test_ambiguous_failure_never_rotates_to_another_key(tmp_path: Path):
             model=MODEL,
             video_fps=5.0,
             environment={
+                "AUTOSLICE_CPA_GEMINI_ENABLED": "0",
                 "GEMINI_API_KEY": "free-one",
                 "GEMINI_API_KEY_2": "free-two",
             },

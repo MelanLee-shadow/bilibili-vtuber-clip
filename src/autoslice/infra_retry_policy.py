@@ -227,7 +227,8 @@ def cpa_text_retry_call(call, *, record, sleeper=None, clock=None, jitter=None):
     only closed metadata, not prompts, exception messages or credentials.
     The public text transport supplies the existing CPA usage recorder.
     """
-    if terminal_retry_state() is not None:
+    from .cpa_request_lifecycle import active_request
+    if active_request() or terminal_retry_state() is not None:
         return call()
     sleeper = sleeper or time.sleep
     clock = clock or time.monotonic
@@ -509,6 +510,9 @@ def _mark_terminal_retry_failure(
 def terminal_retry_call(call, *, timeout_seconds: float | int | None = None):
     """Run one provider call with transient retry inside the active scope."""
 
+    from .cpa_request_lifecycle import active_request
+    if active_request():
+        return call()
     state = terminal_retry_state()
     if state is None:
         return call()

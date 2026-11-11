@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+
 import src.autoslice.song_repair as song_repair
 import src.autoslice.song_performance as song_performance
 import src.autoslice.agy_lrc_alignment as agy_lrc_alignment
@@ -39,6 +40,9 @@ from src.autoslice.song_repair import (
     validate_live_performance_observation,
 )
 
+
+# These fixtures replace the original Google HTTP / AGY process boundary.
+pytestmark = pytest.mark.usefixtures("legacy_gemini_transport")
 
 READY_LYRIC_VOCAL_ASSERTIONS = {
     "lyric_vocal_subject": "LIDOUSHA",

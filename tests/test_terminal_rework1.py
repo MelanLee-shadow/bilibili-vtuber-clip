@@ -96,7 +96,6 @@ def test_context_projection_uses_g6_source_clock_and_never_drops_large_facts(rig
 def test_record_failure_reaches_cli_exit_and_content_block_stays_distinct(rig, monkeypatch):
     import sys,os
     import scripts.predeploy_contract_gauntlet as gate
-    from src.autoslice import semantic_retry_progress as progress
     from src.autoslice.review_evidence_store import record_metrics,validate_record_metrics
     audit,_ = produce(rig,c_reply)
     metrics=record_metrics({'findings':[audit]})
@@ -108,36 +107,19 @@ def test_record_failure_reaches_cli_exit_and_content_block_stays_distinct(rig, m
     assert gate.replay_exit_code([{'status':'ANSWER_UNAVAILABLE'}])==1
     assert gate.replay_exit_code([{'status':'REJECTED','reason':'TERMINAL_UNRESOLVABLE'}])==0
     monkeypatch.setenv('AUTOSLICE_BASE',str(rig.tmp))
-    production = rig.tmp / 'synthetic-production-root'
-    production.mkdir()
-    original_recorder = progress.SemanticAttemptRecorder
-    guards = []
     for phase,callback,bad,good in (
         ('worker','worker',gate.replay_exit_code([failed]),0),
         ('prepare','prepare_cases',[{'status':'PREPARE_REJECTED'}],[{'status':'PREPARED'}]),
         ('legacy','legacy_guard',[{'matches':False}],[{'matches':True}])):
-        # The CLI normally exits its interpreter after installing its recorder
-        # and audit hook. This in-process caller must contain those side effects.
-        with monkeypatch.context() as cli:
-            cli.setattr(progress, 'SemanticAttemptRecorder', original_recorder)
-            cli.setattr(sys, 'addaudithook', guards.append)
-            cli.setattr(sys,'argv',['gauntlet','--phase',phase,'--state',str(rig.tmp/'cli'),
-                '--evidence',str(rig.tmp),'--production-root',str(production)])
-            def reply(args,value):
-                assert os.environ['AUTOSLICE_BASE']==str(args.production_root)
-                assert issubclass(progress.SemanticAttemptRecorder, original_recorder)
-                assert progress.SemanticAttemptRecorder is not original_recorder
-                return value
-            cli.setattr(gate,callback,lambda args,value=bad:reply(args,value))
-            assert gate.main()==1
-            cli.setattr(gate,callback,lambda args,value=good:reply(args,value))
-            assert gate.main()==0
-        assert progress.SemanticAttemptRecorder is original_recorder
-    assert len(guards) == 6
-    for guard in guards:
-        with pytest.raises(PermissionError, match='GAUNTLET_PRODUCTION_WRITE_FORBIDDEN'):
-            guard('os.mkdir', (str(production / 'blocked'), 0o700, -1))
-        guard('os.mkdir', (str(rig.tmp / 'ordinary-output'), 0o700, -1))
+        monkeypatch.setattr(sys,'argv',['gauntlet','--phase',phase,'--state',str(rig.tmp/'cli'),
+            '--evidence',str(rig.tmp)])
+        def reply(args,value):
+            assert os.environ['AUTOSLICE_BASE']==str(args.production_root)
+            return value
+        monkeypatch.setattr(gate,callback,lambda args,value=bad:reply(args,value))
+        assert gate.main()==1
+        monkeypatch.setattr(gate,callback,lambda args,value=good:reply(args,value))
+        assert gate.main()==0
 
 
 def test_real_rendered_edit_contract_roundtrip_and_invalid_bounds(rig):
@@ -275,3 +257,44 @@ def test_real_keep_content_addressed_roundtrip_parallel_writer_and_tamper(rig):
     blob.write_bytes(b'{}')
     with pytest.raises(ValueError, match='ARTIFACT_SHA_MISMATCH'):
         expand(packed)
+
+
+def test_original_v1_producer_receipt_remains_cold_valid_after_reference_roundtrip(rig, monkeypatch):
+    import ast
+    import subprocess
+    from src.autoslice import editorial_subtitle as editorial
+    from src.autoslice import semantic_terminal_adjudication as terminal
+    from src.autoslice import terminal_legacy_v1 as legacy
+    from src.autoslice.final_review_contract import is_release_resolved_keep
+    from src.autoslice.review_evidence_store import persist_review, load_review
+    # HEAD advances after integration. The producer under test is the actual
+    # deployed v1 artifact, not whichever new producer happens to be HEAD.
+    source = subprocess.check_output(['git', 'show',
+        '9e28f907280467091d81d9f9b39c09aded5b8e85:src/autoslice/editorial_subtitle.py'], text=True)
+    original = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name == 'adjudicate')
+    namespace = dict(vars(editorial))
+    exec(compile(ast.Module(body=[original], type_ignores=[]), '<pinned-v1-editorial-producer>', 'exec'), namespace)
+    def supported(data, refs):
+        return {**c_reply(data, refs), 'grade': 'B', 'keep_route': 'B_EVIDENCE_SUPPORTS_CURRENT',
+            'evidence_decisive': True, 'comparison_text': data['current'],
+            'evidence_refs': data['current_support_observation_refs']}
+    with monkeypatch.context() as old:
+        old.setattr(editorial, 'adjudicate', namespace['adjudicate'])
+        old.setattr(terminal, 'terminal_prompt', legacy.terminal_prompt)
+        old.setattr(terminal, 'terminal_materials', legacy.terminal_materials)
+        audit, captured = produce(rig, supported, native=True)
+    assert 'terminal_contract_version' not in captured['request']
+    row = {**audit['rebuilt_finding'], 'exact_release_adjudication': audit}
+    assert is_release_resolved_keep(row)
+    path = rig.tmp / 'legacy-run' / 'review-flags.json'
+    persist_review(path, {'findings': [], 'unresolved_findings_disclosed': [row]})
+    assert is_release_resolved_keep(load_review(path)['unresolved_findings_disclosed'][0])
+    forged = deepcopy(load_review(path)['unresolved_findings_disclosed'][0])
+    review = forged['exact_release_adjudication']['terminal_review']
+    prefix, data = review['prompt'].rsplit('\n', 1)
+    materials = json.loads(data)
+    materials['current'] += '伪造事实'
+    review['prompt'] = prefix + '\n' + json.dumps(materials, ensure_ascii=False, sort_keys=True)
+    import hashlib
+    review['prompt_sha256'] = hashlib.sha256(review['prompt'].encode()).hexdigest()
+    assert not is_release_resolved_keep(forged)

@@ -116,7 +116,7 @@ def _normalize(
 ) -> dict[str, object]:
     findings = audit_final_subtitles(
         srt_text,
-        llm_call=_risk_complete({"findings": []}),
+        llm_call=lambda _prompt: json.dumps({"findings": []}),
         extract_json=json.loads,
         candidate_context=clip_context,
         discovery_batch=batch_from_rows([candidate], context=clip_context),
@@ -124,17 +124,6 @@ def _normalize(
     )
     assert len(findings) == 1
     return findings[0]
-
-
-def _risk_complete(initial):
-    """Controlled current-risk judgments, independent of the acoustic decision."""
-    def answer(prompt):
-        if "本次只补齐上一轮漏报" in prompt:
-            agenda = json.loads(prompt.rsplit('\n', 1)[1])
-            return json.dumps({'findings': [{'cue': row['cue'], 'content_risk': 'meaning_reversal',
-                'risk_basis': '合成候选改变目标动作含义，仍须声学裁决。'} for row in agenda]}, ensure_ascii=False)
-        return json.dumps(initial, ensure_ascii=False)
-    return answer
 
 
 def _observed(request: dict[str, object], heard_pinyin: str) -> dict[str, object]:
@@ -194,7 +183,6 @@ def test_multi_edit_fidelity_context_reaches_fresh_judge_without_extra_candidate
             "cue": 2, "kind": "context", "suspect": "谢绝", "replacement": "谢谢",
             "proposed_full_cue": proposed, "repair_class": "phonetic",
             "why": "邻句正在致谢", "evidence_cue_ids": [1],
-            "content_risk": "meaning_reversal", "risk_basis": "合成致谢与谢绝动作相反。",
         }]}, ensure_ascii=False),
         extract_json=json.loads, draft_fidelity_contexts=contexts,
     )
@@ -332,7 +320,6 @@ def test_f16_kept_current_signal_is_inherited_by_fresh_same_cue_proposal(tmp_pat
                         "proposed_full_cue": fresh_hallucination,
                         "repair_class": "phonetic",
                         "why": "合成 fresh 常识化候选",
-                        "content_risk": "meaning_reversal", "risk_basis": "合成候选改变动作和对象。",
                     }
                 ]
             },

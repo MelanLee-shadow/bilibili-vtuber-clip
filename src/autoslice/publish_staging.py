@@ -144,8 +144,6 @@ from .story_contract import cover_relation_prompt, cover_story_contract_binding
 from .channel_envelope import story_contract_partners
 from .title_policy import (
     _TITLE_MAX_ATTEMPTS,
-    _TITLE_MAX_LEN,
-    _TITLE_MIN_LEN,
     _ensure_title_prefix,
     build_automatic_talk_title_prompt,
     canonicalize_automatic_title_fillers,
@@ -153,6 +151,8 @@ from .title_policy import (
     canonicalize_song_catalog_title,
     manual_title_override,
     publish_title_lane,
+    talk_title_body_length,
+    talk_title_length_ok,
     _title_policy_violations,
 )
 
@@ -1032,9 +1032,7 @@ def _resolve_automatic_title(
         if (
             repaired != candidate
             and not _title_policy_violations(repaired)
-            and _TITLE_MIN_LEN
-            <= len(_ensure_title_prefix(repaired, envelope_partners))
-            <= _TITLE_MAX_LEN
+            and talk_title_length_ok(_ensure_title_prefix(repaired, envelope_partners))
         ):
             candidate = repaired
             deterministic_filler_repair = True
@@ -1077,12 +1075,12 @@ def _resolve_automatic_title(
             attempts,
         )
     prefixed = _ensure_title_prefix(llm_title, envelope_partners)
-    if not _TITLE_MIN_LEN <= len(prefixed) <= _TITLE_MAX_LEN:
+    if not talk_title_length_ok(prefixed):
         return _AutomaticTitleResult(
             None,
-            f"job_title(llm_length_out_of_bounds:{len(prefixed)})",
+            f"job_title(llm_length_out_of_bounds:{talk_title_body_length(prefixed)})",
             None,
-            f"title_length_out_of_bounds:{len(prefixed)}",
+            f"title_length_out_of_bounds:{talk_title_body_length(prefixed)}:total={len(prefixed)}",
             violations,
             attempts,
         )
@@ -1410,9 +1408,7 @@ def _stage_publish_draft(
         if (
             choke_repaired_title != staged_title
             and not _title_policy_violations(choke_repaired_title)
-            and _TITLE_MIN_LEN
-            <= len(_ensure_title_prefix(choke_repaired_title, auto_partners))
-            <= _TITLE_MAX_LEN
+            and talk_title_length_ok(_ensure_title_prefix(choke_repaired_title, auto_partners))
         ):
             staged_title = choke_repaired_title
             title_source = (
@@ -3824,7 +3820,14 @@ def _stage_screenshot_direct_cover(
         cover_generation["screenshot_graphic_poster"] = poster_evidence
         cover_generation["art_direction"] = asdict(art_direction)
         if art_direction.emote_id:
-            cover_generation["emote"] = {"status": "IGNORED_SCREENSHOT_MODE"}
+            # Legacy screenshot_direct route: no candidate comparison runs here (ordinary auto
+            # uses title_cover_staging). Record the emote as not compared; never drop it silently.
+            cover_generation["emote"] = {
+                "status": "NOT_COMPARED_SCREENSHOT_ROUTE",
+                "id": art_direction.emote_id,
+                "mode": art_direction.emote_mode,
+                "reason": art_direction.emote_reason,
+            }
         cover_generation.update(
             {
                 "method": method,

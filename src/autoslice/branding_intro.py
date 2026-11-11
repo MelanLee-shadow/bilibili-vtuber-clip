@@ -1,19 +1,4 @@
-"""Profile-selected branding intro prepended to delivered autoslice videos.
-
-The selected profile's committed ``branding_intro_manifest`` asset is the
-single switch and binds the exact verified intro bytes by SHA-256.  Its
-rotation may give a newly introduced member a bounded launch boost; each
-delivery context snapshots that decision once.  The media itself lives outside
-the repo tree
-(``<host>:/opt/bilive/autoslice/assets/intro/``) like the CAM++ model and
-enrollment WAVs.
-
-Fail-closed contract: when the committed manifest is enabled, a missing or
-hash-drifted intro, a failed concat, or a failed post-concat verification
-must abort the delivery instead of shipping a clip without the intro.  A
-manifest that is absent or ``enabled: false`` turns the feature off; media
-problems never do.
-"""
+"""Hash-bound profile intro selection, rotation and fail-closed prepend."""
 
 from __future__ import annotations
 
@@ -28,6 +13,10 @@ from pathlib import Path
 from typing import Mapping
 
 from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.branding_intro_one_shot import (
+    BrandingIntroError, IntroClipIdentity, clip_identity as _clip_identity,
+    one_shot_bindings as _one_shot_bindings,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -49,11 +38,6 @@ BRANDING_INTRO_PICK_ENV = "AUTOSLICE_BRANDING_INTRO_PICK"
 _COPY_CONCAT_DURATION_TOLERANCE_MS = 150
 _REENCODE_DURATION_TOLERANCE_MS = 250
 _X264_PROFILE_FLAGS = {"high": "high", "main": "main", "baseline": "baseline"}
-
-
-class BrandingIntroError(RuntimeError):
-    """Any condition that must block delivery instead of dropping the intro."""
-
 
 def _sha256_file(path: Path) -> str:
     digest = _evidence_file_sha256(path)
@@ -121,6 +105,11 @@ def load_branding_intro_policy(manifest_path: Path) -> Mapping[str, object] | No
     _validate_rotation(policy, manifest_path)
     for entry in intros:
         _validate_intro_entry(entry, manifest_path)
+    bindings = [binding for entry in intros for binding in _one_shot_bindings(entry)]
+    if len(bindings) != len(set(bindings)):
+        raise BrandingIntroError(f"branding intro manifest has duplicate one-shot clip bindings: {manifest_path}")
+    if not any("one_shot" not in entry for entry in intros):
+        raise BrandingIntroError(f"branding intro manifest has no rotation members: {manifest_path}")
     ids = [entry.get("intro_id") for entry in intros]
     if any(not isinstance(intro_id, str) or not intro_id for intro_id in ids):
         raise BrandingIntroError(f"branding intro manifest has an invalid intro_id: {manifest_path}")
@@ -163,6 +152,7 @@ def _validate_intro_entry(entry: Mapping[str, object], manifest_path: Path) -> N
             entry["introduced_at"],
             label=f"branding intro {entry['intro_id']!r} introduced_at",
         )
+    _one_shot_bindings(entry)
 
 
 def _validate_rotation(
@@ -218,11 +208,12 @@ def resolve_intro_media(policy: Mapping[str, object], repo_root: Path) -> Path:
     return _resolve_intro_entry(policy_intros(policy)[0], repo_root)
 
 
-def _resolve_intro_entry(entry: Mapping[str, object], repo_root: Path) -> Path:
+def _resolve_intro_entry(entry: Mapping[str, object], repo_root: Path, media_dir: Path | None = None) -> Path:
     expected_sha = str(entry["video"]["sha256"]).removeprefix("sha256:")  # type: ignore[index]
     attempts: list[str] = []
-    for raw in entry.get("runtime_media_paths", []):  # type: ignore[union-attr]
-        candidate = Path(str(raw))
+    raw_paths = [Path(str(raw)) for raw in entry.get("runtime_media_paths", [])]  # type: ignore[union-attr]
+    paths = ([media_dir / path.name for path in raw_paths] if media_dir is not None else []) + raw_paths
+    for candidate in paths:
         if not candidate.is_absolute():
             candidate = repo_root / candidate
         if not candidate.is_file():
@@ -283,13 +274,10 @@ def require_branding_intro(
     repo_root: Path,
     *,
     manifest_path: Path | None = None,
+    clip_identity: IntroClipIdentity | None = None,
+    media_dir: Path | None = None,
 ) -> dict[str, object] | None:
-    """Resolve the delivery-time intro context, or None when the feature is off.
-
-    ``AUTOSLICE_BRANDING_INTRO=off`` is an explicit operator/test escape hatch;
-    any other value of that variable is rejected so a typo cannot silently
-    disable the intro.
-    """
+    """Resolve the intro context; absent or disabled policies remain off."""
 
     env_value = os.environ.get(BRANDING_INTRO_ENV_SWITCH, "").strip().lower()
     if env_value == "off":
@@ -302,24 +290,29 @@ def require_branding_intro(
     policy = load_branding_intro_policy(resolved_manifest)
     if policy is None:
         return None
-    # Resolve EVERY declared intro up front: a drifted/missing member of the
-    # rotation roster blocks delivery instead of silently narrowing the pool.
     intros = policy_intros(policy)
+    rotation_intros = [entry for entry in intros if "one_shot" not in entry]
+    one_shots = [entry for entry in intros if "one_shot" in entry]
+    identity = _clip_identity(clip_identity) if clip_identity is not None else None
+    matching = [entry for entry in one_shots if identity in _one_shot_bindings(entry)]
+    selected_intros = rotation_intros + matching
     candidates = [
         {
             "intro_id": str(entry["intro_id"]),
-            "media_path": _resolve_intro_entry(entry, repo_root),
+            "media_path": _resolve_intro_entry(entry, repo_root, media_dir),
             "media_sha256": str(entry["video"]["sha256"]),  # type: ignore[index]
         }
-        for entry in intros
+        for entry in selected_intros
     ]
     snapshot = _rotation_snapshot(
         policy,
-        intros,
+        rotation_intros,
         selection_time=_utc_now(),
         manifest_path=resolved_manifest,
     )
     rotation = _validate_rotation(policy, resolved_manifest)
+    required_media_paths = [candidate["media_path"] for candidate in candidates]
+    if matching: candidates = candidates[-1:]
     return {
         "policy": policy,
         "intro_id": candidates[0]["intro_id"],
@@ -332,6 +325,12 @@ def require_branding_intro(
         "rotation_active_expiry": snapshot["active_expiry"],
         "manifest_path": resolved_manifest,
         "manifest_sha256": _sha256_file(resolved_manifest),
+        "repo_root": repo_root,
+        "media_dir": media_dir,
+        "required_media_paths": required_media_paths,
+        "clip_identity": dict(clip_identity) if clip_identity is not None else None,
+        "identity_required": bool(one_shots) and identity is None,
+        "one_shot_selected": bool(matching),
     }
 
 
@@ -339,19 +338,7 @@ def pin_existing_delivery_intro(
     context: Mapping[str, object] | None,
     recorded_binding: Mapping[str, object],
 ) -> dict[str, object]:
-    """Pin a subtitle redelivery to the intro already bound to its delivery.
-
-    Normal talk-package creation deliberately rotates a verified roster from
-    the newly rendered main bytes.  A subtitle-only correction is different:
-    its new main bytes necessarily change, while the already delivered package
-    is the authority for which intro variant it carries.  Re-selecting the
-    roster would therefore make a text correction silently change branding.
-
-    This helper accepts only a prior ``PREPENDED`` binding, proves its selected
-    member is still present in the current fully verified roster, and returns
-    a single-member context.  It deliberately resolves the member through the
-    current manifest context rather than trusting an old absolute media path.
-    """
+    """Pin redelivery to its recorded PREPENDED intro and verified current media."""
 
     if context is None:
         raise BrandingIntroError(
@@ -383,6 +370,17 @@ def pin_existing_delivery_intro(
         for candidate in candidates
         if isinstance(candidate, Mapping) and candidate.get("intro_id") == intro_id
     ]
+    if not matches:
+        policy = context.get("policy")
+        root = context.get("repo_root")
+        if isinstance(policy, Mapping) and isinstance(root, Path):
+            entries = [entry for entry in policy_intros(policy)
+                       if entry.get("intro_id") == intro_id]
+            if len(entries) == 1:
+                media_dir = context.get("media_dir")
+                media = _resolve_intro_entry(entries[0], root, media_dir if isinstance(media_dir, Path) else None)
+                matches = [{"intro_id": intro_id, "media_path": media,
+                            "media_sha256": str(entries[0]["video"]["sha256"])}]
     if len(matches) != 1:
         raise BrandingIntroError(
             f"existing delivery intro_id {intro_id!r} is absent or ambiguous in current roster"
@@ -409,6 +407,8 @@ def pin_existing_delivery_intro(
             "media_sha256": current_sha,
             "candidates": [dict(selected)],
             "rotation_mode": "recorded-delivery-authority",
+            "identity_required": False,
+            "one_shot_selected": False,
             "recorded_delivery_binding": {
                 "intro_id": intro_id,
                 "intro_media_sha256": current_sha.removeprefix("sha256:"),
@@ -636,20 +636,20 @@ def _concat_reencode(
 def _pick_intro(
     context: Mapping[str, object], main_sha256: str
 ) -> tuple[Mapping[str, object], dict[str, object] | None]:
-    """Select the intro for this delivery from the verified candidate roster.
+    """Pick a verified member using the context's frozen rotation weights."""
 
-    Single-intro contexts (v1 manifests, hand-built contexts) keep the legacy
-    top-level fields and no rotation binding.  With several candidates the
-    choice is keyed on the main clip's content hash and the effective weights
-    captured when the context was resolved.  This keeps re-burns reproducible
-    within that context even if the wall clock crosses a launch expiry; a
-    recorded delivery is pinned separately by ``pin_existing_delivery_intro``.
-    An operator may pin one explicitly via ``AUTOSLICE_BRANDING_INTRO_PICK``
-    (which must name an intro_id from the roster; anything else fails closed).
-    """
-
+    if context.get("identity_required"):
+        raise BrandingIntroError("branding intro needs clip identity when one-shot entries exist")
     raw = context.get("candidates")
     candidates = [c for c in raw if isinstance(c, Mapping)] if isinstance(raw, list) else []
+    if context.get("one_shot_selected"):
+        if len(candidates) != 1:
+            raise BrandingIntroError("one-shot intro context must have exactly one candidate")
+        return candidates[0], {
+            "mode": "one-shot", "selector": "clip_identity",
+            "picked_intro_id": candidates[0]["intro_id"],
+            "clip_identity": context["clip_identity"],
+        }
     if len(candidates) <= 1:
         # Single-intro contexts (v1 manifests, hand-built contexts) stay driven
         # by the legacy top-level fields so callers that pin or adjust them

@@ -2214,7 +2214,7 @@ def test_gemini_runtime_factory_binds_prompts_per_descriptor_mode(tmp_path, monk
 
 @pytest.mark.parametrize("failure_status", [429, 503])
 def test_normal_free_routes_fail_over_only_quota_and_remember_exhausted_key(
-    tmp_path, monkeypatch, failure_status,
+    tmp_path, monkeypatch, failure_status, legacy_gemini_transport,
 ):
     import urllib.error
     import scripts.session_autoslice as runtime

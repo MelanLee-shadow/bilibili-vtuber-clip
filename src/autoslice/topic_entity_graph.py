@@ -175,6 +175,21 @@ def _identity(value: object) -> str:
     return _NON_IDENTITY.sub("", unicodedata.normalize("NFKC", str(value))).casefold()
 
 
+def dedupe_key(value: str) -> str:
+    """Key used only to drop duplicate surfaces; matching keeps using ``_identity``.
+
+    ``_identity`` keeps just Latin, kana and CJK, so a real surface written in
+    another script (Hangul, Cyrillic, ...) would have an empty identity and be
+    silently erased.  Such a value keeps its case-folded text as its own key;
+    values without any letter stay unkeyed and are dropped as before.
+    """
+
+    key = _identity(value)
+    if key or not any(ch.isalpha() for ch in value):
+        return key
+    return unicodedata.normalize("NFKC", value).casefold()
+
+
 def _atom(value: object, *, label: str, max_chars: int = _ATOM_MAX) -> str:
     if not isinstance(value, str):
         raise TopicEntityGraphError(f"{label} must be text")
@@ -206,7 +221,7 @@ def _atom_list(
     seen: set[str] = set()
     for index, raw in enumerate(value):
         item = _atom(raw, label=f"{label}[{index}]")
-        key = _identity(item)
+        key = dedupe_key(item)
         if not key or key in seen:
             continue
         seen.add(key)

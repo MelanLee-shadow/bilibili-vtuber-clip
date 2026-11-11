@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from src.autoslice.structured_output import call_json
 
+import hashlib
 import json
 import re
 import shutil
@@ -29,7 +30,7 @@ from .title_cover_candidates import (
 )
 
 
-from .title_cover_history import recent_choices, source_session_key
+from .title_cover_history import recent_choices, recent_cover_style_ids, source_session_key
 
 
 def pick_final_srt_frames(media_path: Path, final_srt: str, record: dict, out: Path) -> list[dict]:
@@ -284,6 +285,63 @@ def _validate_plan(
     return names, list(lines)
 
 
+def _add_auto_emote_candidate(
+    plan: dict, *, lines: list[str], assets: dict, recent: dict, library, names: list[str]
+) -> dict:
+    """CVR-02: the planner may omit an official-emote candidate; add one deterministically.
+
+    The emote row is an ordinary candidate (scored later, may lose). The outcome is recorded
+    in ``plan["emote_candidate"]``; nothing here raises or blocks the cover.
+    """
+    from .cover_emote import pick_emote_for_text
+
+    candidates = plan["candidates"]
+    if any(isinstance(row, dict) and row.get("route") == "emote" for row in candidates):
+        outcome: dict = {"status": "PLAN_ALREADY_HAS_EMOTE"}
+    elif len(candidates) >= 4:
+        outcome = {"status": "SKIPPED", "reason": "CANDIDATE_LIMIT_REACHED"}
+    else:
+        quotes = [
+            str(person.get("quote") or "") for person in plan["participants"] if isinstance(person, dict)
+        ]
+        excluded = {
+            key.split(":", 1)[1]
+            for key in (*recent["last_five_main_emotes"], *recent["source_session_main_emotes"])
+            if key.startswith("emote:")
+        }
+        emote_id, reason = pick_emote_for_text(
+            " ".join([*lines, *quotes]), library, excluded=excluded
+        )
+        main = f"emote:{emote_id}" if emote_id else None
+        row_id = f"auto-emote-{emote_id}" if emote_id else None
+        if main is None:
+            outcome = {"status": "SKIPPED", "reason": reason}
+        elif main not in assets:
+            outcome = {"status": "SKIPPED", "reason": "EMOTE_ASSET_UNAVAILABLE"}
+        elif any(isinstance(row, dict) and row.get("id") == row_id for row in candidates):
+            outcome = {"status": "SKIPPED", "reason": "CANDIDATE_ID_COLLISION"}
+        else:
+            source_ids = [main]
+            # kmx is represented by the official 25 panda layer; other guests need a
+            # stream-frame layer, whose geometry and clean_layers verdict the CPA probe decides.
+            if "kmx" in names and "emote:25" in assets:
+                source_ids.append("emote:25")
+            if any(name not in ("李豆沙", "kmx") for name in names) and "frame" in assets:
+                source_ids.append("frame")
+            candidates.append(
+                {
+                    "id": row_id,
+                    "route": "emote",
+                    "source_ids": source_ids,
+                    "main_emote": main,
+                    "reason": "规则补充候选：" + reason,
+                }
+            )
+            outcome = {"status": "ADDED", "id": row_id, "source_ids": source_ids, "reason": reason}
+    plan["emote_candidate"] = outcome
+    return outcome
+
+
 def _probe(
     root: Path,
     directory: Path,
@@ -419,6 +477,7 @@ def stage_title_cover_candidates(
     (root / "final.srt").write_text(final_srt)
     session = source_session_key(record)
     recent = recent_choices(history_root, session, candidate_id)
+    recent_styles = recent_cover_style_ids(history_root, candidate_id)
     write_json(root / "recent.json", recent)
     assets = _assets(root, reference_path, emote_library, repo_root, extra_frames)
     catalog = _catalog(assets)
@@ -428,6 +487,10 @@ def stage_title_cover_candidates(
     raw = call_json(llm_call, prompt, reuse=False)
     write_json(root / "plan-response.json", {"answer": raw, "sha256": text_sha(raw)})
     plan = parse_answer(raw)
+    names, lines = _validate_plan(plan, final_srt, assets, recent)
+    _add_auto_emote_candidate(
+        plan, lines=lines, assets=assets, recent=recent, library=emote_library, names=names
+    )
     names, lines = _validate_plan(plan, final_srt, assets, recent)
     write_json(root / "plan.json", plan)
     text_calls = []
@@ -556,7 +619,12 @@ def stage_title_cover_candidates(
             background(spec).convert("RGB").save(directory / "composition.png")
             final_path = directory / (candidate_id + "." + row["id"] + ".cover.png")
             meta = materialize_cover(
-                spec, final_path, font_path=font_path, font_authority=font_authority
+                spec,
+                final_path,
+                font_path=font_path,
+                font_authority=font_authority,
+                content_sha256=hashlib.sha256(final_srt.encode("utf-8")).hexdigest(),
+                recent_style_ids=recent_styles,
             )
             meta.update(final_cover=str(final_path), final_cover_sha256=sha(final_path))
             question = (

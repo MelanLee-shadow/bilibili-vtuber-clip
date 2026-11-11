@@ -7,7 +7,7 @@ stdout/stderr as its log. Each event is one stderr line::
     PRODUCER_STAGE T03:14:20.010Z END exact_final_review.discovery n=1 elapsed_s=28.602
 
 Only fixed stage names, UTC ISO timestamps, a per-stage sequence number,
-elapsed seconds and integer/enum-token fields are written: never credentials,
+elapsed seconds, process/thread CPU clocks and integer/enum-token fields are written: never credentials,
 prompts, paths or subtitle text. A START without its END means that stage
 raised (or the process was killed); no extra line is written on failure, so
 the producer's own failure tail and its final JSON summary stay unchanged
@@ -20,6 +20,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from functools import wraps
+import os
 import re
 import sys
 import threading
@@ -51,6 +52,10 @@ def _field(value: object) -> str | None:
 
 def emit(event: str, stage: str, **fields: object) -> None:
     try:
+        # Cumulative clocks can be differenced even across nested stages. They
+        # are observations, not CPU attribution to a concurrently running task.
+        fields = {**fields, "pid": os.getpid(), "thread_id": threading.get_ident(),
+                  "process_cpu_s": time.process_time(), "thread_cpu_s": time.thread_time()}
         parts = [PREFIX, _utc_now(), event, stage]
         for key in sorted(fields):
             rendered = _field(fields[key])

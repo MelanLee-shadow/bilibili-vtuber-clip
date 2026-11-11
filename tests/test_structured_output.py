@@ -12,6 +12,7 @@ import sys
 
 import pytest
 
+
 from src.autoslice import agy_gemini_client as gemini, llm_client as llm
 from src.autoslice import response_schemas as schemas
 from src.autoslice import structured_output as output
@@ -22,6 +23,9 @@ from src.autoslice import argon_escalation_storage as storage
 from test_argon_escalation_witness import case as case, FakeProvider, finish
 from tests.test_exact_final_funnel import terminal_rig  # noqa: F401
 
+
+# These fixtures replace the original Google HTTP / AGY process boundary.
+pytestmark = pytest.mark.usefixtures("legacy_gemini_transport")
 
 class Response(io.BytesIO):
     status = 200

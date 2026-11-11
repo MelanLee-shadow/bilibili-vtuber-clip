@@ -1,10 +1,11 @@
 """Exact-byte Gemini Files API transport without an SDK dependency.
 
 The module is intentionally lower-level than the final-media adapter.  It
-uploads one already hash-bound local file through the documented resumable
-Files API, waits for an ACTIVE file resource, calls ``generateContent`` with a
-``file_data`` reference, and attempts remote cleanup.  Only configured free
-keys are considered; the paid backup key is never read here.
+uses CPA for fitting inline requests. The registered Files exception uploads
+one hash-bound file, waits for ACTIVE, calls ``generateContent`` with its
+``file_data`` reference, and attempts cleanup. That exception considers only
+configured free keys; CPA credential attribution remains in its own receipt.
+The local paid backup key is never read here.
 
 No method acquires the autoslice provider slot.  Callers already hold that
 slot around the hash-bound adapter process, so acquiring it again would
@@ -30,6 +31,7 @@ import urllib.parse
 import urllib.request
 
 from src.autoslice.agy_gemini_client import build_generation_config
+from . import cpa_gemini_client
 
 
 FILES_UPLOAD_URL = (
@@ -752,11 +754,34 @@ def configured_free_keys(
     seen: set[str] = set()
     for name in FREE_KEY_ENV_NAMES:
         value = environment.get(name)
-        if not isinstance(value, str) or not value or value in seen:
+        if not isinstance(value, str) or not value or value == 'CPA_MANAGED' or value in seen:
             continue
         seen.add(value)
         rows.append((name, value))
     return rows
+
+
+def _inline_request(*, prompt: str, model: str, mime_type: str,
+                    video_fps: float | None) -> cpa_gemini_client.JsonObject:
+    part: cpa_gemini_client.JsonObject = {'inline_data': {'mime_type': mime_type, 'data': ''}}
+    if video_fps is not None:
+        part['video_metadata'] = {'fps': video_fps}
+    return {'contents': [{'parts': [{'text': prompt}, part]}],
+            'generationConfig': build_generation_config(model=model, response_mime_type=None)}
+
+
+def _use_cpa_inline(*, expected_bytes: int, prompt: str, model: str, mime_type: str,
+                    video_fps: float | None, environment: Mapping[str, str] | None) -> bool:
+    from . import cpa_gemini_client
+    if not cpa_gemini_client.enabled(environment) or not isinstance(model, str) or not model.strip():
+        # Preserve the legacy validation boundary and avoid constructing a CPA
+        # request at all when the emergency opt-out is selected.
+        return False
+    # Base64 is ASCII: this is the exact serialized byte size without reading
+    # the media twice or allocating a huge base64 string merely to choose route.
+    body = _inline_request(prompt=prompt, model=model, mime_type=mime_type, video_fps=video_fps)
+    wire_bytes = len(json.dumps(body, ensure_ascii=False).encode('utf-8')) + 4 * ((expected_bytes + 2) // 3)
+    return wire_bytes <= cpa_gemini_client.MAX_REQUEST_BYTES
 
 
 def call_file_model(
@@ -775,11 +800,16 @@ def call_file_model(
     transport: GeminiFileTransport | None = None,
     sleeper: Callable[[float], None] = time.sleep,
     environment: Mapping[str, str] | None = None,
+    key_tier: str = "UNKNOWN",
+    operation: str = "auto",
 ) -> GeminiFileCallOutcome:
     """Upload exact bytes, wait for ACTIVE, generate, and attempt cleanup."""
 
     from . import cpa_gemini_client
-    cpa_managed = cpa_gemini_client.enabled(environment)
+    if operation not in {'auto', 'files_upload'}:
+        raise ValueError('GEMINI_API_OPERATION_INVALID')
+    cpa_managed = operation == 'auto' and _use_cpa_inline(expected_bytes=expected_bytes, prompt=prompt, model=model,
+        mime_type=mime_type, video_fps=video_fps, environment=environment)
     if (
         _MODEL_RE.fullmatch(model) is None
         or _MIME_RE.fullmatch(mime_type) is None
@@ -894,15 +924,24 @@ def call_file_model(
                     "ACTIVE file resource MIME type differs from exact input",
                     phase="file_poll",
                 )
-            generated = selected.generate(
-                key=key,
-                model=model,
-                file_uri=str(resource["uri"]),
-                mime_type=mime_type,
-                prompt=prompt,
-                video_fps=(float(video_fps) if video_fps is not None else None),
-                timeout_seconds=timeout_seconds,
-            )
+            with cpa_gemini_client.legacy_attempt(operation='files_upload', transport='google_files_api',
+                    model=model, purpose='file_model_generate', environment=environment, key_tier=key_tier,
+                    request_sha256=hashlib.sha256(json.dumps({'model': model, 'prompt': prompt,
+                        'media_sha256': stable.sha256, 'mime_type': mime_type, 'video_fps': video_fps},
+                        sort_keys=True).encode()).hexdigest()) as transport_row:
+                generated = selected.generate(
+                    key=key,
+                    model=model,
+                    file_uri=str(resource["uri"]),
+                    mime_type=mime_type,
+                    prompt=prompt,
+                    video_fps=(float(video_fps) if video_fps is not None else None),
+                    timeout_seconds=timeout_seconds,
+                )
+                transport_row['http_status'] = 200
+                transport_row['response_sha256'] = hashlib.sha256(json.dumps(generated,
+                    sort_keys=True).encode()).hexdigest()
+                transport_row.update(cpa_gemini_client.response_accounting(generated))
             http_request_count += 1
             text = _response_text(generated)
             if not text:
@@ -954,6 +993,8 @@ def call_file_model(
         return GeminiFileCallOutcome(
             text=text,
             evidence={
+                **(cpa_gemini_client.exception_receipt('files_upload', 'google_files_api')
+                   if cpa_gemini_client.enabled(environment) else {}),
                 "provider": "gemini_api",
                 "model": model,
                 "media_sha256": stable.sha256,
@@ -996,11 +1037,15 @@ def run_free_key_file_call(
         UrllibGeminiFileTransport
     ),
     sleeper: Callable[[float], None] = time.sleep,
+    operation: str = "auto",
 ) -> GeminiFileCallOutcome:
     """Try configured free keys only; never read or spend the paid backup key."""
 
     from . import cpa_gemini_client
-    if cpa_gemini_client.enabled(environment):
+    if operation not in {'auto', 'files_upload'}:
+        raise ValueError('GEMINI_API_OPERATION_INVALID')
+    if operation == 'auto' and _use_cpa_inline(expected_bytes=expected_bytes, prompt=prompt, model=model,
+            mime_type=mime_type, video_fps=video_fps, environment=environment):
         return call_file_model(media_path=media_path, expected_sha256=expected_sha256,
             expected_bytes=expected_bytes, mime_type=mime_type, prompt=prompt, key='', model=model,
             video_fps=video_fps, timeout_seconds=timeout_seconds, poll_timeout_seconds=poll_timeout_seconds,
@@ -1029,6 +1074,9 @@ def run_free_key_file_call(
                 poll_timeout_seconds=poll_timeout_seconds,
                 transport=transport_factory(),
                 sleeper=sleeper,
+                environment=environment,
+                key_tier='free',
+                operation=operation,
             )
         except GeminiFileApiError as exc:
             last_error = exc

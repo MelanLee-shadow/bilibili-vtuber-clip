@@ -34,7 +34,10 @@ def test_versions_one_to_four_preserve_material_prompt_and_validation_bytes(rig)
         old_prompt = old.terminal_prompt(request)
         prompt = terminal.terminal_prompt(request)
         assert prompt.encode("utf-8") == old_prompt.encode("utf-8")
-        assert terminal.terminal_contract_retry(request) == old.terminal_contract_retry(request)
+        retry = terminal.terminal_contract_retry(request)
+        assert retry['recorded_contract_version'] == version
+        assert retry['current_contract_version'] == terminal.TERMINAL_CONTRACT_VERSION
+        assert retry['kind'] == 'REASK_UNDER_CURRENT_CONTRACT'
         answers = [captured["answer"],
             {**captured["answer"], "grade": "B", "evidence_decisive": True,
              "keep_route": "B_EVIDENCE_SUPPORTS_CURRENT"},
@@ -49,7 +52,7 @@ def test_versions_one_to_four_preserve_material_prompt_and_validation_bytes(rig)
     assert terminal.terminal_prompt(unstamped).encode() == old.terminal_prompt(unstamped).encode()
 
 
-@pytest.mark.parametrize("invalid", [0, 5, -1, "4", 2.0, True, False, [], {}])
+@pytest.mark.parametrize("invalid", [0, 9, -1, "4", 2.0, True, False, [], {}])
 def test_unknown_contract_versions_fail_at_every_contract_entry(invalid):
     from src.autoslice import semantic_terminal_adjudication as terminal
     request = {"terminal_contract_version": invalid}

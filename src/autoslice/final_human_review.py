@@ -27,6 +27,7 @@ from .final_human_review_evidence import (
 )
 from .final_human_review_evidence import validate_bound_review_evidence
 from .cover_route_evidence import validate_cover_route_decision
+from .cover_image_models import REDRAW_MODELS
 from .review_package_cover_diagnostics import validate_package_cover_route
 from .channel_profile import load_channel_profile as _load_channel_profile
 from .clip_profile import (
@@ -716,7 +717,18 @@ def replay_final_human_review_attestation(
     receipt = _json_object(
         paths["final_human_review"], source="final_human_review"
     )
-    if receipt.get("schema_version") == "lidousha-mechanical-delivery-review.v1":
+    from src.autoslice.finished_media_review.common import RECEIPT_SCHEMA as _FMR_RECEIPT_SCHEMA
+
+    if receipt.get("schema_version") == _FMR_RECEIPT_SCHEMA:
+        # Finished-media review receipt: the lane's own audit rules (PASS, reviewer != maker,
+        # bound hashes) are replayed there, not restated here.
+        from src.autoslice.finished_media_review.audit import same_bv_replay_problems
+
+        problems = same_bv_replay_problems(
+            package_root, paths["review_manifest"], paths["final_human_review"], receipt, manifest)
+        if problems:
+            raise FinalHumanReviewError("FINISHED_MEDIA_REVIEW_INVALID", "; ".join(problems)[:500])
+    elif receipt.get("schema_version") == "lidousha-mechanical-delivery-review.v1":
         from src.autoslice.mechanical_delivery_review import validate_mechanical_receipt
         try:
             if paths["review_manifest"] != package_root / "review_manifest.json":
@@ -1121,7 +1133,7 @@ def _cover_story_claim_authority(
                 and generation.get("image_generation_used") is True
                 and route.get("image_generation_used") is True
                 and generation.get("method") == "images.edit"
-                and generation.get("model") in {"gpt-image-2.5", "gpt-image-2"}
+                and generation.get("model") in REDRAW_MODELS
                 and generation.get("image_gen_model") == "cpa"
             )
             or (

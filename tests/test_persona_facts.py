@@ -34,16 +34,16 @@ def accept(original):
 def test_committed_projection_equals_persona_bytes():
     migrated = pf.load_persona_fact_ledger(ROOT / "assets/lidousha/persona_facts.v1.json", profile_id="lidousha")
     original = (ROOT / "assets/lidousha/persona.md").read_bytes()
-    assert len(migrated.revisions) == 23
-    assert len(pf.current_revisions(migrated)) == 23
+    legacy = tuple(row for row in migrated.revisions if row.evidence_class == "LEGACY_PERSONA_MD_GRANDFATHERED")
+    assert migrated.revisions[:23] == legacy and len(legacy) == 23
     assert migrated.revisions[20].claim.kind == "EDITORIAL_DIRECTIVE"
-    assert all(row.evidence_class == "LEGACY_PERSONA_MD_GRANDFATHERED" for row in migrated.revisions)
-    rendered = pf.render_persona_projection(migrated, consumer="TITLE_COVER")
-    assert rendered == original
-    assert hashlib.sha256(rendered).hexdigest() == "66c9eb8780a80391175aa38ce289f230896d374d577d53c310f04281a0b2045a"
+    # persona.md is the render of a ledger prefix: rows accepted after the last explicit promote are not in it yet,
+    # and nothing else may be (a hand edit matches no prefix).
+    prefixes = [pf.render_persona_projection(replace(migrated, revisions=migrated.revisions[:n]), consumer="TITLE_COVER")
+                for n in range(23, len(migrated.revisions) + 1)]
+    assert original in prefixes
     # The same assertion rejects any manual edit, including an added blank line.
-    with pytest.raises(AssertionError):
-        assert rendered == original + b"\n"
+    assert original + b"\n" not in prefixes
 
 
 @pytest.mark.parametrize("text", ["", "# 标题\n\n- 原文\n", "# A\r\n\r\n尾行", "只有一行", "\n\n"])
@@ -203,3 +203,61 @@ def test_typed_boundaries_cannot_hide_mutability_or_forged_evidence(change):
         current = ledger(row)
     with pytest.raises(ValueError):
         pf.current_revisions(current)
+
+
+def human_truth(original=None, **changes):
+    args = dict(kind="APPEARANCE", predicate="IS", statement_zh="形态：有人形态和毛绒形态两种形态。",
+                render=pf.RenderSlot(pf.PROJECTION_GENERATED_SECTION_ZH, 7), authority=human(), recorded_at=STAMP)
+    args.update(changes)
+    return pf.append_human_truth(original if original is not None else ledger(), **args)
+
+
+@pytest.mark.parametrize("kind", ["APPEARANCE", "IDENTITY_BACKGROUND"])
+def test_human_truth_is_appended_accepted_and_rendered(kind):
+    original = ledger(proposal())
+    updated = human_truth(original, kind=kind)
+    pf.verify_append_only(original, updated)
+    row = updated.revisions[-1]
+    assert (row.status, row.revision, row.supersedes, row.evidence_class) == ("ACCEPTED", "r1", None, "ATOMIC_HUMAN_PERSONA_TRUTH")
+    assert row.evidence == (human(),) and row.decided_by == human() and row.claim.kind == kind
+    assert updated.revisions[:-1] == original.revisions
+    assert pf.render_persona_projection(updated, consumer="TITLE_COVER").decode() == (
+        f"## 切片中积累的已审定特质\n- 形态：有人形态和毛绒形态两种形态。 <!-- pf:{row.fact_id}@r1 -->\n")
+
+
+@pytest.mark.parametrize("kind", ["PREFERENCE", "TRAIT", "EXPERIENCE", "VALUE", "RELATIONSHIP", "EDITORIAL_DIRECTIVE", "LEGACY_TEXT"])
+def test_human_truth_rejects_every_other_kind(kind):
+    with pytest.raises(ValueError, match="human-only"):
+        human_truth(kind=kind)
+
+
+@pytest.mark.parametrize("authority", [None, replace(human(), reviewer="ADMIN"), replace(human(), raw_user_message_sha256="bad"),
+                                       replace(human(), raw_excerpt=""), replace(human(), source_user_message_id=""), proposal().evidence[0]])
+def test_human_truth_requires_complete_reviewer_authority(authority):
+    with pytest.raises(ValueError):
+        human_truth(authority=authority)
+
+
+@pytest.mark.parametrize("statement", ["", "身份：虚拟主播", "- 形象：白发", "两行\n文字", "带\r回车", "普通<!-- pf:fake -->"])
+def test_human_truth_rejects_reserved_empty_or_multiline_statement(statement):
+    with pytest.raises(ValueError, match="human projection"):
+        human_truth(statement_zh=statement)
+
+
+def test_human_truth_rejects_duplicate_accepted_claim_but_not_a_different_one():
+    once = human_truth()
+    with pytest.raises(ValueError, match="already accepted"):
+        human_truth(once)
+    with pytest.raises(ValueError, match="already accepted"):
+        human_truth(once, statement_zh="形态：有人形态，和毛绒形态两种形态")  # same claim up to punctuation
+    assert len(pf.current_revisions(human_truth(once, statement_zh="形态：另一件事。"))) == 2
+
+
+def test_human_truth_keeps_committed_rows_and_legacy_projection_verbatim():
+    committed = pf.load_persona_fact_ledger(ROOT / "assets/lidousha/persona_facts.v1.json", profile_id="lidousha")
+    legacy = tuple(row for row in committed.revisions if row.evidence_class == "LEGACY_PERSONA_MD_GRANDFATHERED")
+    updated = human_truth(replace(committed, revisions=legacy), statement_zh="形态：SYNTHETIC 合成句。")
+    assert updated.revisions[:len(legacy)] == legacy
+    # the legacy lines' render is kept verbatim in front of the new fact (persona.md itself may already carry facts)
+    legacy_text = pf.render_persona_projection(replace(committed, revisions=legacy), consumer="TITLE_COVER")
+    assert pf.render_persona_projection(updated, consumer="TITLE_COVER").startswith(legacy_text)

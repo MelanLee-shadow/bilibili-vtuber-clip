@@ -18,6 +18,7 @@ from src.autoslice import publish_policy as archive_policy
 from src.autoslice.authorized_upload_metadata import normalise_tags
 from src.autoslice.authorized_upload_published_recovery import uploaded_sidecar_path
 from src.autoslice.authorized_upload_recovery_cli import manifest_ledger_binding, write_json_sidecar
+from src.autoslice.part_name_contract import aligned_creator, part_name_is_title
 from src.autoslice.same_bv_repair import normalise_creator_snapshot
 
 
@@ -60,8 +61,11 @@ def _read(path):
     return value, hashlib.sha256(raw).hexdigest()
 
 
-def _stable(snapshot):
+def _stable(snapshot, older=None):
+    """Policy-free view; ``older`` folds in the allowed single-P part-name change."""
     value = copy.deepcopy(snapshot)
+    if older is not None:
+        value["creator"] = copy.deepcopy(aligned_creator(older["creator"], value["creator"]))
     for surface in ("creator", "public"):
         for field in FIELDS:
             value[surface]["metadata"].pop(field, None)
@@ -205,7 +209,7 @@ def run(args, *, load_and_verify, read_ledger, public_verify_path, adapter_facto
                 raise PolicyRepairError("POLICY_REPAIR_CREATOR_CHANGED_BEFORE_EDIT")
             changes = {field: {"before": raw["archive"].get(field), "after": value}
                        for field, value in expected.items() if raw["archive"].get(field) != value}
-            if resumed and _stable(snapshot) != _stable(intent["before"]):
+            if resumed and _stable(snapshot, intent["before"]) != _stable(intent["before"]):
                 raise PolicyRepairError("POLICY_REPAIR_NON_POLICY_DRIFT")
         if not resumed:
             intent = {"schema_version": SCHEMA, "status": "EDIT_INTENT", "binding": binding,
@@ -217,7 +221,9 @@ def run(args, *, load_and_verify, read_ledger, public_verify_path, adapter_facto
         if not resumed:
             payload = adapter.session.build_edit_payload(raw)
             for field, change in changes.items():
-                payload[field] = (description_for_title(manifest["title"], submission=True)
+                payload[field] = (description_for_title(
+                                      manifest["title"], submission=True,
+                                      extra=manifest.get("description_extra"))
                                   if field == "desc" else change["after"])
             # Persist no csrf, cookies or edit payload. Once this succeeds,
             # every failure path and reentry is observation-only.
@@ -242,10 +248,10 @@ def run(args, *, load_and_verify, read_ledger, public_verify_path, adapter_facto
             except Exception:
                 after = None
             if after is not None:
-                if _stable(after) != _stable(intent["before"]):
+                if _stable(after, intent["before"]) != _stable(intent["before"]):
                     # Editing may transiently put a previously public archive
                     # into review. Wait for state=0 but reject metadata/media drift.
-                    stable_after, stable_before = _stable(after), _stable(intent["before"])
+                    stable_after, stable_before = _stable(after, intent["before"]), _stable(intent["before"])
                     for s in ("creator", "public"):
                         for key in ("state", "state_desc"):
                             stable_after[s].pop(key, None)
@@ -255,6 +261,7 @@ def run(args, *, load_and_verify, read_ledger, public_verify_path, adapter_facto
                         write_json_sidecar(receipt_path, receipt)
                         return 2, receipt
                 if (_verified(after, expected)
+                        and (not intent["edit_calls"] or part_name_is_title(after["creator"]))
                         and all(after[s]["state"] == 0 for s in ("creator", "public"))):
                     receipt.update(status="VERIFIED_POLICY_ONLY", after=after)
                     write_json_sidecar(receipt_path, receipt)

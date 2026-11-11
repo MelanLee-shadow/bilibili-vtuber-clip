@@ -1759,7 +1759,7 @@ def test_word_choice_prompt_includes_profile_bound_hard_meme_policy():
 
     assert result["choice"] == "CURRENT"
     assert len(prompts) == 1
-    assert "频道固定显示规范" in prompts[0]
+    assert "hard-meme-canon" in prompts[0]
     assert "「直女」一律写作「侄女」" in prompts[0]
 
 
@@ -2128,7 +2128,7 @@ def test_context_adjudication_applies_only_exact_candidate_and_keeps_timing():
 
 def _failed_independent_routes(request):
     """Actual typed route failures precede the phoneme last-resort fixture."""
-    rows = [{
+    return [{
         "schema_version": "subtitle-span-acoustic-witness.v1",
         "witness_protocol": "candidate_blind_transcript",
         "request_sha256": request["request_sha256"], "status": "UNCERTAIN",
@@ -2138,19 +2138,6 @@ def _failed_independent_routes(request):
         "audio_start_ms": request["matched_start_ms"] + request["source_media_timeline_offset_ms"],
         "audio_end_ms": request["matched_end_ms"] + request["source_media_timeline_offset_ms"],
     } for name in ("mai", "moss")]
-    from src.autoslice.independent_context_adjudication import _digest
-    for row in rows:
-        native = {
-            'status': 'NO_SPEECH_REPORTED', 'authority': 'EVIDENCE_ONLY',
-            'mutation_authorized': False, 'candidate_exposure': 'none',
-            'provider': row['provider'], 'model': row['model'],
-            'source_media_sha256': row['source_media_sha256'],
-            'target_start_ms': row['audio_start_ms'], 'target_end_ms': row['audio_end_ms'],
-            'crop_is_exact_target': True, 'input_audio_sha256': 'b' * 64,
-            'response_sha256': 'c' * 64,
-        }
-        row['native_observation'] = {**native, 'receipt_sha256': _digest(native)}
-    return rows
 
 
 def test_neither_rebuilds_one_third_candidate_then_cpa_judges_it():
@@ -2227,7 +2214,7 @@ def test_neither_rebuilds_one_third_candidate_then_cpa_judges_it():
     assert len(calls) == 3
 
 
-def test_exact_release_blocks_unlocalized_rebuild_for_same_run_self_heal():
+def test_exact_release_adopts_rebuilt_candidate_for_same_run_self_heal():
     source = _srt("前一句", "就是那种生吻", "是深吻还是湿吻")
 
     def witness(request):
@@ -2279,13 +2266,36 @@ def test_exact_release_blocks_unlocalized_rebuild_for_same_run_self_heal():
         judge_llm_call=cpa,
     )
 
-    assert resolved == [] and len(unresolved) == 1
-    adjudication = unresolved[0]['exact_release_adjudication']
-    assert adjudication['repaired'] is False
-    assert adjudication['policy_branch'] == 'SPAN_LOCALIZATION_RESULT_REQUIRED'
-    from src.autoslice.producer_package_finalization import _apply_exact_final_cpa_repairs
-    healed, repairs = _apply_exact_final_cpa_repairs(source, {'findings': unresolved})
-    assert healed == source and repairs == []
+    assert resolved == []
+    assert len(unresolved) == 1
+    assert unresolved[0]["proposed_full_cue"] == "就是那种吻"
+    assert unresolved[0]["suspect"] == "生"
+    assert unresolved[0]["suggestion"] == ""
+    adjudication = unresolved[0]["exact_release_adjudication"]
+    assert adjudication["repaired"] is True
+    assert adjudication["request"]["proposed_cue"] == "就是那种吻"
+    assert adjudication["request"][REQUIRE_COMPLETE_UTTERANCE_SUPPORT] is True
+    cpa_judge_prompts = [
+        prompt for prompt in calls if "# 字幕选字裁决" in prompt
+    ]
+    assert len(cpa_judge_prompts) == 2
+    assert all(
+        "exact-final CURRENT 整句闭合要求" in prompt
+        for prompt in cpa_judge_prompts
+    )
+
+    from src.autoslice.producer_package_finalization import (
+        _apply_exact_final_cpa_repairs,
+    )
+
+    healed, repairs = _apply_exact_final_cpa_repairs(
+        source,
+        {"findings": unresolved},
+    )
+    assert "就是那种吻" in healed
+    assert "就是那种生吻" not in healed
+    assert len(repairs) == 1
+    assert repairs[0]["decision_authority"] == "CPA_JUDGE"
 
 
 def test_missing_disclosure_candidate_is_proposed_then_acoustically_judged():
@@ -3295,7 +3305,7 @@ def test_missing_candidate_applies_final_cpa_choice_with_conflict_disclosed():
             "why": "整条语义崩坏",
         },
         entity_verifier=lambda request: _witness(
-            request, "jin tian tian qi hen hao"
+            request, "en zan you dian xiang a ta xi"
         ),
         judge_llm_call=cpa,
     )

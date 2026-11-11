@@ -8,6 +8,8 @@ from types import SimpleNamespace
 import pytest
 
 from src.autoslice import authorized_upload_tags_repair as tags_repair
+from src.autoslice.bilibili_member_api import build_edit_payload
+from src.autoslice.part_name_contract import same_stable
 from src.autoslice.same_bv_repair import normalise_creator_snapshot
 
 
@@ -47,6 +49,8 @@ def setup(tmp_path):
         def build_edit_payload(self, current, *, tag):
             payload = copy.deepcopy(current)
             payload["archive"]["tag"] = tag
+            # Production part-name rule: the sole part is named after the title.
+            payload["videos"] = build_edit_payload(current, csrf="x", tag=tag)["videos"]
             return payload
 
         def edit_archive(self, payload):
@@ -80,8 +84,9 @@ def test_tag_edit_preserves_video_and_metadata_and_resume_never_edits(tmp_path):
     code, receipt = tags_repair.run(args, **dependencies)
     assert code == 0 and receipt["status"] == "VERIFIED_TAGS_ONLY"
     assert adapter.edits == 1
-    assert tags_repair.stable_without_tags(receipt["before"]) == tags_repair.stable_without_tags(receipt["after"])
-    assert adapter.raw["videos"] == [{"cid": 3, "filename": "original", "title": "P1"}]
+    # Only tags and the sole part's name (upload file name -> archive title) changed.
+    assert same_stable(receipt["before"], receipt["after"], tags_repair.stable_without_tags)
+    assert adapter.raw["videos"] == [{"cid": 3, "filename": "original", "title": "月饼"}]
     code, _ = tags_repair.run(args, **dependencies)
     assert code == 0 and adapter.edits == 1
 

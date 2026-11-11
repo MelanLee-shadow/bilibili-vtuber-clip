@@ -16,7 +16,28 @@ from src.autoslice import llm_client as llm
 from src.autoslice.cpa_runtime import bind_observation
 
 
+def test_shadow_shell_imports_its_bound_repo_ahead_of_foreign_cwd(tmp_path):
+    from test_subprocess_repo_bootstrap import (ROOT, shell_python_blocks,
+        repo_imports, minimal_import_script)
 
+    foreign = tmp_path / 'foreign'
+    (foreign / 'src').mkdir(parents=True)
+    (foreign / 'src' / '__init__.py').write_text(
+        'raise RuntimeError("FOREIGN_CWD_SRC_SELECTED")\n')
+    text = (ROOT / 'scripts/run_oci3_shadow_date_once.sh').read_text()
+    found = []
+    for number, command, code in shell_python_blocks(text):
+        if 'PYTHONPATH=' not in command or not repo_imports(code)[1]:
+            continue
+        # Execute only the real bootstrap/import AST, never prepare, copy,
+        # credentials, provider, deployment, or recorder operations.
+        probe = minimal_import_script(code, repo=ROOT)
+        env = {**os.environ, 'PYTHONPATH': str(ROOT), 'PYTHONDONTWRITEBYTECODE': '1'}
+        completed = subprocess.run([sys.executable, '-c', probe], cwd=foreign,
+            env=env, text=True, capture_output=True, timeout=60)
+        assert completed.returncode == 0, f'{number}: {completed.stderr}'
+        found.append(number)
+    assert found, 'discover and exercise every repo-importing stdin child'
 
 
 def no_response():
@@ -42,6 +63,7 @@ def make_bridge(monkeypatch, *, failures=2, error=None, runtime_root=None, cpa=T
     sleeps = clock.sleeps
     monkeypatch.setattr(retry.time, 'sleep', clock.sleep)
     monkeypatch.setattr(retry.time, 'monotonic', clock)
+    monkeypatch.setattr(retry.time, 'time', clock)
     monkeypatch.setattr(retry.random, 'uniform', lambda low, high: 0.0)
     monkeypatch.setattr(llm, 'runtime_provider_slot', lambda **kwargs: nullcontext())
 

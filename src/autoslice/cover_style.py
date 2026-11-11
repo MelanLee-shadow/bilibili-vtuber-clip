@@ -8,16 +8,19 @@ Source SHA256: 207cace8728113166e3c7c0a4aca1215e330e8a325ae1d45c4d14c09ec0cce2b
 import sys
 from PIL import Image, ImageDraw, ImageFilter, ImageEnhance, ImageFont
 
+from .cover_style_rotation import REPO_TABLE, default_content_sha256, load_table, select_style
+
 W, H = 1920, 1080
-PAL = {  # top -> bottom gradient. Default pair: blue (context line) + pink (punchline); others for occasional variety
-    "pink": ((255, 138, 196), (255, 40, 130)),
-    "blue": ((110, 205, 255), (30, 100, 255)),
-    "orange": ((255, 230, 90), (255, 130, 20)),
-    "purple": ((205, 150, 255), (125, 60, 235)),
-    "green": ((150, 240, 120), (20, 170, 90)),
-    "red": ((255, 150, 120), (230, 30, 50)),
-    "yellow": ((255, 248, 140), (255, 196, 0)),
+# Palette, stroke recipes, tilts, contrast floor and style rotation all come from the shared table.
+# Missing or malformed table raises at import: there is no built-in fallback.
+STYLE_TABLE = load_table(REPO_TABLE)
+PAL = {  # colour name -> (top, bottom) of the vertical gradient
+    name: (tuple(pair["top"]), tuple(pair["bottom"]))
+    for name, pair in STYLE_TABLE["palette"].items()
 }
+STROKES = STYLE_TABLE["strokes"]
+ALLOWED_TILTS = tuple(STYLE_TABLE["allowed_tilts"])
+MIN_CONTRAST = STYLE_TABLE["contrast"]["min_distance"]
 SIZE = [170, 250]  # default line sizes (px at 1080p): context line, punchline
 MIN_PUNCH = 120  # production thumbnail rule: emphasis text >= 120px
 SAFE_X0, SAFE_X1 = (
@@ -44,27 +47,47 @@ def missing_glyphs(path, text):
     return [c for c in dict.fromkeys(text) if not c.isspace() and m(c) in notdef]
 
 
-def line_layer(path, text, size, colorway):
+def _outer_extra(recipe, size):
+    if recipe["outer"] is None or not recipe["outer_extra_ratio"]:
+        return 0
+    return max(recipe["outer_extra_min"], int(size * recipe["outer_extra_ratio"]))
+
+
+def line_layer(path, text, size, colorway, stroke="white"):
     f = font_at(path, size)
     w1 = max(6, size // 9)
-    pad = w1 + 12
+    recipe = STROKES[stroke]
+    extra = _outer_extra(recipe, size)
+    pad = w1 + extra + 12
     tw = int(f.getlength(text)) + 2 * pad
     th = int(size * 1.35) + 2 * pad
     org = (pad, pad - int(size * 0.12))
 
-    def mask(stroke):
+    def mask(stroke_width):
         m = Image.new("L", (tw, th), 0)
-        ImageDraw.Draw(m).text(org, text, font=f, fill=255, stroke_width=stroke, stroke_fill=255)
+        ImageDraw.Draw(m).text(
+            org, text, font=f, fill=255, stroke_width=stroke_width, stroke_fill=255
+        )
         return m.point(lambda v: 255 if v > 110 else 0)
 
-    white = mask(w1)
-    ext = white.copy()
-    ImageDraw.floodfill(ext, (0, 0), 128)
-    white = ext.point(
-        lambda v: 0 if v == 128 else 255
-    )  # fill enclosed holes of the stroke, not of the glyphs
+    def ring(stroke_width):
+        m = mask(stroke_width)
+        ext = m.copy()
+        ImageDraw.floodfill(ext, (0, 0), 128)
+        # fill enclosed holes of the stroke, not of the glyphs
+        return ext.point(lambda v: 0 if v == 128 else 255)
+
     lay = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
-    lay.paste(Image.new("RGBA", lay.size, (255, 255, 255, 255)), (0, 0), white)
+    if recipe["outer"] is not None:
+        lay.paste(
+            Image.new("RGBA", lay.size, tuple(recipe["outer"]) + (255,)),
+            (0, 0),
+            ring(w1 + extra),
+        )
+    if recipe["inner"] is not None:
+        lay.paste(
+            Image.new("RGBA", lay.size, tuple(recipe["inner"]) + (255,)), (0, 0), ring(w1)
+        )
     top, bot = PAL[colorway]
     grad = Image.new("RGBA", lay.size)
     gd = ImageDraw.Draw(grad)
@@ -251,9 +274,9 @@ def background_mean(img, box):
     return small.getpixel((0, 0))
 
 
-def _paint_line(font, text, size, colorway, tilt):
+def _paint_line(font, text, size, colorway, tilt, stroke="white"):
     """Measure stroke AND shadow, so both must fit the feed-safe area."""
-    glyph = line_layer(font, text, size, colorway).rotate(
+    glyph = line_layer(font, text, size, colorway, stroke).rotate(
         tilt, resample=Image.Resampling.BICUBIC, expand=True
     )
     pad = 48
@@ -288,9 +311,13 @@ def validate_spec(spec):
         _box(box)
     if spec.get("layout", "auto") not in ("auto", "left", "right", "top", "diagonal"):
         raise ValueError("COVER_SKILL_LAYOUT_INVALID")
-    tilt = spec.get("tilt", 4)
-    if isinstance(tilt, bool) or tilt not in (3, 4):
+    if "tilt" in spec and (isinstance(spec["tilt"], bool) or spec["tilt"] not in ALLOWED_TILTS):
         raise ValueError("COVER_SKILL_TILT_INVALID")
+    if "style_id" in spec and (
+        not isinstance(spec["style_id"], str)
+        or spec["style_id"] not in {s["style_id"] for s in STYLE_TABLE["styles"]}
+    ):
+        raise ValueError("COVER_SKILL_STYLE_ID_INVALID")
     lines = spec.get("lines")
     if not isinstance(lines, list) or not 1 <= len(lines) <= 2:
         raise ValueError("COVER_SKILL_LINES_INVALID")
@@ -304,32 +331,28 @@ def validate_spec(spec):
             or any(c in text for c in "，,")
         ):
             raise ValueError("COVER_SKILL_LINES_INVALID")
-        if line.get("color", "blue") not in PAL:
+        if "color" in line and line["color"] not in PAL:
             raise ValueError("COVER_SKILL_PALETTE_INVALID")
         if "size" in line:
             raise ValueError("COVER_SKILL_SIZE_IS_MEASURED_NOT_AUTHORED")
     return lines
 
 
-def render(spec, font):
-    lines = validate_spec(spec)
-    if "face" not in spec:
-        raise SystemExit("spec 缺 face（脸在成品里的位置 [x0,y0,x1,y1]）")
-    if not 1 <= len(lines) <= 2:
-        raise SystemExit("cover text must be 1-2 lines")
-    for ln in lines:
-        if len(ln["text"]) > 9:
-            raise SystemExit(f"「{ln['text']}」超过 9 字：缩短文字，不要缩小字号")
-    bad = [ln.get("color") for ln in lines if ln.get("color") and ln["color"] not in PAL]
-    if bad:
-        raise SystemExit(f"未知配色 {bad}：可用 {' '.join(PAL)}")
-    miss = missing_glyphs(font, "".join(ln["text"] for ln in lines))
-    if miss:
-        raise SystemExit(f"字体缺字 {''.join(miss)}：改写措辞，不要混用其他字体")
-    can = background(spec)
-    spec_bg = can.convert("RGB")
-    title_layer = Image.new("RGBA", (W, H))
+def _line_color(line, index, style):
+    return line["color"] if "color" in line else style["colors"][index]
+
+
+def _attempt(spec, lines, font, can, spec_bg, style):
+    """Lay out the cover with one style. Raises SystemExit or ValueError when that style does not fit."""
+    tilt = spec["tilt"] if "tilt" in spec else style["tilt"]
+    ratio = style["size_ratio"]
+    stroke = style["stroke"]
+    colors = [_line_color(ln, i, style) for i, ln in enumerate(lines)]
+    overridden = (["tilt"] if "tilt" in spec else []) + [
+        f"line{i}.{key}" for i, ln in enumerate(lines) for key in ("color", "size") if key in ln
+    ]
     fx0, fy0, fx1, fy1 = spec["face"]
+    title_layer = Image.new("RGBA", (W, H))
 
     def zone(layout):  # text area that keeps clear of the face and inside the feed-safe zone
         if layout == "left":
@@ -340,7 +363,6 @@ def render(spec, font):
 
     def plan(layout):
         x0, x1, y0, y1 = zone(layout)
-        tilt = spec.get("tilt", 3 if layout == "top" else 4)
         if x1 - x0 < 300 or y1 - y0 < 150:
             return None
         n = len(lines)
@@ -349,9 +371,7 @@ def render(spec, font):
         def fit(i, size, max_h):
             ln = lines[i]
             while True:
-                lay = _paint_line(
-                    font, ln["text"], size, ln.get("color", "pink" if i else "blue"), tilt
-                )
+                lay = _paint_line(font, ln["text"], size, colors[i], tilt, stroke)
                 ink = lay.getbbox()  # actual painted pixels (stroke included)
                 if (
                     ink[2] - ink[0] <= x1 - x0 - (int(W * 0.03) if (n == 2 and i == 0) else 0)
@@ -365,8 +385,8 @@ def render(spec, font):
             fit(i, ln.get("size") or (SIZE[1] if i == n - 1 else SIZE[0]), budget * share[i])
             for i, ln in enumerate(lines)
         ]
-        if n == 2 and not lines[0].get("size"):  # the context line stays smaller than the punchline
-            want = max(80, int(fitted[1][0] * 0.7))
+        if n == 2 and not lines[0].get("size"):  # the context line stays at most size_ratio of the punchline
+            want = max(80, int(fitted[1][0] * ratio))
             if fitted[0][0] > want:
                 fitted[0] = fit(0, want, budget * share[0])
         if sum(ink[3] - ink[1] for _, _, ink in fitted) > budget:
@@ -383,21 +403,18 @@ def render(spec, font):
         out = []
         for i, (x0_, x1_, y0_, y1_) in enumerate((za, zb)):
             ln = lines[i]
-            tilt = spec.get("tilt", 4)
             size = ln.get("size") or (SIZE[0] if i == 0 else SIZE[1] + 20)
             while True:
-                lay = _paint_line(
-                    font, ln["text"], size, ln.get("color", "pink" if i else "blue"), tilt
-                )
+                lay = _paint_line(font, ln["text"], size, colors[i], tilt, stroke)
                 ink = lay.getbbox()
                 if (ink[2] - ink[0] <= x1_ - x0_ and ink[3] - ink[1] <= y1_ - y0_) or size <= 60:
                     break
                 size -= 6
             out.append((size, lay, ink))
-        if not lines[0].get("size") and out[0][0] > out[1][0] * 0.8:
+        if not lines[0].get("size") and out[0][0] > out[1][0] * ratio:
             ln = lines[0]
-            size = int(out[1][0] * 0.75)
-            lay = _paint_line(font, ln["text"], size, ln.get("color", "blue"), spec.get("tilt", 4))
+            size = int(out[1][0] * ratio)
+            lay = _paint_line(font, ln["text"], size, colors[0], tilt, stroke)
             out[0] = (size, lay, lay.getbbox())
         return dict(layout="diagonal", zone=(za, zb), fitted=out, punch=out[1][0])
 
@@ -415,6 +432,8 @@ def render(spec, font):
     else:
         x0, x1, y0, y1 = best["zone"]
     record = []
+    warnings = []
+    low_contrast = False
     y = y0
     for i, (size, lay, ink) in enumerate(best["fitted"]):
         ln = lines[i]
@@ -439,11 +458,11 @@ def render(spec, font):
         px, py = x - ink[0], y - ink[1]  # paste so the ink box starts at (x, y)
         title_layer.alpha_composite(lay, (px, py))
         bg_mean = background_mean(spec_bg, (x, y, x + iw, y + ih))
-        col = PAL[ln.get("color", "pink" if i else "blue")][1]
-        if sum((a - b) ** 2 for a, b in zip(bg_mean, col)) ** 0.5 < 110:
-            print(
-                f"WARN 「{ln['text']}」的颜色和背景太接近（背景平均 {bg_mean}）：换一套配色",
-                file=sys.stderr,
+        col = PAL[colors[i]][1]
+        if sum((a - b) ** 2 for a, b in zip(bg_mean, col)) ** 0.5 < MIN_CONTRAST:
+            low_contrast = True
+            warnings.append(
+                f"WARN 「{ln['text']}」的颜色和背景太接近（背景平均 {bg_mean}）：换一套配色"
             )
         record.append(
             dict(
@@ -453,9 +472,10 @@ def render(spec, font):
                 y=y,
                 w=iw,
                 h=ih,
-                color=ln.get("color", "pink" if i else "blue"),
+                color=colors[i],
                 layout=layout,
-                tilt=spec.get("tilt", 3 if layout == "top" else 4),
+                tilt=tilt,
+                stroke=stroke,
             )
         )
         y += ih + int(size * 0.02)
@@ -468,15 +488,72 @@ def render(spec, font):
                     f"「{rr['text']}」压到脸或要保留的画面上了：换版式、换裁切或缩短文字"
                 )
     if len(record) == 2 and record[1]["size"] < record[0]["size"]:
-        print(
-            f"WARN 笑点行「{record[1]['text']}」({record[1]['size']}px) 比第一行小：缩短笑点行，或把第一行写短",
-            file=sys.stderr,
+        warnings.append(
+            f"WARN 笑点行「{record[1]['text']}」({record[1]['size']}px) 比第一行小：缩短笑点行，或把第一行写短"
         )
-    print(f"layout={layout} punch={record[-1]['size']}px", file=sys.stderr)
     bbox = title_layer.getchannel("A").getbbox()
     if not bbox or bbox[0] < SAFE_X0 or bbox[2] > SAFE_X1 or bbox[1] < 0 or bbox[3] > H:
         raise ValueError("COVER_TITLE_EXCEEDS_FEED_SAFE_ZONE")
-    return spec_bg, title_layer, record
+    return dict(
+        style=style,
+        layout=layout,
+        spec_bg=spec_bg,
+        title_layer=title_layer,
+        record=record,
+        low_contrast=low_contrast,
+        warnings=warnings,
+        overridden=overridden,
+    )
+
+
+def render(spec, font, *, content_sha256=None, recent_style_ids=(), table=None):
+    """Return (spec_bg, title_layer, record, selection).
+
+    The style is chosen by the content hash, rotated past recent styles and past
+    styles whose line colour is too close to the background. ``spec["style_id"]``
+    forces one style. Hand-written line colour, line size and top-level tilt always win.
+    """
+    table = STYLE_TABLE if table is None else table
+    lines = validate_spec(spec)
+    if "face" not in spec:
+        raise SystemExit("spec 缺 face（脸在成品里的位置 [x0,y0,x1,y1]）")
+    if not 1 <= len(lines) <= 2:
+        raise SystemExit("cover text must be 1-2 lines")
+    for ln in lines:
+        if len(ln["text"]) > 9:
+            raise SystemExit(f"「{ln['text']}」超过 9 字：缩短文字，不要缩小字号")
+    miss = missing_glyphs(font, "".join(ln["text"] for ln in lines))
+    if miss:
+        raise SystemExit(f"字体缺字 {''.join(miss)}：改写措辞，不要混用其他字体")
+    can = background(spec)
+    spec_bg = can.convert("RGB")
+    forced = spec.get("style_id")
+    if forced is not None:
+        selection_table = {
+            **table,
+            "styles": [s for s in table["styles"] if s["style_id"] == forced],
+        }
+        recent_style_ids = ()
+    else:
+        selection_table = table
+    sha = content_sha256 or default_content_sha256(spec)
+
+    def attempt(style):
+        return _attempt(spec, lines, font, can, spec_bg, style)
+
+    result, selection = select_style(
+        selection_table, sha, attempt=attempt, recent_style_ids=recent_style_ids
+    )
+    if forced is not None:
+        selection["selection"] = "spec_style_id"
+    for message in result["warnings"]:
+        print(message, file=sys.stderr)
+    print(
+        f"layout={result['layout']} punch={result['record'][-1]['size']}px style={selection['style_id']}",
+        file=sys.stderr,
+    )
+    selection = {**selection, "overridden": result["overridden"]}
+    return result["spec_bg"], result["title_layer"], result["record"], selection
 
 
 STYLE = "lidousha-zhenyan-gradient.v1"
@@ -518,18 +595,22 @@ def replay_title_layer(spec, font_path):
         ):
             raise ValueError("COVER_SKILL_LINES_INVALID")
         size, tilt = row.get("font_size"), row.get("tilt")
+        # Rows written before the rotation carry no stroke: they replay with the original white stroke.
+        stroke = row.get("stroke", "white")
         if (
             isinstance(size, bool)
             or not isinstance(size, int)
             or not 60 <= size <= 300
             or isinstance(tilt, bool)
-            or tilt not in (3, 4)
+            or tilt not in ALLOWED_TILTS
             or row.get("colorway") not in PAL
+            or not isinstance(stroke, str)
+            or stroke not in STROKES
         ):
             raise ValueError("COVER_SKILL_RENDER_SPEC_INVALID")
         if missing_glyphs(str(font_path), text):
             raise ValueError("COVER_FONT_GLYPH_COVERAGE_MISSING")
-        painted = _paint_line(str(font_path), text, size, row["colorway"], tilt)
+        painted = _paint_line(str(font_path), text, size, row["colorway"], tilt, stroke)
         x, y = row.get("x"), row.get("y")
         if (
             isinstance(x, bool)
@@ -553,14 +634,27 @@ def replay_title_layer(spec, font_path):
     return layer
 
 
-def materialize_cover(spec, final_path, *, font_path, font_authority):
+def materialize_cover(
+    spec,
+    final_path,
+    *,
+    font_path,
+    font_authority,
+    content_sha256=None,
+    recent_style_ids=(),
+):
     """Write the same artifacts consumed by the native package pixel auditor."""
     from pathlib import Path
     from .cover_title_rendering import sha256_file
     from .cover_text_pixel_evidence import materialize_rendered_text_pixel_evidence
 
     final_path, font_path = Path(final_path), Path(font_path)
-    pre, layer, rows = render(spec, str(font_path))
+    pre, layer, rows, cover_style = render(
+        spec,
+        str(font_path),
+        content_sha256=content_sha256,
+        recent_style_ids=recent_style_ids,
+    )
     render_spec = {
         "schema_version": "lidousha-cover-title-render-spec.v1",
         "style": STYLE,
@@ -581,6 +675,7 @@ def materialize_cover(spec, final_path, *, font_path, font_authority):
                 "segments": [{"text": r["text"]}],
                 "colorway": r["color"],
                 "tilt": r["tilt"],
+                "stroke": r["stroke"],
                 "painted_size": [r["w"], r["h"]],
             }
             for r in rows
@@ -634,4 +729,5 @@ def materialize_cover(spec, final_path, *, font_path, font_authority):
         "phone_preview": str(phone_path),
         "phone_preview_sha256": sha256_file(phone_path),
         "measured_lines": rows,
+        "cover_style": cover_style,
     }

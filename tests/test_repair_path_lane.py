@@ -14,8 +14,9 @@ from src.autoslice import same_bv_repair as repair
 from src.autoslice import same_bv_stage_repair as stage
 from src.autoslice.publication_reconciliation import authority_sidecar_path
 from src.autoslice.title_policy import publish_title_lane, publish_title_policy_violations
-from tests.test_publication_reconciliation import (
-    CANDIDATE, _new_bv_fixture, _reconcile_new, _sha, _write_json,
+from tests.test_publication_reconciliation import (  # noqa: F401  (first_publication_registries: fixture)
+    CANDIDATE, _new_bv_fixture, _reconcile_new, _registry_kw, _sha, _write_json,
+    first_publication_registries,
 )
 from tests.test_same_bv_stage_repair import metadata_fixture
 
@@ -29,13 +30,15 @@ def published(tmp_path, title):
     _reconcile_new(fixture)
     source = authority_sidecar_path(fixture["manifest_path"])
     authority = normal.build_new_bv_repair_authority(
-        source, candidate_id=CANDIDATE, title=title,
+        source, candidate_id=CANDIDATE, title=title, **_registry_kw(fixture),
     )
     return fixture, source, authority
 
 
 @pytest.mark.parametrize("title", [TALK, SONG, NEW_SONG])
-def test_first_publication_to_same_bv_plan_keeps_the_title_lane(tmp_path, monkeypatch, title):
+def test_first_publication_to_same_bv_plan_keeps_the_title_lane(
+    tmp_path, monkeypatch, title, first_publication_registries,  # noqa: F811
+):
     fixture, source, authority = published(tmp_path, title)
     source_bytes = source.read_bytes()
     assert recovery.validate_recovery_publication_authority(
@@ -80,9 +83,10 @@ def test_first_publication_to_same_bv_plan_keeps_the_title_lane(tmp_path, monkey
 
 @pytest.mark.parametrize("published_title,successor", [(TALK, SONG), (SONG, TALK)])
 def test_bound_publication_lane_cannot_be_switched_by_successor(tmp_path, published_title, successor):
-    _, source, _ = published(tmp_path, published_title)
+    fixture, source, _ = published(tmp_path, published_title)
     with pytest.raises(normal.NewBvRepairAuthorityError, match="successor title invalid"):
-        normal.build_new_bv_repair_authority(source, candidate_id=CANDIDATE, title=successor)
+        normal.build_new_bv_repair_authority(
+            source, candidate_id=CANDIDATE, title=successor, **_registry_kw(fixture))
 
 
 @pytest.mark.parametrize("title,lane,code", [
@@ -96,7 +100,7 @@ def test_lane_specific_title_rejections_stay_strict(title, lane, code):
 
 @pytest.mark.parametrize("damage", ["source_bytes", "observed_title", "candidate", "final_title"])
 def test_song_authority_still_replays_hash_and_identity_guards(tmp_path, damage):
-    _, source, authority = published(tmp_path, SONG)
+    fixture, source, authority = published(tmp_path, SONG)
     if damage == "source_bytes":
         source.write_bytes(source.read_bytes() + b" ")
     else:
@@ -110,7 +114,7 @@ def test_song_authority_still_replays_hash_and_identity_guards(tmp_path, damage)
         authority["authority_sha256"] = normal._digest(authority)
     with pytest.raises(ValueError):
         normal.validate_new_bv_repair_authority(
-            authority, candidate_id=CANDIDATE, expected_final_title=SONG,
+            authority, candidate_id=CANDIDATE, expected_final_title=SONG, **_registry_kw(fixture),
         )
 
 

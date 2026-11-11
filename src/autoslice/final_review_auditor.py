@@ -34,6 +34,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 from src.autoslice.finding_context import DependencyGraph
+from src.autoslice.chat_authority_ownership import ChatAuthorityProjection
 from src.autoslice.addressee_attribution import SpeakerEvidenceResult
 
 from src.autoslice.surface_canon import CHANNEL_PROFILE
@@ -2335,6 +2336,7 @@ def build_context_adjudication_request(
     require_complete_utterance_support: bool = False,
     finding_dependency_graph: "DependencyGraph | None" = None,
     finding_speaker_evidence: SpeakerEvidenceResult | None = None,
+    prior_chat_authority: "ChatAuthorityProjection | None" = None,
 ) -> dict[str, Any]:
     """Build a hash-bound, span-scoped acoustic compatibility request."""
 
@@ -2613,6 +2615,11 @@ def build_context_adjudication_request(
             graph=graph)
     if request.get('finding_context') is not None and finding.get('discovery_nominations'):
         request['discovery_nomination_evidence'] = deepcopy(finding['discovery_nominations'])
+    if prior_chat_authority is not None:
+        from .chat_authority_ownership import bound_chat_authority_conflict_projection
+        request['prior_chat_authority'] = bound_chat_authority_conflict_projection(
+            prior_chat_authority, srt_text=srt_text, finding=finding,
+            delivery_start_ms=source_media_timeline_offset_ms)
     request["request_sha256"] = hashlib.sha256(
         json.dumps(
             request, ensure_ascii=False, sort_keys=True, separators=(",", ":")
@@ -4960,6 +4967,26 @@ def _argon_batch_in_flight(row: Mapping[str, Any], *, dispatched_now: bool) -> b
                 and (not dispatched_now or (argon.get("dispatches_this_advance") or 0) >= 1))
 
 
+def _source_owner_budget_adapter(budget):
+    """Admit an owner reevaluation through the ordinary review budget."""
+    def source_owner(current_srt, finding, source_request):
+        from src.autoslice.context_assisted_audio import digest
+        from src.autoslice.read_aloud_llm_verifier import build_cpa_read_aloud_verifier
+        bound_finding = {**finding, 'chat_source_owner_request_sha256': digest(source_request),
+                         'chat_source_owner_request': source_request}
+        def source_context(text, row, **kwargs):
+            from src.autoslice.exact_review_parallel import finish_native_admission
+            finish_native_admission()
+            verifier = build_cpa_read_aloud_verifier(kwargs.get('judge_llm_call'))
+            answer = verifier({'schema_version': 'chat-source-owner-reevaluation-request.v1',
+                               'terminal_request': source_request})
+            return text, answer or {'status': 'UNCERTAIN', 'repaired': False,
+                                    'reason_code': 'CHAT_SOURCE_OWNER_UNAVAILABLE'}
+        return budget.prepare(current_srt, bound_finding,
+                              adjudicate_context=source_context)()
+    return source_owner
+
+
 def adjudicate_exact_release_findings(
     srt_text: str,
     findings: Iterable[Mapping[str, Any]],
@@ -5061,6 +5088,7 @@ def adjudicate_exact_release_findings(
 
     terminal_owner.prepare = terminal_owner_prepare
     register_terminal_adapters(terminal_owner=terminal_owner,
+        source_owner=_source_owner_budget_adapter(budget),
         terminal_usage=lambda: budget.provider_adjudication_count)
     origin: dict[int, Mapping[str, Any]] = {}
 
@@ -5410,8 +5438,8 @@ def adjudicate_exact_release_findings(
         collect(finding, prepare_finding(finding, transcript_handoffs)())
     if os.environ.get('AUTOSLICE_FINAL_REVIEW_MODE')=='per_finding':
         from .finding_closure_shell import attach_f2_consumption
-        unresolved=[attach_f2_consumption(row) for row in unresolved]
-        resolved=[attach_f2_consumption(row) for row in resolved]
+        unresolved=[attach_f2_consumption(row,_read_only=True) for row in unresolved]
+        resolved=[attach_f2_consumption(row,_read_only=True) for row in resolved]
     return unresolved, resolved
 
 

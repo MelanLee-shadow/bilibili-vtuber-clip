@@ -6,6 +6,7 @@ from .review_errors import ContractRejection
 from .review_evidence_store import cold_input
 
 from copy import deepcopy
+from collections.abc import Mapping
 import hashlib
 import json
 from functools import lru_cache
@@ -67,7 +68,7 @@ def available_keep_routes(request, *, legacy=False):
 
 # The prompt/material contract the current producer renders. Older recorded
 # requests keep their own rendered materials; they are never rebound to this.
-TERMINAL_CONTRACT_VERSION = 4
+TERMINAL_CONTRACT_VERSION = 8
 TERMINAL_CONTRACT_FEATURES = {
     1: {'legacy_materials': True, 'legacy_support': True, 'lifecycle_prompt': False,
         'written_meaning_proof': False, 'qualified_clear_audio': False, 'reask_under_current_contract': True},
@@ -76,8 +77,43 @@ TERMINAL_CONTRACT_FEATURES = {
     3: {'legacy_materials': False, 'legacy_support': False, 'lifecycle_prompt': True,
         'written_meaning_proof': True, 'qualified_clear_audio': False, 'reask_under_current_contract': True},
     4: {'legacy_materials': False, 'legacy_support': False, 'lifecycle_prompt': True,
-        'written_meaning_proof': True, 'qualified_clear_audio': True, 'reask_under_current_contract': False},
+        'written_meaning_proof': True, 'qualified_clear_audio': True, 'reask_under_current_contract': True},
+    5: {'legacy_materials': False, 'legacy_support': False, 'lifecycle_prompt': True,
+        'written_meaning_proof': True, 'qualified_clear_audio': True, 'reask_under_current_contract': True},
+    6: {'legacy_materials': False, 'legacy_support': False, 'lifecycle_prompt': True,
+        'written_meaning_proof': True, 'qualified_clear_audio': True, 'reask_under_current_contract': True},
+    7: {'legacy_materials': False, 'legacy_support': False, 'lifecycle_prompt': True,
+        'written_meaning_proof': True, 'qualified_clear_audio': True, 'reask_under_current_contract': True},
+    8: {'legacy_materials': False, 'legacy_support': False, 'lifecycle_prompt': True,
+        'written_meaning_proof': True, 'qualified_clear_audio': True, 'reask_under_current_contract': False,
+        'name_slot_contract': True},
 }
+
+
+def terminal_name_slot_contract():
+    """Describe the validator's shared proper-name slot contract to producers.
+
+    ``_name_only_for_current`` decides when the name-only/proper-name guard
+    applies, and ``_name_slot_bound`` then requires a current-cue codepoint
+    span whose outside text remains unchanged.  Keep this wording in one
+    place so the v8 prompt and schema describe the same obligation.  This is
+    guidance only; validation remains in those existing consumer functions.
+    """
+    shared = ('姓名槽共享合同：只要当前比较差异属于 name_only 或专有名词路径，'
+              '无论是否提供 name_source_ref、name_source_text、sourced_name，都必须给 name_span。'
+              'name_span 是当前原稿的 Unicode 码点半开区间 [起点,终点)，只覆盖姓名；'
+              '来源字段只能证明称呼来自来源，不能替代当前原稿的 name_span 槽位绑定。'
+              '槽位前后必须分别与当前原稿逐字对应；若 name_span 缺失、越界或把槽外差异吞进姓名槽，答案会被拒收。')
+    return {
+        'instructions': shared,
+        'schema_description': shared,
+        'name_span_description': ('当前原稿姓名的 Unicode 码点半开区间 [起点,终点)。'
+                                  'name_only 或专有名词路径必填，包括有来源的姓名；槽位前后必须与当前原稿逐字对应。'),
+        'name_source_ref_description': ('来源字段只绑定真实来源称呼；即使填写 name_source_ref、name_source_text、'
+                                        'sourced_name，name_only 或专有名词路径仍必填 name_span。'),
+        'name_source_text_description': ('来源中的逐字引文；不能替代当前原稿姓名的 name_span 槽位绑定。'),
+        'sourced_name_description': ('来源引文中的确切称呼；不能替代当前原稿姓名的 name_span 槽位绑定。'),
+    }
 
 
 def terminal_contract_features(request):
@@ -160,6 +196,24 @@ def independent_wide_identity(row, contract):
         if all(isinstance(value.get(key), str) and value[key].strip()
             for key in contract['independence_fields'])}
     return next(iter(identities)) if len(identities) == 1 else None
+
+
+def grade_a_citation_contract(request):
+    """Offer the exact citation groups counted by the unchanged A validator.
+
+    Support for current text and eligibility as an independent wide witness
+    are different claims. Never turn the support list into answer citations.
+    """
+    contract = grade_a_witness_contract(request)
+    groups = {}
+    for row in request['audio_gain_termination']['projection']['observations']:
+        identity = independent_wide_identity(row, contract)
+        if identity is not None:
+            groups.setdefault(identity, set()).add(row['observation_id'])
+    return {**contract, 'citation_field': 'evidence_refs',
+        'eligible_witness_groups': [
+            {'identity': dict(zip(contract['independence_fields'], identity)),
+             'observation_refs': sorted(refs)} for identity, refs in sorted(groups.items())]}
 
 
 def candidate_evidence_support(text, observations, *, cues=(), policy=None, span_text=None, refrains=None,
@@ -560,6 +614,13 @@ def terminal_materials(request):
     data['edit_contract'] = edit_contract(current)
     data['current_support_observation_refs'] = current_support_refs(request,
         legacy=features['legacy_support'])
+    if request.get('terminal_contract_version', 1) >= 6:
+        data['grade_a_citation_contract'] = grade_a_citation_contract(request)
+    if request.get('terminal_contract_version', 1) >= 7:
+        from .editorial_subtitle import _reliable_fragment_contract
+        data['reliable_fragments_contract'] = _reliable_fragment_contract(producer=True)
+    if features.get('name_slot_contract'):
+        data['name_slot_contract'] = terminal_name_slot_contract()
     from src.autoslice.targeted_relisten import terminal_clear_audio_catalogue
     data['clear_audio_constraints'] = terminal_clear_audio_catalogue(
         terminal_observation_projection(request), current_text=check['current_cue'],
@@ -568,6 +629,33 @@ def terminal_materials(request):
         data.update(stopped_finding_evidence=stopped_evidence_summary(proof['stopped_finding'],
                 projection=proof['projection'], stopped_sha256=proof.get('stopped_finding_sha256')),
             stop_reason_code=proof['stop_reason_code'])
+    prior_chat_authority = check.get('prior_chat_authority')
+    if isinstance(prior_chat_authority, Mapping):
+        # This is a receipt-shaped evidence view only.  It is intentionally
+        # separate from keep/edit routes and carries mutation_authorized=False.
+        data['prior_chat_authority'] = {
+            'projection': deepcopy(dict(prior_chat_authority)),
+            'scope': 'APPLIED_CHAT_AUTHORITY_RECEIPT_EVIDENCE_ONLY; no mutation or supersession authority',
+        }
+    owner_conflict = request.get('chat_source_conflict')
+    if isinstance(owner_conflict, Mapping):
+        evidence = owner_conflict.get('evidence') or {}
+        review = evidence.get('terminal_review') or {}
+        projection = evidence.get('prior_chat_authority') or {}
+        applied = owner_conflict.get('original_applied') or []
+        applied_index = projection.get('applied_index')
+        old_row = (applied[applied_index] if isinstance(applied, list)
+                   and type(applied_index) is int and 0 <= applied_index < len(applied) else {})
+        data['chat_source_conflict'] = {
+            'scope': 'SOURCE_OWNER_REEVALUATION; prior terminal answer is evidence only',
+            'source_recording_start_ms': evidence.get('source_recording_start_ms'),
+            'prior_terminal_raw_completion': review.get('raw_completion'),
+            'prior_terminal_completion_sha256': review.get('completion_sha256'),
+            'prior_source_owner_decision': (old_row.get('read_aloud_verdict')
+                if isinstance(old_row, Mapping) else None),
+            'prior_whole_line_copy_gate': (old_row.get('whole_line_exact_copy_gate')
+                if isinstance(old_row, Mapping) else None),
+        }
     data = _without_planning(data)
     if local_catalogue is not None:
         from .finding_context import model_data
@@ -617,7 +705,8 @@ def terminal_prompt(request):
         raise ContractRejection('TERMINAL_MATERIAL_EXHAUSTION_REQUIRED')
     data, refs = terminal_materials(request)
     return _render_terminal_prompt(data, refs,
-        lifecycle_policy=features['lifecycle_prompt'])
+        lifecycle_policy=features['lifecycle_prompt'],
+        name_slot_instructions=request.get('terminal_contract_version', 1) >= 5)
 
 
 def _keep_route_instructions(data):
@@ -639,8 +728,12 @@ def _keep_route_instructions(data):
     return text
 
 
-def _render_terminal_prompt(data, refs, *, lifecycle_policy=False):
+def _render_terminal_prompt(data, refs, *, lifecycle_policy=False, name_slot_instructions=False):
     route_instructions = _keep_route_instructions(data)
+    fragment_contract = data.get('reliable_fragments_contract')
+    fragment_instructions = (fragment_contract['instructions'] + '\n'
+        if isinstance(fragment_contract, dict) and isinstance(fragment_contract.get('instructions'), str)
+        else '')
     if 'B_EVIDENCE_SUPPORTS_CURRENT' in (data.get('keep_routes') or {}):
         unresolved_instructions = (
             'UNRESOLVABLE 只在直接支持现稿的证据仍定不下、写出来的话会把否定/指代/对象/立场说错且'
@@ -649,7 +742,12 @@ def _render_terminal_prompt(data, refs, *, lifecycle_policy=False):
         unresolved_instructions = (
             'UNRESOLVABLE 只在现有材料仍定不下、写出来的话会把否定/指代/对象/立场说错且语境也定不下时使用；'
             '不能因少了完全听不清的片段或不影响意思的差异判 D。')
-    return (MARKER + '\n'
+    source_owner_instruction = (
+        '你正在作为原弹幕来源的裁决者重新审视这条已应用决定。结合已绑定的原弹幕、旧决定、'
+        '后来取得的原生声学证据和先前终审结论，独立作出完整句裁决；先前结论仅为证据。'
+        '弹幕可能有梗写；它本身不证明主播逐字念出，也不能仅因规范拼写而改写。\n'
+        if 'chat_source_conflict' in data else '')
+    return (MARKER + '\n' + source_owner_instruction +
         '材料已按原合同核验穷尽，本轮必须终裁，不再规划补听。先综合多路宽窗、原生词时间、'
         'refrain、后文重述、整场转写、场次语境、词表与音素。'
         'Argon 只是稍高权威；自相矛盾的窄窗证人可以提疑，不能构成冲突或维持未决。'
@@ -662,7 +760,15 @@ def _render_terminal_prompt(data, refs, *, lifecycle_policy=False):
         '无来源专名只差人名用字/是否人名时保留现稿，在 best_guess 内部给最好猜测，不拦下；'
         '有真实来源才按来源写，嘉宾称呼不进入主播词表。\n'
         + route_instructions + '\n'
+        + ('grade=A 时，evidence_refs 必须实际引用 grade_a_citation_contract 中至少 '
+           'minimum_distinct_witnesses 个独立组，每组至少一个 observation_refs 编号。'
+           '同组多个编号只算一路；Argon、窄窗和语境编号不计入宽窗独立组。'
+           'current_support_observation_refs 是支持现稿的材料目录，不是回答的引用字段；'
+           'reason 中提到证人也不替代 evidence_refs。材料或所选引用不足时不能选A，'
+           '按真实证据选择满足原条件的B/C/D，不得伪造或补造引用。\n'
+           if data.get('grade_a_citation_contract') is not None else '')
         + unresolved_instructions
+        + fragment_instructions
         + ('没有唯一原音读法不是D：先按语境形成不改变含义的通顺写法；'
         'D须说明为什么任何保留、缩短或语境拟合都会让写出来的话主张错误含义或立场。'
         'D的comparison_text必须是已提供的具体候选原句或有绑定的目标听写，不能放解释段落；解释写在written_meaning_error。'
@@ -678,7 +784,14 @@ def _render_terminal_prompt(data, refs, *, lifecycle_policy=False):
         'written_meaning_error（会主张什么错误的具体意思）、best_guess（内部）；无来源姓名保留时必须给 '
         'name_span=[原稿姓名槽起点,终点]；有来源时给 name_source_ref（场次字段名）、name_source_text '
         '（来源逐字引文）、sourced_name（引文中的确切称呼），写出该来源称呼，槽外清楚原话照原话。'
-        '保留原稿时另给 keep_route，取值和适用档位只读 keep_routes。'
+        + ('name_span 是原稿的 Unicode 码点半开区间 [起点,终点)，只覆盖姓名；'
+           'name_only=true 表示 comparison_text 相对原稿的所有差异都只在这个姓名槽内，'
+           '比较句的槽前和槽后必须分别与原稿逐字相同。'
+           '若比较句在槽外也有差异，name_only 必须为 false，按完整句意和清楚原音合同判断，'
+           '不得扩大姓名槽吞并其他词语或把比较句冒称只差姓名。' if name_slot_instructions else '')
+        + ((data.get('name_slot_contract') or {}).get('instructions', '')
+           if isinstance(data.get('name_slot_contract'), dict) else '')
+        + '保留原稿时另给 keep_route，取值和适用档位只读 keep_routes。'
         '改字和UNRESOLVABLE的keep_route为null。改字时同时给既有 typed 编辑字段：'
         'status=RESOLVED、mode=faithful_paraphrase、edit_start/edit_end（严格按上述编辑区间合同）、'
         'replacement、reliable_fragments[{text,basis}]、evidence_refs、meaning_basis、'
@@ -689,7 +802,8 @@ def _render_terminal_prompt(data, refs, *, lifecycle_policy=False):
 
 
 @cold_input
-def validate_terminal_answer(request, answer, *, prompt=None, _defer_editorial_fragments=False):
+def validate_terminal_answer(request, answer, *, prompt=None, _defer_editorial_fragments=False,
+                             _source_owner_reconciliation=False):
     from .answer_contract import answer_version, decode_answer
     features = terminal_contract_features(request)
     version = answer_version(request, prompt=prompt)
@@ -702,6 +816,24 @@ def validate_terminal_answer(request, answer, *, prompt=None, _defer_editorial_f
         raise ContractRejection('TERMINAL_REASON_REQUIRED')
     check = request['check_request']
     proof = request['audio_gain_termination']
+    prior_chat_authority = check.get('prior_chat_authority')
+    if _source_owner_reconciliation:
+        from .chat_authority_reconciliation import validate_owner_request
+        try:
+            validate_owner_request(request)
+        except (ValueError, TypeError, KeyError, OSError) as exc:
+            raise ContractRejection('CHAT_AUTHORITY_CONFLICT_MUTATION_BLOCKED') from exc
+    if isinstance(prior_chat_authority, Mapping):
+        from .chat_authority_ownership import validate_chat_authority_conflict_projection
+        try:
+            validate_chat_authority_conflict_projection(
+                prior_chat_authority,
+                srt_text=check.get('whole_clip_current_srt', ''),
+                finding=check,
+                delivery_start_ms=check.get('source_media_timeline_offset_ms'),
+            )
+        except ValueError as exc:
+            raise ContractRejection(str(exc)) from exc
     if version == 'subtitle-terminal-answer.v1' and prompt is not None:
         if not terminal_prompt_matches(request, prompt):
             raise ContractRejection('TERMINAL_ORIGINAL_PROMPT_BINDING_INVALID')
@@ -719,6 +851,14 @@ def validate_terminal_answer(request, answer, *, prompt=None, _defer_editorial_f
     other = answer.get('comparison_text') or check.get('proposed_cue') or check['current_cue']
     diff = classify_difference(check['current_cue'], other,
         glossary_terms=request['terminal_glossary'], policy=policy)
+    if not _source_owner_reconciliation and isinstance(prior_chat_authority, Mapping) and (
+        choice == 'PROPOSED'
+        or (choice == 'CONTEXT_FIT' and not _is_keep(request, answer))
+    ):
+        # A generic terminal answer may keep or disclose the conflict, but an
+        # edit still needs the existing source-language owner registration and
+        # its authenticated receipt; it cannot retire chat authority itself.
+        raise ContractRejection('CHAT_AUTHORITY_CONFLICT_MUTATION_BLOCKED')
     if answer.get('grade') == 'B' and answer.get('evidence_decisive') is not True:
         raise ContractRejection('TERMINAL_B_EVIDENCE_REQUIRED')
     if answer.get('grade') not in policy['grades']:
@@ -741,16 +881,13 @@ def validate_terminal_answer(request, answer, *, prompt=None, _defer_editorial_f
         if len(grade_a_witnesses(request, refs)) < grade_a_witness_contract(request)['minimum_distinct_witnesses']:
             raise ContractRejection('TERMINAL_A_INDEPENDENT_WIDE_EVIDENCE_REQUIRED')
     # The name-only exception cannot suppress a separate polarity/referent/action error.
-    name_only = name_only_difference(diff, answer)
+    name_only = _name_only_for_current(request, answer, diff, other)
     if name_only and choice != 'CURRENT' and not answer.get('name_source_ref'):
         raise ContractRejection('TERMINAL_UNSOURCED_NAME_RETAIN_CURRENT')
     if name_only:
         span = answer.get('name_span')
         current = check['current_cue']
-        if (not isinstance(span, list) or len(span) != 2 or any(type(i) is not int for i in span)
-                or not 0 <= span[0] < span[1] <= len(current)
-                or not other.startswith(current[:span[0]])
-                or (current[span[1]:] and not other.endswith(current[span[1]:]))):
+        if not _name_slot_bound(current, other, span):
             raise ContractRejection('TERMINAL_NAME_SLOT_BINDING_REQUIRED')
     if answer.get('name_source_ref'):
         from .prompt_materials import terminal_context_source
@@ -836,7 +973,8 @@ def written_meaning_evidence(request, answer):
             'difference': difference}
 
 
-def request_terminal_answer(call, prompt, request, *, wallclock_seconds=None):
+def request_terminal_answer(call, prompt, request, *, wallclock_seconds=None,
+                            _return_checkpoint=False):
     from .llm_client import extract_json_object
     from .response_schemas import terminal_schema
     from .structured_output import call_json
@@ -861,6 +999,16 @@ def request_terminal_answer(call, prompt, request, *, wallclock_seconds=None):
         getattr(call, "terminal_retry_capable", False)
     )
     recorder = getattr(call, "_semantic_attempt_recorder", None)
+    if recorder is not None:
+        # Every terminal caller shares this admission seam. A source-owner
+        # reevaluation gets a fresh budget recorder, so bind the same retained
+        # stop proof here instead of relying on the editorial caller's state.
+        # Reopen it before cache/provider access; never create a new proof.
+        from .targeted_relisten import validate_current_no_gain
+        check = request.get('check_request') or {}
+        proof = validate_current_no_gain(request.get('audio_gain_termination'), check)
+        recorder.terminal_check_request = check
+        recorder.terminal_no_gain = proof
     send = call
     if not provider_retry_capable and recorder is None:
         timeout_seconds = getattr(call, "timeout_seconds", None)
@@ -876,13 +1024,14 @@ def request_terminal_answer(call, prompt, request, *, wallclock_seconds=None):
             for name, value in getattr(call, '__dict__', {}).items():
                 if send is not call:
                     setattr(send, name, value)
-            typed = terminal_finding_materials(request, getattr(send, 'cpa_cache_identity', None))
-            raw, _ = ruling_response(stage='semantic-terminal', prompt=prompt,
+            typed = terminal_finding_materials(request, getattr(send, 'cpa_cache_identity', None),
+                                               _read_only=True)
+            raw, hit = ruling_response(stage='semantic-terminal', prompt=prompt,
                 llm_call=send, inputs={'request': request, **({'finding_materials': typed} if typed is not None else {})}, parser_path=Path(__file__),
                 response_schema=terminal_schema(request), name='semantic_terminal')
             # editorial_subtitle.adjudicate records these bytes and invokes
             # validate_terminal_answer on every path, including a cache hit.
-            return raw
+            return (raw, hit) if _return_checkpoint else raw
     except Exception as exc:
         reason = getattr(exc, "terminal_retry_reason", None)
         if reason:
@@ -912,6 +1061,29 @@ def name_only_difference(diff, answer):
         'derogatory', 'object_place', 'persona_action'})
 
 
+def _name_slot_bound(current, other, span):
+    return (isinstance(span, list) and len(span) == 2
+            and all(type(i) is int for i in span)
+            and 0 <= span[0] < span[1] <= len(current)
+            and other.startswith(current[:span[0]])
+            and (not current[span[1]:] or other.endswith(current[span[1]:])))
+
+
+def _name_only_for_current(request, answer, diff, other):
+    name_only = name_only_difference(diff, answer)
+    # In v5 a model can explicitly describe a mixed comparison. A glossary
+    # hit still establishes that a name differs, but it cannot exempt the
+    # rest of the sentence from the ordinary complete clear-audio guard.
+    # Edits and sourced-name decisions retain the existing name guards.
+    if (name_only and request.get('terminal_contract_version', 1) >= 5
+            and answer.get('choice') == 'CURRENT' and answer.get('name_only') is False
+            and not answer.get('name_source_ref')
+            and not _name_slot_bound(request['check_request']['current_cue'], other,
+                                     answer.get('name_span'))):
+        return False
+    return name_only
+
+
 def _protect_terminal_current(request, answer, *, equivalent_current=False):
     """One guard dispatch for the actual keep producer and its cold reader."""
     from src.autoslice.targeted_relisten import protect_clear_audio
@@ -919,7 +1091,7 @@ def _protect_terminal_current(request, answer, *, equivalent_current=False):
     diff = classify_difference(request['current_cue'], comparison,
         glossary_terms=request['terminal_glossary'], policy=request['terminal_policy'])
     projection = terminal_observation_projection(request)
-    if name_only_difference(diff, answer) and not answer.get('name_source_ref'):
+    if _name_only_for_current(request, answer, diff, comparison) and not answer.get('name_source_ref'):
         protect_outside_name_slot(request['check_request'], request['audio'], answer['name_span'],
             projection=projection, policy=request['terminal_policy'])
     else:
@@ -945,7 +1117,7 @@ def keep_from_terminal(*, srt_text, finding, request, answer, prompt, raw):
         'choice': answer['choice'], 'grade': answer['grade'], 'request': deepcopy(request)}
     if request['check_request'].get('finding_context') is not None:
         from .finding_closure_shell import attach_f2_consumption
-        review=attach_f2_consumption(review)
+        review=attach_f2_consumption(review,_read_only=True)
     route = answer['keep_route']
     if route == 'B_EVIDENCE_SUPPORTS_CURRENT':
         row = {**finding.get('_terminal_original_finding', finding),
@@ -1083,7 +1255,7 @@ def terminal_keep_failure(row, audit):
     return 'TERMINAL_KEEP_RECEIPT_BINDING_MISMATCH'
 
 
-def terminal_finding_materials(request, model_identity):
+def terminal_finding_materials(request, model_identity, *, _read_only=False):
     """Build the typed key from exactly the materials used by prompt/refs."""
     check = request.get('check_request') or {}
     if check.get('finding_context') is None:
@@ -1102,4 +1274,5 @@ def terminal_finding_materials(request, model_identity):
                    'answer_contract_version': request.get('answer_contract_version')},
         model_identity=model_identity, candidates=candidates,
         observation_ids=[row['observation_id'] for row in observations] +
-            [row['observation_id'] for row in check.get('discovery_nomination_evidence',[])])
+            [row['observation_id'] for row in check.get('discovery_nomination_evidence',[])],
+        _read_only=_read_only)

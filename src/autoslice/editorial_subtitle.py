@@ -43,18 +43,25 @@ def _hash(value: object) -> bool:
 RELIABLE_FRAGMENTS_ORDERED_NONOVERLAPPING = True
 
 
-def _reliable_fragment_contract(*, legacy=False):
+def _reliable_fragment_contract(*, legacy=False, producer=False):
     """One definition for the existing literal-fragment consumer and producers.
 
     legacy renders the already-bound ordinary prompt byte for byte. The new
     derived clear-fragment view spells out the same order/non-overlap rule.
+    producer adds the v7 occurrence rule without changing historical output.
     """
     ordered = RELIABLE_FRAGMENTS_ORDERED_NONOVERLAPPING
     text = ('reliable_fragments列出原cue或独立音频/上下文内所有可靠片段，每项text及依据；'
         + ('它们必须在输出中按序保留。' if ordered else '它们必须逐字出现在输出中。'))
     if ordered and not legacy:
         text += '每项text必须按最终成句从左到右、互不重叠列出；不能按证据可信度排序，也不能同时列出相互包含的片段。'
-    return {'ordered_nonoverlapping': ordered, 'instructions': text}
+    contract = {'ordered_nonoverlapping': ordered, 'instructions': text}
+    if producer:
+        contract['occurrence_policy'] = 'MERGE_BASES_PER_OCCURRENCE_REPEAT_TRUE_OCCURRENCES'
+        contract['instructions'] += (
+            '每个reliable_fragments项对应最终输出中的一个实际出现；同一出现有多路依据时合并到同一项basis中，'
+            '不要为同一出现拆成多项；同一text若在最终输出中真实重复出现，则按真实出现次数分别列项。')
+    return contract
 
 
 def validate_reliable_fragments(proposed, fragments):
@@ -194,7 +201,8 @@ def gift_nominations(srt_text: str, context: Mapping[str, Any] | None, *,
 
 
 @cold_input
-def _decision(request: Mapping[str, Any], answer: Mapping[str, Any], *, prompt=None) -> str:
+def _decision(request: Mapping[str, Any], answer: Mapping[str, Any], *, prompt=None,
+              _source_owner_reconciliation=False) -> str:
     from .answer_contract import decode_answer
     answer = decode_answer(request, answer, prompt=prompt,
         family='terminal' if 'terminal_policy' in request else 'editorial')
@@ -204,7 +212,8 @@ def _decision(request: Mapping[str, Any], answer: Mapping[str, Any], *, prompt=N
         # original clear-audio guard. Keep that error precedence when both
         # contracts fail; ordinary answer ingress validates fragments here.
         if validate_terminal_answer(request, answer, prompt=prompt,
-                _defer_editorial_fragments=True) not in {'PROPOSED', 'CONTEXT_FIT'}:
+                _defer_editorial_fragments=True,
+                _source_owner_reconciliation=_source_owner_reconciliation) not in {'PROPOSED', 'CONTEXT_FIT'}:
             raise ContractRejection('TERMINAL_MUTATION_CHOICE_REQUIRED')
     if answer.get('status') != 'RESOLVED' or answer.get('mode') not in MODES:
         raise ContractRejection('EDITORIAL_UNRESOLVED')
@@ -434,7 +443,8 @@ def validate_authority(receipt: Mapping[str, Any], *, current: str | None = None
     if request.get('screen', {}).get('receipts'):
         offset = request['source_media_timeline_offset_ms']
         _validate_screen(request['screen'], request['window'][0] + offset, request['window'][1] + offset)
-    proposed = _decision(request, extract_json_object(raw), prompt=receipt['prompt'])
+    proposed = _decision(request, extract_json_object(raw), prompt=receipt['prompt'],
+                         _source_owner_reconciliation=receipt.get('source_owner_reconciliation') is True)
     if proposed != receipt.get('proposed_cue'):
         raise ContractRejection('EDITORIAL_DECISION_DRIFT')
     return proposed
@@ -689,7 +699,7 @@ def adjudicate(srt_text: str, finding: Mapping[str, Any], *, check_request: Mapp
                 typed=decision_materials(check_request,data=editorial_model_data(request),
                     contracts={'editorial_schema':SCHEMA,'instructions':PROMPT+OMISSION_PROMPT+REFERENCE_PROMPT,
                         'edit_contract':edit_contract(request['current_cue'])},
-                    model_identity=getattr(judge_llm_call,'cpa_cache_identity',{}))
+                    model_identity=getattr(judge_llm_call,'cpa_cache_identity',{}),_read_only=True)
                 raw,_=ruling_response(stage='editorial-rendering',prompt=prompt,llm_call=judge_llm_call,
                     inputs={'request':request,'finding_materials':typed},parser_path=Path(__file__))
             else:
@@ -699,7 +709,7 @@ def adjudicate(srt_text: str, finding: Mapping[str, Any], *, check_request: Mapp
             audit['terminal_review'] = {'prompt': prompt, 'raw_completion': raw,
                 'prompt_sha256': sha(prompt), 'completion_sha256': sha(raw), 'request': copy.deepcopy(request)}
             from .finding_closure_shell import attach_f2_consumption
-            audit['terminal_review']=attach_f2_consumption(audit['terminal_review'])
+            audit['terminal_review']=attach_f2_consumption(audit['terminal_review'],_read_only=True)
             answer = extract_json_object(raw)
             choice = validate_terminal_answer(request, answer, prompt=prompt)
             if choice == 'UNRESOLVABLE':

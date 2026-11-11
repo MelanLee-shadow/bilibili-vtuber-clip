@@ -399,7 +399,7 @@ def test_visual_router_falls_back_when_cpa_answer_breaks_contract():
 
 def test_agy_observed_receipt_still_binds_frame_prompt_response(
     monkeypatch,
-    tmp_path,
+    tmp_path, legacy_gemini_transport,
 ):
     monkeypatch.setattr(
         agy_frame_witness,

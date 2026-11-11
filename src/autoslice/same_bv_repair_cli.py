@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from src.autoslice import same_bv_live_verification
+from src.autoslice import same_bv_append_desc_reconciliation as append_desc_reconciliation
 from src.autoslice import same_bv_repair as repair
 from src.autoslice.same_bv_cover_reconciliation import (
     reconcile_cover_alias_false_block,
@@ -15,7 +16,12 @@ from src.autoslice.same_bv_cover_reconciliation import (
 
 
 def repair_reconcile_blocked(args) -> int:
-    """Correct one proven CDN-alias false block without remote mutation."""
+    """Correct one of two proven false blocks without remote mutation.
+
+    Exactly two blocked reasons are recognised: the post-swap CDN cover alias
+    and the post-append app-truncated description.  Anything else is refused by
+    the cover-alias reconciler's own reason check.
+    """
 
     # Import lazily so scripts.authorized_upload can register this function as
     # a handler while its production dependencies remain monkeypatchable.
@@ -30,7 +36,18 @@ def repair_reconcile_blocked(args) -> int:
             for problem in problems:
                 print(f"REFUSE: {problem}", file=sys.stderr)
             return 2
-        result = reconcile_cover_alias_false_block(
+        entries = repair.plan_entries(journal, plan_path, plan)
+        blocked_reason = (
+            (entries[-1].get("details") or {}).get("reason")
+            if entries and entries[-1].get("state") == "BLOCKED_DRIFT"
+            else None
+        )
+        reconcile = (
+            append_desc_reconciliation.reconcile_append_desc_truncation_block
+            if blocked_reason == append_desc_reconciliation.APPEND_TOPOLOGY_BLOCK_REASON
+            else reconcile_cover_alias_false_block
+        )
+        result = reconcile(
             plan_path=plan_path,
             journal=journal,
             manifest=manifest,

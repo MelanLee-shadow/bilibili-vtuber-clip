@@ -4,7 +4,7 @@ from __future__ import annotations
 from src.autoslice.discovery_channels import batch_from_rows, ClosedFindings, ClosedLedger, DiscoveryResult
 from src.autoslice.scan_coverage import ScanCoverage, coverage_json, cue_versions, dependency_scopes
 
-from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
+from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256, sha256_ref
 from .finding_lifecycle import is_finding_failure, only_finding_failures
 
 from src.autoslice.review_evidence_store import (
@@ -20,8 +20,11 @@ import os
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence, TypedDict
 
+from src.autoslice.producer_source_truth_checkpoint import (
+    build_retained_preview, source_parent_input, source_review_preflight, pending_source_language_scan,
+)
 from src.autoslice.acoustic_witness_availability import witness_audio_locally_resolvable
 from src.autoslice.prepared_native_audio_recovery import PreparedNativeAudioState
 from src.autoslice.acoustic_witness_adjudication import (
@@ -54,6 +57,7 @@ from src.autoslice.continuation_subchecks import cold_read_session_scope
 from src.autoslice.continuation_review_state import reviewed_reference_cues, unavailable_review_stage
 from src.autoslice.exact_final_cpa_history import caption_successors, with_caption_successor
 from src.autoslice.clip_context import (
+    ClipContextError,
     build_clip_context,
     clip_context_prompt_text,
     validate_clip_context,
@@ -162,7 +166,12 @@ from src.autoslice.producer_boundary_owner_contract import (
     validate_frozen_boundary_owner_contract,
 )
 from src.autoslice.producer_text_finalization import _render_cues_to_srt
-from src.autoslice.producer_text_checkpoint import retain_post_transcript_text
+from src.autoslice.producer_text_checkpoint import (
+    retain_post_transcript_text, _source_stage_chat_support_srts,
+    _write_partial_with_support, _validate_source_authority_with_support,
+    project_historical_span_review, preburn_pending_review,
+    current_postburn_mixed_input, validate_current_postburn_mixed,
+)
 from src.autoslice.producer_source_truth_authority import (
     reconcile_required_source_truth_chat_authority,
     verify_source_truth_preview_formal_binding,
@@ -1358,6 +1367,52 @@ def _postburn_text_artifact_matches(path_value: object, expected: object) -> boo
     )
 
 
+class PostburnHandoffDiagnostic(TypedDict):
+    reason_code: str
+    candidate_id: str
+
+
+def postburn_replay_failure_parent(review):
+    """Select evidence only; callers must still validate its artifacts/bindings."""
+    if (not isinstance(review, Mapping) or review.get("status") != "AUDITOR_UNAVAILABLE"
+            or review.get("cpa_calls") != []):
+        return review
+    detail = review.get("replay_error") or {}
+    request = review.get("cpa_request") or {}
+    if not isinstance(detail, Mapping) or not isinstance(request, Mapping):
+        return review
+    known_replay_failure = (
+        review.get("error_type") == "ValueError"
+        and review.get("reason_codes") == ["POSTBURN_SUBTITLE_AUDIO_CPA_AMBIGUOUS_REPLAY"]
+    ) or (
+        detail.get("dispatch_state") == "COMPLETED"
+        and detail.get("request_sha256") == request.get("request_sha256")
+        and review.get("reason_codes") == [detail.get("reason_code")]
+    )
+    parent = review.get("prior_postburn_subtitle_audio_review")
+    if (known_replay_failure and isinstance(parent, Mapping)
+            and request == parent.get("cpa_request")
+            and review.get("reviewed_srt_sha256") == parent.get("reviewed_srt_sha256")):
+        return parent
+    return review
+
+
+def postburn_candidate_context(
+    final_srt_text: str, authority, clip_context, *, timeline_offset_ms: int,
+    source_media_sha256: str | None,
+) -> tuple[str, frozenset[int], list[dict]]:
+    """The postburn writer and its handoff reader render the same evidence."""
+    from src.autoslice.editorial_subtitle import rendering_context
+    from src.autoslice.audio_language_discovery import current_language_discovery_context
+    base = clip_context_prompt_text(clip_context) if isinstance(clip_context, Mapping) else ""
+    editorial, cues = rendering_context(final_srt_text, authority, timeline_offset_ms)
+    language, findings = current_language_discovery_context(
+        final_srt_text, dict(authority or {}), source_media_sha256=source_media_sha256,
+        timeline_offset_ms=timeline_offset_ms,
+    )
+    return base + editorial + language, cues, findings
+
+
 def validated_postburn_priority_findings(
     *,
     final_srt_text: str,
@@ -1367,6 +1422,9 @@ def validated_postburn_priority_findings(
     expected_media_sha256: str | None = None,
     allow_parser_recovery: bool = False,
     allow_clean_checkpoint: bool = False,
+    timeline_offset_ms: int | None = None,
+    source_media_sha256: str | None = None,
+    diagnostics: list[PostburnHandoffDiagnostic] | None = None,
 ) -> tuple[list[dict[str, Any]], str] | None:
     """Return only completed, current-byte postburn rows for normal CPA.
 
@@ -1374,24 +1432,37 @@ def validated_postburn_priority_findings(
     deliberately strips no fields and applies no mutation: the ordinary exact
     final reviewer receives the rows as priority raw findings and must run its
     existing text/entity/audio/CPA adjudication before a repair can be used.
-    Missing or drifted bindings return ``None`` so the caller keeps the
-    postburn block rather than treating an unbound receipt as a new review.
+    Missing or drifted bindings return ``None`` with a specific diagnostic,
+    keeping the postburn block rather than importing an unbound receipt.
     Current-text recovery may explicitly validate a clean same-byte checkpoint;
     it returns no findings and grants no release over a later semantic BLOCK.
     """
 
-    if not isinstance(verified_authority_audit, Mapping):
+    def reject(code: str) -> None:
+        import logging
+        if diagnostics is not None:
+            diagnostics.append({"reason_code": code, "candidate_id": candidate_id})
+        logging.getLogger(__name__).warning("%s candidate_id=%s", code, candidate_id)
         return None
+
+    if not isinstance(verified_authority_audit, Mapping):
+        return None if verified_authority_audit is None else reject("POSTBURN_PRIORITY_AUTHORITY_INVALID")
+    nested = verified_authority_audit.get("final_review_audit")
+    receipt_present = "postburn_subtitle_audio_review" in verified_authority_audit or (
+        isinstance(nested, Mapping) and "postburn_subtitle_audio_review" in nested)
     postburn = verified_authority_audit.get("postburn_subtitle_audio_review")
     if not isinstance(postburn, Mapping):
-        nested = verified_authority_audit.get("final_review_audit")
         postburn = (
             nested.get("postburn_subtitle_audio_review")
             if isinstance(nested, Mapping)
             else None
         )
     if not isinstance(postburn, Mapping):
-        return None
+        return reject("POSTBURN_PRIORITY_RECEIPT_INVALID") if receipt_present else None
+    # A zero-dispatch replay failure does not revoke its completed discovery
+    # evidence. Only the exact same bound parent may enter ordinary review;
+    # every parent artifact and row still passes the checks below.
+    postburn = postburn_replay_failure_parent(postburn)
     clean_checkpoint = bool(
         allow_clean_checkpoint
         and postburn.get("status") == "CLEAN"
@@ -1399,6 +1470,15 @@ def validated_postburn_priority_findings(
         and postburn.get("reason_codes") == []
         and postburn.get("findings") == []
     )
+    if (not allow_clean_checkpoint
+            and postburn.get("schema_version") == "postburn-subtitle-audio-review.v1"
+            and postburn.get("status") == "CLEAN" and postburn.get("release_gate") == "PASS"
+            and postburn.get("reason_codes") == [] and postburn.get("findings") == []
+            and postburn.get("reviewed_srt_sha256") == sha256_ref(hashlib.sha256(
+                final_srt_text.encode("utf-8")).hexdigest())):
+        # No open discovery to hand back. This is an ordinary absence, not a
+        # rejected handoff or permission to reuse the clean release verdict.
+        return None
     parser_recovery = bool(
         allow_parser_recovery
         and postburn.get("status") == "AUDITOR_UNAVAILABLE"
@@ -1412,23 +1492,23 @@ def validated_postburn_priority_findings(
         or (postburn.get("status") != "FLAGGED" and not parser_recovery and not clean_checkpoint)
         or (postburn.get("release_gate") != "BLOCK" and not clean_checkpoint)
     ):
-        return None
+        return reject("POSTBURN_PRIORITY_STATE_INVALID")
     findings = postburn.get("findings")
     if (
         not isinstance(findings, list)
         or (not findings and not parser_recovery and not clean_checkpoint)
         or postburn.get("validated_finding_count") != len(findings)
     ):
-        return None
+        return reject("POSTBURN_PRIORITY_FINDINGS_INVALID")
     final_srt_sha256 = "sha256:" + hashlib.sha256(
         final_srt_text.encode("utf-8")
     ).hexdigest()
     if postburn.get("reviewed_srt_sha256") != final_srt_sha256:
-        return None
+        return reject("POSTBURN_PRIORITY_SRT_DRIFT")
     request = postburn.get("cpa_request")
     binding = postburn.get("subtitle_audio_binding")
     if not isinstance(request, Mapping) or not isinstance(binding, Mapping):
-        return None
+        return reject("POSTBURN_PRIORITY_BINDING_MISSING")
     if (
         request.get("schema_version") != "postburn-subtitle-audio-cpa-request.v1"
         or request.get("candidate_id") != candidate_id
@@ -1439,16 +1519,45 @@ def validated_postburn_priority_findings(
         or request.get("request_sha256")
         != _postburn_request_sha256(request)
     ):
-        return None
-    candidate_context_text = (
-        clip_context_prompt_text(clip_context)
-        if isinstance(clip_context, Mapping)
-        else ""
-    )
+        return reject("POSTBURN_PRIORITY_REQUEST_BINDING_INVALID")
+    # Cold continuation already carries the checked delivery/source geometry.
+    # It is a render input, not an additional permission or release decision.
+    final_review = verified_authority_audit.get("final_review_audit") or {}
+    if not isinstance(final_review, Mapping):
+        return reject("POSTBURN_PRIORITY_CONTEXT_INPUT_INVALID")
+    boundary = final_review.get("boundary_semantic_review") or {}
+    if not isinstance(boundary, Mapping):
+        return reject("POSTBURN_PRIORITY_CONTEXT_INPUT_INVALID")
+    endpoint = boundary.get("final_endpoint_binding") or {}
+    source_witness = boundary.get("source_separation_witness") or {}
+    if not isinstance(endpoint, Mapping) or not isinstance(source_witness, Mapping):
+        return reject("POSTBURN_PRIORITY_CONTEXT_INPUT_INVALID")
+    if timeline_offset_ms is None:
+        start, origin = source_witness.get("source_final_start_ms", 0), endpoint.get("final_start_ms", 0)
+        if type(start) is not int or type(origin) is not int:
+            return reject("POSTBURN_PRIORITY_CONTEXT_INPUT_INVALID")
+        timeline_offset_ms = start - origin
+    if type(timeline_offset_ms) is not int or timeline_offset_ms < 0:
+        return reject("POSTBURN_PRIORITY_CONTEXT_INPUT_INVALID")
+    language_audit = verified_authority_audit.get("audio_language_discovery_audit") or {}
+    if not isinstance(language_audit, Mapping):
+        return reject("POSTBURN_PRIORITY_CONTEXT_INPUT_INVALID")
+    if source_media_sha256 is None:
+        source_media_sha256 = language_audit.get("source_media_sha256")
+    try:
+        candidate_context_text, _, _ = postburn_candidate_context(
+            final_srt_text, verified_authority_audit, clip_context,
+            timeline_offset_ms=timeline_offset_ms, source_media_sha256=source_media_sha256,
+        )
+    except ClipContextError:
+        reject("POSTBURN_PRIORITY_CONTEXT_INVALID_ClipContextError")
+        raise
+    except (ValueError, TypeError, KeyError, OSError) as exc:
+        return reject("POSTBURN_PRIORITY_CONTEXT_INVALID_" + type(exc).__name__)
     if request.get("candidate_context_sha256") != (
         "sha256:" + hashlib.sha256(candidate_context_text.encode("utf-8")).hexdigest()
     ):
-        return None
+        return reject("POSTBURN_PRIORITY_CANDIDATE_CONTEXT_DRIFT")
     actual_media_sha256 = str(request.get("actual_media_sha256") or "")
     if (
         not actual_media_sha256
@@ -1465,7 +1574,7 @@ def validated_postburn_priority_findings(
             )
         )
     ):
-        return None
+        return reject("POSTBURN_PRIORITY_MEDIA_BINDING_DRIFT")
     calls = postburn.get("cpa_calls")
     cache_identity = request.get("cpa_cache_identity")
     runtime_binding = request.get("provider_runtime_binding")
@@ -1484,7 +1593,7 @@ def validated_postburn_priority_findings(
         or postburn.get("cpa_cache_identity") != dict(cache_identity)
         or postburn.get("provider_runtime_binding") != dict(runtime_binding)
     ):
-        return None
+        return reject("POSTBURN_PRIORITY_PROVIDER_IDENTITY_INVALID")
     for call in calls:
         if (
             not isinstance(call, Mapping)
@@ -1497,37 +1606,37 @@ def validated_postburn_priority_findings(
                 call.get("response_path"), call.get("response_sha256")
             )
         ):
-            return None
+            return reject("POSTBURN_PRIORITY_CALL_ARTIFACT_INVALID")
     try:
         cues = [cue for cue in parse_srt_cues(final_srt_text) if cue.text.strip()]
     except (TypeError, ValueError):
-        return None
+        return reject("POSTBURN_PRIORITY_SRT_INVALID")
     validated_rows: list[dict[str, Any]] = []
     for finding in findings:
         if not isinstance(finding, Mapping):
-            return None
+            return reject("POSTBURN_PRIORITY_FINDING_INVALID")
         # A postburn receipt is discovery evidence.  A typed repair in this
         # field would bypass the ordinary exact-final adjudication chain.
         if "exact_release_adjudication" in finding or "mutation_authority" in finding:
-            return None
+            return reject("POSTBURN_PRIORITY_RAW_AUTHORITY_INVALID")
         raw_cue_index = finding.get("cue_index")
         if raw_cue_index is None:
             raw_cue_index = finding.get("cue")
         if isinstance(raw_cue_index, bool):
-            return None
+            return reject("POSTBURN_PRIORITY_CUE_INVALID")
         try:
             cue_index = int(raw_cue_index)
         except (TypeError, ValueError):
-            return None
+            return reject("POSTBURN_PRIORITY_CUE_INVALID")
         if not 1 <= cue_index <= len(cues):
-            return None
+            return reject("POSTBURN_PRIORITY_CUE_INVALID")
         base_sha256 = str(finding.get("base_text_sha256") or "").removeprefix("sha256:")
         if len(base_sha256) != 64 or any(
             char not in "0123456789abcdef" for char in base_sha256
         ):
-            return None
+            return reject("POSTBURN_PRIORITY_BASE_HASH_INVALID")
         if hashlib.sha256(cues[cue_index - 1].text.encode("utf-8")).hexdigest() != base_sha256:
-            return None
+            return reject("POSTBURN_PRIORITY_CUE_TEXT_DRIFT")
         row = dict(finding)
         row["cue"] = cue_index
         row["cue_index"] = cue_index
@@ -2151,23 +2260,8 @@ def _bound_source_evidence_context(
                     "scope": row.get("scope"),
                 }
     rows = {"range_audio": list(audio_rows.values()), "screen": list(screen_rows.values())}
-    serialized = json.dumps(rows, ensure_ascii=False, sort_keys=True)
-    audit = {
-        "status": "VALIDATED_CONTEXT_ONLY" if any(rows.values()) else "NO_VALIDATED_CONTEXT",
-        "current_srt_sha256": "sha256:" + hashlib.sha256(srt_text.encode()).hexdigest(),
-        "range_count": len(audio_rows), "screen_frame_count": len(screen_rows),
-        "context_sha256": "sha256:" + hashlib.sha256(serialized.encode()).hexdigest(),
-        "mutation_authorized": False, "provider_calls": 0,
-    }
-    if not any(rows.values()):
-        return "", audit
-    return (
-        "\n\n已验证与当前字幕、源时钟绑定的原始画面、范围听写及局部声学证据：\n"
-        "这些是可能出错的来源观察，不能直接授权改字。画面中的游戏文字不是全部主播口述；"
-        "整块听写也不是单 cue 的逐字真相。比较角色称呼、自我纠正、游戏叙述和主播插话，"
-        "发现实际疑点后仍由正常逐项裁决处理，保留有意义的重复。\n" + serialized,
-        audit,
-    )
+    from src.autoslice.discovery_evidence_presentation import render_source_context
+    return render_source_context(rows, srt_text)
 
 
 def _prior_pronoun_discovery_audit(authority: Mapping[str, object] | None) -> object:
@@ -2308,7 +2402,7 @@ def _run_exact_final_release_review(
             from src.autoslice.discovery_channels import (
                 Channel, DiscoveryBatch, validated_observation_nominations,
                 blind_scan_complete, language_scan_complete, language_spans_from_audit, observation_id,
-                scan_channels,
+                scan_channels, fullclip_scan_complete, fullclip_scan_observations,
             )
             language_spans = language_spans_from_audit((verified_authority_audit or {}).get("audio_language_discovery_audit"))
             from src.autoslice.retained_partial_evidence import partial_ranges_from_audit
@@ -2415,7 +2509,7 @@ def _run_exact_final_release_review(
             batch = batch_from_rows(priority_findings, context=clip_context,
                 source_offset_ms=timeline_offset_ms, source_sha256=source_media_sha256)
             fullclip_observations = (acoustic_discovery_audit or {}).get("fullclip_discovery_observations") or []
-            fullclip_scan = validated_observation_nominations(srt_text, fullclip_observations,
+            fullclip_scan = validated_observation_nominations(srt_text, fullclip_scan_observations(fullclip_observations),
                 context=clip_context, source_offset_ms=timeline_offset_ms, channel=Channel.FULL_TRANSCRIPT,
                 language_spans=language_spans)
             batch = DiscoveryBatch((*batch.nominations, *fullclip_scan.nominations, *range_scan.nominations),
@@ -2464,7 +2558,7 @@ def _run_exact_final_release_review(
                 if not set(range_scan.rejection_reasons) - invalid_precision:
                     completed_channels.append("C1")
                 if ((acoustic_discovery_audit or {}).get("fullclip_discovery_status") == "OBSERVED"
-                    and {row.get("provider") for row in fullclip_observations} >= {"mai", "moss"}
+                    and fullclip_scan_complete(fullclip_observations)
                     and not set(fullclip_scan.rejection_reasons) - invalid_precision):
                     completed_channels.append("C0")
                 if language_scan_complete(verified_authority_audit):
@@ -3058,12 +3152,16 @@ def _build_exact_final_review_callback(
             truth_full_ownership=truth_ownership,
         )
 
+        handoff_diagnostics: list[PostburnHandoffDiagnostic] = []
         def postburn_priority_findings() -> list[Mapping[str, Any]]:
             postburn_result = validated_postburn_priority_findings(
                 final_srt_text=final_srt_text,
                 verified_authority_audit=verified_authority_audit,
                 candidate_id=cid,
                 clip_context=clip_context,
+                timeline_offset_ms=timeline_offset_ms,
+                source_media_sha256=(spec.get("source_piece_clock") or {}).get("padded_sha256"),
+                diagnostics=handoff_diagnostics,
             )
             if postburn_result is None:
                 return []
@@ -3202,6 +3300,8 @@ def _build_exact_final_review_callback(
         if speaker_generation is not None:
             exact["speaker_attribution_generation"] = speaker_generation
             exact["speaker_attribution"] = verified_authority_audit["speaker_attribution"]
+        if handoff_diagnostics:
+            exact["postburn_priority_handoff_diagnostics"] = handoff_diagnostics
         checkpoint_final_review_carryover(carryover_path(out_root, cid), exact)
         return exact
 
@@ -3512,6 +3612,7 @@ def _finalize_text_evidence(
     protected_name_source_srt: str | None = None,
     source_language_guard_reference: tuple[str, dict] | None = None,
     retained_reviewed_input: Mapping[str, Any] | None = None,
+    independent_chat_support_srts: Sequence[str] | None = None,
 ) -> TextEvidenceResult:
     from src.autoslice.retained_source_usage import reconcile_legacy_source_usage
     reconcile_legacy_source_usage(chat_authority_audit)
@@ -3521,21 +3622,12 @@ def _finalize_text_evidence(
             'schema_version':'producer-source-truth-attempt.v1',
             'ledger':_frozen_binding(out_root/'source-truth-input','ledger',source_truth_ledger_path)}
     def checkpoint_partial(text: str) -> None:
-        context_path = out_root / f'{cid}.clip-context.json'
-        if (padded is not None and context_path.is_file()
-                and (source_language_witness_srt or retained_reviewed_input is not None)):
-            from src.autoslice.producer_text_checkpoint import write_partial_source_text_checkpoint
-            from src.autoslice.retained_source_input import load_retained_source_input
-            retained_input = load_retained_source_input(spec=spec, cid=cid, padded=padded, out_root=out_root)
-            write_partial_source_text_checkpoint(
-                out_root / f'{cid}.partial-source-text-checkpoint.json', candidate_id=cid,
-                srt_text=text, authority=chat_authority_audit, final_review=final_review_audit,
-                context_path=context_path, padded=padded,
-                source_language_witness_srt=source_language_witness_srt,
-                protected_name_source_srt=protected_name_source_srt or text,
-                native_budget_receipt_path=(retained_input.native.budget_receipt if retained_input else None),
-                retained_reviewed_input=retained_reviewed_input,
-            )
+        _write_partial_with_support(
+            text, spec=spec, cid=cid, out_root=out_root, padded=padded,
+            authority=chat_authority_audit, final_review=final_review_audit,
+            language_witness=source_language_witness_srt, name_source=protected_name_source_srt,
+            retained=retained_reviewed_input, support=independent_chat_support_srts,
+        )
 
     # Review observations precede language/finalization providers. Persist the
     # actual unfinished input before any of those later operations can fail.
@@ -4108,12 +4200,14 @@ def _continuation_validate_final_language_owner(
     row: Mapping[str, Any], *, row_index: int, chat_authority: Mapping[str, Any],
     srt_text: str, final_review: Mapping[str, Any],
     projection_review: Mapping[str, Any] | None = None,
+    projection_reference_cues: Sequence[object] | None = None,
 ) -> None:
     """Replay a source-language owner on its original clock after a real cut."""
     from src.autoslice.final_source_language_owner import validate_final_cpa_owner
 
     try:
-        if (final_review.get("boundary_semantic_review") or {}).get("review_scope") == "source_full_window":
+        geometry_review = final_review if projection_review is None else projection_review
+        if (geometry_review.get("boundary_semantic_review") or {}).get("review_scope") == "source_full_window":
             validate_final_cpa_owner(row, row_index=row_index, authority=chat_authority,
                                      srt_text=srt_text)
             return
@@ -4130,7 +4224,8 @@ def _continuation_validate_final_language_owner(
         )
         projected, clock = _continuation_project_delivery_to_source(
             parse_srt_cues(srt_text),
-            final_review_audit=final_review if projection_review is None else projection_review,
+            final_review_audit=geometry_review,
+            reference_cues=projection_reference_cues,
             authority=chat_authority,
         )
         validate_final_cpa_owner(
@@ -4319,6 +4414,21 @@ def _continuation_validate_exact_final_owner(
             )
         offset = request_offsets[0]
     replay: dict[str, Any] = {}
+    editorial = repair.get("editorial_authority")
+    if isinstance(editorial, Mapping) and editorial.get("source_owner_reconciliation") is True:
+        # The validated receipt seals the original applied-owner prestate.
+        # Rebuild that historical registration locally; the ordinary writer
+        # still rejects drift against whichever live ledger it is given.
+        from copy import deepcopy
+
+        source_request = editorial.get("request")
+        conflict = source_request.get("chat_source_conflict") if isinstance(source_request, Mapping) else None
+        original_applied = conflict.get("original_applied") if isinstance(conflict, Mapping) else None
+        if not isinstance(original_applied, list):
+            raise CurrentTextContinuationError("CURRENT_EDITORIAL_OWNER_INVALID")
+        # Registration retires nested applied rows, so a shallow copy would
+        # mutate the sealed request and invalidate its original repair digest.
+        replay["applied"] = deepcopy(original_applied)
     _register_exact_final_cpa_repairs(
         replay, [dict(matches[0])], delivery_start_ms=offset,
     )
@@ -4460,14 +4570,14 @@ def _continuation_pending_source_boundary(
         "status": "BLOCK", "reason_codes": ["CURRENT_TEXT_REQUIRES_SOURCE_REVIEW"],
     }:
         return True
-    # Exact review can reach a real final-delivery endpoint before discovering
-    # that its source-separation witness is still blocked.  Its current cue
+    # Exact review can reach a real final-delivery endpoint even when either
+    # the boundary or another review stage remains blocked. Its current cue
     # geometry can resume review using a separately validated source clock;
     # neither this checkpoint nor that historical clock grants release.
     if (
         isinstance(boundary, Mapping)
         and boundary.get("schema_version") == "talk-boundary-semantic-review.v1"
-        and boundary.get("status") == "BLOCK"
+        and boundary.get("status") in {"PASS", "BLOCK"}
         and boundary.get("candidate_id") == candidate_id
         and boundary.get("review_scope") == "final_delivery"
     ):
@@ -4496,6 +4606,21 @@ def _continuation_pending_source_boundary(
             )
         ):
             return False
+        if boundary.get("status") == "PASS":
+            witness = boundary.get("source_separation_witness")
+            clock_witness = clock_boundary.get("source_separation_witness")
+            if (not isinstance(witness, Mapping) or not isinstance(clock_witness, Mapping)
+                    or witness.get("schema_version") != "talk-boundary-source-separation-witness.v1"
+                    or witness.get("status") != "PASS" or clock_witness.get("status") != "PASS"
+                    or any(witness.get(key) != clock_witness.get(key) for key in (
+                        "source_cue_grid_sha256", "source_final_start_ms", "source_final_end_ms"))
+                    or any(re.fullmatch(r"sha256:[0-9a-f]{64}", str(witness.get(key) or "")) is None
+                           for key in ("source_cue_grid_sha256", "source_request_sha256", "source_review_sha256"))
+                    or type(witness.get("source_final_start_ms")) is not int
+                    or type(witness.get("source_final_end_ms")) is not int
+                    or witness["source_final_end_ms"] - witness["source_final_start_ms"]
+                       != endpoint["final_end_ms"] - endpoint["final_start_ms"]):
+                return False
         cues = [cue for cue in parse_srt_cues(srt_text) if cue.text.strip()]
         if not cues or not 0 <= endpoint["final_start_ms"] < endpoint["final_end_ms"]:
             return False
@@ -4506,7 +4631,7 @@ def _continuation_pending_source_boundary(
             final_end_ms=endpoint["final_end_ms"],
         )
         return (
-            reasons == ["BOUNDARY_SEMANTIC_REVIEW_NOT_PASS"]
+            reasons == ([] if boundary.get("status") == "PASS" else ["BOUNDARY_SEMANTIC_REVIEW_NOT_PASS"])
             and rebound["final_endpoint_binding"] == endpoint
         )
     if (
@@ -4544,6 +4669,73 @@ def _continuation_pending_source_boundary(
     )
 
 
+def _continuation_historical_disclosure_pending(
+    authority: object, review: object, *,
+    reason_code: str | None = None,
+) -> bool:
+    """Admit one narrowly typed historical disclosure as review input only.
+
+    Older terminal answers can remain valid historical evidence while the current
+    consumer rejects their recorded contract (for example v6 versus the current
+    v8 name-slot contract).  Such rows must not satisfy the release union.  A
+    completed successor may continue only when the top review is otherwise a
+    clean predecessor, a separate postburn review is still FLAGGED/BLOCK, and
+    every non-release disclosed row is a deterministic contract retry.  The
+    original row, answer and release validator remain untouched.
+    """
+    if not isinstance(authority, Mapping) or not isinstance(review, Mapping):
+        return False
+    if reason_code is not None and reason_code != "FINAL_REVIEW_FINDINGS_CONTRACT_INVALID":
+        return False
+    if (
+        review.get("status") != "CLEAN"
+        or review.get("release_gate") != "PASS"
+        or review.get("findings") != []
+        or review.get("validated_finding_count") != 0
+    ):
+        return False
+    disclosed = review.get("unresolved_findings_disclosed")
+    postburn = authority.get("postburn_subtitle_audio_review")
+    if (
+        not isinstance(disclosed, list)
+        or not disclosed
+        or not isinstance(postburn, Mapping)
+        or postburn.get("status") != "FLAGGED"
+        or postburn.get("release_gate") != "BLOCK"
+        or not isinstance(postburn.get("findings"), list)
+        or not postburn.get("findings")
+    ):
+        return False
+    from src.autoslice.finding_lifecycle import classify
+
+    historical_contract_rows = 0
+    for row in disclosed:
+        if is_release_resolved_keep(row):
+            continue
+        if not is_keep_current_disclosed(row):
+            return False
+        try:
+            lifecycle = classify(row, terminal=True)
+        except (TypeError, ValueError, KeyError, AttributeError):
+            return False
+        retry = lifecycle.get("contract_retry")
+        detail = lifecycle.get("detail")
+        if (
+            lifecycle.get("state") != "CONTRACT_ERROR"
+            or lifecycle.get("reason_code") != "CONSUMER_REJECTED"
+            or lifecycle.get("recovery") != "REASK_UNDER_CURRENT_CONTRACT"
+            or lifecycle.get("new_model_call_authorized") is not False
+            or not isinstance(retry, Mapping)
+            or retry.get("kind") != "REASK_UNDER_CURRENT_CONTRACT"
+            or retry.get("reask_under_current_contract") is not True
+            or not isinstance(detail, Mapping)
+            or detail.get("validation_error") != "FINAL_STOP_OBSERVATION_DRIFT"
+        ):
+            return False
+        historical_contract_rows += 1
+    return historical_contract_rows > 0
+
+
 def _continuation_validate_existing_authority(
     chat_authority: Mapping[str, Any],
     *,
@@ -4553,7 +4745,9 @@ def _continuation_validate_existing_authority(
     candidate_id: str,
     source_clock_review: Mapping[str, object] | None = None,
     source_clock_srt_sha256: str | None = None,
+    source_clock_reference_cues: Sequence[object] | None = None,
     allow_source_scope_input: bool = False,
+    authenticated_padded_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Check the normal final audit and typed rows without importing new schemas.
 
@@ -4600,16 +4794,23 @@ def _continuation_validate_existing_authority(
     with checks.check("chat_authority.mutation_flag"):
         if chat_authority.get("mutation_authorized") is True:
             raise CurrentTextContinuationError("CURRENT_CHAT_AUTHORITY_MUTATION_INVALID")
-    final_review = chat_authority.get("final_review_audit")
+    projected_span_review = project_historical_span_review(
+        chat_authority, srt_text=srt_text, source_clock_review=source_clock_review,
+        source_clock_srt_sha256=source_clock_srt_sha256)
+    final_review = projected_span_review or chat_authority.get("final_review_audit")
     with checks.check("final_review.present"):
         if not isinstance(final_review, Mapping):
             raise CurrentTextContinuationError("CURRENT_FINAL_REVIEW_AUDIT_MISSING")
     preburn_pending = False
     boundary_pending = False
     mixed_pending = False
+    mixed_current_postburn = False
+    pending_reason = "FINAL_REVIEW_FINDING_REVIEW_PENDING"
     postburn_clean_pending = False
+    replay_pending = False
     discovery_pending = False
     source_scope_input = False
+    historical_disclosure_pending = False
     validated_final_review: Mapping[str, Any] = final_review if isinstance(final_review, Mapping) else {}
     if not isinstance(final_review, Mapping):
         for name in ("final_review.successor_binding", "final_review.release_or_pending",
@@ -4648,6 +4849,7 @@ def _continuation_validate_existing_authority(
                     # release (or completed review) of the active bytes.
                     raise CurrentTextContinuationError("CURRENT_FINAL_REVIEW_SUCCESSOR_NOT_PENDING")
             except FinalReviewContractError as exc:
+                pending_reason = exc.reason_code
                 boundary = final_review.get('boundary_semantic_review') or {}
                 context = final_review.get('source_boundary_context') or {}
                 # Some historical checkpoints completed source-window review while
@@ -4677,6 +4879,23 @@ def _continuation_validate_existing_authority(
                 # review after a parser failure or unresolved semantic finding.
                 # Release and input validation are separate; retain the original verdict.
                 postburn = chat_authority.get("postburn_subtitle_audio_review")
+                historical_disclosure_pending = _continuation_historical_disclosure_pending(
+                    chat_authority, final_review, reason_code=exc.reason_code,
+                )
+                replay_parent = postburn_replay_failure_parent(postburn)
+                replay_pending = bool(
+                    not successor_review_pending
+                    and exc.reason_code == "FINAL_REVIEW_RELEASE_GATE_BLOCKED"
+                    and final_review.get("status") == "AUDITOR_UNAVAILABLE"
+                    and isinstance(postburn, Mapping)
+                    and replay_parent is not postburn
+                    and isinstance(replay_parent, Mapping)
+                    and replay_parent.get("status") == "FLAGGED"
+                    and replay_parent.get("release_gate") == "BLOCK"
+                    and isinstance(replay_parent.get("findings"), list)
+                    and bool(replay_parent["findings"])
+                    and final_review.get("reason_codes") == postburn.get("reason_codes")
+                )
                 parser_pending = (
                     not successor_review_pending
                     and exc.reason_code == "FINAL_REVIEW_RELEASE_GATE_BLOCKED"
@@ -4743,24 +4962,9 @@ def _continuation_validate_existing_authority(
                         for row in passes
                     )
                 )
-                preburn_pending = (
-                    is_finding_failure(exc.reason_code)
-                    and final_review.get("status") == "FLAGGED"
-                    and final_review.get("release_gate") == "BLOCK"
-                    and only_finding_failures(final_review.get("reason_codes"))
-                    and isinstance(findings, list)
-                    and bool(findings)
-                    and final_review.get("validated_finding_count") == len(findings)
-                    and (
-                        prior_postburn
-                        or (
-                            "postburn_subtitle_audio_review" not in chat_authority
-                            and "postburn_subtitle_audio_review" not in final_review
-                        )
-                    )
-                    and isinstance(exact_self_heal, Mapping)
-                    and exact_self_heal.get("status") == "REVIEW_PENDING"
-                )
+                preburn_pending = preburn_pending_review(
+                    exc.reason_code, final_review, prior_postburn, chat_authority,
+                    exact_self_heal, projected_span_review is not None)
                 pending_text = final_review.get("pre_boundary_text_recovery")
                 boundary_pending = (
                     not successor_review_pending
@@ -4804,6 +5008,9 @@ def _continuation_validate_existing_authority(
                 # findings are already the retained text-stage receipt; if present,
                 # it must still describe the same current bytes.
                 mixed_pending_text = final_review.get("pre_boundary_text_recovery")
+                mixed_current_postburn = current_postburn_mixed_input(
+                    postburn, final_review, exact_self_heal, current_sha, successor_review_pending,
+                )
                 mixed_pending = (
                     is_finding_failure(exc.reason_code)
                     and final_review.get("status") == "FLAGGED"
@@ -4831,7 +5038,7 @@ def _continuation_validate_existing_authority(
                         )
                     )
                     and (
-                        prior_postburn
+                        prior_postburn or mixed_current_postburn
                         or (
                             "postburn_subtitle_audio_review" not in chat_authority
                             and "postburn_subtitle_audio_review" not in final_review
@@ -4839,20 +5046,27 @@ def _continuation_validate_existing_authority(
                     )
                     and isinstance(source_clock_review, Mapping)
                     and isinstance(exact_self_heal, Mapping)
-                    and exact_self_heal.get("status") == "REVIEW_PENDING"
+                    and (exact_self_heal.get("status") == "REVIEW_PENDING"
+                         or mixed_current_postburn)
                 )
                 if (
                     not (
                         parser_pending
+                        or replay_pending
                         or semantic_pending
                         or preburn_pending
                         or boundary_pending
                         or mixed_pending
                         or postburn_clean_pending
                         or discovery_pending
+                        or historical_disclosure_pending
                         or source_scope_input
                     )
-                    or (final_review.get("release_gate") != "BLOCK" and not source_scope_input)
+                    or (
+                        final_review.get("release_gate") != "BLOCK"
+                        and not source_scope_input
+                        and not historical_disclosure_pending
+                    )
                 ):
                     raise CurrentTextContinuationError(exc.reason_code) from exc
                 if not (preburn_pending or boundary_pending or mixed_pending or discovery_pending or source_scope_input):
@@ -4872,7 +5086,7 @@ def _continuation_validate_existing_authority(
         with checks.check("final_review.input_integrity_geometry"):
             if validated_final_review is final_review and (
                 preburn_pending or boundary_pending or mixed_pending or postburn_clean_pending
-                or discovery_pending or source_scope_input
+                or discovery_pending or historical_disclosure_pending or source_scope_input
                 or final_review.get("release_gate") == "BLOCK"
             ):
                 # Unresolved findings stop release before its geometry checks.  They
@@ -4900,6 +5114,13 @@ def _continuation_validate_existing_authority(
                     )
                 except FinalReviewContractError as input_exc:
                     raise CurrentTextContinuationError(input_exc.reason_code) from input_exc
+
+        if mixed_pending and mixed_current_postburn and not validate_current_postburn_mixed(
+            authority=chat_authority, source_clock_review=source_clock_review,
+            padded_sha256=authenticated_padded_sha256, srt_text=srt_text,
+            candidate_id=candidate_id, clip_context=clip_context,
+        ):
+            raise CurrentTextContinuationError(pending_reason)
 
     # ``correction_pass`` is historical provenance.  The contract validator
     # checks its mutation/carryover integrity; its findings remain bound to
@@ -4950,6 +5171,8 @@ def _continuation_validate_existing_authority(
                     row, row_index=row_index, chat_authority=chat_authority,
                     srt_text=srt_text, final_review=validated_final_review,
                     projection_review=owner_projection_review(),
+                    projection_reference_cues=(source_clock_reference_cues
+                        if borrows_source_clock_geometry() else None),
                 )
             else:
                 _continuation_validate_existing_repair(
@@ -5019,11 +5242,53 @@ def _continuation_source_clock_reference(
     }
 
 
+def _continuation_clock_reference_cues(
+    reference: Mapping[str, object] | None,
+) -> list[SrtCue] | None:
+    """Reopen the authenticated clock text used before a typed text suffix."""
+    if not reference or not reference.get("reference_srt_path"):
+        return None
+    text = Path(str(reference["reference_srt_path"])).read_text(encoding="utf-8")
+    _continuation_require_sha(
+        hashlib.sha256(text.encode()).hexdigest(), reference["reviewed_srt_sha256"],
+        label="CURRENT_SOURCE_CLOCK_SRT",
+    )
+    return parse_srt_cues(text)
+
+
 def _continuation_replay_clock_text_chain(
     chat_authority: Mapping[str, object], *, reference_text: str,
     reference_sha: str, current_text: str, current_sha: str,
 ) -> None:
-    """Recompute the normal typed suffix without modifying either artifact."""
+    """Recompute the normal typed suffix and every registered text successor.
+
+    A source-clock reference can precede a release-grade merge (or another
+    typed successor) recorded after the last CPA pass.  Replaying only the
+    caption-display successor collection made a valid completed chain look
+    like text drift.  Use the shared successor readers and the same typed-pass
+    replay used by current-authority consumers; this remains a read-only
+    proof and never promotes the historical review. A resumed review starts a
+    new pass sequence, so an older clock can belong to a retained completed run.
+    Validate and replay those runs in order, keeping each successor with its
+    own pass sequence and requiring exact bytes at every run boundary.
+    """
+    from src.autoslice.exact_final_cpa_history import (
+        HISTORY_KEY, ordered_successors, read_successors, repair_history,
+    )
+    from src.autoslice.legacy_final_surface_supersession import _replay_typed_pass
+
+    def digest(text: str) -> str:
+        return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    def geometry(text: str) -> tuple[tuple[str, int, int], ...]:
+        return tuple(
+            (cue.index, cue.start_ms, cue.end_ms)
+            for cue in parse_srt_cues(text)
+        )
+
+    if digest(reference_text) != "sha256:" + reference_sha:
+        raise CurrentTextContinuationError("CURRENT_SOURCE_CLOCK_TEXT_CHAIN_DRIFT")
+
     try:
         _validate_exact_final_cpa_self_heal(
             chat_authority, expected_srt_sha256="sha256:" + current_sha, allow_pending=True,
@@ -5031,45 +5296,97 @@ def _continuation_replay_clock_text_chain(
     except FinalReviewContractError as exc:
         raise CurrentTextContinuationError(exc.reason_code) from exc
     receipt = chat_authority.get("exact_final_cpa_self_heal")
-    passes = receipt.get("passes") if isinstance(receipt, Mapping) else None
-    starts = [i for i, row in enumerate(passes or [])
-              if row.get("input_srt_sha256") == "sha256:" + reference_sha]
-    if len(starts) != 1:
+    if not isinstance(receipt, Mapping):
         raise CurrentTextContinuationError("CURRENT_SOURCE_CLOCK_TEXT_CHAIN_MISSING")
-    original = parse_srt_cues(reference_text)
-    cues = list(original)
-    text = reference_text
-    display_successors = caption_successors(receipt)
-    for row in passes[starts[0]:]:
-        if row["input_srt_sha256"] != "sha256:" + hashlib.sha256(text.encode()).hexdigest():
-            raise CurrentTextContinuationError("CURRENT_SOURCE_CLOCK_TEXT_CHAIN_DRIFT")
-        for repair in row["repairs"]:
-            position = repair["cue_index"] - 1
-            if not 0 <= position < len(cues):
+    passes = receipt.get("passes")
+    if not isinstance(passes, list) or not passes:
+        raise CurrentTextContinuationError("CURRENT_SOURCE_CLOCK_TEXT_CHAIN_MISSING")
+    try:
+        # A retained digest seals provenance, not validity. Revalidate each
+        # original completed run before using its typed passes or successors.
+        repair_history(receipt)
+        retained = receipt.get(HISTORY_KEY, [])
+        if not isinstance(retained, list):
+            raise ValueError("EXACT_FINAL_CPA_HISTORY_INVALID")
+        runs = [entry["audit"] for entry in retained] + [receipt]
+        for previous in runs[:-1]:
+            _validate_exact_final_cpa_self_heal(
+                {"exact_final_cpa_self_heal": previous},
+                expected_srt_sha256=previous["final_srt_sha256"],
+                allow_pending=False,
+            )
+        chains = [(run["passes"], read_successors(run)) for run in runs]
+    except FinalReviewContractError as exc:
+        raise CurrentTextContinuationError(exc.reason_code) from exc
+    except (TypeError, ValueError, KeyError) as exc:
+        raise CurrentTextContinuationError("CURRENT_SOURCE_CLOCK_TEXT_CHAIN_DRIFT") from exc
+    text = current_text
+    for passes, successor_groups in reversed(chains):
+        successors = [row for rows in successor_groups.values() for row in rows]
+        remaining = list(successors)
+        # Recover the first pass input, then replay the complete typed chain.  The
+        # clock may name any boundary, including a pass output or an intermediate
+        # successor output; it need not also be the input of a later CPA pass.
+        for row in reversed(passes):
+            if not isinstance(row, Mapping):
                 raise CurrentTextContinuationError("CURRENT_SOURCE_CLOCK_TEXT_CHAIN_DRIFT")
-            cue = cues[position]
-            if (repair["before"] != cue.text or not repair["after"].strip()
-                    or repair.get("matched_start_ms") != cue.start_ms
-                    or repair.get("matched_end_ms") != cue.end_ms):
+            while True:
+                undo = [
+                    successor for successor in remaining
+                    if successor.get("after_pass_index") == row.get("pass_index")
+                    and successor.get("output_srt_sha256") == digest(text)
+                ]
+                if not undo:
+                    break
+                if len(undo) != 1 or not isinstance(undo[0].get("input_srt_text"), str):
+                    raise CurrentTextContinuationError("CURRENT_SOURCE_CLOCK_TEXT_CHAIN_DRIFT")
+                text = undo[0]["input_srt_text"]
+                remaining.remove(undo[0])
+            if row.get("output_srt_sha256") != digest(text):
                 raise CurrentTextContinuationError("CURRENT_SOURCE_CLOCK_TEXT_CHAIN_DRIFT")
-            cues[position] = type(cue)(index=cue.index, start_ms=cue.start_ms,
-                                       end_ms=cue.end_ms, text=repair["after"])
-        text = _render_cues_to_srt(cues)
-        if row["output_srt_sha256"] != "sha256:" + hashlib.sha256(text.encode()).hexdigest():
-            raise CurrentTextContinuationError("CURRENT_SOURCE_CLOCK_TEXT_CHAIN_DRIFT")
-        successor = display_successors.get(row["pass_index"])
-        if successor is not None:
-            if text != successor["input_srt_text"]:
+            replayed = _replay_typed_pass(text, row, reverse=True)
+            if replayed is None:
                 raise CurrentTextContinuationError("CURRENT_SOURCE_CLOCK_TEXT_CHAIN_DRIFT")
-            text = successor["output_srt_text"]
-            cues = list(parse_srt_cues(text))
-    if text != current_text or hashlib.sha256(text.encode()).hexdigest() != current_sha:
+            text = replayed
+    replay = text
+    reference_reached = replay == reference_text
+    typed_successor_changed_geometry = False
+    for passes, successor_groups in chains:
+        for row in passes:
+            if not isinstance(row, Mapping):
+                raise CurrentTextContinuationError("CURRENT_SOURCE_CLOCK_TEXT_CHAIN_DRIFT")
+            replayed = _replay_typed_pass(replay, row, reverse=False)
+            if replayed is None:
+                raise CurrentTextContinuationError("CURRENT_SOURCE_CLOCK_TEXT_CHAIN_DRIFT")
+            replay = replayed
+            reference_reached = reference_reached or replay == reference_text
+            try:
+                ordered = ordered_successors(
+                    successor_groups.get(row.get("pass_index"), []), digest(replay),
+                )
+            except (TypeError, ValueError, KeyError) as exc:
+                raise CurrentTextContinuationError("CURRENT_SOURCE_CLOCK_TEXT_CHAIN_DRIFT") from exc
+            for successor in ordered:
+                if replay != successor.get("input_srt_text"):
+                    raise CurrentTextContinuationError("CURRENT_SOURCE_CLOCK_TEXT_CHAIN_DRIFT")
+                output = successor.get("output_srt_text")
+                if not isinstance(output, str) or digest(output) != successor.get("output_srt_sha256"):
+                    raise CurrentTextContinuationError("CURRENT_SOURCE_CLOCK_TEXT_CHAIN_DRIFT")
+                if reference_reached and geometry(replay) != geometry(output):
+                    typed_successor_changed_geometry = True
+                replay = output
+                reference_reached = reference_reached or replay == reference_text
+    if not reference_reached:
+        raise CurrentTextContinuationError("CURRENT_SOURCE_CLOCK_TEXT_CHAIN_MISSING")
+    if replay != current_text or digest(replay) != "sha256:" + current_sha:
         raise CurrentTextContinuationError("CURRENT_SOURCE_CLOCK_TEXT_CHAIN_DRIFT")
+    original = parse_srt_cues(reference_text)
     current_cues = parse_srt_cues(current_text)
-    if len(original) != len(current_cues) or any(
-        (old.index, old.start_ms, old.end_ms) != (new.index, new.start_ms, new.end_ms)
+    geometry_matches = len(original) == len(current_cues) and all(
+        (old.index, old.start_ms, old.end_ms) == (new.index, new.start_ms, new.end_ms)
         for old, new in zip(original, current_cues)
-    ):
+    )
+    if not typed_successor_changed_geometry and not geometry_matches:
         raise CurrentTextContinuationError("CURRENT_TEXT_REPAIR_TIMING_DRIFT")
 
 
@@ -5116,6 +5433,8 @@ def _continuation_project_delivery_to_source(
     final_review_audit: Mapping[str, object],
     reference_cues: Sequence[object] | None = None,
     authority: Mapping[str, object] | None = None,
+    reference_text: str | None = None,
+    current_text: str | None = None,
 ) -> tuple[list[SrtCue], dict[str, object]]:
     """Bind the current delivery grid to the padded source timeline.
 
@@ -5146,6 +5465,7 @@ def _continuation_project_delivery_to_source(
         if reviewed_cues is not None:
             reference_cues = reviewed_cues
             reference_grid = cue_grid_sha256(reviewed_cues)
+    geometry_transition_proved = False
     if reference_cues is not None and (
         len(cues) != len(reference_cues)
         or any(
@@ -5154,7 +5474,35 @@ def _continuation_project_delivery_to_source(
             for current, original in zip(cues, reference_cues)
         )
     ):
-        raise CurrentTextContinuationError("CURRENT_TEXT_REPAIR_TIMING_DRIFT")
+        # A later registered typed successor may legitimately merge or split
+        # the reviewed cue grid. The source-clock consumer has already
+        # replayed that chain for its own reference, but this projection seam
+        # must consume the same proof instead of comparing two endpoints as
+        # though they were the same bytes. Keep the old fail-closed behavior
+        # when exact endpoint text is unavailable: a grid mismatch is not
+        # inferred to be a successor merely from matching cue counts.
+        if authority is not None and isinstance(reference_text, str) and isinstance(current_text, str):
+            try:
+                if cue_grid_sha256(parse_srt_cues(reference_text)) != reference_grid:
+                    raise CurrentTextContinuationError("CURRENT_SOURCE_CLOCK_TEXT_CHAIN_DRIFT")
+                if cue_grid_sha256(parse_srt_cues(current_text)) != delivery_grid:
+                    raise CurrentTextContinuationError("CURRENT_SOURCE_CLOCK_TEXT_CHAIN_DRIFT")
+                _continuation_replay_clock_text_chain(
+                    authority,
+                    reference_text=reference_text,
+                    reference_sha=hashlib.sha256(reference_text.encode("utf-8")).hexdigest(),
+                    current_text=current_text,
+                    current_sha=hashlib.sha256(current_text.encode("utf-8")).hexdigest(),
+                )
+            except CurrentTextContinuationError:
+                raise
+            except (TypeError, ValueError, UnicodeDecodeError) as exc:
+                raise CurrentTextContinuationError(
+                    "CURRENT_SOURCE_CLOCK_TEXT_CHAIN_DRIFT"
+                ) from exc
+            geometry_transition_proved = True
+        if not geometry_transition_proved:
+            raise CurrentTextContinuationError("CURRENT_TEXT_REPAIR_TIMING_DRIFT")
     if (
         endpoint.get("semantic_cue_grid_sha256") != reference_grid
         or endpoint.get("final_cue_grid_sha256") != reference_grid
@@ -5456,12 +5804,14 @@ def _continuation_source_boundary_cues(
 
 
 def _continuation_retain_superseded_boundary_geometry(audit: dict[str, Any]) -> None:
-    """Keep an already frozen source window after a validated text-only repair.
+    """Keep already frozen source windows after validated text-only repairs.
 
     Called on the freezer's evidence copy after CURRENT authority validation.
     Supersession retires the old spelling, not its mandatory source interval.
-    The original repair ledger and its reconciliation receipt stay untouched.
+    The original repair ledger and its reconciliation receipts stay untouched.
     """
+    from src.autoslice.exact_final_cpa_history import repair_history
+
     frozen = audit.get("frozen_boundary_owner_contract")
     if not isinstance(frozen, Mapping):
         return
@@ -5472,28 +5822,41 @@ def _continuation_retain_superseded_boundary_geometry(audit: dict[str, Any]) -> 
         "sha256:" + hashlib.sha256(json.dumps(
             repair, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
         ).encode()).hexdigest()
-        for item in (audit.get("exact_final_cpa_self_heal") or {}).get("passes", [])
-        for repair in item.get("repairs", [])
+        for repair in repair_history(
+            audit.get("exact_final_cpa_self_heal") or {"passes": []},
+        )
     }
-    for row in audit.get("entity_repairs") or []:
-        reconciliation = row.get("reconciliation")
-        if not isinstance(reconciliation, Mapping) or not (
-            reconciliation.get("schema_version") == "exact-final-cpa-supersession.v1"
-            and reconciliation.get("status") == "SUPERSEDED_BY_EXACT_FINAL_CPA"
-            and reconciliation.get("timing_immutable") is True
-            and reconciliation.get("exact_final_repair_sha256") in repairs
-            and row.get("boundary_required") is True
-        ):
-            continue
-        expected = {
-            "owner_kind": "entity_repair", "owner_id": row.get("boundary_owner_id"),
-            "required": True, "local_windows": [{
-                "start_ms": row.get("matched_start_ms"),
-                "end_ms": row.get("matched_end_ms"),
-            }],
-        }
-        if expected in owners:
-            row.pop("reconciliation")
+    groups = (
+        ("entity_repair", "entity_repairs", {"exact-final-cpa-supersession.v1"}),
+        ("exact_read", "applied", {
+            "exact-final-cpa-exact-read-supersession.v1",
+            "chat-source-owner-exact-read-supersession.v1",
+        }),
+    )
+    for kind, key, schemas in groups:
+        for row in audit.get(key) or []:
+            if not isinstance(row, dict):
+                continue
+            if kind == "exact_read" and row.get("owner_eligible") is not True:
+                continue
+            reconciliation = row.get("reconciliation")
+            if not isinstance(reconciliation, Mapping) or not (
+                reconciliation.get("schema_version") in schemas
+                and reconciliation.get("status") == "SUPERSEDED_BY_EXACT_FINAL_CPA"
+                and reconciliation.get("timing_immutable") is True
+                and reconciliation.get("exact_final_repair_sha256") in repairs
+                and row.get("boundary_required") is True
+            ):
+                continue
+            expected = {
+                "owner_kind": kind, "owner_id": row.get("boundary_owner_id"),
+                "required": True, "local_windows": [{
+                    "start_ms": row.get("matched_start_ms"),
+                    "end_ms": row.get("matched_end_ms"),
+                }],
+            }
+            if expected in owners:
+                row.pop("reconciliation")
 
 
 def _continuation_boundary_owner_contract(
@@ -5747,9 +6110,11 @@ def _run_current_text_continuation(
         candidate_id=cid,
         source_clock_review=source_clock_review,
         source_clock_srt_sha256=(source_clock_reference or {}).get("reviewed_srt_sha256"),
+        source_clock_reference_cues=_continuation_clock_reference_cues(source_clock_reference),
         allow_source_scope_input=True,
+        authenticated_padded_sha256=padded_sha256,
     )
-    completed_candidate = final_review_audit
+    chat_authority["final_review_audit"] = completed_candidate = final_review_audit
     if ((final_review_audit.get('boundary_semantic_review') or {}).get('review_scope') == 'source_full_window'
             and final_review_audit.get('status') == 'CLEAN' and final_review_audit.get('release_gate') == 'PASS'):
         # A clock can also contain an actual completed content review of these
@@ -5761,17 +6126,18 @@ def _run_current_text_continuation(
         and completed_candidate.get('status') == 'CLEAN' and completed_candidate.get('release_gate') == 'PASS'
         and completed_candidate.get('reviewed_srt_sha256') == 'sha256:' + srt_sha256) else None
     clock_review_audit = source_clock_review or final_review_audit
-    clock_cues = None
-    if source_clock_reference and source_clock_reference.get("reference_srt_path"):
-        clock_text = Path(source_clock_reference["reference_srt_path"]).read_text(encoding="utf-8")
-        if "sha256:" + hashlib.sha256(clock_text.encode()).hexdigest() != source_clock_reference["reviewed_srt_sha256"]:
-            raise CurrentTextContinuationError("CURRENT_SOURCE_CLOCK_SRT_DRIFT")
-        clock_cues = parse_srt_cues(clock_text)
+    clock_cues = _continuation_clock_reference_cues(source_clock_reference)
     projected_source_cues, delivery_source_projection = _continuation_project_delivery_to_source(
         cues,
         final_review_audit=clock_review_audit,
         reference_cues=clock_cues,
         authority=chat_authority,
+        reference_text=(
+            Path(source_clock_reference["reference_srt_path"]).read_text(encoding="utf-8")
+            if isinstance(source_clock_reference, Mapping)
+            and source_clock_reference.get("reference_srt_path") else None
+        ),
+        current_text=srt_text,
     )
     _bind_projection_recording_clock(delivery_source_projection, spec, padded_sha256)
     source_boundary_cues, source_boundary_context = _continuation_source_boundary_cues(
@@ -5933,6 +6299,7 @@ def _run_current_text_continuation(
     # retain the validated input clock and frozen source owners unchanged.
     current_text_recovery_required = bool(
         caption_display_changed
+        or _continuation_historical_disclosure_pending(chat_authority, final_review_audit)
         or final_review_audit.get("status") == "AUDITOR_UNAVAILABLE"
         or (
             final_review_audit.get("release_gate") == "BLOCK"
@@ -6019,6 +6386,12 @@ def _run_current_text_continuation(
             cues, final_review_audit=clock_review_audit,
             reference_cues=clock_cues if clock_cues is not None else original_cues,
             authority=chat_authority,
+            reference_text=(
+                Path(source_clock_reference["reference_srt_path"]).read_text(encoding="utf-8")
+                if isinstance(source_clock_reference, Mapping)
+                and source_clock_reference.get("reference_srt_path") else None
+            ),
+            current_text=srt_text,
         )
         _bind_projection_recording_clock(delivery_source_projection, spec, padded_sha256)
         # The copy is a clock reference, not a restored semantic PASS.
@@ -7129,6 +7502,129 @@ def _source_checkpoint_reproduces_delivery(
         return False
 
 
+def _continuation_validate_completed_successor_projection(
+    *,
+    checkpoint_authority: object,
+    live_authority: object,
+    delivery_text: str,
+    delivery_sha256: str,
+    candidate_id: str,
+    source_boundary_binding: Mapping[str, str] | None = None,
+    source_boundary_audit_path: Path | None = None,
+) -> None:
+    """Validate a later completed delivery against the immutable source parent.
+
+    A completed postburn successor may legitimately have different delivery
+    bytes from the pre-postburn current checkpoint.  Its source parent and
+    delivery-to-source projection still have to be independently reproducible
+    from the saved authority; the later delivery is only a new review input,
+    never an automatic release.
+    """
+    if not isinstance(checkpoint_authority, Mapping) or not isinstance(live_authority, Mapping):
+        raise CurrentTextContinuationError("CURRENT_COMPLETED_SUCCESSOR_PARENT_DRIFT")
+    review = live_authority.get("final_review_audit")
+    if not isinstance(review, Mapping):
+        raise CurrentTextContinuationError("CURRENT_COMPLETED_SUCCESSOR_PARENT_DRIFT")
+    boundary = review.get("boundary_semantic_review")
+    if not isinstance(boundary, Mapping) or boundary.get("candidate_id") != candidate_id:
+        raise CurrentTextContinuationError("CURRENT_COMPLETED_SUCCESSOR_PARENT_DRIFT")
+    parent_sha = _continuation_normalize_sha(
+        checkpoint_authority.get("post_transcript_entity_output_srt_sha256")
+    )
+    if re.fullmatch(r"[0-9a-f]{64}", parent_sha) is None:
+        raise CurrentTextContinuationError("CURRENT_COMPLETED_SUCCESSOR_PARENT_DRIFT")
+    parent_text = checkpoint_authority.get("post_transcript_entity_output_srt")
+    if not isinstance(parent_text, str) or hashlib.sha256(parent_text.encode("utf-8")).hexdigest() != parent_sha:
+        raise CurrentTextContinuationError("CURRENT_COMPLETED_SUCCESSOR_PARENT_DRIFT")
+    if hashlib.sha256(delivery_text.encode("utf-8")).hexdigest() != delivery_sha256:
+        raise CurrentTextContinuationError("CURRENT_COMPLETED_SUCCESSOR_PARENT_DRIFT")
+    try:
+        parent_cues = [cue for cue in parse_srt_cues(parent_text) if cue.text.strip()]
+        delivery_cues = [cue for cue in parse_srt_cues(delivery_text) if cue.text.strip()]
+        if not parent_cues or not delivery_cues:
+            raise CurrentTextContinuationError("CURRENT_COMPLETED_SUCCESSOR_PARENT_DRIFT")
+        source_witness = boundary.get("source_separation_witness")
+        if not isinstance(source_witness, Mapping):
+            raise CurrentTextContinuationError("CURRENT_COMPLETED_SUCCESSOR_PARENT_DRIFT")
+        if source_witness.get("source_cue_grid_sha256") != cue_grid_sha256(parent_cues):
+            # A retained source review may use a wider, frozen boundary context
+            # than its post-transcript parent. Authenticate both the exact
+            # context bytes and the source review referenced by this witness.
+            old_review = checkpoint_authority.get("final_review_audit") or {}
+            if not isinstance(old_review, Mapping):
+                raise CurrentTextContinuationError("CURRENT_COMPLETED_SUCCESSOR_PARENT_DRIFT")
+            source_context = old_review.get("source_boundary_context") or {}
+            old_boundary = old_review.get("boundary_semantic_review") or {}
+            if not isinstance(source_boundary_binding, Mapping) or source_boundary_audit_path is None:
+                raise CurrentTextContinuationError("CURRENT_COMPLETED_SUCCESSOR_PARENT_DRIFT")
+            path = Path(str(source_boundary_binding.get("path") or ""))
+            actual_sha = _continuation_sha256_path(path, label="CURRENT_SOURCE_BOUNDARY_ARTIFACT")
+            _continuation_require_sha(actual_sha, source_boundary_binding.get("sha256"), label="CURRENT_SOURCE_BOUNDARY_ARTIFACT")
+            source_audit, _ = _continuation_read_json(source_boundary_audit_path, label="CURRENT_SOURCE_BOUNDARY_AUDIT")
+            source_review = source_audit.get("boundary_semantic_review") or {}
+            endpoint = source_review.get("final_endpoint_binding") if isinstance(source_review, Mapping) else None
+            from src.autoslice.boundary_semantic_review import semantic_review_sha256
+            if (not isinstance(source_context, Mapping) or not isinstance(old_boundary, Mapping)
+                    or not isinstance(source_review, Mapping)
+                    or source_context.get("schema_version") != "source-boundary-transcript-context.v1"
+                    or source_context.get("status") != "PASS"
+                    or source_context.get("source_srt_role") != "EXPLICIT_SOURCE_BOUNDARY_ARTIFACT"
+                    or source_context.get("source_srt_sha256") != "sha256:" + actual_sha
+                    or source_context.get("source_cue_grid_sha256") != cue_grid_sha256(parse_srt_cues(path.read_text(encoding="utf-8")))
+                    or source_context.get("source_cue_grid_sha256") != source_witness.get("source_cue_grid_sha256")
+                    or source_witness.get("status") != "PASS"
+                    or source_audit.get("schema_version") != "boundary-audit.v1"
+                    or source_review.get("candidate_id") != candidate_id
+                    or source_review.get("status") != "PASS"
+                    or source_review.get("review_scope") != "source_full_window"
+                    or old_boundary.get("candidate_id") != candidate_id
+                    or old_boundary.get("status") != "PASS"
+                    or old_boundary.get("review_scope") != "source_full_window"
+                    or source_review.get("cue_grid_sha256") != source_witness.get("source_cue_grid_sha256")
+                    or old_boundary.get("cue_grid_sha256") != source_review.get("cue_grid_sha256")
+                    or old_boundary.get("request_sha256") != source_review.get("request_sha256")
+                    or re.fullmatch(r"sha256:[0-9a-f]{64}", str(source_review.get("request_sha256") or "")) is None
+                    or source_witness.get("source_request_sha256") != source_review.get("request_sha256")
+                    or source_witness.get("source_review_sha256") != semantic_review_sha256(source_review)
+                    or not isinstance(endpoint, Mapping) or endpoint.get("status") != "PASS"
+                    or endpoint.get("schema_version") != "talk-boundary-final-endpoint-binding.v1"
+                    or endpoint.get("semantic_cue_grid_sha256") != source_review.get("cue_grid_sha256")
+                    or endpoint.get("final_cue_grid_sha256") != source_review.get("cue_grid_sha256")
+                    or type(source_audit.get("final_start_ms")) is not int
+                    or type(source_audit.get("final_end_ms")) is not int
+                    or not 0 <= source_audit["final_start_ms"] < source_audit["final_end_ms"]
+                    or endpoint.get("final_start_ms") != source_audit.get("final_start_ms")
+                    or endpoint.get("final_end_ms") != source_audit.get("final_end_ms")
+                    or source_witness.get("source_final_start_ms") != source_audit.get("final_start_ms")
+                    or source_witness.get("source_final_end_ms") != source_audit.get("final_end_ms")):
+                raise CurrentTextContinuationError("CURRENT_COMPLETED_SUCCESSOR_PARENT_DRIFT")
+        projection_cues, projection = _continuation_project_delivery_to_source(
+            delivery_cues, final_review_audit=review, authority=live_authority,
+        )
+        if projection.get("delivery_srt_cue_grid_sha256") != cue_grid_sha256(delivery_cues):
+            raise CurrentTextContinuationError("CURRENT_COMPLETED_SUCCESSOR_PARENT_DRIFT")
+        if projection.get("projected_source_cue_grid_sha256") != cue_grid_sha256(projection_cues):
+            raise CurrentTextContinuationError("CURRENT_COMPLETED_SUCCESSOR_PARENT_DRIFT")
+        declared_projection = live_authority.get("current_delivery_source_projection")
+        if declared_projection is None:
+            declared_projection = review.get("current_delivery_source_projection")
+        if isinstance(declared_projection, Mapping):
+            if any(
+                declared_projection.get(key) != projection.get(key)
+                for key in (
+                    "delivery_srt_cue_grid_sha256",
+                    "projected_source_cue_grid_sha256",
+                    "source_final_start_ms",
+                    "source_final_end_ms",
+                )
+            ):
+                raise CurrentTextContinuationError("CURRENT_COMPLETED_SUCCESSOR_PARENT_DRIFT")
+    except (OSError, TypeError, ValueError, UnicodeDecodeError, CurrentTextContinuationError) as exc:
+        if isinstance(exc, CurrentTextContinuationError):
+            raise
+        raise CurrentTextContinuationError("CURRENT_COMPLETED_SUCCESSOR_PARENT_DRIFT") from exc
+
+
 def _automatic_current_checkpoint_snapshot(
     *,
     spec: Mapping[str, object],
@@ -7389,23 +7885,45 @@ def _automatic_current_checkpoint_snapshot(
             )
             review = live.get('final_review_audit') or {}
             boundary = review.get('boundary_semantic_review') or {}
-            if (live_sha != chat_authority_sha256 and review.get('status') == 'CLEAN'
-                    and review.get('release_gate') == 'PASS' and boundary.get('review_scope') == 'final_delivery'):
+            if (live_sha != chat_authority_sha256
+                    and boundary.get('review_scope') == 'final_delivery'):
                 delivery = Path(live.get('final_text_srt_path') or out_root / 'replacement_recuts' / f'{cid}.recut.srt')
                 if not delivery.resolve().is_relative_to(out_root.resolve()):
                     raise CurrentTextContinuationError('CURRENT_AUTO_RESUME_DELIVERY_PATH_INVALID')
                 delivery_sha = _continuation_sha256_path(delivery, label='CURRENT_COMPLETED_SRT')
                 original_source_sha = _continuation_normalize_sha(chat_authority.get('post_transcript_entity_output_srt_sha256'))
-                if (delivery_sha != srt_sha256 or re.fullmatch(r'[0-9a-f]{64}', original_source_sha) is None
+                if (re.fullmatch(r'[0-9a-f]{64}', original_source_sha) is None
                         or _continuation_normalize_sha(live.get('post_transcript_entity_output_srt_sha256'))
                         != original_source_sha):
                     raise CurrentTextContinuationError('CURRENT_COMPLETED_SUCCESSOR_PARENT_DRIFT')
+                if delivery_sha != srt_sha256:
+                    _continuation_validate_completed_successor_projection(
+                        checkpoint_authority=chat_authority,
+                        live_authority=live,
+                        delivery_text=delivery.read_text(encoding='utf-8'),
+                        delivery_sha256=delivery_sha,
+                        candidate_id=cid,
+                        source_boundary_binding=((native.get('source_clock') or {}).get('boundary_srt')
+                                                 if validated_retained is not None else None),
+                        source_boundary_audit_path=(out_root / f'{cid}.boundary_audit.json'
+                                                    if validated_retained is not None else None),
+                    )
                 if validated_retained is not None and any(
                     (live.get('retained_reviewed_draft') or {}).get(key) != validated_retained['proof'].get(key)
                     for key in ('source_srt_sha256','parent_authority_sha256','parent_clip_context_sha256',
                                 'filler_plan_sha256','padded_sha256','source_timeline_offset_ms','source_endpoint')):
                     raise CurrentTextContinuationError('CURRENT_COMPLETED_SUCCESSOR_PARENT_DRIFT')
-                validate_final_review_release(review, expected_srt_sha256='sha256:' + delivery_sha)
+                # A later ordinary review can still be pending. Its BLOCK is
+                # checked by the existing input-authority validator below;
+                # requiring release here would restore the older source review.
+                if review.get('release_gate') != 'BLOCK':
+                    try:
+                        validate_final_review_release(review, expected_srt_sha256='sha256:' + delivery_sha)
+                    except FinalReviewContractError as exc:
+                        if not _continuation_historical_disclosure_pending(
+                            live, review, reason_code=exc.reason_code,
+                        ):
+                            raise CurrentTextContinuationError(exc.reason_code) from exc
                 clock = native.get('source_clock') or {}
                 if any(not isinstance(clock.get(key), Mapping) for key in ('authority','srt')):
                     raise CurrentTextContinuationError('CURRENT_COMPLETED_SUCCESSOR_PARENT_DRIFT')
@@ -7423,7 +7941,8 @@ def _automatic_current_checkpoint_snapshot(
                 _continuation_validate_existing_authority(live, srt_text=delivery.read_text(encoding='utf-8'),
                     srt_sha256=delivery_sha, clip_context=clip_context, candidate_id=cid,
                     source_clock_review=clock_review,
-                    source_clock_srt_sha256=(clock_reference or {}).get('reviewed_srt_sha256'))
+                    source_clock_srt_sha256=(clock_reference or {}).get('reviewed_srt_sha256'),
+                    source_clock_reference_cues=_continuation_clock_reference_cues(clock_reference))
                 from src.autoslice.producer_text_checkpoint import write_current_text_checkpoint
                 write_current_text_checkpoint(out_root / f'{cid}.current-text-checkpoint.json',
                     candidate_id=cid, srt_path=delivery, authority_path=live_path,
@@ -8890,6 +9409,10 @@ def _source_stage_original_language_witness(
 ) -> str | None:
     """Load the saved original substrate, never the current repaired text."""
 
+    parent_spec = source_parent_input(spec)
+    if parent_spec is not None:
+        return _source_stage_original_language_witness(authority, parent_spec, padded, padded_dur)
+
     expected_input_sha = _continuation_normalize_sha(authority.get("input_srt_sha256"))
     if len(expected_input_sha) != 64:
         return None
@@ -9586,6 +10109,7 @@ def _resume_pending_source_finalization(
     current = snapshot['srt_text']
     native = snapshot.get('native_checkpoint') or {}
     retained_partial = native.get('schema_version') == RETAINED_PARTIAL_SCHEMA
+    chat_support_srts = _source_stage_chat_support_srts(snapshot, padded=padded)
     if retained_partial:
         validate_retained_partial(
             native=native, authority=authority, retained=snapshot.get('validated_retained'))
@@ -9610,11 +10134,15 @@ def _resume_pending_source_finalization(
         if _needs_typed_language_reference(authority) else None)
     ledger = None if str(spec.get('human_truth_mode') or 'delivery') == 'withheld' else adapters.profile_asset_file('subtitle_truth_ledger')
     from src.autoslice.producer_source_truth_checkpoint import rebase_pending_previews
+    source_parent = snapshot.get('source_accounting_parent')
+    source_input_roots = ((Path(source_parent['source_checkpoint']['path']).parent,)
+                          if source_parent is not None else ())
     try:
         rebase_pending_previews(authority, spec=spec, durations=durations, ledger_path=ledger,
             origin_path=getattr(adapters,'source_truth_origin_path',ledger),
             clip_context=snapshot['clip_context'], name_reference=name_reference,
-            current_text=current, out_root=out_root, allow_added_local_terms=pending_review)
+            current_text=current, out_root=out_root, allow_added_local_terms=pending_review,
+            source_input_roots=source_input_roots)
     except (OSError, ValueError, RuntimeError) as exc:
         raise CurrentTextContinuationError(str(exc)) from exc
     human = authority.get('human_sequence_alignment') or {}
@@ -9646,9 +10174,11 @@ def _resume_pending_source_finalization(
         if type(old_usage) is not int or old_usage < 0:
             raise CurrentTextContinuationError('CURRENT_SOURCE_STAGE_CPA_ADJUDICATION_USAGE_INVALID')
         _append_source_stage_review_history(authority,review,srt_sha256=snapshot['srt_sha256'])
-        _, truth_audit = apply_source_subtitle_truth(current, spec=spec, durations=durations, ledger_path=ledger)
-        truth_preview = build_source_truth_preview_receipt(
-            input_srt_text=current, source_truth_audit=truth_audit, stage='pre_correction_review')
+        truth_preview = build_retained_preview(
+            current, stage='pre_correction_review', spec=spec, durations=durations,
+            ledger_path=ledger, out_root=out_root,
+            apply_truth=apply_source_subtitle_truth, build_receipt=build_source_truth_preview_receipt,
+        )
         authority.setdefault('source_truth_preview_receipts', {})['pre_correction_review'] = truth_preview
         cues = parse_srt_cues(current)
         handled = {int(c.index) for c in cues for key in ('applied','entity_repairs','coreference_repairs')
@@ -9707,10 +10237,12 @@ def _resume_pending_source_finalization(
         source_language_witness_srt=witness,text_override_path=text_override_path,
         retained_reviewed_input=snapshot.get('validated_retained'),
         source_language_guard_reference=language_guard_reference,
+        independent_chat_support_srts=chat_support_srts,
         source_truth_ledger_path=ledger,out_root=out_root,cid=cid,padded=padded,clip_context=snapshot['clip_context'])
     write_source_text_checkpoint(out_root/f'{cid}.source-text-checkpoint.json',candidate_id=cid,
         srt_path=out_root/'padded.fresh.srt',authority_path=evidence.chat_authority_path,
-        context_path=snapshot['clip_context_path'],padded=padded)
+        context_path=snapshot['clip_context_path'],padded=padded,
+        independent_chat_support_srts=chat_support_srts)
     return _automatic_current_checkpoint_snapshot(spec=spec,durations=durations,padded=padded,
         padded_dur=padded_dur,cid=cid,out_root=out_root,source_truth_ledger_path=ledger,
         validated_retained=snapshot.get('validated_retained'))
@@ -9735,6 +10267,7 @@ def _automatic_current_source_stage_checkpoint(
     snapshot: Mapping[str, Any] | None = None,
     native_audio_state: PreparedNativeAudioState | None = None,
     witness_cache_roots: tuple[Path, ...] = (),
+    _language_scan_attempted: bool = False,
 ) -> TextPipelineResult | None:
     """Resume a genuine normal source-text checkpoint in memory.
 
@@ -9775,34 +10308,22 @@ def _automatic_current_source_stage_checkpoint(
         if str(spec.get("human_truth_mode") or "delivery") == "withheld"
         else adapters.profile_asset_file("subtitle_truth_ledger")
     )
-    from src.autoslice.producer_source_truth_checkpoint import added_local_term_review_required
-    added_terms = added_local_term_review_required(authority,spec=spec,durations=durations,
-        ledger_path=source_truth_ledger_path,current_text=snapshot['srt_text'])
-    if snapshot.get('source_observation_parent') is not None and not added_terms:
-        raise CurrentTextContinuationError('SOURCE_REPLAY_OBSERVATIONS_TRUTH_SCOPE_DRIFT')
-    pending_review = final_review.get('status') == 'AUDITOR_UNAVAILABLE' or added_terms
-    language_reference = snapshot.get('verified_language_reference')
-    source_language = authority.get('final_source_language_preservation_audit') or {}
-    if language_reference is None and (source_language.get('status') == 'SKIPPED_CUE_COUNT_MISMATCH'
-                                      or source_language.get('typed_language_reference') is not None):
-        language_reference = _source_stage_original_language_witness(authority, spec, padded, padded_dur)
-    validated_final_review = _validate_current_source_stage_authority(
-        authority,
-        spec=spec,
-        durations=durations,
-        srt_text=snapshot["srt_text"],
-        srt_sha256=snapshot["srt_sha256"],
-        clip_context=snapshot["clip_context"],
-        source_truth_ledger_path=None if added_terms else source_truth_ledger_path,
-        authoritative_chat=authoritative_chat,
-        independent_support_srts=_load_independent_chat_support_srts(padded),
-        allow_pending_review=True,
-        verified_language_reference=language_reference,
-        pending_finalization=partial,
-        pending_review=pending_review,
-        completed_retained_input=snapshot.get("completed_retained_input"),
+    added_terms, pending_review, language_reference = source_review_preflight(
+        snapshot, spec=spec, durations=durations, ledger_path=source_truth_ledger_path,
+        load_original_witness=lambda: _source_stage_original_language_witness(authority, spec, padded, padded_dur),
+        error_type=CurrentTextContinuationError,
     )
-    if partial or pending_review:
+    chat_support_srts = _source_stage_chat_support_srts(snapshot, padded=padded)
+    validated_final_review = _validate_source_authority_with_support(
+        snapshot, spec=spec, durations=durations, padded=padded, authoritative_chat=authoritative_chat,
+        source_truth_ledger_path=None if added_terms else source_truth_ledger_path,
+        support=chat_support_srts, verified_language_reference=language_reference,
+        pending_finalization=partial, pending_review=pending_review,
+    )
+    pending_language = pending_source_language_scan(
+        authority, attempted=_language_scan_attempted, error_type=CurrentTextContinuationError,
+    )
+    if partial or pending_review or pending_language:
         completed = _resume_pending_source_finalization(spec=spec,durations=durations,padded=padded,
             padded_dur=padded_dur,host=host,text_override_path=text_override_path,cid=cid,out_root=out_root,
             substrate=substrate,correct=correct,screen_text=screen_text,adapters=adapters,merged=merged,
@@ -9813,13 +10334,15 @@ def _automatic_current_source_stage_checkpoint(
             padded_dur=padded_dur,host=host,text_override_path=text_override_path,cid=cid,out_root=out_root,
             substrate=substrate,correct=correct,screen_text=screen_text,adapters=adapters,merged=merged,
             authoritative_chat=authoritative_chat,snapshot=completed,
-            native_audio_state=native_audio_state,witness_cache_roots=witness_cache_roots)
+            native_audio_state=native_audio_state,witness_cache_roots=witness_cache_roots,
+            _language_scan_attempted=_language_scan_attempted or pending_language)
     from src.autoslice.producer_text_checkpoint import write_source_text_checkpoint
 
     source_checkpoint_path = out_root / f"{cid}.source-text-checkpoint.json"
     write_source_text_checkpoint(
         source_checkpoint_path, candidate_id=cid, srt_path=snapshot["current_srt_path"],
         authority_path=snapshot["chat_authority_path"], context_path=snapshot["clip_context_path"], padded=padded,
+        independent_chat_support_srts=chat_support_srts,
     )
     authority = copy.deepcopy(dict(authority))
     language_replay = _replay_typed_source_language_guard(
@@ -9893,6 +10416,7 @@ def _automatic_current_source_stage_checkpoint(
         write_source_text_checkpoint(
             source_checkpoint_path, candidate_id=cid, srt_path=current_checkpoint_srt_path,
             authority_path=current_authority_path, context_path=snapshot['clip_context_path'], padded=padded,
+            independent_chat_support_srts=chat_support_srts,
         )
     if isinstance(pending_scope, Mapping):
         previous_final_review = copy.deepcopy(validated_final_review)
@@ -10034,6 +10558,7 @@ def _automatic_current_source_stage_checkpoint(
                 known_songs_path=adapters.profile_asset_file("known_songs"),
                 session_topic_authorities=draft.session_topic_authorities,
                 source_language_witness_srt=source_language_witness_srt,
+                independent_chat_support_srts=chat_support_srts,
                 source_language_guard_reference=(_typed_source_language_reference(
                     source_language_witness_srt, snapshot['srt_text'], _source_language_effect_rows(authority))
                     if _needs_typed_language_reference(authority) else None),
@@ -10093,6 +10618,7 @@ def _automatic_current_source_stage_checkpoint(
         write_source_text_checkpoint(
             source_checkpoint_path, candidate_id=cid, srt_path=current_checkpoint_srt_path,
             authority_path=current_authority_path, context_path=snapshot["clip_context_path"], padded=padded,
+            independent_chat_support_srts=chat_support_srts,
         )
     frozen_boundary_receipt, boundary_review, replay, exact_replay = review_source_boundary(
         spec=spec, candidate_id=cid, cues=current_cues,
@@ -10234,16 +10760,22 @@ def _automatic_current_text_checkpoint(
         candidate_id=cid,
         source_clock_review=clock_review,
         source_clock_srt_sha256=(clock_reference.get("reviewed_srt_sha256") if clock_reference else None),
+        source_clock_reference_cues=_continuation_clock_reference_cues(clock_reference),
         allow_source_scope_input=True,
+        authenticated_padded_sha256=padded_sha256,
     )
     reference_cues = None
+    reference_text = None
     if clock_kwargs.get("source_clock_srt_path") is not None:
-        reference_cues = parse_srt_cues(clock_kwargs["source_clock_srt_path"].read_text(encoding="utf-8"))
+        reference_text = clock_kwargs["source_clock_srt_path"].read_text(encoding="utf-8")
+        reference_cues = parse_srt_cues(reference_text)
     _continuation_project_delivery_to_source(
         cues,
         final_review_audit=clock_review or validated_review,
         reference_cues=reference_cues,
         authority=chat_authority,
+        reference_text=reference_text,
+        current_text=srt_text,
     )
     _continuation_source_boundary_cues(
         chat_authority=chat_authority,
@@ -10445,13 +10977,13 @@ def run_text_pipeline(
                     validate_records(current['chat_authority'].get('human_sequence_alignment') or {},
                         ledger_path=adapters.profile_asset_file('subtitle_truth_ledger'),spec=spec,durations=durations)
                     current['verified_language_reference'] = _retained_language_reference(current,cid=cid)
-                    _validate_current_source_stage_authority(current['chat_authority'],
-                        spec=spec,durations=durations,srt_text=current['srt_text'],srt_sha256=current['srt_sha256'],
-                        clip_context=current['clip_context'],source_truth_ledger_path=adapters.profile_asset_file('subtitle_truth_ledger'),
-                        authoritative_chat=authoritative_chat,independent_support_srts=_load_independent_chat_support_srts(padded),
-                        allow_pending_review=True,verified_language_reference=current['verified_language_reference'],
+                    _validate_source_authority_with_support(
+                        current, spec=spec, durations=durations, padded=padded,
+                        authoritative_chat=authoritative_chat,
+                        source_truth_ledger_path=adapters.profile_asset_file('subtitle_truth_ledger'),
+                        verified_language_reference=current['verified_language_reference'],
                         pending_finalization=bool(current.get('partial_source_text')),
-                        completed_retained_input=current.get('completed_retained_input'))
+                    )
                     source_text = current['srt_text']
                 else:
                     clock_kwargs = (_current_checkpoint_clock_bindings(current['native_checkpoint'])
@@ -10465,7 +10997,9 @@ def run_text_pipeline(
                         clip_context=current["clip_context"], candidate_id=cid,
                         source_clock_review=clock_review,
                         source_clock_srt_sha256=(clock_reference or {}).get('reviewed_srt_sha256'),
+                        source_clock_reference_cues=_continuation_clock_reference_cues(clock_reference),
                         allow_source_scope_input=True,
+                        authenticated_padded_sha256=current['padded_sha256'],
                     )
                     projected, _ = _continuation_project_delivery_to_source(current["cues"], final_review_audit=clock_review or current_review,
                         authority=current["chat_authority"])
@@ -10572,16 +11106,10 @@ def run_text_pipeline(
         if str(spec.get("human_truth_mode") or "delivery") == "withheld"
         else adapters.profile_asset_file("subtitle_truth_ledger")
     )
-    _discarded_draft_truth_text, draft_source_truth_preview_audit = apply_source_subtitle_truth(
-        draft.srt_text,
-        spec=spec,
-        durations=durations,
-        ledger_path=source_truth_ledger_path,
-    )
-    draft_source_truth_preview = build_source_truth_preview_receipt(
-        input_srt_text=draft.srt_text,
-        source_truth_audit=draft_source_truth_preview_audit,
-        stage="pre_entity_arbitration",
+    draft_source_truth_preview = build_retained_preview(
+        draft.srt_text, stage='pre_entity_arbitration', spec=spec, durations=durations,
+        ledger_path=source_truth_ledger_path, out_root=out_root,
+        apply_truth=apply_source_subtitle_truth, build_receipt=build_source_truth_preview_receipt,
     )
     entity_context = _build_entity_verification_context(
         spec=spec,
@@ -10678,16 +11206,10 @@ def run_text_pipeline(
         from src.autoslice.semantic_request_history import preserve_partial_usage
         authority.chat_authority_audit["cpa_adjudication_usage"] = preserve_partial_usage(
             authority.chat_authority_audit["cpa_adjudication_usage"], authority.chat_authority_audit)
-    _discarded_review_truth_text, review_source_truth_preview_audit = apply_source_subtitle_truth(
-        authority.srt_text,
-        spec=spec,
-        durations=durations,
-        ledger_path=source_truth_ledger_path,
-    )
-    review_source_truth_preview = build_source_truth_preview_receipt(
-        input_srt_text=authority.srt_text,
-        source_truth_audit=review_source_truth_preview_audit,
-        stage="pre_correction_review",
+    review_source_truth_preview = build_retained_preview(
+        authority.srt_text, stage='pre_correction_review', spec=spec, durations=durations,
+        ledger_path=source_truth_ledger_path, out_root=out_root,
+        apply_truth=apply_source_subtitle_truth, build_receipt=build_source_truth_preview_receipt,
     )
     authority.chat_authority_audit["source_truth_preview_receipts"]["pre_correction_review"] = (
         review_source_truth_preview

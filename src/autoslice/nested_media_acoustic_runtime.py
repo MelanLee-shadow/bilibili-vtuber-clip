@@ -21,6 +21,7 @@ from pathlib import Path
 
 from src.autoslice.llm_client import extract_json_object
 from src.autoslice.nested_media_acoustic_observer import (
+    Json,
     CPA_SCHEMA,
     OBSERVER_SCHEMA,
     _canonical_hash,
@@ -140,7 +141,7 @@ class RuntimeAcousticCallbacks:
     observe_audio: Callable[[Mapping[str, object]], Mapping[str, object]]
     cpa_judge: Callable[[Mapping[str, object], Mapping[str, object]], Mapping[str, object]]
     runtime_identity: Mapping[str, object] | None
-    transport_audit: Mapping[str, object] | None = None
+    transport_audit: Mapping[str, Json] | None = None
 
 
 def _hash_bytes(value: bytes) -> str:

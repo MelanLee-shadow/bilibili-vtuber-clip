@@ -312,6 +312,187 @@ def validate_final_cpa_owner(
         raise ValueError("FINAL_CPA_REPLAY_CURRENT_SURFACE_DRIFT")
 
 
+def _shift_srt_timebase(srt_text: str, offset_ms: int) -> str:
+    """Render a validation-only global-clock view of a local SRT.
+
+    Final-source owner receipts are recorded on the source/session clock while
+    the terminal consumer holds the delivery-local SRT.  The conversion is
+    deliberately in memory: it is only an input to the existing replay
+    validator, never a persisted or user-visible subtitle rewrite.
+    """
+    if type(offset_ms) is not int or offset_ms < 0:
+        raise ValueError("FINAL_CPA_REPLAY_DELIVERY_OFFSET_INVALID")
+    from src.autoslice.foreign_span_witness import _ms_to_srt_ts
+
+    cues = parse_srt_cues(srt_text)
+    if not cues or any(str(cue.index) != str(index) for index, cue in enumerate(cues, 1)):
+        raise ValueError("FINAL_CPA_REPLAY_OUTPUT_GRID_INVALID")
+    return "\n\n".join(
+        f"{index}\n{_ms_to_srt_ts(cue.start_ms + offset_ms)} --> "
+        f"{_ms_to_srt_ts(cue.end_ms + offset_ms)}\n{cue.text}"
+        for index, cue in enumerate(cues, 1)
+    ) + "\n"
+
+
+def validated_exact_read_superseded_applied_indexes(
+    authority: object,
+    *,
+    current_srt_text: str,
+    delivery_start_ms: int,
+) -> frozenset[int]:
+    """Return only applied rows retired by an authenticated final owner.
+
+    The persisted reconciliation is a claim, not authority on its own.  This
+    reader first replays the exact existing final-surface owner validator, then
+    checks the registration, row identity, receipt, immutable geometry, hashes,
+    and the visible current owner text.  Any malformed or incomplete branch is
+    ignored, so the caller keeps the original chat protection (fail closed).
+    """
+    if not isinstance(authority, Mapping) or not isinstance(current_srt_text, str):
+        return frozenset()
+    if type(delivery_start_ms) is not int or delivery_start_ms < 0:
+        return frozenset()
+    rows = authority.get("entity_repairs")
+    applied = authority.get("applied")
+    if not isinstance(rows, list) or not isinstance(applied, list):
+        return frozenset()
+    try:
+        global_srt = _shift_srt_timebase(current_srt_text, delivery_start_ms)
+        local_cues = parse_srt_cues(current_srt_text)
+    except (TypeError, ValueError):
+        return frozenset()
+    # Count all claims before accepting any.  A later duplicate must invalidate
+    # the first claim too, including conflicts across the two owner surfaces.
+    from collections import Counter
+    owner_claims: Counter[int] = Counter()
+    applied_claims: Counter[int] = Counter()
+    for surface in ("source_language", "foreign_script"):
+        registrations = authority.get(f"final_{surface}_cpa_surface_registrations")
+        for registration in registrations if isinstance(registrations, list) else []:
+            if not isinstance(registration, Mapping):
+                continue
+            owner_index = registration.get("owner_entity_repair_index")
+            if type(owner_index) is int:
+                owner_claims[owner_index] += 1
+            superseded = registration.get("superseded_applied_indexes")
+            if isinstance(superseded, list):
+                applied_claims.update(index for index in superseded if type(index) is int)
+    retired: set[int] = set()
+    for surface in ("source_language", "foreign_script"):
+        registration_key = f"final_{surface}_cpa_surface_registrations"
+        registrations = authority.get(registration_key)
+        if not isinstance(registrations, list):
+            continue
+        receipt_key = f"final_{surface}_receipt_sha256"
+        owner_mode = f"final_{surface}_cpa_adjudication"
+        surface_slug = surface.replace("_", "-")
+        registration_schema = f"final-{surface_slug}-cpa-surface-registration.v1"
+        exact_schema = f"final-{surface_slug}-cpa-exact-read-supersession.v1"
+        status = f"SUPERSEDED_BY_FINAL_{surface.upper()}_CPA"
+        for registration in registrations:
+            if not isinstance(registration, Mapping):
+                continue
+            owner_index = registration.get("owner_entity_repair_index")
+            superseded = registration.get("superseded_applied_indexes")
+            if (
+                registration.get("schema_version") != registration_schema
+                or registration.get("status") != "REGISTERED"
+                or type(owner_index) is not int
+                or owner_claims[owner_index] != 1
+                or not 0 <= owner_index < len(rows)
+                or not isinstance(superseded, list)
+                or any(type(index) is not int or index < 0 or index >= len(applied)
+                       for index in superseded)
+                or len(set(superseded)) != len(superseded)
+            ):
+                continue
+            owner = rows[owner_index]
+            receipt_sha = owner.get(receipt_key) if isinstance(owner, Mapping) else None
+            if (
+                not isinstance(owner, Mapping)
+                or owner.get("mode") != owner_mode
+                or owner.get("decision_authority") != "CPA_JUDGE"
+                or not isinstance(owner.get("mutation_authority"), Mapping)
+                or owner["mutation_authority"].get("status") != "PASS"
+                or owner.get("survived") is not True
+                or owner.get("timing_immutable") is not True
+                or owner.get("reconciliation") is not None
+                or not isinstance(receipt_sha, str)
+                or registration.get("receipt_sha256") != receipt_sha
+                or owner.get("superseded_applied_indexes") != superseded
+                or not isinstance(owner.get("cue_indexes"), list)
+                or len(owner["cue_indexes"]) != 1
+                or type(owner["cue_indexes"][0]) is not int
+                or not isinstance(owner.get("before"), list)
+                or len(owner["before"]) != 1
+                or not isinstance(owner["before"][0], str)
+                or not owner["before"][0]
+                or not isinstance(owner.get("after"), list)
+                or len(owner["after"]) != 1
+                or not isinstance(owner["after"][0], str)
+                or not owner["after"][0]
+                or owner.get("structured_exact_text") != owner["after"][0]
+                or type(owner.get("matched_start_ms")) is not int
+                or type(owner.get("matched_end_ms")) is not int
+                or owner["matched_end_ms"] <= owner["matched_start_ms"]
+            ):
+                continue
+            try:
+                # This is the existing owner replay, including original CPA
+                # witness, generation and registration effects.
+                validate_final_cpa_owner(
+                    owner,
+                    row_index=owner_index,
+                    authority=authority,
+                    srt_text=global_srt,
+                )
+            except (AttributeError, IndexError, KeyError, TypeError, ValueError, RuntimeError):
+                continue
+            local_owner_cues = [
+                cue for cue in local_cues
+                if cue.start_ms + delivery_start_ms == owner["matched_start_ms"]
+                and cue.end_ms + delivery_start_ms == owner["matched_end_ms"]
+            ]
+            if len(local_owner_cues) != 1 or local_owner_cues[0].text != owner["after"][0]:
+                continue
+            valid_applied_indexes: list[int] = []
+            for applied_index in superseded:
+                row = applied[applied_index]
+                reconciliation = row.get("reconciliation") if isinstance(row, Mapping) else None
+                exact_text = row.get("exact_text") if isinstance(row, Mapping) else None
+                before_sha = "sha256:" + _text_sha(owner["before"][0])
+                after_sha = "sha256:" + _text_sha(owner["after"][0])
+                if (
+                    applied_claims[applied_index] != 1
+                    or not isinstance(row, Mapping)
+                    or row.get("mode") not in {"exact_span", "question_particle_patch"}
+                    or row.get("matched_start_ms") != owner["matched_start_ms"]
+                    or row.get("matched_end_ms") != owner["matched_end_ms"]
+                    or not isinstance(row.get("cue_indexes"), list)
+                    or row.get("cue_indexes") != owner.get("cue_indexes")
+                    or not isinstance(exact_text, str)
+                    or not exact_text
+                    or exact_text not in owner["before"][0]
+                    or exact_text in owner["after"][0]
+                    or not isinstance(reconciliation, Mapping)
+                    or reconciliation.get("schema_version") != exact_schema
+                    or reconciliation.get("status") != status
+                    or reconciliation.get("receipt_sha256") != receipt_sha
+                    or reconciliation.get("before_sha256") != before_sha
+                    or reconciliation.get("after_sha256") != after_sha
+                    or reconciliation.get("timing_immutable") is not True
+                ):
+                    valid_applied_indexes = []
+                    break
+                valid_applied_indexes.append(applied_index)
+            # A registration is atomic: a malformed member must not retire a
+            # subset of the indexes it claims, and two owners may not claim
+            # the same applied row ambiguously.
+            if len(valid_applied_indexes) == len(superseded):
+                retired.update(valid_applied_indexes)
+    return frozenset(retired)
+
+
 def _frozen_story_owner_annotation(
     authority: Mapping[str, Any], rows: list[Any], *, index: int,
 ) -> dict[str, Any]:

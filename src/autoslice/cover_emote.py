@@ -1,14 +1,17 @@
-"""Official emote stickers as an alternate cover subject (维护者).
+"""Official emote stickers as cover candidates (维护者 10/19, CVR-02: "作默认很不错").
 
 The library is a committed per-channel manifest (``emote_library`` profile
 asset); the sticker media ships with this repo under the profile tree
 (``assets/<profile>/emote/``; override the root via ``AUTOSLICE_EMOTE_DIR``).  Policy, enforced by the callers
-in ``cover_generation``/``publish_staging``:
+in ``title_cover_staging`` (the candidate producer) and the legacy routes:
 
-- The cover subject DEFAULTS to the live-frame character redraw.  An emote may
-  REPLACE it only on a strong, articulated reason (the clip's reaction matches
-  a sticker so well that the sticker is clearly more expressive), decided by
-  the art-direction judge and never by the deterministic baseline.
+- An official emote is a DEFAULT candidate, like a screenshot, a collage, a cut-out
+  or an AI route. No route is preset: candidates are compared on the finished cover by
+  the scorecard, and the highest total wins (``title_cover_candidates.score_candidate``).
+  The 7/19 "only on a strong reason" rule is superseded.
+- When the planner omits an emote candidate, ``pick_emote_for_text`` picks one by
+  manifest keywords (deterministic, no model call). A hook with no matching sticker
+  only records a reason; it never blocks the cover.
 - ``companion`` mode (emote AND character in one frame) is reserved for
   分身/复数小李 memes or drawing a panda-class sticker to depict kmx —
   kmx (读 kimo熊) is the NAME OF HER FANS, not a mascot; the sticker stands
@@ -28,6 +31,7 @@ from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import json
 import os
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -41,9 +45,12 @@ EMOTE_MEDIA_ROOT_ENV = "AUTOSLICE_EMOTE_DIR"
 _EMOTE_MEDIA_REPO_DEFAULT = Path("assets") / CHANNEL_PROFILE.profile_id / "emote"
 _EMOTE_SCHEMA_PREFIX = "lidousha-emote-library"
 _EMOTE_MODES = ("replace", "companion")
-# A strong reason must be articulated, not a bare "好看"; length is a cheap
-# proxy that rejects empty/one-word justifications without judging content.
+# Legacy art-direction path only: the reason must name the matching line. Length is a
+# cheap proxy that rejects empty justifications without judging content (CVR-02: no strong-reason gate).
 _EMOTE_MIN_REASON_CHARS = 1
+# Keyword split for manifest ``use_when`` phrases; the skill copy (choose_cover.py) uses the same pattern.
+_EMOTE_KEYWORD_SPLIT = re.compile(r"[/、，,；;：:（）()“”\"'\s]+")
+_EMOTE_KEYWORD_MIN_CHARS = 2
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -278,6 +285,39 @@ def normalize_emote_choice(
     if not (isinstance(reason, str) and len(reason.strip()) >= _EMOTE_MIN_REASON_CHARS):
         return "", "", ""
     return emote_id.strip(), mode, reason.strip()
+
+
+def emote_keywords(entry: EmoteEntry) -> tuple[str, ...]:
+    """Deterministic match keys: the label plus the manifest's ``use_when`` phrases."""
+
+    parts = [entry.label, *_EMOTE_KEYWORD_SPLIT.split(entry.use_when)]
+    return tuple(dict.fromkeys(p for p in parts if len(p) >= _EMOTE_KEYWORD_MIN_CHARS))
+
+
+def pick_emote_for_text(
+    text: str, library: EmoteLibrary, *, excluded: Iterable[str] = ()
+) -> tuple[str | None, str]:
+    """Pick the lidousha sticker whose keywords occur most often in ``text``.
+
+    ``text`` is the cover lines plus the final-subtitle quotes. ``excluded`` holds
+    emote ids that may not be the main emote (same source session or last five covers).
+    The panda creature is never a main emote; it is the kmx layer. Ties keep manifest
+    order. No match returns ``(None, reason)``: a record, never a gate.
+    """
+
+    if not library:
+        return None, "EMOTE_LIBRARY_DISABLED"
+    blocked = set(excluded)
+    best: tuple[EmoteEntry, list[str]] | None = None
+    for entry in library.entries:
+        if entry.subject != "lidousha" or entry.id in blocked:
+            continue
+        matched = [key for key in emote_keywords(entry) if key in text]
+        if matched and (best is None or len(matched) > len(best[1])):
+            best = (entry, matched)
+    if best is None:
+        return None, "NO_EMOTION_MATCH: 官方表情包清单中没有与这段原话情绪相符的条目"
+    return best[0].id, "MATCHED: " + "、".join(best[1])
 
 
 def compose_companion_reference(

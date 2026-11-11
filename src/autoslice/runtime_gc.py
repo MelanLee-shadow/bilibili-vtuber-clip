@@ -26,6 +26,9 @@ import sys
 import time
 from typing import Callable
 
+from src.autoslice.batch_items import ItemBatch
+from src.autoslice import evidence_lease
+
 DAY = 86400
 GIB = 1024**3
 SCHEMA = "runtime-lifecycle-gc.v1"
@@ -87,7 +90,10 @@ def identity(info: os.stat_result) -> dict:
 
 
 def under(path: Path, parent: Path) -> bool:
-    return path == parent or parent in path.parents
+    # Path.parents constructs every intermediate Path on each query. This
+    # predicate is hot for every media × live-path/publication/group lookup.
+    return (not path.is_absolute() if not parent.parts else
+            path.parts[:len(parent.parts)] == parent.parts)
 
 
 def terminal_candidates(state: dict) -> dict[str, str]:
@@ -427,37 +433,54 @@ def commit_hints(metadata: dict, path: Path | None = None) -> set[str]:
     return {match for value in values for match in re.findall(r"\b[0-9a-f]{40}\b", value)}
 
 
-def roots(base: Path, home: Path) -> list[tuple[Path, str]]:
+def roots(base: Path, home: Path, issues: ItemBatch | None = None) -> list[tuple[Path, str]]:
+    issues = issues if issues is not None else ItemBatch()
     found = [(base / name, name) for name in ("out", "private-runs", "reports", "candidates", ".prepared-deliveries")]
     # Existing delivery and the stable root used by versioned deployments.
     found.extend((p, "delivery") for p in (base / "lidousha", base / "repo" / "lidousha"))
     found.extend((p, "old-deployment") for p in base.iterdir()
-                 if p.is_dir() and not p.is_symlink() and p.name.startswith((".oci3-shadow-upload-", "repo.rollback-", "repo.stage-")))
-    if home.is_dir():
-        found.extend((p, "old-clone") for p in home.glob("vtuber*") if p.is_dir() and not p.is_symlink())
-    return [(p, category) for p, category in found if p.is_dir() and not p.is_symlink()]
+                 if p.name.startswith((".oci3-shadow-upload-", "repo.rollback-", "repo.stage-")))
+    with issues.isolate(str(home)):
+        if home.is_dir():
+            found.extend((p, "old-clone") for p in home.glob("vtuber*"))
+    result = []
+    for path, category in found:
+        with issues.isolate(str(path)):
+            # Configured roots that never existed are normal, not failures.
+            if path.is_dir() and not path.is_symlink():
+                result.append((path, category))
+    return result
 
 
 def walk_entries(root: Path):
-    device = root.stat().st_dev
-    for directory, dirs, files in os.walk(root, followlinks=False):
-        yield Path(directory), Path(directory).stat()
-        for name in dirs:
-            path = Path(directory) / name
-            if path.is_symlink():
-                yield path, path.lstat()
-        dirs[:] = [d for d in dirs if d not in SKIP_DIRS
-                   and not (Path(directory) / d).is_symlink()
-                   and (Path(directory) / d).stat().st_dev == device]
-        for name in files:
-            path = Path(directory) / name
-            info = path.lstat()
-            if info.st_dev == device:
-                yield path, info
+    info = root.stat()
+    device = info.st_dev
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        # Directory activity must be sampled when entered, not cached when
+        # its parent was listed: a create/delete in between is real activity.
+        info = directory.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_dev != device:
+            raise ValueError(f"ITEM_CHANGED_DURING_WALK: {directory}")
+        yield directory, info
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                info = entry.stat(follow_symlinks=False)
+                path = directory / entry.name
+                if info.st_dev != device:
+                    continue
+                if stat.S_ISDIR(info.st_mode):
+                    if entry.name not in SKIP_DIRS:
+                        pending.append(path)
+                else:
+                    yield path, info
 
 
-def groups(base: Path, home: Path, rows: dict, candidate_ids: set[str] | None = None) -> list[Group]:
+def groups(base: Path, home: Path, rows: dict, candidate_ids: set[str] | None = None,
+           issues: ItemBatch | None = None) -> list[Group]:
     result = []
+    issues = issues if issues is not None else ItemBatch()
     touched = read_self_touch(base)
     ids = sorted({cid for _, cid in rows}, key=len, reverse=True)
     owned_paths = {Path(value) for (_, cid), row in rows.items() if candidate_ids and cid in candidate_ids
@@ -474,122 +497,143 @@ def groups(base: Path, home: Path, rows: dict, candidate_ids: set[str] | None = 
         # active candidate still wins even if its run omitted a date.
         active = next((row for row in matches if row.get("status") in ACTIVE), None)
         return (active, True) if active else (metadata, False)
-    for root, category in roots(base, home):
-        containers = []
-        if category in {"out", "delivery"}:
-            for date in root.iterdir():
-                if not date.is_dir() or date.is_symlink():
-                    continue
-                loose = {}
-                for child in date.iterdir():
-                    if child.is_dir() and not child.is_symlink():
-                        containers.append(Group(child, category, child.name))
-                    elif child.is_file() and not child.is_symlink():
-                        cid = next((cid for cid in ids if child.name.startswith(cid + ".") or f"__{cid}." in child.name
-                                    or child.name == f"spec_{cid}.json"), child.name)
-                        group = loose.setdefault(cid, Group(date, category, cid, True))
-                        group.last_write = max(group.last_write, activity_mtime(date, date.stat(), touched), child.stat().st_mtime)
-                        if child.suffix.lower() in MEDIA:
-                            group.media.append((child, child.stat(), category == "delivery" and child.suffix.lower() == ".mp4"))
-                containers.extend(loose.values())
-        elif category == ".prepared-deliveries":
-            containers = [Group(p, category, p.parent.name) for p in root.glob("*/*/*") if p.is_dir() and not p.is_symlink()]
-        elif category in {"old-clone", "old-deployment"}:
-            containers = [Group(root, category)]
-        else:
-            containers = [Group(p, category) for p in root.iterdir() if p.is_dir() and not p.is_symlink()]
-            for p in root.iterdir():
-                if p.is_file() and not p.is_symlink() and p.suffix.lower() in MEDIA:
-                    group = Group(root, category, p.name, True)
-                    group.last_write = max(activity_mtime(root, root.stat(), touched), p.stat().st_mtime)
-                    group.media.append((p, p.stat(), False))
-                    containers.append(group)
-        for group in containers:
-            if candidate_ids and group.cid not in candidate_ids and not any(cid in group.root.name for cid in candidate_ids):
-                if not any(group.owns(path) for path in owned_paths):
-                    spec = metadata_json(group.root / "SPEC.json") or metadata_json(group.root / "spec.json")
-                    if str(spec.get("candidate_id") or spec.get("cid") or "") not in candidate_ids:
-                        continue
-            metadata = {}
-            for name in ("STATE.json", "state.json", "RESULT.json", "result.json", "SPEC.json", "spec.json", "prepared.json"):
-                document = metadata_json(group.root / name) if not group.loose else {}
-                metadata.update(document)
-            declared = metadata_json(group.root / RUN_LIFECYCLE) if not group.loose else {}
-            run_status = str(declared.get("status") or "").lower() if declared.get("schema_version") == RUN_LIFECYCLE_SCHEMA else ""
-            run_status = run_status if run_status in TERMINAL_DISCARD else ""
-            own_cid = str(metadata.get("candidate_id") or metadata.get("cid") or "")
-            group.cid = group.cid or own_cid
-            group.run_scoped = (category in {"out", "delivery", ".prepared-deliveries"} or bool(run_status)
-                                or bool(group.cid) and group.cid == own_cid)
-            group.commit_hints = commit_hints(metadata)
+    def children(path):
+        found = []
+        with issues.isolate(str(path)):
+            found = list(path.iterdir())
+        return found
 
-            def settle(row):
-                group.status = str(row.get("status") or "idle").lower()
-                if run_status and not group.current_state:
-                    group.status = run_status  # the run's own terminal record outranks free-form notes
-                group.declared = bool(run_status)
-                # A publication concludes the run that published it (the one holding its
-                # authority), not later repair/recall runs on the same candidate.
-                group.verified = _published(row)
-                group.published = group.verified and under(_authority_path(row), group.root)
-            row, group.current_state = current_row(group, metadata)
-            settle(row)
-            typed_media = set()
-            finals = set()
-            if not group.loose:
-                files = list(walk_entries(group.root))
-                group.last_write = max(activity_mtime(path, info, touched) for path, info in files)
-                if category in NONMEDIA_CATEGORIES:
-                    copies = {path.parent.parent for path, info in files if stat.S_ISDIR(info.st_mode)
-                              and path.name == "autoslice" and path.parent.name == "src"}
-                    for path, info in files:
-                        if not stat.S_ISREG(info.st_mode) or path.suffix.lower() in MEDIA:
+    def containers_for(root, category):
+        if category in {"old-clone", "old-deployment"}:
+            return [Group(root, category)]
+        if category == ".prepared-deliveries":
+            def directories(path):
+                found = []
+                for child in children(path):
+                    with issues.isolate(str(child)):
+                        if stat.S_ISDIR(child.lstat().st_mode):
+                            found.append(child)
+                return found
+            return [Group(generation, category, cid.name)
+                    for lane in directories(root) for cid in directories(lane)
+                    for generation in directories(cid)]
+        result = []
+        parents = children(root) if category in {"out", "delivery"} else [root]
+        for parent in parents:
+            with issues.isolate(str(parent)):
+                info = parent.lstat()
+                if not stat.S_ISDIR(info.st_mode):
+                    continue
+                loose, incomplete = {}, set()
+                for child in children(parent):
+                    cid = next((cid for cid in ids if child.name.startswith(cid + ".") or f"__{cid}." in child.name
+                                or child.name == f"spec_{cid}.json"), child.name)
+                    if category not in {"out", "delivery"}:
+                        cid = child.name
+                    before = len(issues.failures)
+                    with issues.isolate(str(child)):
+                        child_info = child.lstat()
+                        if stat.S_ISDIR(child_info.st_mode):
+                            result.append(Group(child, category, child.name if category in {"out", "delivery"} else ""))
+                        elif stat.S_ISREG(child_info.st_mode):
+                            group = loose.setdefault(cid, Group(parent, category, cid, True))
+                            group.last_write = max(group.last_write, activity_mtime(parent, info, touched), child_info.st_mtime)
+                            if child.suffix.lower() in MEDIA:
+                                group.media.append((child, child_info, category == "delivery" and child.suffix.lower() == ".mp4"))
+                    if len(issues.failures) != before:
+                        incomplete.add(cid)
+                result.extend(group for cid, group in loose.items() if cid not in incomplete)
+        return result
+
+    for root, category in roots(base, home, issues):
+        containers = containers_for(root, category)
+        for group in containers:
+            with issues.isolate(str(group.root)):
+                if candidate_ids and group.cid not in candidate_ids and not any(cid in group.root.name for cid in candidate_ids):
+                    if not any(group.owns(path) for path in owned_paths):
+                        spec = metadata_json(group.root / "SPEC.json") or metadata_json(group.root / "spec.json")
+                        if str(spec.get("candidate_id") or spec.get("cid") or "") not in candidate_ids:
                             continue
-                        if path.name in COMMIT_FILES and info.st_size <= 128:
-                            group.commit_hints |= commit_hints({}, path)
-                        relative = path.relative_to(group.root)
-                        kind = nonmedia_kind(relative, info, not copies.isdisjoint(path.parents))
-                        if kind:
-                            group.nonmedia.append((path, info, kind))
-                for path, _info in files:
-                    if NO_MEDIA_DIRS.intersection(path.relative_to(group.root).parts):
-                        continue
-                    if path.name == "prepared.json":
-                        for artifact in metadata_json(path).get("artifacts", []):
-                            if not isinstance(artifact, dict):
+                metadata = {}
+                for name in ("STATE.json", "state.json", "RESULT.json", "result.json", "SPEC.json", "spec.json", "prepared.json"):
+                    document = metadata_json(group.root / name) if not group.loose else {}
+                    metadata.update(document)
+                declared = metadata_json(group.root / RUN_LIFECYCLE) if not group.loose else {}
+                run_status = str(declared.get("status") or "").lower() if declared.get("schema_version") == RUN_LIFECYCLE_SCHEMA else ""
+                run_status = run_status if run_status in TERMINAL_DISCARD else ""
+                own_cid = str(metadata.get("candidate_id") or metadata.get("cid") or "")
+                group.cid = group.cid or own_cid
+                group.run_scoped = (category in {"out", "delivery", ".prepared-deliveries"} or bool(run_status)
+                                    or bool(group.cid) and group.cid == own_cid)
+                group.commit_hints = commit_hints(metadata)
+
+                def settle(row):
+                    group.status = str(row.get("status") or "idle").lower()
+                    if run_status and not group.current_state:
+                        group.status = run_status  # the run's own terminal record outranks free-form notes
+                    group.declared = bool(run_status)
+                    # A publication concludes the run that published it (the one holding its
+                    # authority), not later repair/recall runs on the same candidate.
+                    group.verified = _published(row)
+                    group.published = group.verified and under(_authority_path(row), group.root)
+                row, group.current_state = current_row(group, metadata)
+                settle(row)
+                typed_media = set()
+                finals = set()
+                if not group.loose:
+                    files = list(walk_entries(group.root))
+                    group.last_write = max(activity_mtime(path, info, touched) for path, info in files)
+                    if category in NONMEDIA_CATEGORIES:
+                        copies = {path.parent.parent for path, info in files if stat.S_ISDIR(info.st_mode)
+                                  and path.name == "autoslice" and path.parent.name == "src"}
+                        for path, info in files:
+                            if not stat.S_ISREG(info.st_mode) or path.suffix.lower() in MEDIA:
                                 continue
-                            staged = Path(str(artifact.get("staged_path") or ""))
-                            source = Path(str(artifact.get("source_path") or ""))
-                            if under(staged, path.parent) and (artifact.get("role") in MEDIA_ROLES or source.suffix.lower() in MEDIA):
-                                typed_media.add(staged)
-                                if artifact.get("role") == "video":
-                                    finals.add(staged)
-                    elif path.name.endswith("upload_manifest.json"):
-                        video = metadata_json(path).get("video", {})
-                        if isinstance(video, dict) and video.get("path"):
-                            finals.add(Path(str(video["path"])))
-                for path, info in files:
-                    if (not NO_MEDIA_DIRS.intersection(path.relative_to(group.root).parts)
-                            and stat.S_ISREG(info.st_mode) and (path.suffix.lower() in MEDIA or path in typed_media)):
-                        group.media.append((path, info, path in finals or path.name.endswith(".recut.burned-final-sapphire72.mp4")))
-            for key in ("video_path", "mp4_path", "delivery_path"):
-                if isinstance(row.get(key), str):
-                    finals.add(Path(row[key]))
-            group.media = [(p, info, final or p in finals) for p, info, final in group.media]
-            if not group.cid:
-                matched = {cid for p, _, _ in group.media for cid in ids if cid in p.name}
-                if len(matched) == 1:
-                    group.cid = matched.pop()
-                    row, group.current_state = current_row(group, metadata)
-                    settle(row)
-            if group.verified:
-                stamp = (row.get("publication_reconciliation") or {}).get("reconciled_at")
-                try:
-                    group.published_at = datetime.fromisoformat(str(stamp)).timestamp()
-                except ValueError:
-                    pass
-            if group.media or group.nonmedia:
-                result.append(group)
+                            if path.name in COMMIT_FILES and info.st_size <= 128:
+                                group.commit_hints |= commit_hints({}, path)
+                            relative = path.relative_to(group.root)
+                            kind = nonmedia_kind(relative, info, not copies.isdisjoint(path.parents))
+                            if kind:
+                                group.nonmedia.append((path, info, kind))
+                    for path, _info in files:
+                        if NO_MEDIA_DIRS.intersection(path.relative_to(group.root).parts):
+                            continue
+                        if path.name == "prepared.json":
+                            for artifact in metadata_json(path).get("artifacts", []):
+                                if not isinstance(artifact, dict):
+                                    continue
+                                staged = Path(str(artifact.get("staged_path") or ""))
+                                source = Path(str(artifact.get("source_path") or ""))
+                                if under(staged, path.parent) and (artifact.get("role") in MEDIA_ROLES or source.suffix.lower() in MEDIA):
+                                    typed_media.add(staged)
+                                    if artifact.get("role") == "video":
+                                        finals.add(staged)
+                        elif path.name.endswith("upload_manifest.json"):
+                            video = metadata_json(path).get("video", {})
+                            if isinstance(video, dict) and video.get("path"):
+                                finals.add(Path(str(video["path"])))
+                    for path, info in files:
+                        if (not NO_MEDIA_DIRS.intersection(path.relative_to(group.root).parts)
+                                and stat.S_ISREG(info.st_mode) and (path.suffix.lower() in MEDIA or path in typed_media)):
+                            group.media.append((path, info, path in finals or path.name.endswith(".recut.burned-final-sapphire72.mp4")))
+                for key in ("video_path", "mp4_path", "delivery_path"):
+                    if isinstance(row.get(key), str):
+                        finals.add(Path(row[key]))
+                group.media = [(p, info, final or p in finals) for p, info, final in group.media]
+                if not group.cid:
+                    matched = {cid for p, _, _ in group.media for cid in ids if cid in p.name}
+                    if len(matched) == 1:
+                        group.cid = matched.pop()
+                        row, group.current_state = current_row(group, metadata)
+                        settle(row)
+                if group.verified:
+                    stamp = (row.get("publication_reconciliation") or {}).get("reconciled_at")
+                    try:
+                        group.published_at = datetime.fromisoformat(str(stamp)).timestamp()
+                    except ValueError:
+                        pass
+                if group.media or group.nonmedia:
+                    result.append(group)
     return result
 
 
@@ -610,22 +654,28 @@ def _retention(group: Group, final: bool, pressure: bool, applies: bool = True) 
 def collect(base: Path, *, home: Path = Path("/home/user"), now: float | None = None,
             free_bytes: int | None = None, live: Activity | None = None,
             preserve: set[str] | None = None, candidate_ids: set[str] | None = None,
-            registry: Path | None = None) -> dict:
+            registry: Path | None = None, lease_base: Path | None = None) -> dict:
     base = base.absolute()
     now = time.time() if now is None else now
     free_bytes = shutil.disk_usage(base).free if free_bytes is None else free_bytes
     live = activity(base) if live is None else live
     pressure = free_bytes < 20 * GIB
     keep = set(preserve or ())
+    leases = evidence_lease.read_leases(lease_base or base, now=now)
+    lease_index = evidence_lease.LeaseIndex(leases)
     rows = state_rows(base)
     # The registry is the publication authority; daily state may not exist.
     pubs = publications(base, rows, registry)
     rows = {**rows, **pubs.rows}
     deletes, retained, retained_nonmedia, summary, by_lifecycle = [], Counter(), Counter(), {}, {}
     code_source = Counter()
+    issues = ItemBatch()
     self_times = read_self_touch(base)
 
     def add(group, path, info, reason, kind):
+        current = path.lstat()
+        if identity(current) != identity(info):
+            raise ValueError(f"ITEM_CHANGED_DURING_PLAN: {path}")
         parent_info = path.parent.stat()
         if activity_mtime(path.parent, parent_info, self_times) > now - DAY:
             (retained if kind == "media" else retained_nonmedia)["recent-write"] += info.st_size
@@ -644,54 +694,76 @@ def collect(base: Path, *, home: Path = Path("/home/user"), now: float | None = 
             bucket["logical_bytes"] += info.st_size
             bucket["allocated_bytes"] += entry["allocated_bytes"]
 
-    for group in groups(base, home, rows, candidate_ids):
-        if candidate_ids and group.cid not in candidate_ids and not any(any(cid in p.name for cid in candidate_ids) for p, _, _ in group.media):
-            continue
-        busy = (group.cid in live.candidate_ids or any(group.owns(p) for p in live.paths)
-                or group.category == "out" and live.runner_locked)
-        last_media_write = max((info.st_mtime for _, info, _ in group.media), default=0)
-        recent = max(last_media_write, group.last_write) > now - DAY
-        group_guard = pubs.guards_group(group.cid)
-        for path, info, final in group.media:
-            reason, seconds = _retention(group, final, pressure, group.lifecycle_applies(path))
-            protection = ("recording" if RECORDING.fullmatch(path.name) else
-                          "explicit-preserve" if str(path) in keep else
-                          group_guard or pubs.guard(path))
-            protection = protection or (
-                "process-or-lock" if busy or (info.st_dev, info.st_ino) in live.inodes else
-                "recent-write" if recent else
-                "in-progress" if group.current_state and group.status in ACTIVE else
-                "publication-unverified" if reason == "publication-unverified" else
-                "retention" if now - (max(info.st_mtime, group.published_at) if reason == "published-final" else last_media_write) < seconds else ""
-            )
-            if protection:
-                retained[protection] += info.st_size
-            else:
-                add(group, path, info, reason, "media")
-        # Terminal runs also give up bulk caches and repository copies; decision
-        # records, subtitles and run-local scripts always stay.
-        # Operator runs give up non-media only by their own record or by being the
-        # publishing run; a daily verdict concludes the runner's own out/ directory.
-        terminal = (group.published or group.category == "out" and group.status in TERMINAL_DISCARD
-                    or group.declared and not (group.current_state and group.status in ACTIVE))
-        for path, info, kind in group.nonmedia if terminal else ():
-            if not group.lifecycle_applies(path):
+    for group in groups(base, home, rows, candidate_ids, issues):
+        mark = len(deletes)
+        counters = [retained, retained_nonmedia, code_source]
+        snapshots = [counter.copy() for counter in counters]
+        summary_before = {key: dict(value) for key, value in summary.items()}
+        lifecycle_before = {key: dict(value) for key, value in by_lifecycle.items()}
+        failures_before = len(issues.failures)
+        with issues.isolate(str(group.root)):
+            if candidate_ids and group.cid not in candidate_ids and not any(any(cid in p.name for cid in candidate_ids) for p, _, _ in group.media):
                 continue
-            protection = ("explicit-preserve" if str(path) in keep else group_guard or pubs.guard(path)) or (
-                "process-or-lock" if busy or (info.st_dev, info.st_ino) in live.inodes else
-                "recent-write" if recent else
-                "in-progress" if group.current_state and group.status in ACTIVE else "")
-            if protection:
-                retained_nonmedia[protection] += info.st_size
-            else:
-                add(group, path, info, "terminal-" + kind, kind)
+            busy = (group.cid in live.candidate_ids or any(group.owns(p) for p in live.paths)
+                    or group.category == "out" and live.runner_locked)
+            last_media_write = max((info.st_mtime for _, info, _ in group.media), default=0)
+            recent = max(last_media_write, group.last_write) > now - DAY
+            group_guard = pubs.guards_group(group.cid)
+            for path, info, final in group.media:
+                reason, seconds = _retention(group, final, pressure, group.lifecycle_applies(path))
+                protection = ("recording" if RECORDING.fullmatch(path.name) else
+                              "explicit-preserve" if str(path) in keep else
+                              "evidence-lease" if lease_index.covering(path) else
+                              group_guard or pubs.guard(path))
+                protection = protection or (
+                    "process-or-lock" if busy or (info.st_dev, info.st_ino) in live.inodes else
+                    "recent-write" if recent else
+                    "in-progress" if group.current_state and group.status in ACTIVE else
+                    "publication-unverified" if reason == "publication-unverified" else
+                    "retention" if now - (max(info.st_mtime, group.published_at) if reason == "published-final" else last_media_write) < seconds else ""
+                )
+                if protection:
+                    retained[protection] += info.st_size
+                else:
+                    add(group, path, info, reason, "media")
+            # Terminal runs also give up bulk caches and repository copies; decision
+            # records, subtitles and run-local scripts always stay.
+            # Operator runs give up non-media only by their own record or by being the
+            # publishing run; a daily verdict concludes the runner's own out/ directory.
+            terminal = (group.published or group.category == "out" and group.status in TERMINAL_DISCARD
+                        or group.declared and not (group.current_state and group.status in ACTIVE))
+            for path, info, kind in group.nonmedia if terminal else ():
+                if not group.lifecycle_applies(path):
+                    continue
+                protection = ("explicit-preserve" if str(path) in keep else
+                              "evidence-lease" if lease_index.covering(path) else group_guard or pubs.guard(path)) or (
+                    "process-or-lock" if busy or (info.st_dev, info.st_ino) in live.inodes else
+                    "recent-write" if recent else
+                    "in-progress" if group.current_state and group.status in ACTIVE else "")
+                if protection:
+                    retained_nonmedia[protection] += info.st_size
+                else:
+                    add(group, path, info, "terminal-" + kind, kind)
+        if len(issues.failures) != failures_before:
+            del deletes[mark:]
+            for counter, snapshot in zip(counters, snapshots):
+                counter.clear()
+                counter.update(snapshot)
+            summary.clear()
+            summary.update(summary_before)
+            by_lifecycle.clear()
+            by_lifecycle.update(lifecycle_before)
     return {"schema_version": SCHEMA, "base": str(base), "home": str(home), "created_at_epoch": now,
             "free_bytes_before": free_bytes, "pressure": pressure, "preserve": sorted(keep),
+            "lease_base": str(lease_base) if lease_base else None, "evidence_leases": leases,
+            "preserve_classification": [
+                {"path": path, "classification": "covered-by-lease" if lease_index.covering(Path(path)) else "no-inflight-binding",
+                 "lease_ids": lease_index.covering(Path(path))} for path in sorted(keep)],
             "candidate_ids": sorted(candidate_ids or ()), "registry": str(registry) if registry else None,
             "published_input_files": len(pubs.inputs), "summary": summary,
             "summary_by_lifecycle": by_lifecycle, "code_source_allocated_bytes": dict(code_source),
             "retained_logical_bytes": dict(retained), "retained_nonmedia_logical_bytes": dict(retained_nonmedia),
-            "targets": deletes}
+            "item_failures": issues.as_list(), "targets": deletes}
 
 
 def git_blob_sha1(data: bytes) -> str:
@@ -738,7 +810,10 @@ def apply_plan(plan: dict) -> dict:
     base = Path(plan["base"])
     fresh = collect(base, home=Path(plan["home"]), preserve=set(plan["preserve"]),
                     candidate_ids=set(plan.get("candidate_ids", [])),
-                    registry=Path(plan["registry"]) if plan.get("registry") else None)
+                    registry=Path(plan["registry"]) if plan.get("registry") else None,
+                    lease_base=Path(plan["lease_base"]) if plan.get("lease_base") else None)
+    if fresh["evidence_leases"] != plan.get("evidence_leases", {}):
+        raise RuntimeError("evidence leases changed since collection; review a new plan")
     eligible = {row["path"]: row for row in fresh["targets"]}
     approved = plan["targets"]
     paths = [row["path"] for row in approved]
@@ -757,7 +832,11 @@ def apply_plan(plan: dict) -> dict:
     inode_attributes = {}
     removed, last_owner, live = [], None, None
     self_touched: dict[str, dict[str, int]] = {}
+    lease_guard = None
     try:
+        lease_guard = evidence_lease.SnapshotGuard(Path(plan.get("lease_base") or base), fresh["evidence_leases"])
+        if not lease_guard.unchanged():
+            raise RuntimeError("evidence leases changed before apply; review a new plan")
         write_code_sources(base, [row for row in approved if row.get("kind") == "code"])
         for row in approved:
             # Refresh process/lock protection at each owner, not per media hash.
@@ -787,6 +866,8 @@ def apply_plan(plan: dict) -> dict:
                 expected_parent = self_touched.get(str(path.parent), row["parent_identity"])
                 if directory_stamp(path.parent.stat()) != expected_parent:
                     raise RuntimeError(f"parent directory changed since collection: {path.parent}")
+                if not lease_guard.unchanged():
+                    raise RuntimeError("evidence leases changed during apply; review a new plan")
                 path.unlink()
                 removed.append(str(path))
                 parent_info = path.parent.stat()
@@ -817,6 +898,9 @@ def apply_plan(plan: dict) -> dict:
         free_after = shutil.disk_usage(base).free
         return {"status": "PARTIAL" if removed else "REFUSED", "removed": removed, "error": str(exc),
                 "free_bytes_after": free_after, "alert_below_10gib": free_after < 10 * GIB}
+    finally:
+        if lease_guard is not None:
+            lease_guard.close()
     write_self_touch(base, self_touched)
     free_after = shutil.disk_usage(base).free
     return {"status": "APPLIED", "removed": removed, "free_bytes_before": fresh["free_bytes_before"],
@@ -858,6 +942,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--scheduled", action="store_true")
     parser.add_argument("--proc", type=Path, default=Path("/proc"),
                         help="live process table for planning; apply always re-reads /proc")
+    parser.add_argument("--lease-base", type=Path, help="explicit lease store base (offline comparisons)")
+    parser.add_argument("--policy-json", type=Path, help="explicit policy for an offline read-only comparison")
     args = parser.parse_args(argv)
     if args.apply_plan:
         try:
@@ -868,13 +954,15 @@ def main(argv: list[str] | None = None) -> int:
         if result.get("alert_below_10gib"):
             print("RUNTIME_GC_LOW_DISK: free space remains below 10 GiB", file=sys.stderr)
         return 0 if result["status"] == "APPLIED" else 1
-    policy = read_json(args.base / "runtime-gc.json")
-    preserve = set(policy.get("preserve", []))
-    if args.preserve_json:
-        preserve.update(json.loads(args.preserve_json.read_text()))
     try:
+        policy = read_json(args.policy_json or args.base / "runtime-gc.json")
+        if args.policy_json and args.scheduled:
+            raise ValueError("an offline policy override cannot authorize scheduled apply")
+        preserve = set(policy.get("preserve", []))
+        if args.preserve_json:
+            preserve.update(json.loads(args.preserve_json.read_text()))
         plan = collect(args.base, home=args.home or Path(policy.get("home", "/home/user")), preserve=preserve,
-                       live=activity(args.base.absolute(), args.proc))
+                       live=activity(args.base.absolute(), args.proc), lease_base=args.lease_base)
     except (OSError, RuntimeError, ValueError) as exc:  # e.g. unreadable publication registry
         print(json.dumps({"status": "REFUSED", "removed": [], "error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False))
         return 1
@@ -884,7 +972,8 @@ def main(argv: list[str] | None = None) -> int:
         "status": "DRY_RUN", "target_files": len(plan["targets"]), "explicit_preserve_paths": len(plan["preserve"]),
         **{key: plan[key] for key in ("schema_version", "base", "home", "created_at_epoch", "free_bytes_before", "pressure",
                                       "summary", "summary_by_lifecycle", "code_source_allocated_bytes",
-                                      "retained_logical_bytes", "retained_nonmedia_logical_bytes")}}
+                                      "retained_logical_bytes", "retained_nonmedia_logical_bytes", "item_failures",
+                                      "preserve_classification")}}
     print(json.dumps(result, ensure_ascii=False))
     if result.get("alert_below_10gib"):
         print("RUNTIME_GC_LOW_DISK: free space remains below 10 GiB", file=sys.stderr)

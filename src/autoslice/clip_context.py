@@ -7,7 +7,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Sequence, TypeVar
+from typing import Mapping, NotRequired, Sequence, TypedDict, TypeVar, cast
 
 from src.autoslice.chat_authority import ChatEvidence, sanitize_chat_display_text
 from src.autoslice.speech_memory_ledger import load_scoped_speech_memory
@@ -24,6 +24,30 @@ _T = TypeVar("_T")
 
 class ClipContextError(ValueError):
     pass
+
+
+class SourcePieceInput(TypedDict):
+    start_ms: int
+    end_ms: int
+    remote_media: str
+    source_media_sha256: NotRequired[str | None]
+
+
+class SourcePieceContext(TypedDict):
+    start_ms: int
+    end_ms: int
+    recording_basename: str
+    source_media_sha256: str | None
+
+
+def source_piece_context(piece: SourcePieceInput) -> SourcePieceContext:
+    """Project the producer's source identity onto the frozen context clock."""
+    return {
+        "start_ms": int(piece["start_ms"]),
+        "end_ms": int(piece["end_ms"]),
+        "source_media_sha256": piece.get("source_media_sha256"),
+        "recording_basename": Path(str(piece.get("remote_media") or "")).name,
+    }
 
 
 @dataclass(frozen=True)
@@ -169,12 +193,7 @@ def build_clip_context(
         for item in selected_chat
     ]
     pieces = [
-        {
-            "start_ms": int(piece["start_ms"]),
-            "end_ms": int(piece["end_ms"]),
-            "source_media_sha256": piece.get("source_media_sha256"),
-            "recording_basename": Path(str(piece.get("remote_media") or "")).name,
-        }
+        source_piece_context(cast(SourcePieceInput, piece))
         for piece in (spec.get("pieces") or [])
         if isinstance(piece, Mapping)
     ]

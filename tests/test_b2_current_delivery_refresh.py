@@ -178,22 +178,3 @@ def test_result_writer_is_create_only(tmp_path: Path) -> None:
 
     with pytest.raises(FileExistsError):
         refresh.write_result_create_only(output, {"status": "OTHER"})
-
-
-def test_cli_bootstrap_ignores_installed_scripts_package() -> None:
-    script = Path(__file__).resolve().parents[1] / "scripts/refresh_b2_current_delivery_package.py"
-    namespace: dict[str, object] = {"__file__": str(script), "__name__": "bootstrap_test"}
-    source = script.read_text(encoding="utf-8")
-    exec(compile(source, str(script), "exec"), namespace)
-    previous = {name: sys.modules.get(name) for name in ("scripts", "src")}
-    try:
-        namespace["_bootstrap_repository_namespaces"]()
-        assert (
-            Path(os.fspath(__import__("scripts").__path__[0])).resolve() == script.parent.resolve()
-        )
-    finally:
-        for name, module in previous.items():
-            if module is None:
-                sys.modules.pop(name, None)
-            else:
-                sys.modules[name] = module

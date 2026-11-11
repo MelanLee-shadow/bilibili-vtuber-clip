@@ -13,7 +13,9 @@ from collections.abc import Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
+from typing import cast
 
+from .chat_authority_ownership import ChatAuthorityProjection
 from .context_assisted_audio import digest, text_sha
 
 _capture = ContextVar('exact_final_terminal_adapters', default=None)
@@ -130,12 +132,119 @@ def _records(value):
             yield from _records(child)
 
 
+class _TerminalHistory:
+    """Read-only, invocation-local index of historical request owners.
+
+    Evidence expansion shares immutable subtrees. Summarize each container
+    once, but concatenate its summary at EVERY occurrence: both traversal
+    order and duplicate owner/wrapper occurrences remain the old DFS order.
+    The index and pure hashes never survive this terminal_check invocation;
+    file-backed witness validation still runs through its ordinary owners.
+    """
+
+    def __init__(self):
+        self._owners = {}
+        self._digests = {}
+
+    def digest(self, value):
+        if not isinstance(value, (Mapping, list, tuple)):
+            return digest(value)
+        key = id(value)
+        if key not in self._digests:
+            self._digests[key] = (value, digest(value))
+        return self._digests[key][1]
+
+    def owners(self, value):
+        if not isinstance(value, (Mapping, list, tuple)):
+            return ()
+        key = id(value)
+        if key in self._owners:
+            return self._owners[key][1]
+        rows = []
+        if isinstance(value, Mapping):
+            if (value.get('schema_version') == 'subtitle-span-acoustic-check-request.v1'
+                    or isinstance(value.get('request'), Mapping)
+                    or isinstance(value.get('consumer_check_request'), Mapping)):
+                rows.append(value)
+            children = value.values()
+        else:
+            children = value
+        for child in children:
+            rows.extend(self.owners(child))
+        result = tuple(rows)
+        # Retain the source as well as its identity, avoiding address reuse.
+        self._owners[key] = (value, result)
+        return result
+
+
+def _prior_chat_authority_projection(
+    srt_text: str,
+    finding: object,
+    *,
+    chat_authority_audit: object,
+    delivery_start_ms: int,
+) -> "ChatAuthorityProjection | None":
+    """Resolve the ordinary terminal's evidence-only chat authority handoff."""
+    from .chat_authority_ownership import (
+        build_chat_authority_conflict_projection,
+        chat_authority_owned_cue_indexes,
+        validate_chat_authority_conflict_projection,
+    )
+
+    if not isinstance(finding, Mapping):
+        raise ContractRejection("CHAT_AUTHORITY_CONFLICT_FINDING_INVALID")
+    supplied = finding.get("prior_chat_authority")
+    if isinstance(supplied, Mapping):
+        try:
+            validate_chat_authority_conflict_projection(
+                supplied, srt_text=srt_text, finding=finding,
+                delivery_start_ms=delivery_start_ms,
+                chat_authority_audit=chat_authority_audit,
+            )
+        except ValueError as exc:
+            raise ContractRejection(str(exc)) from exc
+        return cast(ChatAuthorityProjection, supplied)
+    if not isinstance(chat_authority_audit, Mapping):
+        return None
+    # An ordinary review may carry an empty authority envelope even when no
+    # chat row exists for this cue.  That is the no-prior-authority control,
+    # not a malformed receipt.  Once an applied ledger is present, however,
+    # build_chat_authority_conflict_projection returns an explicit INVALID
+    # projection and the request builder fails closed on any missing/stale
+    # binding.
+    applied = chat_authority_audit.get("applied")
+    if not isinstance(applied, list) or not applied:
+        return None
+    cue_index = finding.get("cue_index")
+    if type(cue_index) is not int or cue_index not in chat_authority_owned_cue_indexes(
+        srt_text, chat_authority_audit, delivery_start_ms=delivery_start_ms,
+    ):
+        # The audit can contain chat receipts for other cues in the same
+        # clip. Source cue numbers predate boundary trimming; only physical
+        # interval coverage determines whether this delivery cue is owned.
+        return None
+    return build_chat_authority_conflict_projection(
+        srt_text,
+        chat_authority_audit,
+        cue_index=cue_index,
+        delivery_start_ms=delivery_start_ms,
+    )
+
+
+def _context_request_with_chat_authority(srt_text, scaffold, *, context, offset, chat_authority_audit):
+    from .final_review_auditor import build_context_adjudication_request
+    prior = _prior_chat_authority_projection(
+        srt_text, scaffold, chat_authority_audit=chat_authority_audit,
+        delivery_start_ms=offset)
+    return build_context_adjudication_request(srt_text, scaffold, clip_context=context,
+        source_media_timeline_offset_ms=offset, require_complete_utterance_support=True,
+        prior_chat_authority=prior)
+
+
 @cold_input
 def terminal_check(srt_text, finding, *, clip_context, offset_ms, ranges=(), secondary=(),
-                  related_findings=(), historical_findings=()):
-    from .final_review_auditor import (
-        _candidate_blind_missing_proposal_scaffold, build_context_adjudication_request,
-    )
+                  related_findings=(), historical_findings=(), chat_authority_audit=None):
+    from .final_review_auditor import _candidate_blind_missing_proposal_scaffold
     from .targeted_relisten import TARGET_MATERIAL_CONTRACT
     from .audio_question_identity import same_audio_question
     from .acoustic_witness_adjudication import build_witness_request, same_hearing
@@ -146,21 +255,23 @@ def terminal_check(srt_text, finding, *, clip_context, offset_ms, ranges=(), sec
         scaffold = _candidate_blind_missing_proposal_scaffold(srt_text, finding)
     if scaffold is None:
         raise ContractRejection('TERMINAL_FINDING_GEOMETRY_INVALID')
+    history = _TerminalHistory()
     old, old_keys = [], set()
     for row in (finding, *related_findings, *historical_findings):
         value = row.get('exact_release_adjudication') or {}
-        key = digest(value)
+        key = history.digest(value)
         if key in old_keys:
             continue
         old_keys.add(key)
         old.append(value)
     bound_ranges = list(ranges)
-    for row in _records(old):
+    historical_owners = history.owners(old)
+    for row in historical_owners:
         if row.get('schema_version') == 'subtitle-span-acoustic-check-request.v1':
             bound_ranges.extend(row.get('context_only_range_acoustic_observations') or [])
-    scaffold['_prior_range_acoustic_observations'] = list({digest(r): r for r in bound_ranges}.values())
-    check = build_context_adjudication_request(srt_text, scaffold, clip_context=clip_context,
-        source_media_timeline_offset_ms=offset_ms, require_complete_utterance_support=True)
+    scaffold['_prior_range_acoustic_observations'] = list({history.digest(r): r for r in bound_ranges}.values())
+    check = _context_request_with_chat_authority(srt_text, scaffold,
+        context=clip_context, offset=offset_ms, chat_authority_audit=chat_authority_audit)
     # The producer binds the complete cue text and its physical audio window,
     # covering the union of every G6 member's character spans. A narrower
     # representative suspect never narrows the terminal question.
@@ -170,16 +281,22 @@ def terminal_check(srt_text, finding, *, clip_context, offset_ms, ranges=(), sec
     processed_requests, witness_requests = set(), {}
     historical_argon_upgrade = check.get('argon_upgrade_available') is True
 
+    validated_requests = {}
+
     def self_hashed_request(value):
         """Return a historical check request only when its own bytes verify."""
         if (not isinstance(value, Mapping)
                 or value.get('schema_version') != 'subtitle-span-acoustic-check-request.v1'):
             return None
+        key = id(value)
+        if key in validated_requests:
+            return validated_requests[key][1]
         request_sha256 = value.get('request_sha256')
         unsigned = {key: item for key, item in value.items() if key != 'request_sha256'}
-        if not isinstance(request_sha256, str) or digest(unsigned) != request_sha256:
-            return None
-        return value
+        result = (value if isinstance(request_sha256, str)
+                  and digest(unsigned) == request_sha256 else None)
+        validated_requests[key] = (value, result)
+        return result
 
     def historical_requests(row):
         """Yield the original request carried by either historical owner shape."""
@@ -246,12 +363,12 @@ def terminal_check(srt_text, finding, *, clip_context, offset_ms, ranges=(), sec
             'provenance': {
                 'source_field': request_field,
                 'request_sha256': request['request_sha256'],
-                'owner_audit_sha256': digest(audit),
+                'owner_audit_sha256': history.digest(audit),
             },
         }
 
     historical_argon_states = []
-    for row in _records(old):
+    for row in historical_owners:
         request, request_field = next(
             ((candidate, field) for candidate, field in historical_requests(row)
              if self_hashed_request(candidate) is not None
@@ -273,7 +390,7 @@ def terminal_check(srt_text, finding, *, clip_context, offset_ms, ranges=(), sec
         # pre-candidate request: rebuilding it from the later check mixes a
         # syllable hint/evidence_id into the hash and loses these hearings.
         from .acoustic_witness_adjudication import own_witness_request
-        request_key = digest(request)
+        request_key = history.digest(request)
         first = request_key not in processed_requests
         processed_requests.add(request_key)
         direct = {k: row[k] for k in ('verdict', 'acoustic_witness') if k in row}
@@ -282,7 +399,7 @@ def terminal_check(srt_text, finding, *, clip_context, offset_ms, ranges=(), sec
         containers = ([request] if first else []) + [direct]
         envelope = request.get('argon_escalation_evidence')
         if isinstance(envelope, Mapping):
-            key = digest(envelope)
+            key = history.digest(envelope)
             if key not in reopened_argon:
                 try:
                     with contract_boundary():
@@ -298,7 +415,7 @@ def terminal_check(srt_text, finding, *, clip_context, offset_ms, ranges=(), sec
         saved = list(_records(containers))
         for value in saved:
             if value.get('schema_version') == 'exact-final-source-transcript-observation.v2':
-                source_observations[digest(value)] = deepcopy(dict(value))
+                source_observations[history.digest(value)] = deepcopy(dict(value))
         own_requests.extend(value for value in saved
             if value.get('kind') == 'subtitle_span_acoustic_witness')
         witness_requests[request_key] = own_requests
@@ -306,7 +423,7 @@ def terminal_check(srt_text, finding, *, clip_context, offset_ms, ranges=(), sec
             if value.get('schema_version') != 'subtitle-span-acoustic-witness.v1':
                 continue
             if (value.get('argon_escalation_evidence')
-                    and digest(value['argon_escalation_evidence']) in reopened_argon):
+                    and history.digest(value['argon_escalation_evidence']) in reopened_argon):
                 continue  # Already reopened once under its original G6 question.
             own = own_witness_request(value, *own_requests)
             if own is not None and same_hearing(value, target, bound_request=own):
@@ -318,11 +435,11 @@ def terminal_check(srt_text, finding, *, clip_context, offset_ms, ranges=(), sec
                         entry.update({k: deepcopy(v) for k, v in wrapper.items()
                             if k not in {'witness_request', 'verdict'}})
                 observations.append(entry)
-    check['prior_acoustic_observations'] = list({digest(r): r for r in observations}.values())
+    check['prior_acoustic_observations'] = list({history.digest(r): r for r in observations}.values())
     if source_observations:
         check['primary_original_language_observations'] = list(source_observations.values())
     if rejected_history:
-        check['terminal_rejected_history'] = list({digest(r): r for r in rejected_history}.values())
+        check['terminal_rejected_history'] = list({history.digest(r): r for r in rejected_history}.values())
     if historical_argon_upgrade:
         check['argon_upgrade_available'] = True
     if historical_argon_states and not reopened_argon and not check.get('target_argon_state'):
@@ -343,6 +460,59 @@ def terminal_check(srt_text, finding, *, clip_context, offset_ms, ranges=(), sec
     check.pop('request_sha256', None)
     check['request_sha256'] = digest(check)
     return check
+
+
+def _replay_terminal_candidate(srt_text, row, *, prior, check, finding,
+        chat_authority_audit, offset, context):
+    from .editorial_subtitle import replay_terminal_adjudication, needs_contract_retry
+    saved_owner = prior.get('source_owner_answer')
+    if isinstance(saved_owner, Mapping):
+        # Replay the saved answer against the same live source. Its new prompt
+        # must never become an "old" terminal answer that is asked recursively.
+        if saved_owner.get('status') == 'VALIDATED':
+            from .chat_authority_reconciliation import owner_answer_to_adjudication
+            terminal = owner_answer_to_adjudication(saved_owner, srt_text=srt_text,
+                finding=finding, authority=chat_authority_audit,
+                delivery_start_ms=offset, clip_context=context)
+            terminal['source_owner_answer'] = deepcopy(dict(saved_owner))
+        else:
+            terminal = deepcopy(dict(prior))
+    else:
+        terminal = replay_terminal_adjudication(srt_text, row,
+            check_request=check, clip_context=context)
+        if needs_contract_retry(terminal):
+            # The ordinary owner re-asks under the current contract while the
+            # rejected old-contract answer remains stopped history.
+            terminal = None
+    return terminal, saved_owner
+
+
+def _reconcile_chat_terminal(terminal, *, srt_text, row, finding, check,
+        adapters, chat_authority_audit, offset, context):
+    # Only the original chat owner may supersede its cue, using the unchanged
+    # source receipt and the new terminal evidence.
+    bound_owner = check.get('prior_chat_authority')
+    conflict = (isinstance(bound_owner, Mapping)
+        and isinstance(terminal.get('terminal_review'), Mapping)
+        and (terminal.get('reason_code') == 'CHAT_AUTHORITY_CONFLICT_MUTATION_BLOCKED'
+             or terminal.get('repaired') is True))
+    source_owner = adapters.get('source_owner')
+    if conflict and callable(source_owner):
+        from .chat_authority_reconciliation import (build_owner_request,
+            owner_answer_to_adjudication)
+        source_finding = {**dict(finding), 'exact_release_adjudication': terminal}
+        source_request = build_owner_request(srt_text, source_finding,
+            chat_authority_audit, delivery_start_ms=offset)
+        source_answer = source_owner(srt_text, source_finding, source_request)
+        if isinstance(source_answer, Mapping):
+            terminal['source_owner_answer'] = deepcopy(dict(source_answer))
+            row['exact_release_adjudication'] = terminal
+        if isinstance(source_answer, Mapping) and source_answer.get('status') == 'VALIDATED':
+            terminal = owner_answer_to_adjudication(source_answer, srt_text=srt_text,
+                finding=finding, authority=chat_authority_audit,
+                delivery_start_ms=offset, clip_context=context)
+            terminal['source_owner_answer'] = deepcopy(dict(source_answer))
+    return terminal
 
 
 @cold_input
@@ -373,9 +543,9 @@ def terminalize_review(srt_text, audit, *, pass_receipts, adapters, task_materia
                            *(result.get('unresolved_findings_disclosed') or [])]
     context = adapters.get('clip_context')
     offset = adapters.get('source_media_timeline_offset_ms', 0)
+    chat_authority_audit = adapters.get('chat_authority_audit')
     def question(finding):
-        from .final_review_auditor import (build_context_adjudication_request,
-            _candidate_blind_missing_proposal_scaffold)
+        from .final_review_auditor import _candidate_blind_missing_proposal_scaffold
         try:
             with contract_boundary():
                 scaffold = dict(finding)
@@ -383,8 +553,8 @@ def terminalize_review(srt_text, audit, *, pass_receipts, adapters, task_materia
                     scaffold = _candidate_blind_missing_proposal_scaffold(srt_text, finding)
                 if scaffold is None:
                     return None
-                return build_context_adjudication_request(srt_text, scaffold, clip_context=context,
-                    source_media_timeline_offset_ms=offset, require_complete_utterance_support=True)
+                return _context_request_with_chat_authority(srt_text, scaffold,
+                    context=context, offset=offset, chat_authority_audit=chat_authority_audit)
         except (ContractRejection, ProviderFailure):
             # The scheduler keeps an unbuildable row separate. Its ordinary
             # terminal path below retains the precise failure and prior evidence.
@@ -442,14 +612,11 @@ def terminalize_review(srt_text, audit, *, pass_receipts, adapters, task_materia
                     ranges=adapters.get('prior_range_acoustic_observations') or (),
                     secondary=adapters.get('prior_secondary_audio_observations') or (),
                     related_findings=[agenda[i] for i in group if i != owner_index],
-                    historical_findings=historical_findings)
-                from .editorial_subtitle import replay_terminal_adjudication, needs_contract_retry
-                terminal = replay_terminal_adjudication(srt_text, row,
-                    check_request=check, clip_context=context)
-                if needs_contract_retry(terminal):
-                    # A rejected old-contract answer is re-asked under the current
-                    # contract by the ordinary owner below; prior stays stopped history.
-                    terminal = None
+                    historical_findings=historical_findings,
+                    chat_authority_audit=chat_authority_audit)
+                terminal, saved_owner = _replay_terminal_candidate(srt_text, row,
+                    prior=prior, check=check, finding=finding,
+                    chat_authority_audit=chat_authority_audit, offset=offset, context=context)
                 replayed_original = terminal is not None
                 if terminal is not None:
                     proof = ((terminal.get('terminal_review') or {}).get('request') or {}).get(
@@ -511,7 +678,12 @@ def terminalize_review(srt_text, audit, *, pass_receipts, adapters, task_materia
                         terminal = close_with_existing_editorial(srt_text=srt_text, finding=row,
                             recovery_audit=recovery, prior=prior, clip_context=context,
                             entity_verifier=adapters.get('entity_verifier'), judge_llm_call=call)
-                terminal['stopped_adjudication'] = prior
+                terminal = _reconcile_chat_terminal(terminal, srt_text=srt_text,
+                    row=row, finding=finding, check=check, adapters=adapters,
+                    chat_authority_audit=chat_authority_audit, offset=offset, context=context)
+                terminal['stopped_adjudication'] = (
+                    prior.get('stopped_adjudication', prior)
+                    if isinstance(saved_owner, Mapping) else prior)
                 if (isinstance(terminal.get('terminal_review'), Mapping)
                         and isinstance(terminal['terminal_review'].get('raw_completion'), str)
                         and terminal.get('reason_code') not in {None, 'TERMINAL_UNRESOLVABLE'}

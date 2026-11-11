@@ -386,7 +386,9 @@ def test_changed_source_removes_cached_proposals_without_calling_provider(sample
     assert not (batch / "channel_knowledge_review_queue.jsonl").read_text()
 
 
-
+def test_oss_classifies_generic_cli():
+    from scripts.export_oss_snapshot import classify
+    assert classify("scripts/extract_persona_facts.py") == "keep"
 
 
 def test_real_published_sealed_fixture_via_cli(tmp_path):

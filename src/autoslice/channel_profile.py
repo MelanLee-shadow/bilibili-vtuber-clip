@@ -313,14 +313,22 @@ class ChannelProfile:
     song_title_prefix: str
     talk_title_prefix: str
     song_plain_template: str
-    canonical_surface_rules: tuple[CanonicalSurfaceRule, ...]
+    inline_canonical_surface_rules: tuple[CanonicalSurfaceRule, ...]
     decisions: Mapping[str, str]
     tools: Mapping[str, Path]
     manifest_path: Path
     manifest_sha256: str
     repo_root: Path
+    spelling_table_path: Path | None = None
     task_binding: Mapping[str, str] | None = None
     binding_extension: ProfileBindingExtension | None = None
+
+    @property
+    def canonical_surface_rules(self) -> tuple[CanonicalSurfaceRule, ...]:
+        if self.spelling_table_path is None:
+            return self.inline_canonical_surface_rules
+        from .channel_profile_surfaces import load_table_surface_rules
+        return load_table_surface_rules(self.spelling_table_path)
 
     @property
     def delivery_root(self) -> Path:
@@ -382,6 +390,8 @@ class ChannelProfile:
             except ValueError:
                 pass
         paths: list[Path] = [manifest]
+        if self.spelling_table_path is not None:
+            paths.append(self._rebase_repo_path(self.spelling_table_path, repo_root))
         paths.extend(
             self.asset_file(key, repo_root=repo_root) for key in self.fingerprint_asset_keys
         )
@@ -770,44 +780,9 @@ def load_channel_profile(
             "song titles are fixed catalog form with nothing before or after the song name"
         )
 
-    text_normalization = _mapping(
-        root.get("text_normalization"), label="text_normalization"
-    )
-    _strict_keys(
-        text_normalization,
-        label="text_normalization",
-        required={"canonical_surfaces"},
-    )
-    raw_surface_rules = text_normalization.get("canonical_surfaces")
-    if not isinstance(raw_surface_rules, list):
-        raise ChannelProfileError(
-            "text_normalization.canonical_surfaces must be a list"
-        )
-    canonical_surface_rules: list[CanonicalSurfaceRule] = []
-    for index, raw_rule in enumerate(raw_surface_rules):
-        label = f"text_normalization.canonical_surfaces[{index}]"
-        rule = _mapping(raw_rule, label=label)
-        _strict_keys(
-            rule,
-            label=label,
-            required={"surface", "canonical", "authority"},
-        )
-        canonical_surface_rules.append(
-            CanonicalSurfaceRule(
-                surface=_string(rule.get("surface"), label=f"{label}.surface"),
-                canonical=_string(
-                    rule.get("canonical"), label=f"{label}.canonical"
-                ),
-                authority=_string(
-                    rule.get("authority"), label=f"{label}.authority"
-                ),
-            )
-        )
-    surfaces = [rule.surface for rule in canonical_surface_rules]
-    if len(surfaces) != len(set(surfaces)):
-        raise ChannelProfileError(
-            "text_normalization.canonical_surfaces must not repeat a surface"
-        )
+    from .channel_profile_surfaces import parse_surface_spec
+    canonical_surface_rules, spelling_table_path = parse_surface_spec(
+        root.get("text_normalization"), repo_root)
 
     decisions = _string_map(root.get("decisions"), label="decisions")
     required_decisions = {
@@ -866,12 +841,13 @@ def load_channel_profile(
         song_title_prefix=song_title_prefix,
         talk_title_prefix=talk_title_prefix,
         song_plain_template=song_plain_template,
-        canonical_surface_rules=tuple(canonical_surface_rules),
+        inline_canonical_surface_rules=tuple(canonical_surface_rules),
         decisions=MappingProxyType(decisions),
         tools=MappingProxyType(tools),
         manifest_path=resolved_manifest,
         manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
         repo_root=repo_root,
+        spelling_table_path=spelling_table_path,
         task_binding=MappingProxyType(expected) if expected is not None else None,
         binding_extension=extension,
     )

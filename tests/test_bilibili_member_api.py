@@ -232,7 +232,8 @@ def test_build_edit_payload_keep_only_new_cid(cookie_file):
     }
     payload = session.build_edit_payload(view_data, title="新标题", keep_only_cid=2)
     assert payload["title"] == "新标题"
-    assert payload["videos"] == [{"filename": "new", "title": "新P", "cid": 2}]
+    # keep_only_cid leaves one part: a single-P archive's part name is the final title.
+    assert payload["videos"] == [{"filename": "new", "title": "新标题", "cid": 2}]
     assert payload["aid"] == 42 and payload["tag"] == "a,b"
     assert payload["csrf"] == "csrf-token"
 
@@ -262,6 +263,42 @@ def test_build_edit_payload_can_replace_part_title(cookie_file):
             "cid": 2,
         }
     ]
+
+
+def _part_view(*parts):
+    return {
+        "archive": {"aid": 42, "bvid": "BV1xx", "title": "线上标题"},
+        "videos": [{"filename": f"f{i}", "title": name, "cid": i} for i, name in enumerate(parts, 1)],
+    }
+
+
+def test_build_edit_payload_single_part_takes_live_title_without_new_title(cookie_file):
+    session, _ = make_session(cookie_file(BILIUP_SHAPE), [])
+    payload = session.build_edit_payload(_part_view("内部编号文件名"), tag="a,b")
+    assert payload["videos"] == [{"filename": "f1", "title": "线上标题", "cid": 1}]
+
+
+def test_build_edit_payload_single_part_takes_new_title(cookie_file):
+    session, _ = make_session(cookie_file(BILIUP_SHAPE), [])
+    payload = session.build_edit_payload(_part_view("内部编号文件名"), title="新的标题")
+    assert payload["title"] == "新的标题"
+    assert payload["videos"][0]["title"] == "新的标题"
+
+
+def test_build_edit_payload_multi_part_keeps_live_part_names(cookie_file):
+    session, _ = make_session(cookie_file(BILIUP_SHAPE), [])
+    payload = session.build_edit_payload(_part_view("甲", "乙"), title="新的标题")
+    assert [row["title"] for row in payload["videos"]] == ["甲", "乙"]
+    explicit = session.build_edit_payload(_part_view("甲", "乙"), video_title="统一名")
+    assert [row["title"] for row in explicit["videos"]] == ["统一名", "统一名"]
+
+
+def test_build_edit_payload_single_part_explicit_name_must_be_the_title(cookie_file):
+    session, _ = make_session(cookie_file(BILIUP_SHAPE), [])
+    same = session.build_edit_payload(_part_view("x"), title="新的标题", video_title="新的标题")
+    assert same["videos"][0]["title"] == "新的标题"
+    with pytest.raises(ValueError, match="part name must equal"):
+        session.build_edit_payload(_part_view("x"), video_title="别的名字")
 
 
 def test_season_add_treats_already_in_as_success(cookie_file):

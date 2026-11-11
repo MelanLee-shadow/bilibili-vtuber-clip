@@ -94,6 +94,7 @@ def _runtime(
         manifest,
     )
     return root, script, {
+        "AUTOSLICE_CPA_GEMINI_ENABLED": "0",
         "AUTOSLICE_BASE": str(root),
         "AUTOSLICE_FINAL_MEDIA_GEMINI_API_MODEL": MODEL,
         "GEMINI_API_KEY": "free-key-for-test",
@@ -285,6 +286,83 @@ def test_sentinel_upload_is_hash_bound_and_free_key_only(tmp_path: Path):
     assert saved["input_sha256"] == _sha(media)
     assert saved["prompt_sha256"] == _sha(prompt)
     assert saved["provider_evidence"]["paid_backup_used"] is False
+
+
+def _joint_sentinel_fixture(tmp_path):
+    from src.autoslice.final_media_review_gemini_api_runtime import selected_endpoint_family
+    values = _sentinel_fixture(tmp_path)
+    root, script, request, response, media, prompt, environment = values
+    environment.pop('AUTOSLICE_CPA_GEMINI_ENABLED')
+    family = selected_endpoint_family(environment)
+    for path in (root / adapter.SENTINEL_RUNTIME_FILENAME, request):
+        value = json.loads(path.read_text())
+        value['endpoint_family'] = family
+        _write_json(path, value)
+    return values
+
+
+class JointFileRunner(FakeFileRunner):
+    def __init__(self, answers, *, disguise_files=False):
+        super().__init__(answers)
+        self.disguise_files = disguise_files
+
+    def __call__(self, **kwargs):
+        outcome = super().__call__(**kwargs)
+        evidence = dict(outcome.evidence)
+        native = kwargs.get('operation') != 'files_upload' or self.disguise_files
+        evidence['transport'] = 'cpa_gemini_native' if native else 'google_files_api'
+        if native:
+            evidence.update(paid_backup_used='UNKNOWN', key_tier='UNKNOWN', key_name='UNKNOWN',
+                key_ordinal=None, configured_free_key_count=0,
+                cpa_transport_receipt={'status': 'RESPONDED', 'identity_model': MODEL})
+        return GeminiFileCallOutcome(outcome.text, evidence)
+
+
+@pytest.mark.parametrize('files_answer', ['12345678', '87654321'])
+def test_joint_sentinel_requires_both_transports_to_hear_same_hidden_input(tmp_path, files_answer):
+    root, script, request, response, media, prompt, environment = _joint_sentinel_fixture(tmp_path)
+    fake = JointFileRunner(['12345678', files_answer])
+    arguments = dict(request_path=request, response_path=response, input_path=media,
+        prompt_path=prompt, environment=environment, file_runner=fake, adapter_path=script)
+    if files_answer != '12345678':
+        with pytest.raises(adapter.AdapterError) as rejected:
+            adapter.run_sentinel(**arguments)
+        assert rejected.value.safe_reason == 'GEMINI_API_SENTINEL_TRANSPORT_DISAGREEMENT'
+        assert not response.exists()
+    else:
+        assert adapter.run_sentinel(**arguments)['observed_answer'] == '12345678'
+        saved = json.loads(next((root / 'final-media-review-gemini-api-runs').glob('*/*/adapter-evidence.json')).read_text())
+        assert saved['provider_evidence']['transport'] == 'cpa_gemini_native'
+        assert saved['files_provider_evidence']['transport'] == 'google_files_api'
+    assert len(fake.calls) == 2
+    assert fake.calls[0].get('operation', 'auto') == 'auto'
+    assert fake.calls[1]['operation'] == 'files_upload'
+    assert fake.calls[0]['expected_sha256'] == fake.calls[1]['expected_sha256'] == _sha(media)
+    assert fake.calls[0]['prompt'] == fake.calls[1]['prompt']
+
+
+def test_joint_sentinel_rejects_one_protocol_masquerading_as_two(tmp_path):
+    root, script, request, response, media, prompt, environment = _joint_sentinel_fixture(tmp_path)
+    fake = JointFileRunner(['12345678', '12345678'], disguise_files=True)
+    with pytest.raises(adapter.AdapterError) as rejected:
+        adapter.run_sentinel(request_path=request, response_path=response, input_path=media,
+            prompt_path=prompt, environment=environment, file_runner=fake, adapter_path=script)
+    assert rejected.value.safe_reason == 'GEMINI_API_SENTINEL_TRANSPORT_DISAGREEMENT'
+    assert not response.exists()
+
+
+def test_single_cpa_proof_cannot_seal_joint_transport_policy(tmp_path):
+    from src.autoslice.final_media_review_gemini_api_runtime import CPA_ENDPOINT_FAMILY
+    root, script, request, response, media, prompt, environment = _joint_sentinel_fixture(tmp_path)
+    value = json.loads(request.read_text())
+    value['endpoint_family'] = CPA_ENDPOINT_FAMILY
+    _write_json(request, value)
+    fake = JointFileRunner([])
+    with pytest.raises(adapter.AdapterError) as rejected:
+        adapter.run_sentinel(request_path=request, response_path=response, input_path=media,
+            prompt_path=prompt, environment=environment, file_runner=fake, adapter_path=script)
+    assert rejected.value.safe_reason == 'GEMINI_API_SENTINEL_REQUEST_INVALID'
+    assert not fake.calls
 
 
 def test_sentinel_rejects_prose_instead_of_hidden_token(tmp_path: Path):
@@ -592,6 +670,7 @@ def test_actual_adapter_envelope_completes_existing_raw_av_consumer(
         [_review("PASS", "video-whole"), _review("PASS", "audio-whole")]
     )
     child_environment = {
+        "AUTOSLICE_CPA_GEMINI_ENABLED": "0",
         "PATH": os.environ.get("PATH", ""),
         "AUTOSLICE_FINAL_MEDIA_GEMINI_API_MODEL": MODEL,
         "GEMINI_API_KEY": "free-test-key",
@@ -640,7 +719,7 @@ def test_actual_adapter_envelope_completes_existing_raw_av_consumer(
     assert evidence["consumed_raw_audio"] is True
     assert len(fake.calls) == 2
     assert all(
-        set(call["environment"]) == {"GEMINI_API_KEY"}
+        set(call["environment"]) == {"GEMINI_API_KEY", "AUTOSLICE_CPA_GEMINI_ENABLED"}
         and "GEMINI_KEY_BACKUP" not in call["environment"]
         for call in fake.calls
     )

@@ -8,6 +8,8 @@ human truth, a speaker identity, or an independent mutation authority.
 
 from __future__ import annotations
 
+from .canonical_json_hash import canonical_sha256
+
 from .validation_memo import memoized_validation
 
 import copy
@@ -34,6 +36,7 @@ from .argon_escalation_contract import (
     window,
 )
 from .argon_escalation_runtime import ArgonRuntime
+from .argon_raw_replay import raw_replay_is_observed
 from .argon_escalation_witness import ArgonEscalationWitness
 from .native_witness_artifact_contract import native_witness_artifact_contract
 
@@ -85,7 +88,9 @@ class ArgonConsumerContract:
                    "source_binding": store.get_json(root / "source-binding.json"),
                    "engine_root": outcome["engine_root"], "task_id": result["task_id"],
                    "result_sha256": result["result_sha256"]}
-        return {**payload, "envelope_sha256": sha(canonical(payload))}
+        if outcome.get("format_recovery") is not None:
+            payload["format_recovery"] = dict(outcome["format_recovery"])
+        return {**payload, "envelope_sha256": canonical_sha256(payload)}
 
 
 def argon_consumer_contract(spec, result=None):
@@ -99,7 +104,7 @@ def argon_session_binding_contract(source_sha, request, finding):
                 "suspect": request["suspect"],
                 "span": [finding.get("span_start_codepoint"), finding.get("span_end_codepoint")],
                 "repair_class": request["repair_class"]}
-    return target, sha(canonical(identity))
+    return target, canonical_sha256(identity)
 
 
 def ordinary_history_event_contract(spec, ordinary, raw_judge):
@@ -127,8 +132,16 @@ def argon_config_contract(config):
     require(isinstance(config, Mapping) and config.get("enabled") is True, "ARGON_OPT_IN_INVALID")
     bools = ("allow_paid", "allow_realtime_fallback")
     limits = {"request_timeout_s": 600, "slot_wait_s": 10800}
-    require(set(config) <= {"enabled", *bools, *limits, "comparison_plan", "comparison_grant", "comparison_case_ids"},
+    require(set(config) <= {"enabled", *bools, *limits, "comparison_plan", "comparison_grant",
+                            "comparison_case_ids", "format_recovery_authorization",
+                            "format_recovery"},
             "ARGON_CONFIG_INVALID")
+    if "format_recovery_authorization" in config and "format_recovery" in config:
+        require(canonical(config["format_recovery_authorization"])
+                == canonical(config["format_recovery"]), "ARGON_CONFIG_INVALID")
+    for key in ("format_recovery_authorization", "format_recovery"):
+        if key in config:
+            require(isinstance(config[key], Mapping), "ARGON_CONFIG_INVALID")
     for name in bools:
         require(name not in config or type(config[name]) is bool, "ARGON_CONFIG_INVALID")
     for name, limit in limits.items():
@@ -150,7 +163,7 @@ def _check_request(request: Mapping) -> None:
     require(isinstance(request, Mapping), "ARGON_CHECK_REQUEST_INVALID")
     unsigned = dict(request)
     digest = unsigned.pop("request_sha256", None)
-    require(sha(canonical(unsigned)) == digest, "ARGON_CHECK_REQUEST_HASH_DRIFT")
+    require(canonical_sha256(unsigned) == digest, "ARGON_CHECK_REQUEST_HASH_DRIFT")
     from .jingting_chunker import parse_srt_cues
 
     cues = parse_srt_cues(request["whole_clip_current_srt"])
@@ -198,14 +211,14 @@ def _consumer_evidence_spec(check_request: Mapping, envelope: Mapping) -> AudioS
     )
     unsigned = dict(envelope)
     supplied = unsigned.pop("envelope_sha256", None)
-    require(sha(canonical(unsigned)) == supplied, "ARGON_CONSUMER_ENVELOPE_DRIFT")
+    require(canonical_sha256(unsigned) == supplied, "ARGON_CONSUMER_ENVELOPE_DRIFT")
     return spec_from_envelope(envelope)
 
 
 def _consumer_evidence_key(check_request: Mapping, envelope: Mapping) -> str:
     spec = _consumer_evidence_spec(check_request, envelope)
-    return sha(canonical([check_request, envelope, str(spec.source_path),
-                          spec.finding.source_media_sha256]))
+    return canonical_sha256([check_request, envelope, str(spec.source_path),
+                          spec.finding.source_media_sha256])
 
 
 @memoized_validation(_consumer_evidence_key)
@@ -241,17 +254,62 @@ def validate_consumer_evidence(check_request: Mapping, envelope: Mapping) -> dic
     engine = ArgonEscalationWitness(Path(envelope["engine_root"]), read_only=True)
     raw = store.get_blob(engine.root / envelope["task_id"], envelope["result_sha256"])
     result = strict_json(raw)
-    result = engine.validate_evidence(envelope["task_id"], result, expected=spec,
-                                      acquisition_root=consumer_root / "batch")
+    capability_binding_task = None
+    if envelope.get("format_recovery") is not None:
+        # The copied successor carries the original capability receipt, but a
+        # production API receipt also binds the native predecessor under the
+        # original engine root.  Resolve that source-bound task before the
+        # ordinary child replay; successor-envelope validation below rechecks
+        # the same proof and hashes rather than trusting this locator.
+        recovery_root = Path(envelope["format_recovery"]["root"]).absolute()
+        proof = strict_json(store.read(recovery_root / "predecessor-proof.json"))
+        original_engine = ArgonEscalationWitness(Path(proof["engine_root"]), read_only=True)
+        capability_binding_task, _, _ = original_engine._load(proof["task_id"], spec)
+    result = engine.validate_evidence(
+        envelope["task_id"],
+        result,
+        expected=spec,
+        # A format successor is an intentionally separate engine root.  Its
+        # predecessor proof below binds it back to the ordinary acquisition;
+        # forcing the ordinary attempt-N relocation here would reject the
+        # valid successor before that proof can be checked.
+        acquisition_root=None if envelope.get("format_recovery") is not None else consumer_root / "batch",
+        capability_binding_task=capability_binding_task,
+    )
+    if envelope.get("format_recovery") is not None:
+        from .argon_format_recovery import validate_successor_envelope
+
+        validate_successor_envelope(envelope["format_recovery"], result=result, expected=spec)
+    replay_observed = raw_replay_is_observed(result.get("raw_replay"))
     require(
-        result["status"] == "OBSERVED" and (
+        (
+            result["status"] == "OBSERVED"
+            or (
+                replay_observed
+                and result["status"] == "RESPONSE_REJECTED"
+                and result.get("reason") == "HEARING_UNCERTAINTIES_INVALID"
+            )
+        )
+        and (
             result["model_version"] == "gemini-4-argon" or result["mode"] == "agy"
             and result.get("provider") == "agy"
-            and result.get("model_identity_basis") == "ACTUAL_CLI_MODEL_SELECTION"),
+            and result.get("model_identity_basis") == "ACTUAL_CLI_MODEL_SELECTION"
+        ),
         "ARGON_CONSUMER_NOT_OBSERVED",
     )
-    require(any(h["mode"] == result["mode"] and h["state"] == "COMPLETED"
-                for h in result["accounting"]["histories"]), "ARGON_COMPLETED_SUBMISSION_REQUIRED")
+    completed_submission = any(
+        h["mode"] == result["mode"] and h["state"] == "COMPLETED"
+        for h in result["accounting"]["histories"]
+    )
+    # The old ledger is FAILED because its strict hearing parser rejected the
+    # representation after a complete provider response.  The replay engine
+    # has already re-read that complete response, checked its terminal seal,
+    # and projected it under the narrow rule; this is the only non-COMPLETED
+    # history that may cross the ordinary consumer boundary.
+    require(
+        completed_submission or replay_observed,
+        "ARGON_COMPLETED_SUBMISSION_REQUIRED",
+    )
     require((consumer_root / "trigger.json").is_file(), "ARGON_TRIGGER_MISSING")
     history = read_ordinary_history(consumer_root, spec)
     trigger = validate_trigger(consumer_root, spec, history)
@@ -300,7 +358,16 @@ def validate_consumer_evidence(check_request: Mapping, envelope: Mapping) -> dic
     expected_context = [max(0, acquired_check['context_start_ms'] + acquired_offset),
         min(result['binding']['source_duration_ms'], acquired_check['context_end_ms'] + acquired_offset)]
     require(list(spec.context_source_ms) == expected_context, 'ARGON_CONSUMER_CONTEXT_DRIFT')
-    return {**result, "ordinary_observations": observations}
+    consumer_result = dict(result)
+    if replay_observed:
+        # The old sealed object remains RESPONSE_REJECTED and its hearing is
+        # still absent.  Only this validated consumer projection gets an
+        # observed-transport marker and the strict projected hearing; the
+        # hearing certainty remains UNCERTAIN.
+        replay = result["raw_replay"]
+        consumer_result["observation_status"] = "OBSERVED"
+        consumer_result["hearing"] = copy.deepcopy(replay["hearing"])
+    return {**consumer_result, "ordinary_observations": observations}
 
 
 def material_identity(check_request: Mapping, envelope: Mapping) -> dict:
@@ -334,10 +401,17 @@ def transcript_witness(check_request: Mapping, envelope: Mapping) -> dict:
     result = validate_consumer_evidence(check_request, envelope)
     b, hearing = result["binding"], result["hearing"]
     offset = check_request["source_media_timeline_offset_ms"]
+    replay_observed = result.get("observation_status") == "OBSERVED" and result.get(
+        "status"
+    ) != "OBSERVED"
     return {
         "schema_version": "subtitle-span-acoustic-witness.v1",
         "witness_protocol": "candidate_blind_transcript",
-        "status": "OBSERVED",
+        # A replay proves the complete response was observed, but its hearing
+        # is still UNCERTAIN and has no trustworthy transcript.  Keep the
+        # downstream witness gate conservative instead of relabelling it.
+        "status": "UNCERTAIN" if replay_observed else "OBSERVED",
+        **({"observation_status": "OBSERVED"} if replay_observed else {}),
         "candidate_exposure": "none",
         "exact_transcript": hearing["transcript"],
         "target_audible": True,
@@ -410,7 +484,7 @@ def bind_evidence(request: Mapping, envelope: Mapping) -> dict:
     output = copy.deepcopy(dict(request))
     output["argon_escalation_evidence"] = dict(envelope)
     output.pop("request_sha256", None)
-    output["request_sha256"] = sha(canonical(output))
+    output["request_sha256"] = canonical_sha256(output)
     result = validate_consumer_evidence(output, envelope)
     # Do not flatten the original hearing into a false pinyin source.
     source = {
@@ -419,12 +493,13 @@ def bind_evidence(request: Mapping, envelope: Mapping) -> dict:
         "mutation_authorized": False,
     }
     candidates = output.setdefault("proposed_candidates", [])
-    if not any(
+    transcript = result["hearing"].get("transcript")
+    if isinstance(transcript, str) and transcript.strip() and not any(
         row.get("source", {}).get("kind") == "argon_target_transcript" for row in candidates
     ):
-        candidates.append({"text": result["hearing"]["transcript"], "source": source})
+        candidates.append({"text": transcript, "source": source})
     output.pop("request_sha256", None)
-    output["request_sha256"] = sha(canonical(output))
+    output["request_sha256"] = canonical_sha256(output)
     return output
 
 
@@ -434,7 +509,7 @@ def read_ordinary_history(root: Path, spec: AudioSpec):
         event = store.get_json(path)
         value = dict(event)
         event_sha = value.pop("event_sha256")
-        require(sha(canonical(value)) == event_sha, "ARGON_ORDINARY_HISTORY_DRIFT")
+        require(canonical_sha256(value) == event_sha, "ARGON_ORDINARY_HISTORY_DRIFT")
         require(event["finding"] == spec.finding.binding(), "ARGON_ORDINARY_OTHER_FINDING")
         bundle = event["ordinary"]
         raw = {k: store.get_blob(root, v) for k, v in bundle["artifacts"].items()}
@@ -447,7 +522,7 @@ def read_ordinary_history(root: Path, spec: AudioSpec):
         )
         wr = dict(bundle["witness_request"])
         wr_sha = wr.pop("request_sha256")
-        require(sha(canonical(wr)) == wr_sha, "ARGON_ORDINARY_HISTORY_REQUEST")
+        require(canonical_sha256(wr) == wr_sha, "ARGON_ORDINARY_HISTORY_REQUEST")
         replay = bundle.get("cache_replay")
         if replay is None:
             require(
@@ -510,7 +585,7 @@ def read_ordinary_history(root: Path, spec: AudioSpec):
             require(
                 decision["status"] == "COMPLETED"
                 and sha(decision["completion"].encode()) == decision["completion_sha256"]
-                and sha(canonical(decision["request"])) == decision["request_sha256"],
+                and canonical_sha256(decision["request"]) == decision["request_sha256"],
                 "ARGON_ORDINARY_HISTORY_JUDGE_INVALID",
             )
             require(
@@ -555,14 +630,10 @@ def history_recommendation(root: Path, spec: AudioSpec, rows=None) -> dict:
     for receipt, status, flags, event in rows:
         if status == "NEITHER" and event.get("judge_after_audio"):
             record = strict_json(store.get_blob(root, event["judge_record"]))
-            attempt = sha(
-                canonical(
-                    {
+            attempt = canonical_sha256({
                         "request_sha256": record["request_sha256"],
                         "completion_sha256": record["completion_sha256"],
-                    }
-                )
-            )
+                    })
         else:
             if receipt in judged_neither:
                 continue
@@ -693,7 +764,7 @@ class FindingSession:
             argon_upgrade_available=True,
         )
         output.pop("request_sha256", None)
-        output["request_sha256"] = sha(canonical(output))
+        output["request_sha256"] = canonical_sha256(output)
         return bind_evidence(output, self.envelope) if self.envelope else output
 
     def pending_audit(self, request: Mapping, prior=None) -> dict:
@@ -709,7 +780,7 @@ class FindingSession:
                     (prior.get("witness_judge") or {}).get("judge") or {})
             except (ValueError, TypeError, KeyError, AttributeError):
                 pass  # Original unresolved finding and raw prior remain intact.
-        return {
+        result = {
             **({"span_pending_questions": questions} if questions is not None else {}),
             "schema_version": "subtitle-span-adjudication.v1",
             "status": "UNCERTAIN",
@@ -731,6 +802,11 @@ class FindingSession:
                 "basis": "ARGON_NOT_A_DECISION",
             },
         }
+        from .finding_lifecycle import adjudication_failure_layer
+        layer = adjudication_failure_layer(result)
+        if layer is not None:
+            result['failure_layer'] = layer
+        return result
 
     def infrastructure_blocked_audit(self, request: Mapping, prior=None) -> dict:
         """Argon ended on a credential/config/request failure: not exhausted hearing."""
@@ -800,12 +876,31 @@ class FindingSession:
             cache_replay is not None or all(original.get(k) == v for k, v in supplied.items()),
             "ARGON_ORDINARY_VERDICT_DRIFT",
         )
+        # Validate the saved source clock before using it as a reconstruction
+        # recipe. Local delivery offsets are representations of that clock.
+        projected = contract.projected_target
+        require(
+            projected is not None
+            and projected == contract.physical_target == list(self.spec.finding.target_source_ms),
+            "ARGON_ORDINARY_CLOCK_DRIFT",
+        )
         artifacts = {"manifest": manifest_raw}
-        # The ordinary cache probe has verified the physical input.mp4 beside
-        # the returned manifest. An immutable relocated manifest must retain
+        # The ordinary cache probe has verified the bound clip for the returned
+        # manifest. An immutable relocated manifest must retain
         # its original path, not be rewritten to pretend it was acquired here.
         audio = path.parent / "input.mp4" if cache_replay is not None else Path(manifest["audio_clip"])
         require(audio.parent == path.parent and not audio.is_symlink(), "ARGON_ORDINARY_AUDIO_PATH")
+        # The cache probe and this history collector must reopen the same bound
+        # bytes. A probe may have recovered a missing clip in a temporary path;
+        # the immutable manifest correctly continues to name the old location.
+        # Use the ordinary writer's recorded crop, never the current context
+        # window, and the current same-SHA source (which may have relocated).
+        from .bound_media_recovery import audio_recipe, resolve_bound_media
+        geometry = manifest["timeline_binding"]["source_media"]
+        recipe = audio_recipe(
+            {"path": str(self.owner.source), "sha256": self.owner.source_sha},
+            [geometry.get("crop_start_ms"), geometry.get("crop_end_ms")], "black_frame")
+        audio = resolve_bound_media(audio, manifest["audio_clip_sha256"], recipe=recipe)
         artifacts["audio"] = audio.read_bytes()
         require(
             sha(artifacts["audio"]) == manifest["audio_clip_sha256"], "ARGON_ORDINARY_AUDIO_DRIFT"
@@ -814,31 +909,18 @@ class FindingSession:
         # the same bytes as byte-identical copies (prompt.md plus
         # prompt.acoustic-cache.json, response.acoustic-cache.json). Identity is
         # the manifest SHA; identical copies are one artifact, not ambiguity.
-        acoustic_hit = (manifest.get("acoustic_cache") or {}).get("hit") is True
-        for name, patterns in (("prompt", ("prompt*",)),
-                               ("response", ("verdict.raw*",) + (("response.acoustic-cache*",) if acoustic_hit else ()))):
+        # Provider writers use different raw names (including Gemini API and
+        # acoustic-cache copies). Their manifest hashes identify the original
+        # bytes; a filename is neither identity nor a separate evidence rule.
+        for name in ("prompt", "response"):
             matches = sorted({
                 p
-                for pattern in patterns
-                for p in path.parent.glob(pattern)
+                for p in path.parent.iterdir()
                 if p.is_file() and not p.is_symlink() and file_sha(p) == manifest[name + "_sha256"]
             })
             require(bool(matches) and len({p.read_bytes() for p in matches}) == 1,
                     "ARGON_ORDINARY_" + name.upper() + "_DRIFT")
             artifacts[name] = matches[0].read_bytes()
-        # Source and physical geometry are checked independently of model text.
-        # 41:112: the same physical target is compared on the physical source
-        # clock. A local/padded/delivery offset is only each record's own
-        # representation, so the manifest must project onto itself and onto
-        # this finding's source target (spec target = request local + offset).
-        projected = contract.projected_target
-        require(
-            projected is not None
-            and projected
-            == contract.physical_target
-            == list(self.spec.finding.target_source_ms),
-            "ARGON_ORDINARY_CLOCK_DRIFT",
-        )
         raw = strict_json(artifacts["response"])
         if raw.get("status") == "UNCERTAIN":
             require(
@@ -895,7 +977,7 @@ class FindingSession:
                 raw_judge = self._judge_raw(request, judge, recorder)
                 event = ordinary_history_event_contract(self.spec, ordinary, raw_judge)
                 event["judge_record"] = store.blob(self.root, canonical(raw_judge)) if raw_judge else None
-                digest = sha(canonical(event))
+                digest = canonical_sha256(event)
                 duplicate = any(row[3]["event_sha256"] == digest for row in self._history())
                 if not duplicate:
                     store.put_json(
@@ -976,13 +1058,22 @@ class FindingSession:
             'advance_operation': outcome.get('advance_operation'),
             'provider_slot_wait_s': outcome.get('provider_slot_wait_s'),
             "hearing": result.get("hearing"),
+            "raw_replay": result.get("raw_replay"),
             # The runtime's shared refusal classification of the last route
             # (present only for a definitive zero-inference refusal).
             "route_refusal": result.get("route_refusal"),
             "mutation_authorized": False,
+            "format_recovery": outcome.get("format_recovery"),
         }
+        if result["status"] == "RESPONSE_REJECTED":
+            # Preserve the original owner's request/result locators for the
+            # engineering recovery consumer. This is a rejected observation,
+            # not a new hearing, retry permission, or replacement of its ledger.
+            self.audit.update({key: result[key] for key in (
+                "mode", "request_sha256", "inner_request_sha256", "result_sha256"
+            ) if key in result})
         store.blob(self.root, canonical(self.audit))
-        if result["status"] == "OBSERVED":
+        if result["status"] == "OBSERVED" or result.get("raw_replay") is not None:
             self.envelope = argon_consumer_contract(self.spec).envelope(self.root, outcome)
 
 

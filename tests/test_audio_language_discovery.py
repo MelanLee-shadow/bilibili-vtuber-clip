@@ -190,7 +190,7 @@ def test_other_languages_do_not_compare_equal_after_script_stripping(tmp_path, m
     assert result == srt('Она') and calls['judge'] == 1
 
 
-def test_scan_success_cache_avoids_repeated_audio_calls(tmp_path, monkeypatch):
+def test_scan_success_cache_avoids_repeated_audio_calls(tmp_path, monkeypatch, legacy_gemini_transport):
     import subprocess
     monkeypatch.setenv('AUTOSLICE_BASE', str(tmp_path))
     monkeypatch.setattr(discovery.subprocess, 'run', lambda *a, **k: subprocess.CompletedProcess(a, 0, '1.0', ''))

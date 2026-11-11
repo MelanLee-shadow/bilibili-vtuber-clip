@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Protocol
 
-from src.autoslice import same_bv_repair as repair
+from src.autoslice import part_name_contract as pnc, same_bv_repair as repair
 from src.autoslice.same_bv_cover_reconciliation import (
     normalise_cover_url,
     snapshot_with_current_cover_identity,
@@ -936,7 +936,7 @@ def _transition_projection(
         new_cover=new_cover,
     )
     creator_noncover_matches = _creator_without_cover_or_state(
-        creator
+        pnc.aligned_creator(before_creator, creator)
     ) == _creator_without_cover_or_state(before_creator)
     creator_state_matches = (
         creator.get("state") == before_creator.get("state")
@@ -965,7 +965,7 @@ def _transition_projection(
         not public_pending
         and not section_pending
         and not creator_review_pending
-        and current_creator_cover == new_cover
+        and current_creator_cover == new_cover and pnc.part_name_is_title(creator)
         and current_public_cover == new_cover
     ):
         return "target", []

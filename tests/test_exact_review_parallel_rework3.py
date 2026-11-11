@@ -107,7 +107,7 @@ def test_native_actual_provider_overlaps_without_source_or_receipt_lock(tmp_path
     print(f'REWORK3_NATIVE_OWNER={provider}:peak_audio=8,dispatches=8,pending=0,cache_replay=0_dispatch')
 
 
-def test_entity_actual_provider_and_same_content_cache_publish_in_parallel(tmp_path, monkeypatch):
+def test_entity_actual_provider_and_same_content_cache_publish_in_parallel(tmp_path, monkeypatch, legacy_gemini_transport):
     source = tmp_path/'base'/'source.mp4'
     source.parent.mkdir()
     source.write_bytes(b'fixed source')

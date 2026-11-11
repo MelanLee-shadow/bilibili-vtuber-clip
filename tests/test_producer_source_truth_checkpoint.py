@@ -11,6 +11,47 @@ from src.autoslice.source_subtitle_truth import (
 SRT = "1\n00:00:00,000 --> 00:00:01,000\n旧文字\n\n2\n00:00:02,000 --> 00:00:03,000\n继续说话\n"
 
 
+def test_fresh_producer_retains_each_phase_input_before_final_review(tmp_path, monkeypatch):
+    """Exercise fresh producer wiring and real preview IO, stopping before review."""
+    from types import SimpleNamespace
+    from src.autoslice import producer_text_pipeline as pipeline
+    from tests.test_producer_current_text_auto_resume import _checkpoint, _fake_draft, _pipeline_kwargs
+
+    checkpoint = _checkpoint(tmp_path)
+    for path in checkpoint['out_root'].glob('*'):
+        path.unlink()
+    checkpoint['spec']['human_truth_mode'] = 'withheld'
+    draft = checkpoint['srt']
+    current = draft.replace('当前文字', '当前词面')
+    monkeypatch.setattr(pipeline, '_collect_timeline_chat', lambda *_args: ([], []))
+    monkeypatch.setattr(pipeline, 'build_env_screen_read_probe', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(pipeline, '_transcribe_draft', lambda **_kwargs: _fake_draft(draft))
+    monkeypatch.setattr(pipeline, '_build_entity_verification_context', lambda **_kwargs:
+        pipeline.EntityVerificationContext(verify_confusable_entity=lambda *_args, **_kw: None,
+                                          referent_groups=[], topic_resolution_audit={}))
+    authority = pipeline.EntityAuthorityResult(srt_text=current, chat_authority_audit={},
+        transcript_entity_audit={}, handled_entity_cues=set())
+    monkeypatch.setattr(pipeline, '_apply_entity_authority', lambda **_kwargs: authority)
+
+    class ReviewReached(Exception):
+        pass
+
+    def review(**kwargs):
+        assert kwargs['srt_text'] == current
+        raise ReviewReached
+
+    monkeypatch.setattr(pipeline, '_run_final_review', review)
+    assets = Path(__file__).resolve().parents[1]/'assets/lidousha'
+    adapters = SimpleNamespace(profile_asset_file=lambda name: assets/f'{name}.v1.json')
+    with pytest.raises(ReviewReached):
+        pipeline.run_text_pipeline(**_pipeline_kwargs(checkpoint, adapters=adapters))
+    for stage, text in (('pre_entity_arbitration', draft), ('pre_correction_review', current)):
+        receipt = authority.chat_authority_audit['source_truth_preview_receipts'][stage]
+        path = checkpoint['out_root']/'source-truth-input'/f'{stage}.{receipt["input_srt_sha256"].removeprefix("sha256:")}.srt'
+        assert path.read_text() == text
+    assert draft != current
+
+
 def fixture(tmp_path):
     old = tmp_path / "old.json"
     new = tmp_path / "new.json"
@@ -78,6 +119,74 @@ def test_pending_phase_replays_two_real_ledgers_and_keeps_old_preview(tmp_path):
     history = copy.deepcopy(a["source_truth_preview_history"])
     rebase_pending_previews(a, **kw)
     assert a["source_truth_preview_history"] == history
+
+
+@pytest.mark.parametrize('member', ['retained-source', 'new-source-question'])
+@pytest.mark.parametrize('legacy', [False, True])
+def test_phase_preimages_survive_source_successor_and_cold_replay(tmp_path, member, legacy):
+    from src.autoslice.producer_source_truth_checkpoint import retain_preview_input
+    from src.autoslice.producer_text_checkpoint import _frozen_bytes
+
+    authority, kw, _, old_ledger = fixture(tmp_path)
+    parent = tmp_path / member
+    parent.mkdir()
+    original = SRT.replace('旧文字', member)
+    correction = original.replace('继续说话', '阶段输入已经不同')
+    for stage, text in [('pre_entity_arbitration', original),
+                        ('pre_correction_review', correction)]:
+        _, audit = apply_source_subtitle_truth(text, spec=kw['spec'],
+            durations=kw['durations'], ledger_path=old_ledger)
+        receipt = build_source_truth_preview_receipt(
+            input_srt_text=text, source_truth_audit=audit, stage=stage)
+        authority['source_truth_preview_receipts'][stage] = receipt
+        if legacy:
+            role = 'language_witness' if stage == 'pre_entity_arbitration' else 'name_reference'
+            _frozen_bytes(parent/'partial-source-text-input', role, text.encode(), '.srt')
+        else:
+            retain_preview_input(text, stage=stage, receipt=receipt, out_root=parent)
+    # Neither transient current/name text nor the new context contains the
+    # two preimages. The ordinary SOURCE boundary supplies its verified root.
+    kw.update(clip_context={}, name_reference='changed current', current_text='changed current',
+              source_input_roots=(parent,))
+    rebase_pending_previews(authority, **kw)
+    for stage, text in [('pre_entity_arbitration', original), ('pre_correction_review', correction)]:
+        digest = authority['source_truth_preview_receipts'][stage]['input_srt_sha256'][7:]
+        assert (kw['out_root']/'source-truth-input'/f'{stage}.{digest}.srt').read_text() == text
+    before = copy.deepcopy(authority)
+    # Once copied through the ordinary writer, cold replay needs no parent.
+    rebase_pending_previews(authority, **{**kw, 'source_input_roots': ()})
+    assert authority == before
+    assert 'release_authorized' not in authority
+
+
+@pytest.mark.parametrize('damage', ['missing', 'bytes', 'symlink', 'receipt'])
+def test_source_phase_preimages_keep_binding_and_missing_guards(tmp_path, damage):
+    from src.autoslice.producer_source_truth_checkpoint import retain_preview_input
+    authority, kw, _, ledger = fixture(tmp_path)
+    text = SRT.replace('旧文字', '独立阶段文字')
+    _, audit = apply_source_subtitle_truth(text, spec=kw['spec'], durations=kw['durations'], ledger_path=ledger)
+    receipt = build_source_truth_preview_receipt(input_srt_text=text,
+        source_truth_audit=audit, stage='pre_correction_review')
+    authority['source_truth_preview_receipts']['pre_correction_review'] = receipt
+    parent = tmp_path/'parent'
+    binding = retain_preview_input(text, stage='pre_correction_review', receipt=receipt, out_root=parent)
+    path = Path(binding['path'])
+    if damage == 'missing':
+        path.unlink()
+    elif damage == 'bytes':
+        path.write_text('tampered')
+    elif damage == 'symlink':
+        original = path.read_bytes()
+        path.unlink()
+        target = tmp_path/'other.srt'
+        target.write_bytes(original)
+        path.symlink_to(target)
+    else:
+        receipt['protected_cue_indexes'] = [1]
+    before = copy.deepcopy(authority)
+    with pytest.raises(ValueError):
+        rebase_pending_previews(authority, **kw, source_input_roots=(parent,))
+    assert authority == before
 
 
 @pytest.mark.parametrize("damage", ["preview", "text", "old_ledger", "new_relevant", "frozen"])

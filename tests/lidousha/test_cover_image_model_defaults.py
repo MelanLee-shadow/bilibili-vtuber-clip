@@ -40,10 +40,12 @@ def no_provider_or_network(monkeypatch):
 @pytest.mark.parametrize(
     ("override", "expected"),
     [
-        (None, ("gpt-image-2.5", "gpt-image-2")),
-        ("", ("gpt-image-2.5", "gpt-image-2")),
-        (" \t ", ("gpt-image-2.5", "gpt-image-2")),
-        ("gpt-image-2.5", ("gpt-image-2.5", "gpt-image-2")),
+        (None, ("gpt-image-2.6-sunburst", "gpt-image-2")),
+        ("", ("gpt-image-2.6-sunburst", "gpt-image-2")),
+        (" \t ", ("gpt-image-2.6-sunburst", "gpt-image-2")),
+        ("gpt-image-2.6-sunburst", ("gpt-image-2.6-sunburst", "gpt-image-2")),
+        ("gpt-image-2.6-flare", ("gpt-image-2.6-flare",)),
+        ("gpt-image-2.5", ("gpt-image-2.5",)),
         ("gpt-image-2", ("gpt-image-2",)),
         ("gpt-image-1.5", ("gpt-image-1.5",)),
         (" custom-image ", ("custom-image",)),
@@ -112,7 +114,7 @@ def test_actual_edit_request_uses_new_default_and_only_explicit_fallback(
 
     monkeypatch.setattr(urllib.request, "urlopen", reply)
     result = entrypoint(**edit_inputs)
-    expected = ["gpt-image-2.5"] + (["gpt-image-2"] if unavailable_status else [])
+    expected = ["gpt-image-2.6-sunburst"] + (["gpt-image-2"] if unavailable_status else [])
     evidence = json.loads(edit_inputs["response_path"].read_text())
     assert result["status"] == "AI_BACKGROUND_READY"
     assert result["selected_model"] == expected[-1]
@@ -151,9 +153,47 @@ def test_default_never_falls_back_for_ordinary_failure(monkeypatch, edit_inputs,
     monkeypatch.setattr(urllib.request, "urlopen", reply)
     result = cover_generation._call_cpa_image_edit(**edit_inputs)
     assert result["status"] == "FAILED"
-    assert result["attempted_models"] == ["gpt-image-2.5"]
+    assert result["attempted_models"] == ["gpt-image-2.6-sunburst"]
     assert result["model_fallback_used"] is False
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("entrypoint", [cover_generation._call_cpa_image_edit, shadow._call_cpa_image_edit])
+@pytest.mark.parametrize("model", ["gpt-image-2.6-sunburst", "gpt-image-2.5"])
+def test_explicit_images_endpoint_unsupported_answer_uses_existing_fallback(
+    monkeypatch, edit_inputs, entrypoint, model,
+):
+    calls = []
+
+    def reply(request, **_kwargs):
+        calls.append(request)
+        if len(calls) == 1:
+            message = (f"Model {model} is not supported on /v1/images/generations or /v1/images/edits. "
+                       "Use another image model.")
+            body = json.dumps({"error": {"message": message, "type": "invalid_request_error"}}).encode()
+            raise urllib.error.HTTPError(request.full_url, 400, "bad request", None, io.BytesIO(body))
+        return image_response()
+
+    monkeypatch.setattr(urllib.request, "urlopen", reply)
+    result = entrypoint(**edit_inputs, model_candidates=(model, "gpt-image-2"))
+    evidence = json.loads(edit_inputs["response_path"].read_text())
+    assert result["status"] == "AI_BACKGROUND_READY"
+    assert result["attempted_models"] == [model, "gpt-image-2"]
+    assert [a["model"] for a in evidence["attempts"]] == result["attempted_models"]
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("status,message", [
+    (400, "Model x is not supported on /v1/chat/completions."),
+    (400, "Model x is not supported on /v1/images/edits."),
+    (400, "not supported on /v1/images/generations or /v1/images/edits."),
+    (401, "Model x is not supported on /v1/images/generations or /v1/images/edits."),
+    (429, "Model x is not supported on /v1/images/generations or /v1/images/edits."),
+    (500, "Model x is not supported on /v1/images/generations or /v1/images/edits."),
+])
+def test_unsupported_phrase_does_not_expand_other_error_classes(status, message):
+    body = json.dumps({"error": {"message": message}})
+    assert not cover_generation._explicit_cpa_model_unavailable(status, body)
 
 
 def test_screenshot_polish_uses_same_default_transport(monkeypatch, edit_inputs, tmp_path):
@@ -174,7 +214,7 @@ def test_screenshot_polish_uses_same_default_transport(monkeypatch, edit_inputs,
     )
     assert output.is_file()
     assert (method, model, attempted, used) == (
-        "screenshot_polish", "gpt-image-2.5", ["gpt-image-2.5"], True
+        "screenshot_polish", "gpt-image-2.6-sunburst", ["gpt-image-2.6-sunburst"], True
     )
     assert len(calls) == 1
 
@@ -182,11 +222,12 @@ def test_screenshot_polish_uses_same_default_transport(monkeypatch, edit_inputs,
 @pytest.mark.parametrize(
     ("payload", "reported", "present"),
     [({}, None, False), ({"model": None}, None, True), ({"model": ""}, "", True),
-     ({"model": "gpt-image-2.5"}, "gpt-image-2.5", True)],
+     ({"model": "gpt-image-2.5"}, "gpt-image-2.5", True),
+     ({"model": "gpt-image-2.6-sunburst"}, "gpt-image-2.6-sunburst", True)],
 )
 def test_service_report_keeps_blank_and_missing_distinct(payload, reported, present):
     observation = cpa_image_edit.service_observation(
-        payload, requested_model="gpt-image-2.5", requested_size="1920x1088",
+        payload, requested_model="gpt-image-2.6-sunburst", requested_size="1920x1088",
         headers={}, request_elapsed_seconds=1,
     )
     assert observation["reported_model"] == reported
@@ -198,6 +239,13 @@ def test_service_report_keeps_blank_and_missing_distinct(payload, reported, pres
 @pytest.mark.parametrize(
     ("model", "attempted", "valid"),
     [
+        ("gpt-image-2.6-sunburst", ["gpt-image-2.6-sunburst"], True),
+        ("gpt-image-2.6-flare", ["gpt-image-2.6-flare"], True),
+        ("gpt-image-2", ["gpt-image-2.6-sunburst", "gpt-image-2"], True),
+        ("gpt-image-2", ["gpt-image-2.6-flare", "gpt-image-2"], False),
+        ("gpt-image-2.5", ["gpt-image-2.6-sunburst", "gpt-image-2.5"], False),
+        ("gpt-image-2.6-sunburst", ["gpt-image-2.6-sunburst", "gpt-image-2.6-sunburst"], False),
+        ("unknown-image", ["unknown-image"], False),
         ("gpt-image-2.5", ["gpt-image-2.5"], True),
         ("gpt-image-2", ["gpt-image-2.5", "gpt-image-2"], True),
         ("gpt-image-1.5", ["gpt-image-2", "gpt-image-1.5"], True),
@@ -233,7 +281,9 @@ def test_current_and_historical_repair_model_receipts(
             validate()
 
 
-@pytest.mark.parametrize("model", ["gpt-image-2.5", "gpt-image-2", "gpt-image-1.5"])
+@pytest.mark.parametrize("model", [
+    "gpt-image-2.6-sunburst", "gpt-image-2.6-flare", "gpt-image-2.5", "gpt-image-2", "gpt-image-1.5",
+])
 @pytest.mark.parametrize("pixel_hash_matches", [True, False])
 def test_host_only_review_accepts_new_model_without_relaxing_pixel_binding(model, pixel_hash_matches):
     digest = "sha256:" + "a" * 64

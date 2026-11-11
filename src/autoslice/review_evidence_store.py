@@ -7,12 +7,13 @@ hash/authority validators operate. No old files are rewritten on reads.
 from __future__ import annotations
 
 from .review_errors import ContractRejection
+from .continuation_subchecks import session_cached_validation, _session_validation_memo
 
 from collections import Counter
 from contextvars import ContextVar
 from functools import wraps
 from .validation_memo import (memoized_validation, capture_validation_dependencies,
-                              replay_validation_dependencies)
+                              replay_validation_dependencies, _graph_size)
 import hashlib
 import json
 from pathlib import Path
@@ -27,6 +28,33 @@ REFERENCE_FIELDS = frozenset({'request', 'check_request', 'terminal_check_reques
     'rebuilt_finding', 'terminal_question_originals', 'whole_clip_current_srt',
     'adjudication'})
 _cold_active = ContextVar('review_evidence_cold_consumer', default=False)
+
+# Domain seals are checked against the original expanded record BEFORE this
+# comparison-only boundary. Upgrades never enter load_review/persist_review:
+# changing their bytes would invalidate nested receipts and authority hashes.
+_PERSISTED_UPGRADES = {}
+
+
+def persisted_upgrade(record_type, schema_version):
+    """Register one ordered representation upgrade, owned by its record writer."""
+    def register(function):
+        key = (record_type, schema_version)
+        _PERSISTED_UPGRADES.setdefault(key, []).append(function)
+        return function
+    return register
+
+
+def persisted_view(record_type, sealed_record, value):
+    """Return a comparison view; unknown types/versions retain strict equality.
+
+    The caller must validate the record's seal first. Each upgrade can derive
+    only from that record's authenticated material; explicit values and inputs
+    without an unambiguous legacy representation remain unchanged.
+    """
+    key = (record_type, sealed_record.get('schema_version'))
+    for upgrade in _PERSISTED_UPGRADES.get(key, ()):
+        value = upgrade(value, sealed_record)
+    return value
 
 
 def encoded(value):
@@ -76,17 +104,26 @@ def expand(value, *, store_root=None, _active=None, _memo=None, _references=None
             raise ContractRejection('REVIEW_EVIDENCE_REFERENCE_CYCLE')
         # Only fields the publisher defines as immutable evidence may share
         # expanded payloads. Mutable finding/authority envelopes stay distinct.
-        # This memo lives for one document read, not across mutable consumers.
+        # Local aliases stay shared within one read. Across reads the bounded
+        # session memo returns detached values and replays every nested binding.
         if _shared and key in references:
             cached, dependencies = references[key]
             if replay_validation_dependencies(dependencies):
                 return cached
         active.add(key)
         try:
+            session = _session_validation_memo() if _shared else None
+            identity = ('review_evidence.blob', _decoded_blob, key,
+                        str(Path(store_root).absolute()) if store_root is not None else None, REF_SCHEMA,
+                        tuple(sorted(REFERENCE_FIELDS)))
             with capture_validation_dependencies() as dependencies:
-                result = expand(_decoded_blob(path.parent.parent, sha),
-                    store_root=store_root, _active=active, _memo=memo,
-                    _references=references, _shared=_shared)
+                hit, result = session.recall(identity) if session is not None else (False, None)
+                if not hit:
+                    result = expand(_decoded_blob(path.parent.parent, sha),
+                        store_root=store_root, _active=active, _memo=memo,
+                        _references=references, _shared=_shared)
+                    if session is not None:
+                        session.remember(identity, result, tuple(dependencies.values()), evict=False, named_blobs=True)
             if _shared:
                 references[key] = (result, tuple(dependencies.values()))
             return result
@@ -126,13 +163,31 @@ def evidence_store_root(directory):
 def review_from_bytes(payload, *, directory):
     """Decode exactly the captured bytes, using the co-located store if present."""
     root = evidence_store_root(directory)
-    return expand(json.loads(payload), store_root=root if root.is_dir() else None)
+    return _cold_decode(payload, store_root=str(root) if root.is_dir() else None)
 
 
 def load_review(path):
     """Read inline or relocated audits without rewriting sealed references."""
+    from .evidence_identity import read_file_bytes
     path = Path(path)
-    return review_from_bytes(path.read_bytes(), directory=path.parent)
+    return review_from_bytes(read_file_bytes(path), directory=path.parent)
+
+
+def load_retained_review(path):
+    """Read into an immutable owner without unfolding repeated blob histories.
+
+    Mutable audit readers keep ``load_review``'s independent envelopes. A
+    RetainedObject instead owns a detached private graph and recreates independent
+    mutable occurrences on ``value()``. All blob and final document hashes are
+    still checked; sharing here changes no persisted bytes or domain authority.
+    """
+    from .evidence_identity import read_file_bytes
+    from .finding_closure_ports import RetainedObject
+    path = Path(path)
+    root = evidence_store_root(path.parent)
+    graph = expand(json.loads(read_file_bytes(path)),
+        store_root=str(root) if root.is_dir() else None, _shared=True)
+    return RetainedObject.from_value(graph)
 
 
 def _contains_reference(value):
@@ -147,26 +202,41 @@ def _contains_reference(value):
     stack = [(None, iter((value,)))]
     while stack:
         parent, children = stack[-1]
-        try:
-            child = next(children)
-        except StopIteration:
+        for child in children:
+            if not isinstance(child, (dict, list, tuple)):
+                continue
+            if is_reference(child):
+                return True
+            identity = id(child)
+            if identity in active:
+                # Keep cyclic legacy inputs on the original expansion/error path.
+                return True
+            if identity in seen:
+                continue
+            seen.add(identity)
+            active.add(identity)
+            stack.append((identity, iter(child.values() if isinstance(child, dict) else child)))
+            break
+        else:
             stack.pop()
             active.discard(parent)
-            continue
-        if is_reference(child):
-            return True
-        if not isinstance(child, (dict, list, tuple)):
-            continue
-        identity = id(child)
-        if identity in active:
-            # Keep cyclic legacy inputs on the original expansion/error path.
-            return True
-        if identity in seen:
-            continue
-        seen.add(identity)
-        active.add(identity)
-        stack.append((identity, iter(child.values() if isinstance(child, dict) else child)))
     return False
+
+
+def _small_owner(result):
+    # Large one-off mutable envelopes must not evict reusable immutable blobs
+    # from the shared session budget. Admission never limits valid inputs.
+    return _graph_size(result, 512 * 1024) is not None
+
+
+@session_cached_validation('review_evidence.decode', cache_result=_small_owner, evict=False, named_blobs=True)
+def _cold_decode(payload, *, store_root=None):
+    return expand(json.loads(payload), store_root=store_root)
+
+
+@session_cached_validation('review_evidence.expand', cache_result=_small_owner, evict=False, named_blobs=True)
+def _cold_expand(value, *, store_root=None):
+    return expand(value, store_root=store_root)
 
 
 def cold_input(function):
@@ -177,13 +247,12 @@ def cold_input(function):
             return function(*args, **kwargs)
         token = _cold_active.set(True)
         try:
-            memo = {}
             def current(value):
                 if not isinstance(value, (dict, list, tuple)):
                     return value
                 if not _contains_reference(value):
                     return value
-                return expand(value, _memo=memo)
+                return _cold_expand(value)
             return function(*(current(v) for v in args),
                 **{k: current(v) for k, v in kwargs.items()})
         finally:
@@ -243,7 +312,12 @@ def _compact_review(audit, root):
         if isinstance(original, (dict, list, tuple)):
             packed[key] = (original, result)
         return result
-    return pack(audit, keep=True)[0]
+    try:
+        return pack(audit, keep=True)[0]
+    finally:
+        # Recursive pack closes over this memo. Release its original and
+        # compacted graphs when the call returns or raises.
+        packed.clear()
 
 
 def record_metrics(audit, *, prompts=()):

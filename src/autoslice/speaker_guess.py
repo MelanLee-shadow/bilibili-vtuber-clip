@@ -618,7 +618,7 @@ def delivered_artifact_paths(result: Mapping[str, object]) -> dict[str, object]:
     """把成品路径写进 state。
 
     两个作用：维护者 从报表直接拿到"打开哪个文件看"；``free`` 的容量清理在删
-    ``out/``/媒体前会扫 state 引用（2026-07/08 两次误删的血泪），停泊件的成品
+    ``out/``/媒体前会扫 state 引用（/08 两次误删的血泪），停泊件的成品
     必须被 state 引用住才不会被当孤儿清掉。
     """
 

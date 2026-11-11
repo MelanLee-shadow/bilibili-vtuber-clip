@@ -336,7 +336,7 @@ def test_retained_history_reader_failure_reason_is_persisted():
         recorder.submitted_history()
     event = recorder.audit()["events"][-1]
     assert event["status"] == "SEMANTIC_RETAINED_HISTORY_INVALID"
-    assert event["error_type"] == "ContractRejection" and event["reason_detail"] == "RETAINED_CPA_FILE_MISSING"
+    assert event["error_type"] == "ValueError" and event["reason_detail"] == "RETAINED_CPA_FILE_MISSING"
 
 
 def test_nested_independent_rows_keep_their_own_pre_candidate_binding():
@@ -385,12 +385,13 @@ def test_retained_range_replay_compares_cue_grid_and_anchor_not_whole_srt_bytes(
     assert "validate_range_acoustic_observation(check[\"whole_clip_current_srt\"], check, row)" in body
 
 
-def test_argon_ordinary_reads_acoustic_cache_hit_copies(tmp_path):
-    import inspect
-    from src.autoslice import argon_escalation_integration as integration
-    body = inspect.getsource(integration)
-    assert 'acoustic_hit = (manifest.get("acoustic_cache") or {}).get("hit") is True' in body
-    assert '"response.acoustic-cache*"' in body
+def test_argon_ordinary_reads_acoustic_cache_hit_copies(tmp_path, monkeypatch):
+    from test_argon_ordinary_media_recovery import (
+        assert_cold_collection, setup_acquisition,
+    )
+
+    rig, witness = setup_acquisition(tmp_path, monkeypatch)
+    assert_cold_collection(rig, witness, "cache_replay", "copy")
 
 
 def test_unprovable_native_narrow_row_is_not_counted_and_does_not_block_assisted_audio(tmp_path, monkeypatch):

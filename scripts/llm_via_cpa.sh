@@ -110,9 +110,21 @@ fi
 
 SLEPT_TOTAL=0
 TOTAL_ATTEMPTS=0
-MAX_TOTAL_ATTEMPTS=10
+MAX_TOTAL_ATTEMPTS="$(python3 "$REPO_ROOT/scripts/cpa_request_body.py" --text-retry-limit)"
 OUTER_ATTEMPT="${AUTOSLICE_CPA_TEXT_ATTEMPT:-0}"
-if ! [[ "$OUTER_ATTEMPT" =~ ^[0-9]+$ ]] || [[ "$OUTER_ATTEMPT" -gt 10 ]]; then
+if [[ -n "${AUTOSLICE_CPA_TEXT_ATTEMPT_LIMIT:-}" ]]; then
+  # Only the durable Python owner validates/loads a human grant. This mirrors
+  # its effective limit for one physical attempt; standalone retries stay at 10.
+  if ! [[ "$OUTER_ATTEMPT" =~ ^[1-9][0-9]*$ ]] || \
+     ! [[ "$AUTOSLICE_CPA_TEXT_ATTEMPT_LIMIT" =~ ^[1-9][0-9]*$ ]] || \
+     ! [[ "${AUTOSLICE_CPA_LOGICAL_REQUEST_ID:-}" =~ ^[a-f0-9]{64}$ ]] || \
+     [[ "$AUTOSLICE_CPA_TEXT_ATTEMPT_LIMIT" -lt "$MAX_TOTAL_ATTEMPTS" ]]; then
+    echo "invalid CPA text attempt authorization" >&2
+    exit 2
+  fi
+  MAX_TOTAL_ATTEMPTS="$AUTOSLICE_CPA_TEXT_ATTEMPT_LIMIT"
+fi
+if ! [[ "$OUTER_ATTEMPT" =~ ^[0-9]+$ ]] || [[ "$OUTER_ATTEMPT" -gt "$MAX_TOTAL_ATTEMPTS" ]]; then
   echo "invalid CPA text attempt budget" >&2
   exit 2
 fi
@@ -229,6 +241,11 @@ HEADER_FILE="$(mktemp)"
 {
   builtin printf 'Authorization: Bearer %s\n' "$CPA_API_KEY"
   builtin printf 'Content-Type: application/json\n'
+  if [[ -n "${AUTOSLICE_CPA_LOGICAL_REQUEST_ID:-}" ]]; then
+    [[ "$AUTOSLICE_CPA_LOGICAL_REQUEST_ID" =~ ^[a-f0-9]{64}$ ]] || exit 2
+    builtin printf 'Idempotency-Key: %s\n' "$AUTOSLICE_CPA_LOGICAL_REQUEST_ID"
+    builtin printf 'X-Client-Request-Id: %.32s\n' "$AUTOSLICE_CPA_LOGICAL_REQUEST_ID"
+  fi
   builtin printf 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)\n'
 } > "$HEADER_FILE"
 unset CPA_API_KEY

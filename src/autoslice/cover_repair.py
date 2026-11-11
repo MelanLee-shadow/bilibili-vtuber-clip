@@ -26,6 +26,7 @@ from src.autoslice.runner_proxy import RunnerProxy
 from src.autoslice.shadow_review import _sha256
 from src.autoslice import cover_repair_route_lineage as _route_lineage
 from src.autoslice.cover_package_media_lineage import validate_manual_cover_media_lineage
+from src.autoslice.cover_image_models import FALLBACK_CHAINS, RECEIPT_MODELS
 from src.autoslice.cover_route_evidence import (
     build_cover_route_decision,
     record_cover_route_execution,
@@ -71,7 +72,7 @@ def _validate_repaired_cover_generation(
     if document.get("candidate_id") != candidate_id or document.get("title") != title:
         raise ValueError("cover generation candidate/title binding mismatch")
     model = str(document.get("model") or "")
-    if model not in {"gpt-image-2.5", "gpt-image-2", "gpt-image-1.5"}:
+    if model not in RECEIPT_MODELS:
         raise ValueError(f"unapproved cover image model: {model!r}")
     attempted = [str(item) for item in document.get("attempted_models") or []]
     fallback_used = bool(document.get("model_fallback_used"))
@@ -80,10 +81,7 @@ def _validate_repaired_cover_generation(
     if fallback_used != (len(attempted) > 1):
         raise ValueError("cover model fallback flag does not match attempted_models")
     # Preserve valid historical receipts without reinterpreting their model chain.
-    if fallback_used and attempted not in (
-        ["gpt-image-2.5", "gpt-image-2"],
-        ["gpt-image-2", "gpt-image-1.5"],
-    ):
+    if fallback_used and tuple(attempted) not in FALLBACK_CHAINS:
         raise ValueError("unapproved cover model fallback chain")
     try:
         if Path(str(document.get("final_cover") or "")).resolve(strict=True) != cover.resolve(strict=True):

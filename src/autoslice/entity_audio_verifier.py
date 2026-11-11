@@ -1652,56 +1652,21 @@ def _crop_black_frame_audio(
     start_ms: int,
     end_ms: int,
 ) -> tuple[bool, str]:
-    duration_s = (end_ms - start_ms) / 1000.0
-    if not 0 < duration_s <= 30 or audio_path.is_symlink():
+    """The narrow witness keeps its existing thirty-second request contract."""
+    if not 0 < end_ms - start_ms <= 30_000:
         return False, "audio witness crop interval or output path is invalid"
-    completed = subprocess.run(
-        [
-            "ffmpeg",
-            "-nostdin",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-ss",
-            f"{start_ms / 1000.0:.3f}",
-            "-t",
-            f"{duration_s:.3f}",
-            "-i",
-            str(source_media),
-            "-f",
-            "lavfi",
-            "-t",
-            f"{duration_s:.3f}",
-            "-i",
-            "color=c=black:s=320x240:r=10",
-            "-map",
-            "1:v:0",
-            "-map",
-            "0:a:0",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "128k",
-            "-shortest",
-            str(audio_path),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=180,
-        stdin=subprocess.DEVNULL,
-    )
-    if completed.returncode != 0 or not audio_path.is_file():
-        return False, completed.stderr
-    return _validate_cropped_audio_media(
-        audio_path, expected_duration_ms=end_ms - start_ms,
+    return _render_black_frame_audio(source_media=source_media, audio_path=audio_path,
+                                     start_ms=start_ms, end_ms=end_ms)
+
+
+def _render_black_frame_audio(
+    *, source_media: Path, audio_path: Path, start_ms: int, end_ms: int,
+) -> tuple[bool, str]:
+    """Encode a validated range while retaining the local media validator seam."""
+    from .range_audio_render import render_black_frame_audio
+    return render_black_frame_audio(
+        source_media=source_media, audio_path=audio_path, start_ms=start_ms, end_ms=end_ms,
+        validate_media=_validate_cropped_audio_media,
     )
 
 

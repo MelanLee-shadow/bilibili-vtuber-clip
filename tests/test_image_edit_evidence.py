@@ -362,7 +362,7 @@ def test_explicit_candidate_is_not_implicitly_rerouted(tmp_path, monkeypatch, mo
 
 def test_default_selection_uses_current_approved_upgrade(monkeypatch):
     monkeypatch.delenv("CPA_IMAGE_MODEL", raising=False)
-    assert cover._cpa_image_model_candidates() == ("gpt-image-2.5", "gpt-image-2")
+    assert cover._cpa_image_model_candidates() == ("gpt-image-2.6-sunburst", "gpt-image-2")
 
 
 @pytest.mark.parametrize("value", [None, "[]", "not-json"])

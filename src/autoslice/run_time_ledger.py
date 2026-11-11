@@ -21,7 +21,7 @@ span may omit ended_utc. Do not duplicate an existing exchange/Argon call here.
 """
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, deque
 from contextlib import contextmanager, redirect_stderr
 from datetime import datetime, timezone
 import json
@@ -29,16 +29,18 @@ import math
 import os
 from pathlib import Path
 import re
+import resource
 import sys
 import tempfile
-from typing import Iterable
+import time
+from typing import Iterable, TypedDict
 
 SCHEMA = "run-time-ledger.v1"
 DEAD_GAP_SECONDS = 300.0
 SOURCE_CATALOGUE = [
     {"id": "producer_stage", "files": "explicit logs / producer.log",
-     "fields": ["UTC timestamp", "START/END", "stage", "n", "elapsed_s"],
-     "missing": "no END on exceptions/kills; no pid/thread id; elapsed_s is monotonic"},
+     "fields": ["UTC timestamp", "START/END", "stage", "n", "elapsed_s", "pid", "thread_id", "process_cpu_s", "thread_cpu_s"],
+     "missing": "no END on exceptions/kills; legacy rows have no CPU clocks or pid/thread id; CPU spans overlap and must not be added"},
     {"id": "text_exchange", "files": "cpa-text-exchanges/request-*/request.json + terminal.json",
      "fields": ["started_utc", "ended_utc", "status", "error_type", "provider_diagnostics"],
      "missing": "terminal may be absent; retry HTTP history is not always archived"},
@@ -59,6 +61,47 @@ _STAGE = re.compile(r"^PRODUCER_STAGE (\S+) (START|END) (\S+)(.*)$")
 _EXTENSIONS = {".json", ".jsonl", ".srt", ".ass", ".txt", ".md", ".stdout"}
 _FAILURE_FIELDS = {"http_status", "provider_http_status", "error_type", "transport_reason",
                    "safe_reason", "reason_code", "failure_category", "category", "status"}
+
+
+class RecordedDependencyPathBasis(TypedDict):
+    definition: str
+    missing_effect_spans: int
+    unmatched_spans: int
+    complete: bool
+
+
+class RecordedDependencyPath(TypedDict):
+    workflow_critical_path_s: float
+    workflow_critical_path_basis: RecordedDependencyPathBasis
+
+
+def recorded_dependency_path(
+    durations: Iterable[tuple[str, float]],
+    effects: Iterable[tuple[str, tuple[str, ...], bool]],
+) -> RecordedDependencyPath:
+    """Pair each durable work event with its own span, retaining failed attempts."""
+    weights: dict[str, deque[float]] = {}
+    for work_id, duration in durations:
+        weights.setdefault(work_id, deque()).append(duration)
+    path: dict[str, float] = {}
+    missing = 0
+    for work_id, dependencies, needs_span in effects:
+        attempts = weights.get(work_id) if needs_span else None
+        recorded = bool(attempts)
+        weight = attempts.popleft() if attempts else 0.0
+        missing += int(needs_span and not recorded)
+        path[work_id] = weight + max(path.get(work_id, 0.0), max(
+            (path.get(dep, 0.0) for dep in dependencies), default=0.0))
+    unmatched = sum(len(values) for values in weights.values())
+    return {
+        'workflow_critical_path_s': max(path.values(), default=0.0),
+        'workflow_critical_path_basis': {
+            'definition': 'Longest recorded dependency path including successive attempts of the same work; parallel independent work is not summed; unrecorded gaps and remote-only work excluded.',
+            'missing_effect_spans': missing,
+            'unmatched_spans': unmatched,
+            'complete': missing == 0 and unmatched == 0,
+        },
+    }
 
 
 def timestamp(value: object) -> float | None:
@@ -137,7 +180,7 @@ def _walk(root: Path):
 
 def _stage_rows(lines: Iterable[str], source: str, issues: Counter) -> list[dict]:
     rows = []
-    active: dict[tuple[str, str], dict] = {}
+    active: dict[tuple[str, ...], dict] = {}
     for line in lines:
         match = _STAGE.match(line)
         if not match:
@@ -148,10 +191,20 @@ def _stage_rows(lines: Iterable[str], source: str, issues: Counter) -> list[dict
         if ts is None:
             issues["invalid_stage_timestamp"] += 1
             continue
-        key = name, fields.get("n", "")
+        key = name, fields.get("n", ""), fields.get("pid", ""), fields.get("thread_id", "")
         if event == "START":
             row = {"kind": "stage", "name": name, "source": source,
                    "sequence": key[1], "start": ts, "end": None}
+            for field in ("pid", "thread_id"):
+                if fields.get(field, "").isdigit():
+                    row[field] = int(fields[field])
+            for field in ("process_cpu_s", "thread_cpu_s"):
+                try:
+                    value = float(fields[field])
+                    if math.isfinite(value) and value >= 0:
+                        row[field + "_start"] = value
+                except (KeyError, ValueError):
+                    pass
             rows.append(row)
             active[key] = row
         elif key in active:
@@ -159,6 +212,13 @@ def _stage_rows(lines: Iterable[str], source: str, issues: Counter) -> list[dict
             row["end"] = ts
             elapsed = timestamp(float(fields["elapsed_s"])) if "elapsed_s" in fields else None
             row["monotonic_elapsed_s"] = elapsed
+            for field in ("process_cpu_s", "thread_cpu_s"):
+                try:
+                    value = float(fields[field]) - row[field + "_start"]
+                    if math.isfinite(value) and value >= 0:
+                        row[field] = round(value, 6)
+                except (KeyError, ValueError):
+                    pass
         else:
             issues["unmatched_stage_end"] += 1
     return rows
@@ -345,7 +405,8 @@ def build_ledger(sources: dict, *, start: object = None, end: object = None,
             "definitions": {"dead_gap_s": dead_gap_s, "dead_time": "long gaps outside timed calls, leaf stages and waits, split at observed writes",
                             "call_inflight": "union of explicit paired timestamps, clipped to window; lower bound if calls untimed/open",
                             "write_time": "point observation only; overwritten history unavailable",
-                            "stage_time": "inclusive per stage; nested rows must not be added"},
+                            "stage_time": "inclusive per stage; nested rows must not be added",
+                            "stage_cpu": "process and current-thread CPU clock deltas; concurrent/nested spans overlap, not additive; no child or remote CPU"},
             "totals": {"wall_s": round(window, 6), "call_inflight_s": call_s,
                        "call_duration_sum_s": round(sum(r["duration_s"] for r in calls if r["duration_s"] is not None), 6),
                        "no_call_observed_s": round(window - call_s, 6),
@@ -426,15 +487,32 @@ def producer_run_ledger(*, out_root: Path, cid: str, started_utc: str | None = N
     # event inside its window rather than discarding it as an older event.
     if started is not None:
         started = math.floor(started * 1000) / 1000
+    def cpu_snapshot() -> tuple[float, float, float] | None:
+        try:
+            children = resource.getrusage(resource.RUSAGE_CHILDREN)
+            return time.process_time(), children.ru_utime, children.ru_stime
+        except Exception:
+            return None
+
+    cpu_started = cpu_snapshot()
     tee = _StageTee(sys.stderr)
     try:
         with redirect_stderr(tee):
             yield
     finally:
         ended = datetime.now(timezone.utc).timestamp()
+        cpu_ended = cpu_snapshot()
         try:
             sources = collect_sources(Path(out_root), stage_lines=tee.lines)
             ledger = build_ledger(sources, start=started, end=ended, candidate_id=cid)
+            ledger["cpu"] = {"process_s": None, "reaped_children_user_s": None,
+                "reaped_children_system_s": None,
+                "basis": "live producer context; process CPU includes its threads; child counters include only reaped children; excludes remote work and ledger collection"}
+            if cpu_started is not None and cpu_ended is not None:
+                for name, before, after in zip(("process_s", "reaped_children_user_s", "reaped_children_system_s"), cpu_started, cpu_ended):
+                    delta = after - before
+                    if math.isfinite(delta) and delta >= 0:
+                        ledger["cpu"][name] = round(delta, 6)
             write_ledger(Path(out_root) / f"{cid}.time-ledger.json", ledger)
         except Exception:
             pass  # Same contract as producer_stage_log: no output/exit-code changes.

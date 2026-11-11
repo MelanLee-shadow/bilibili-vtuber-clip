@@ -1,18 +1,19 @@
 ---
 name: huozi-luanshua
-description: Build, repair, verify, or review the host's “活字乱刷” speech reconstructions from historical bilive/Bilibili recordings. Use when asked to make a sentence from past speech, find longer natural source phrases, distinguish the host from guests, suggest a minimally edited sentence that splices better, or produce no-upload comparison videos.
+description: Build, repair, verify, or review the host's “活字乱刷” reconstructions from historical recordings; find source phrases, distinguish speakers, suggest edits, and produce no-upload comparisons.
 ---
 
 # 活字乱刷
 
-Use `src/autoslice/deployed_code_root.py` on the deployment host to locate committed runtime code; use that host’s live cache and recordings as source authority. Treat the macOS worktree as code, test, and review staging.
+Use `src/autoslice/deployed_code_root.py` to locate committed code on the task host; its live cache and recordings are source authority. The Mac worktree is for code, tests, and review.
 
 Use `scripts/huozi_luanshua.py`; do not replace its evidence and render gates with an ad-hoc concat script.
 
 ## Procedure
 
 1. Search all indexed historical transcripts. Treat a date suggested by 维护者 as a lead, not the only search scope.
-2. Re-extract promising intervals from the immutable original recording. Bind the media hash and run word-timed BCUT plus an independent second transcript authority. If they differ only on a contextual proper-name homophone, preserve both raw observations and add a separate hash-bound human proper-name review; never silently rewrite either ASR result.
+2. Re-extract promising intervals from the immutable original recording. Bind the media hash and run word-timed BCUT plus an independent second transcript authority. If they differ only on a name homophone, or an 维护者 export cue fixes a misheard span, keep both raw results, add a hash-bound human review, plan on the spoken audio; never rewrite ASR.
+   Attach via source manifest `proper_name_review_path` and `proper_name_review_sha256`; see `bind_name_review` for repeated utterances.
 3. In mixed-speaker recordings, verify every selected cue as the host. Explicitly reject known guest cues even when their wording is a perfect match.
 4. Record the exact millisecond coverage of each human or voiceprint decision. Never promote context, an adjacent cue, or a partially confirmed phrase to a wider trusted range. A confirmation of `小李是` does not authorize the following `零`.
 5. Plan exact reconstruction with the fewest, longest natural pieces. Prefer a continuous `是零` or longer phrase over a standalone clause-final `零`. Inspect the actual selected source IDs and ranges; do not infer continuity from ASR text.

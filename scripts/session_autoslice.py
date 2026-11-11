@@ -1173,9 +1173,8 @@ PAID_CAP = "GEMINI_PAID_BACKUP_DAILY_CAP"
 
 
 def load_gemini_credentials() -> dict[str, str]:
-    from src.autoslice.cpa_gemini_client import enabled
-    if enabled():
-        return {"GEMINI_API_KEY": "CPA_MANAGED"}
+    # CPA still owns supported inference. The two protocol exceptions need the
+    # existing allowlisted credentials; never export CPA_MANAGED as a real key.
     bilive_env = load_env_file(BILIVE_ENV, GEMINI_ENV_NAMES)
     return {key: bilive_env[key] for key in GEMINI_ENV_NAMES if bilive_env.get(key)}
 

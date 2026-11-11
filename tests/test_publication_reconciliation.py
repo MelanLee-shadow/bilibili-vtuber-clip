@@ -60,6 +60,7 @@ def _new_bv_fixture(
     aid: int = 1001,
     published_cid: int = 2002,
     title: str = TITLE,
+    publish_policy: dict | None = None,
 ) -> dict:
     from src.autoslice.title_policy import publish_title_lane
 
@@ -98,6 +99,8 @@ def _new_bv_fixture(
             "record": _entry(record),
         },
     }
+    if publish_policy is not None:
+        manifest["publish_policy"] = publish_policy
     _write_json(manifest_path, manifest)
     public = {
         "schema_version": "authorized-upload-public-verify.v2",
@@ -208,7 +211,61 @@ def _new_bv_fixture(
     }
 
 
+_RECONCILED_FIXTURES: list[dict] = []
+
+
+def _registry_kw(fixture: dict) -> dict:
+    """Explicit registry location for direct calls of the same-BV authority functions."""
+    return {
+        "registry_path": fixture["registry_path"],
+        "runtime_path": fixture["base"] / "state" / "publication_registry.runtime.v1.json",
+    }
+
+
+def merged_registry_loader(real, fixtures: list):
+    """A ``load_publication_registry`` stand-in reading the tmp registries of these first-publication fixtures.
+
+    Explicit ``path`` / ``runtime_path`` arguments pass through to ``real`` unchanged.
+    """
+
+    def load(path=None, *, runtime_path=None):
+        if path is not None or runtime_path is not None or not fixtures:
+            return real(path, runtime_path=runtime_path)
+        views = [
+            real(fx["registry_path"],
+                 runtime_path=fx["base"] / "state" / "publication_registry.runtime.v1.json")
+            for fx in fixtures
+        ]
+        merged = views[0]
+        for view in views[1:]:
+            merged["entries"].extend(view["entries"])
+        return merged
+
+    return load
+
+
+@pytest.fixture
+def first_publication_registries(monkeypatch):
+    """Point the same-BV authority witness's default registry read at this test's own tmp registries.
+
+    Tests that go through ``validate_new_bv_repair_authority`` & co. via a deep call chain cannot pass
+    ``registry_path`` down; the first-publication fixtures write their registry under tmp, so the
+    default (production) read is redirected to them for the duration of one test.  Direct callers
+    pass ``registry_path`` explicitly instead.
+    """
+    from src.autoslice import publication_registry
+
+    _RECONCILED_FIXTURES.clear()
+    monkeypatch.setattr(
+        publication_registry, "load_publication_registry",
+        merged_registry_loader(publication_registry.load_publication_registry, _RECONCILED_FIXTURES))
+    yield
+    _RECONCILED_FIXTURES.clear()
+
+
 def _reconcile_new(fixture: dict, *, at: str = "2026-07-29T12:01:00+00:00"):
+    if not any(fx["registry_path"] == fixture["registry_path"] for fx in _RECONCILED_FIXTURES):
+        _RECONCILED_FIXTURES.append(fixture)
     return reconciliation.reconcile_new_bv_publication(
         manifest=fixture["manifest"],
         manifest_path=fixture["manifest_path"],
@@ -2358,11 +2415,14 @@ def _normal_repair_fixture(tmp_path):
     _reconcile_new(fixture)
     source = reconciliation.authority_sidecar_path(fixture["manifest_path"])
     title = f"{CHANNEL_PROFILE.talk_title_prefix}请求抱抱，怎么还要加一句咬一下？"
-    authority = build_new_bv_repair_authority(source, candidate_id=CANDIDATE, title=title)
+    authority = build_new_bv_repair_authority(
+        source, candidate_id=CANDIDATE, title=title, **_registry_kw(fixture))
     return fixture, source, title, authority
 
 
-def test_normal_new_bv_authority_reaches_existing_same_bv_target_and_mechanical_title(tmp_path, monkeypatch):
+def test_normal_new_bv_authority_reaches_existing_same_bv_target_and_mechanical_title(
+    tmp_path, monkeypatch, first_publication_registries,
+):
     from src.autoslice import same_bv_repair, final_human_review
     from src.autoslice.recovery_title_authority import validate_recovery_publication_authority
 
@@ -2389,13 +2449,14 @@ def test_normal_new_bv_authority_reaches_existing_same_bv_target_and_mechanical_
 def test_normal_repair_projection_rejects_rehashed_target_or_title_drift(tmp_path, key):
     from src.autoslice.new_bv_repair_authority import validate_new_bv_repair_authority, _digest
 
-    _, _, title, authority = _normal_repair_fixture(tmp_path)
+    fixture, _, title, authority = _normal_repair_fixture(tmp_path)
     changed = dict(authority)
     changed[key] = 99999 if key in {"aid", "cid"} else "wrong"
     changed.pop("authority_sha256")
     changed["authority_sha256"] = _digest(changed)
     with pytest.raises(ValueError):
-        validate_new_bv_repair_authority(changed, candidate_id=CANDIDATE, expected_final_title=title)
+        validate_new_bv_repair_authority(
+            changed, candidate_id=CANDIDATE, expected_final_title=title, **_registry_kw(fixture))
 
 
 @pytest.mark.parametrize("key", ["public_path", "season_path", "uploaded_path"])
@@ -2405,7 +2466,8 @@ def test_normal_repair_projection_replays_original_receipt_bytes(tmp_path, key):
     fixture, _, title, authority = _normal_repair_fixture(tmp_path)
     fixture[key].write_text('{}\n')
     with pytest.raises(ValueError):
-        validate_new_bv_repair_authority(authority, candidate_id=CANDIDATE, expected_final_title=title)
+        validate_new_bv_repair_authority(
+            authority, candidate_id=CANDIDATE, expected_final_title=title, **_registry_kw(fixture))
 
 
 def test_normal_repair_projection_rejects_explicit_null_snapshot(tmp_path):
@@ -2423,12 +2485,19 @@ def test_normal_repair_projection_rejects_explicit_null_snapshot(tmp_path):
 def test_normal_repair_projection_requires_the_complete_first_publication(tmp_path):
     from src.autoslice.new_bv_repair_authority import build_new_bv_repair_authority
 
-    _, source, title, _ = _normal_repair_fixture(tmp_path)
+    fixture, source, title, _ = _normal_repair_fixture(tmp_path)
     raw = json.loads(source.read_text())
     raw["cid"] += 1  # A freshly hashed envelope cannot overrule the public evidence.
     _write_json(source, raw)
+    # The registry row binds the receipt bytes, so a rewritten receipt is refused there first.
+    # Re-bind the registry to the rewritten receipt to reach the evidence-closure check.
+    registry = json.loads(fixture["registry_path"].read_text())
+    registry["entries"][0]["publication_reconciliation"]["authority"] = _entry(source)
+    rebound = tmp_path / "rebound-registry.json"
+    _write_json(rebound, registry)
     with pytest.raises(ValueError, match="identity drifted"):
-        build_new_bv_repair_authority(source, candidate_id=CANDIDATE, title=title)
+        build_new_bv_repair_authority(
+            source, candidate_id=CANDIDATE, title=title, registry_path=rebound)
 
 
 def _bind_historical_review_manifest(
@@ -2486,16 +2555,17 @@ def test_normal_new_bv_authority_binds_historical_review_snapshot_after_source_d
         candidate_id=CANDIDATE,
         title=title,
         review_manifest_snapshot=snapshot,
+        **_registry_kw(fixture),
     )
     assert authority["review_manifest_snapshot"] == _entry(snapshot)
     assert authority["source_publication"] == _entry(source)
     assert validate_new_bv_repair_authority(
-        authority, candidate_id=CANDIDATE, expected_final_title=title
+        authority, candidate_id=CANDIDATE, expected_final_title=title, **_registry_kw(fixture)
     ) == authority
     snapshot.write_text(snapshot.read_text(encoding="utf-8") + "drift\n", encoding="utf-8")
     with pytest.raises(ValueError, match="snapshot"):
         validate_new_bv_repair_authority(
-            authority, candidate_id=CANDIDATE, expected_final_title=title
+            authority, candidate_id=CANDIDATE, expected_final_title=title, **_registry_kw(fixture)
         )
 
 
@@ -2519,4 +2589,5 @@ def test_normal_new_bv_authority_rejects_snapshot_candidate_or_date_drift(
             candidate_id=CANDIDATE,
             title=f"{CHANNEL_PROFILE.talk_title_prefix}请求抱抱，怎么还要加一句咬一下？",
             review_manifest_snapshot=review,
+            **_registry_kw(fixture),
         )

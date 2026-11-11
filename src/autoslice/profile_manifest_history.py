@@ -55,17 +55,21 @@ class ProfileBindingExtension:
     new_sha256: str
     added_files: tuple[str, ...]
     added_directories: tuple[str, ...]
+    equivalent_surface_table: bool = False
 
     def as_dict(self) -> JsonMap:
-        return {"old_sha256": self.old_sha256, "new_sha256": self.new_sha256,
-                "added_asset_keys": {"files": list(self.added_files),
-                                     "directories": list(self.added_directories)}}
+        proof: JsonMap = {"old_sha256": self.old_sha256, "new_sha256": self.new_sha256,
+                          "added_asset_keys": {"files": list(self.added_files),
+                                               "directories": list(self.added_directories)}}
+        if self.equivalent_surface_table:
+            proof["equivalent_surface_table"] = True
+        return proof
 
 
 def manifest_extension(
     repo: Path, *, old_sha256: str, current_bytes: bytes, profile_id: str,
 ) -> ProfileBindingExtension | None:
-    """Only strict additions to files/directories are compatible; no re-signing."""
+    """Accept asset additions and a provably identical inline-to-table conversion."""
     new_sha256 = hashlib.sha256(current_bytes).hexdigest()
     if old_sha256 == new_sha256:
         return None
@@ -96,9 +100,27 @@ def manifest_extension(
             effective.add(normalized)
         # Compare the entire remainder, including all other assets metadata.
         new_assets[name] = previous
-    if _canonical(old) != _canonical(new) or not any(additions.values()):
+    converted = False
+    old_text, new_text = old.get("text_normalization"), new.get("text_normalization")
+    if _canonical(old_text) != _canonical(new_text):
+        if (not isinstance(old_text, dict) or set(old_text) != {"canonical_surfaces"}
+                or not isinstance(new_text, dict)
+                or set(new_text) != {"canonical_surfaces", "canonical_surfaces_table"}
+                or new_text["canonical_surfaces"] != []):
+            raise ValueError("manifest text normalization is not a surface-table conversion")
+        from .channel_profile_surfaces import load_table_surface_rules, parse_surface_spec
+        old_rules, old_path = parse_surface_spec(old_text, repo)
+        new_rules, table_path = parse_surface_spec(new_text, repo)
+        if old_path is not None or new_rules or table_path is None:
+            raise ValueError("invalid surface-table conversion")
+        if old_rules != load_table_surface_rules(table_path):
+            raise ValueError("surface-table conversion differs from the frozen inline rules")
+        new["text_normalization"] = old_text
+        converted = True
+    if _canonical(old) != _canonical(new) or not (any(additions.values()) or converted):
         raise ValueError("manifest differs beyond a strict asset-key extension")
-    return ProfileBindingExtension(old_sha256, new_sha256, additions["files"], additions["directories"])
+    return ProfileBindingExtension(old_sha256, new_sha256, additions["files"],
+                                   additions["directories"], converted)
 
 
 def _index(repo: Path) -> dict[str, list[str]]:

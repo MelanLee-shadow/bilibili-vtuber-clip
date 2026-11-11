@@ -7,12 +7,15 @@ from __future__ import annotations
 
 import io
 import json
+from functools import partial
 from pathlib import Path
+import sys
 import time
 
 import pytest
 
 from ops.recording import bililive_recorder_adapter as adapter
+from ops.recording import cd2_status as cd2_module
 from ops.recording import recording_archive as identity
 from ops.recording import recording_spool_mover as spool_module
 from ops.recording.cd2_status import CD2Error, CD2Status, GrpcWeb, UPLOAD, decode, request_bytes
@@ -29,6 +32,16 @@ class FakeCD2:
         self.now = 0
         self.outage_until = 0
         self.refresh_calls = []
+
+    def check_auth(self):
+        pass
+
+    def push_uploads(self, *, on_open=None):
+        if on_open is not None:
+            on_open()
+        # Finished may happen before subscription; only upload_list can then
+        # supply evidence. Stream readiness is deliberately cleared on EOF.
+        yield from ()
 
     def upload_list(self, filename):
         if self.now < self.outage_until:
@@ -73,12 +86,217 @@ def recording(tmp_path, monkeypatch):
     client = FakeCD2(cloud)
     monkeypatch.setattr(spool_module, "require_cloud_mount", lambda *args: None)
     monkeypatch.setattr(spool_module, "open_files", lambda paths: set())
+    monkeypatch.setattr(spool_module, "capacity", lambda path: {
+        "available_bytes": 64 * 1024**3, "total_bytes": 146 * 1024**3})
     observations = spool_module.UploadObservations(client, state_path.with_name("uploads.json"))
     mover = spool_module.Mover(spool=spool, archive_root=cloud,
                                mount=tmp_path / "mount", state_path=state_path,
                                archive_path=state_path.with_name("archive-state.json"),
                                client=client, observations=observations)
     return mover, client, state
+
+
+@pytest.fixture
+def main_once(recording, monkeypatch, tmp_path):
+    mover, _, _ = recording
+    token = tmp_path / "synthetic-token"
+    monkeypatch.setattr(sys, "argv", ["recording_spool_mover.py", "--spool", str(mover.spool),
+                                     "--state-path", str(mover.state_path),
+                                     "--archive-state", str(mover.archive_path),
+                                     "--cd2-token-file", str(token)])
+    monkeypatch.setattr(spool_module, "require_local_spool", lambda path: None)
+    monkeypatch.setattr(identity, "ARCHIVE_ROOT", mover.archive_root)
+    monkeypatch.setattr(identity, "CLOUD_MOUNT", mover.mount)
+    monkeypatch.setattr(spool_module, "Mover", partial(spool_module.Mover, mount=mover.mount))
+
+    class EndIteration(BaseException):
+        pass
+
+    def stop_sleep(seconds):
+        raise EndIteration
+
+    class OneWatch:
+        def __init__(self, *, target, daemon):
+            self.target = target
+
+        def start(self):
+            with pytest.raises(EndIteration):
+                self.target()
+
+    monkeypatch.setattr(spool_module.threading, "Thread", OneWatch)
+    monkeypatch.setattr(spool_module.time, "sleep", stop_sleep)
+
+    def run():
+        with pytest.raises(EndIteration):
+            spool_module.main()
+        return identity.read_json(mover.archive_path)
+
+    return run, token
+
+
+@pytest.mark.parametrize("auth", ["missing", "prefixed", "rejected"])
+def test_main_copies_entire_group_without_authenticated_status(recording, main_once, monkeypatch,
+                                                               capsys, auth):
+    mover, _, _ = recording
+    run, token = main_once
+    synthetic_secret = "SYNTHETIC-NOT-A-REAL-TOKEN"
+    requests = []
+
+    def reject(request, **kwargs):
+        requests.append(request.full_url.rsplit("/", 1)[-1])
+        trailer = b"grpc-status: 16\r\ngrpc-message: Invalid auth token " + synthetic_secret.encode()
+        return io.BytesIO(b"\x80" + len(trailer).to_bytes(4, "big") + trailer)
+
+    monkeypatch.setattr("urllib.request.urlopen", reject)
+    if auth != "missing":
+        token.write_text(("name1234=" if auth == "prefixed" else "") + synthetic_secret)
+        token.chmod(0o600)
+    archive = run()
+    row = archive["segments"][RELATIVE]
+    assert row["phase"] == "pending"
+    assert row["error"] == "CD2Error"
+    for name in identity.artifact_paths(RELATIVE):
+        assert row["files"][name]["copy_complete"]
+        assert (mover.spool / name).read_bytes() == (mover.archive_root / identity.ROOM / name).read_bytes()
+    assert not mover.events.exists()
+    assert requests == (["GetUploadFileList", "PushMessage", "GetUploadFileList"] if auth == "rejected" else [])
+    persisted = "".join(path.read_text() for path in mover.archive_path.parent.glob("*.json*"))
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
+    assert "CD2_AUTH_CHECK_FAILED" in output
+    expected_code = {"missing": "CD2_TOKEN_FILE_MISSING", "prefixed": "CD2_TOKEN_NAME_PREFIX",
+                     "rejected": "CD2_AUTH_REJECTED"}[auth]
+    assert expected_code in output
+    assert row["reason"] == expected_code
+    assert synthetic_secret not in output + persisted
+
+
+@pytest.mark.parametrize("mode", ["complete", "queued", "fuse_only", "size_mismatch"])
+def test_main_does_not_wait_for_stream_and_preserves_delete_gate(recording, main_once,
+                                                                monkeypatch, mode):
+    mover, client, state = recording
+    client.mode = mode
+    monkeypatch.setattr(spool_module, "CD2Status", lambda transport: client)
+    archive = main_once[0]()
+    row = archive["segments"][RELATIVE]
+    assert all(item["copy_complete"] for item in row["files"].values())
+    assert identity.verified_segment(state, archive, RELATIVE) == (mode == "complete")
+    assert all((mover.spool / name).exists() == (mode != "complete")
+               for name in identity.artifact_paths(RELATIVE))
+    if mode == "fuse_only":
+        assert not client.refresh_calls  # Missed Finished cannot be guessed from FUSE/queue absence.
+
+
+def test_startup_auth_check_stays_in_background_while_main_copies(recording, main_once, monkeypatch):
+    mover, client, _ = recording
+    client.mode = "fuse_only"
+    callbacks = []
+
+    class DeferredThread:
+        def __init__(self, *, target, daemon):
+            self.target = target
+
+        def start(self):
+            callbacks.append(self.target)
+
+    monkeypatch.setattr(spool_module.threading, "Thread", DeferredThread)
+    monkeypatch.setattr(spool_module, "CD2Status", lambda transport: client)
+    monkeypatch.setattr(client, "check_auth", lambda: pytest.fail("auth check must remain in background"))
+    archive = main_once[0]()
+    assert len(callbacks) == 1
+    assert all(item["copy_complete"] for item in archive["segments"][RELATIVE]["files"].values())
+    assert all((mover.spool / name).exists() for name in identity.artifact_paths(RELATIVE))
+
+
+def test_tick_copies_later_group_members_during_cd2_outage(recording, monkeypatch):
+    mover, client, _ = recording
+    client.outage_until = 30
+    mover.tick(now=0)
+    persisted = identity.read_json(mover.archive_path)
+    assert all(item["copy_complete"] for item in persisted["segments"][RELATIVE]["files"].values())
+    assert all((mover.spool / name).exists() for name in identity.artifact_paths(RELATIVE))
+    assert not mover.events.exists()
+    # A restart consumes the receipts without recopying, then obtains fresh
+    # authenticated Finished + forceRefresh evidence before eviction.
+    restarted = spool_module.Mover(spool=mover.spool, archive_root=mover.archive_root,
+                                  state_path=mover.state_path, archive_path=mover.archive_path,
+                                  client=client, observations=mover.observations, mount=mover.mount)
+    monkeypatch.setattr(restarted, "copy_file", lambda *args: pytest.fail("already copied"))
+    client.now = 35
+    restarted.tick(now=35)
+    assert all(not (mover.spool / name).exists() for name in identity.artifact_paths(RELATIVE))
+
+
+def test_queue_disappearing_without_finished_retains_local(recording):
+    mover, client, _ = recording
+    client.mode = "queued"
+    mover.tick(now=0)
+    client.mode = "fuse_only"
+    mover.tick(now=5)
+    assert all((mover.spool / name).exists() for name in identity.artifact_paths(RELATIVE))
+    assert not mover.events.exists()
+
+
+def test_copy_capacity_floor_defers_without_create_and_retries(recording, monkeypatch, capsys):
+    mover, client, _ = recording
+    client.mode = "fuse_only"
+    size = (mover.spool / RELATIVE).stat().st_size
+    available = 8 * 1024**3 + size - 1
+    calls = []
+    monkeypatch.setattr(spool_module, "capacity", lambda path: {
+        "available_bytes": available, "total_bytes": 146 * 1024**3})
+    monkeypatch.setattr(spool_module.subprocess, "run", lambda args, **kw: calls.append(args))
+    mover.tick(now=0)
+    assert not list(mover.archive_root.rglob("*.flv"))
+    assert all((mover.spool / name).exists() for name in identity.artifact_paths(RELATIVE))
+    assert calls[0][:5] == ["logger", "-p", "daemon.warning", "-t", "oci3-disk-guard"]
+    assert "RECORDING_SPOOL_LOW_SPACE" in capsys.readouterr().out
+    # Equality is permitted; no extra margin may exclude an authorized copy.
+    available += 1
+    mover.tick(now=5)
+    assert (mover.archive_root / identity.ROOM / RELATIVE).exists()
+    assert (mover.spool / RELATIVE).exists()
+
+
+def test_resumed_copy_reserves_only_remaining_bytes(recording, monkeypatch):
+    mover, _, state = recording
+    row = mover.prepare(state, RELATIVE)
+    item = row["files"][RELATIVE]
+    target = mover.archive_root / identity.ROOM / RELATIVE
+    target.parent.mkdir(parents=True)
+    prefix = (mover.spool / RELATIVE).read_bytes()[:-1]
+    target.write_bytes(prefix)
+    item.update(destination_created=True, copy_started_at_epoch=time.time())
+    monkeypatch.setattr(spool_module, "capacity", lambda path: {
+        "available_bytes": 8 * 1024**3 + 1, "total_bytes": 146 * 1024**3})
+    mover.copy_file(RELATIVE, item)
+    assert item["copy_complete"]
+    assert target.read_bytes() == (mover.spool / RELATIVE).read_bytes()
+
+
+def test_zero_size_create_obeys_floor_but_completed_copy_can_be_recovered(recording, monkeypatch):
+    mover, _, state = recording
+    name = RELATIVE[:-4] + ".jsonl"
+    (mover.spool / name).write_bytes(b"")
+    row = mover.prepare(state, RELATIVE)
+    item = row["files"][name]
+    available = 8 * 1024**3 - 1
+    monkeypatch.setattr(spool_module, "capacity", lambda path: {
+        "available_bytes": available, "total_bytes": 146 * 1024**3})
+    monkeypatch.setattr(spool_module.subprocess, "run", lambda *args, **kwargs: None)
+    with pytest.raises(identity.ArchiveError, match="8 GiB"):
+        mover.copy_file(name, item)
+    target = mover.archive_root / identity.ROOM / name
+    assert not target.exists()
+    available += 1
+    mover.copy_file(name, item)
+    # A crash after writing all bytes but before marking copy_complete requires
+    # no new copy space; low disk must not prevent reaching verification.
+    item.pop("copy_complete")
+    available = 0
+    mover.copy_file(name, item)
+    assert item["copy_complete"]
+    assert target.read_bytes() == b""
 
 
 @pytest.mark.parametrize("mode", ["queued", "fuse_only", "size_mismatch"])
@@ -266,6 +484,169 @@ def test_grpc_web_refuses_missing_success_trailers(tmp_path, monkeypatch):
     monkeypatch.setattr("urllib.request.urlopen", lambda *args, **kw: io.BytesIO(b"\x00\x00\x00\x00\x00"))
     with pytest.raises(CD2Error, match="trailers"):
         list(GrpcWeb("http://127.0.0.1:19798", token).stream("GetUploadFileList", {}, {}))
+
+
+def _success_frames(payload=b""):
+    trailer = b"grpc-status: 0\r\n"
+    return (b"\x00" + len(payload).to_bytes(4, "big") + payload
+            + b"\x80" + len(trailer).to_bytes(4, "big") + trailer)
+
+
+class IdleResponse(io.BytesIO):
+    def read(self, size=-1):
+        if self.tell() == len(self.getvalue()):
+            raise TimeoutError("SYNTHETIC-REMOTE-DETAIL-MUST-NOT-BE-LOGGED")
+        return super().read(size)
+
+
+@pytest.mark.parametrize("value", ["a-token-123", "jwt.header.signature", "QmFzZTY0Lw=="])
+def test_raw_bearer_values_including_padding_are_sent_unchanged(tmp_path, monkeypatch, value):
+    token = tmp_path / "synthetic-token"
+    token.write_text(value + "\n")
+    token.chmod(0o600)
+    requests = []
+
+    def reply(request, **kwargs):
+        requests.append(request)
+        return io.BytesIO(_success_frames())
+
+    monkeypatch.setattr("urllib.request.urlopen", reply)
+    assert list(GrpcWeb("http://127.0.0.1:19798", token).stream(
+        "GetUploadFileList", {1: True, 4: ".recording-spool-auth-check"}, {})) == [{}]
+    assert len(requests) == 1
+    assert requests[0].get_header("Authorization") == "Bearer " + value
+    assert requests[0].full_url.endswith("/GetUploadFileList")
+    assert requests[0].data[5:] == request_bytes({1: True, 4: ".recording-spool-auth-check"})
+
+
+@pytest.mark.parametrize("contents,code", [
+    ("name1234=synthetic-value", "CD2_TOKEN_NAME_PREFIX"),
+    ("", "CD2_TOKEN_FILE_FORMAT"),
+    ("one\ntwo", "CD2_TOKEN_FILE_FORMAT"),
+    ("Bearer synthetic-value", "CD2_TOKEN_FILE_FORMAT"),
+])
+def test_invalid_token_representations_have_safe_local_codes_before_rpc(tmp_path, monkeypatch, contents, code):
+    token = tmp_path / "synthetic-token"
+    token.write_text(contents)
+    token.chmod(0o600)
+    monkeypatch.setattr("urllib.request.urlopen", lambda *args, **kwargs: pytest.fail("must not send malformed token"))
+    with pytest.raises(CD2Error) as caught:
+        list(GrpcWeb("http://127.0.0.1:19798", token).stream("GetUploadFileList", {}, {}))
+    assert caught.value.code == code
+    assert "synthetic-value" not in str(caught.value)
+
+
+def test_grpc_auth_rejection_code_does_not_include_server_details(tmp_path, monkeypatch):
+    token = tmp_path / "synthetic-token"
+    token.write_text("synthetic-value")
+    token.chmod(0o600)
+    trailer = b"grpc-status: 16\r\ngrpc-message: SYNTHETIC-SECRET\r\n"
+    monkeypatch.setattr("urllib.request.urlopen", lambda *args, **kwargs: io.BytesIO(
+        b"\x80" + len(trailer).to_bytes(4, "big") + trailer))
+    with pytest.raises(CD2Error) as caught:
+        list(GrpcWeb("http://127.0.0.1:19798", token).stream("GetUploadFileList", {}, {}))
+    assert caught.value.code == "CD2_AUTH_REJECTED"
+    assert "SYNTHETIC-SECRET" not in str(caught.value)
+
+
+@pytest.mark.parametrize("stage", ["idle", "connect", "partial_header", "partial_body", "unary"])
+def test_only_push_timeout_between_frames_is_idle(tmp_path, monkeypatch, stage):
+    token = tmp_path / "synthetic-token"
+    token.write_text("synthetic-value")
+    token.chmod(0o600)
+
+    def reply(*args, **kwargs):
+        if stage == "connect":
+            raise TimeoutError("synthetic connect failure")
+        prefix = {"partial_header": b"\x00\x00", "partial_body": b"\x00\x00\x00\x00\x02\x08"}.get(stage, b"")
+        return IdleResponse(prefix)
+
+    monkeypatch.setattr("urllib.request.urlopen", reply)
+    client = GrpcWeb("http://127.0.0.1:19798", token)
+    expected = CD2Error if stage == "idle" else TimeoutError
+    with pytest.raises(expected) as caught:
+        list(client.stream("GetUploadFileList" if stage == "unary" else "PushMessage", {}, {}))
+    if stage == "idle":
+        assert caught.value.code == "CD2_PUSH_IDLE_TIMEOUT"
+
+
+def test_watch_checks_auth_once_and_reconnects_idle_stream_without_clearing_ready(tmp_path, monkeypatch, capsys):
+    token = tmp_path / "synthetic-token"
+    token.write_text("synthetic-value")
+    token.chmod(0o600)
+    client = CD2Status(GrpcWeb("http://127.0.0.1:19798", token))
+    observations = spool_module.UploadObservations(client, tmp_path / "uploads.json")
+    methods = []
+    canary_payloads = []
+    ready_at_connect = []
+
+    class Stop(BaseException):
+        pass
+
+    def reply(request, **kwargs):
+        method = request.full_url.rsplit("/", 1)[-1]
+        methods.append(method)
+        if method == "GetUploadFileList":
+            canary_payloads.append(request.data[5:])
+            return io.BytesIO(_success_frames())
+        ready_at_connect.append(observations.ready.is_set())
+        if len(ready_at_connect) == 3:
+            raise Stop
+        return IdleResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", reply)
+    monkeypatch.setattr(spool_module.time, "sleep", lambda seconds: pytest.fail("idle must reconnect immediately"))
+    with pytest.raises(Stop):
+        observations.watch()
+    assert methods == ["GetUploadFileList", "PushMessage", "PushMessage", "PushMessage"]
+    assert canary_payloads == [request_bytes({1: True, 4: ".recording-spool-auth-check"})]
+    assert ready_at_connect == [False, True, True]
+    assert observations.ready.is_set()
+    assert observations.rows == {}
+    assert not observations.path.exists()
+    output = capsys.readouterr()
+    assert "CD2_AUTH_CHECK_OK" in output.out
+    assert output.out.count("CD2_PUSH_IDLE code=CD2_PUSH_IDLE_TIMEOUT") == 2
+    assert "CD2_PUSH_RETRY" not in output.out
+    assert "SYNTHETIC-REMOTE-DETAIL" not in output.out + output.err
+
+
+def test_watch_real_errors_back_off_and_idle_resets_delay_without_new_uploads(tmp_path, monkeypatch, capsys):
+    class Stop(BaseException):
+        pass
+
+    class Client:
+        checks = 0
+
+        def check_auth(self):
+            self.checks += 1
+
+        def push_uploads(self, *, on_open):
+            on_open()
+            outcome = outcomes.pop(0)
+            raise outcome
+            yield  # retain the ordinary generator interface
+
+    rejected = CD2Error("SYNTHETIC-SECRET")
+    rejected.code = "CD2_AUTH_REJECTED"
+    # The baseline producer represented idle as plain TimeoutError. Keeping
+    # that fallback lets this same ordinary-path check run on the old tree.
+    idle = getattr(cd2_module, "CD2IdleTimeout", TimeoutError)()
+    outcomes = [TimeoutError("SYNTHETIC-SECRET"), rejected,
+                idle, TimeoutError("SYNTHETIC-SECRET"), Stop()]
+    client = Client()
+    observations = spool_module.UploadObservations(client, tmp_path / "uploads.json")
+    sleeps = []
+    monkeypatch.setattr(spool_module.time, "sleep", lambda seconds: sleeps.append((seconds, observations.ready.is_set())))
+    with pytest.raises(Stop):
+        observations.watch()
+    assert client.checks == 1
+    assert sleeps == [(5, False), (10, False), (5, False)]
+    assert observations.rows == {}
+    output = capsys.readouterr()
+    assert "CD2_AUTH_REJECTED" in output.out
+    assert "CD2_TIMEOUT" in output.out
+    assert "SYNTHETIC-SECRET" not in output.out + output.err
 
 
 def test_historical_115_ledger_is_read_only_and_conflicting_identity_is_rejected(tmp_path):

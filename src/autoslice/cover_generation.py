@@ -16,6 +16,10 @@ from typing import Callable, Mapping, NamedTuple, Sequence
 
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.cover_candidate_direction import apply_candidate_cover_direction
+from src.autoslice.cover_image_models import (
+    PRIMARY_MODEL as _COVER_PRIMARY_MODEL,
+    COMPATIBILITY_MODEL as _COVER_COMPATIBILITY_MODEL,
+)
 from src.autoslice.cover_emote import (
     EmoteEntry,
     EmoteLibrary,
@@ -1512,8 +1516,6 @@ _COVER_CANVAS = (1920, 1080)
 # blanked a whole unattended batch's covers).  Request the nearest compliant
 # size and normalize the returned image back onto the 1920x1080 overlay canvas.
 _COVER_REQUEST_SIZE = "1920x1088"
-_COVER_PRIMARY_MODEL = "gpt-image-2.5"
-_COVER_COMPATIBILITY_MODEL = "gpt-image-2"
 
 
 def _cpa_image_model_candidates() -> tuple[str, ...]:
@@ -1538,6 +1540,13 @@ def _explicit_cpa_model_unavailable(status_code: int, raw: str) -> bool:
         error = payload.get("error")
         if isinstance(error, Mapping) and error.get("code") == "client_model_unavailable":
             return True
+        if isinstance(error, Mapping) and status_code == 400:
+            message = error.get("message")
+            if isinstance(message, str) and re.match(
+                r"^Model\s+\S+\s+is not supported on /v1/images/generations or /v1/images/edits(?:\.|$)",
+                message, re.IGNORECASE,
+            ):
+                return True
     lowered = raw.lower()
     return "client_model_unavailable" in lowered or "可用渠道不存在" in raw
 

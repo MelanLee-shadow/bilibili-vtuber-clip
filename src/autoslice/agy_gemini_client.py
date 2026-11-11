@@ -303,6 +303,7 @@ def run_local_agy(
     cpa_output_path: Path | None = None,
     cpa_response_mime_type: str | None = "application/json",
     cpa_response_schema: cpa_gemini_client.JsonMap | None = None,
+    cpa_operation: str = "generateContent",
 ) -> AgyRun:
     """Run agy locally, never raising for absence/timeout/spawn failure.
 
@@ -311,7 +312,9 @@ def run_local_agy(
     seams keep working after this extraction.
     """
 
-    if cpa_gemini_client.enabled():
+    if cpa_operation != "generateContent" and cpa_operation not in cpa_gemini_client.OPERATION_EXCEPTIONS:
+        cpa_gemini_client.require_operation(cpa_operation)
+    if cpa_gemini_client.enabled() and cpa_operation == "generateContent":
         if cpa_prompt is None:
             raise ValueError("CPA_GEMINI_REQUEST_DESCRIPTION_REQUIRED")
         model = list(argv)[list(argv).index('--model') + 1]

@@ -56,7 +56,7 @@ RAW_AV_REQUEST_SCHEMA = "final-media-review-raw-av-request.v3"
 RAW_AV_RESPONSE_SCHEMA = "final-media-review-raw-av-adapter-response.v3"
 RAW_AV_RECEIPT_SCHEMA = "final-media-review-raw-av-adapter-receipt.v3"
 RESULT_SCHEMA = "final-media-perceptual-review-result.v1"
-GEMINI_FILE_HELPER_SHA256 = "8bcac1336ea05c2771d6ef1d174343ebd57698b8a6ea5204bdbf86638679adc0"
+GEMINI_FILE_HELPER_SHA256 = "107b79763fa0ecd6389871d7beb8991999517918cf2500cf191e2ec472e73fea"
 _REQUEST_TIMEOUT_ENV = "AUTOSLICE_FINAL_MEDIA_GEMINI_API_TIMEOUT_SECONDS"
 _POLL_TIMEOUT_ENV = "AUTOSLICE_FINAL_MEDIA_GEMINI_API_POLL_TIMEOUT_SECONDS"
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
@@ -500,6 +500,7 @@ def _provider_call(
     evidence_root: Path,
     label: str,
     request_sha256: str,
+    operation: str = "auto",
 ) -> GeminiFileCallOutcome:
     """Dispatch once and leave an auditable record for every ending.
 
@@ -538,6 +539,10 @@ def _provider_call(
             for name in ("GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3")
             if isinstance((value := environment.get(name)), str) and value
         }
+        if not enabled(environment):
+            # This mapping is passed as the complete transport environment;
+            # preserve the emergency opt-out across the filtered child seam.
+            free_key_environment = {**free_key_environment, 'AUTOSLICE_CPA_GEMINI_ENABLED': '0'}
         outcome = runner(
             media_path=media,
             expected_sha256=media_sha256,
@@ -549,6 +554,7 @@ def _provider_call(
             environment=free_key_environment,
             timeout_seconds=config.timeout_seconds,
             poll_timeout_seconds=config.poll_timeout_seconds,
+            **({'operation': operation} if operation != 'auto' else {}),
         )
     except GeminiFileApiError as exc:
         _record_or_report(
@@ -787,7 +793,7 @@ def run_sentinel(
     )
     outcome = _provider_call(
         media=media,
-        media_sha256=_sha256(media),
+        media_sha256=str(request['input_sha256']),
         media_bytes=media.stat().st_size,
         mime_type=_sentinel_mime(request["coverage"]),
         prompt=prompt,
@@ -798,6 +804,22 @@ def run_sentinel(
         label="sentinel",
         request_sha256=request_sha,
     )
+    from src.autoslice.final_media_review_gemini_api_runtime import CPA_ENDPOINT_FAMILY, CPA_FILES_ENDPOINT_FAMILY
+    extra_evidence = {}
+    if (request['endpoint_family'] in {CPA_ENDPOINT_FAMILY, CPA_FILES_ENDPOINT_FAMILY}
+            and outcome.evidence.get('transport') != 'cpa_gemini_native'):
+        raise AdapterError('GEMINI_API_SENTINEL_WIRE_INVALID', 'CPA proof requires a native CPA observation')
+    if request['endpoint_family'] == CPA_FILES_ENDPOINT_FAMILY:
+        files_outcome = _provider_call(media=media, media_sha256=str(request['input_sha256']),
+            media_bytes=media.stat().st_size, mime_type=_sentinel_mime(request['coverage']),
+            prompt=prompt, config=config, environment=environment, runner=file_runner,
+            evidence_root=evidence_root, label='sentinel_files', request_sha256=request_sha,
+            operation='files_upload')
+        if (files_outcome.evidence.get('transport') != 'google_files_api'
+                or _sentinel_answer(files_outcome.text) != _sentinel_answer(outcome.text)):
+            raise AdapterError('GEMINI_API_SENTINEL_TRANSPORT_DISAGREEMENT',
+                'both physical transports must independently return the same hidden answer')
+        extra_evidence = {'files_provider_evidence': dict(files_outcome.evidence)}
     response = _sentinel_response(
         request=request, request_sha=request_sha, raw=outcome.text
     )
@@ -812,6 +834,7 @@ def run_sentinel(
             "input_sha256": _sha256(media),
             "prompt_sha256": _sha256(prompt_path),
             "provider_evidence": dict(outcome.evidence),
+            **extra_evidence,
             "response_sha256": _sha256(response_path),
         },
     )
@@ -1103,9 +1126,11 @@ def run_final_review(
             "point_id": "gemini-api-provider-evidence",
             "verdict": "PASS",
             "detail": (
-                "Two independent Gemini Files API turns consumed the exact bound "
+                "Two physical calls to the same Gemini model consumed the exact bound "
                 f"MP4 at static {config.video_fps:g} FPS and exact bound full-media "
-                "WAV using free keys only; durable provider evidence is SHA256 "
+                f"WAV; video transport={video_outcome.evidence.get('transport', 'google_files_api')}, "
+                f"audio transport={audio_outcome.evidence.get('transport', 'google_files_api')}. "
+                "Credential tier is recorded per call; durable provider evidence is SHA256 "
                 f"{_sha256(evidence_path)}."
             ),
             "provider_evidence": _binding(evidence_path),

@@ -42,6 +42,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import subprocess
 from tempfile import NamedTemporaryFile
 from typing import cast
 
@@ -49,6 +50,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.autoslice.batch_items import ItemAuthorityError, ItemBatch
 from src.autoslice import channel_census as cc
 from src.autoslice.channel_profile import ChannelProfileError, load_channel_profile
 
@@ -115,7 +117,8 @@ def stop_check(out: Path) -> None:
         raise CensusStopped("CENSUS_STOP_REQUESTED")
 
 
-def recordings_from_list(path: Path) -> tuple[RecordingInput, ...]:
+def recordings_from_list(path: Path, *, issues: ItemBatch | None = None) -> tuple[RecordingInput, ...]:
+    issues = issues if issues is not None else ItemBatch()
     raw = json.loads(path.read_text(encoding="utf-8"))
     rows = raw.get("recordings") if isinstance(raw, dict) else None
     if not isinstance(rows, list) or not rows:
@@ -125,7 +128,7 @@ def recordings_from_list(path: Path) -> tuple[RecordingInput, ...]:
     for row in rows:
         if not isinstance(row, dict) or not isinstance(row.get("path"), str):
             raise ValueError("INVALID_CENSUS_RECORDING")
-        media = (path.parent / row["path"]).resolve()
+        locator = path.parent / row["path"]
         duration = row.get("duration_ms")
         if type(duration) is not int or duration <= 0:
             raise ValueError("INVALID_CENSUS_DURATION")
@@ -138,7 +141,16 @@ def recordings_from_list(path: Path) -> tuple[RecordingInput, ...]:
             type(t) is not int or not 0 <= t < duration for t in danmaku
         ):
             raise ValueError("CENSUS_DANMAKU_OUTSIDE_RECORDING")
-        ref = cc.RecordingRef(media.name, file_sha256(media), duration, recorded)
+        source_sha = None
+        media = None
+        # Resolve is itself an input read: a looping link must not abort the
+        # other recordings before their byte identities can be established.
+        with issues.isolate(str(locator), errors=(OSError, ValueError, RuntimeError)):
+            media = locator.resolve()
+            source_sha = file_sha256(media)
+        if source_sha is None or media is None:
+            continue
+        ref = cc.RecordingRef(media.name, source_sha, duration, recorded)
         identity = (ref.basename, ref.sha256)
         if identity in identities:
             raise ValueError("DUPLICATE_CENSUS_RECORDING")
@@ -198,7 +210,8 @@ def run_census(
             host_display_name=profile.display_name, config=config,
             metric_text=metric_text,
         )
-        inputs = recordings_from_list(args.recordings.resolve())
+        issues = ItemBatch()
+        inputs = recordings_from_list(args.recordings.resolve(), issues=issues)
         prompt_sha = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
         run_input = {
             "schema_version": "channel-census-run-input.v1",
@@ -234,12 +247,27 @@ def run_census(
                                         "provider": args.transcriber})
             transcript_path = out / "transcripts" / f"{transcription_sha}.json"
             if not transcript_path.exists():
-                cues = tuple(transcriber(recording.ref, recording.path))
-                # Validate timings/types before publishing a reusable transcript.
-                cc.build_census_windows(cues, recording_group="validate", window_seconds=300,
-                                        duration_ms=recording.ref.duration_ms)
-                if file_sha256(recording.path) != recording.ref.sha256:
-                    raise ValueError("CENSUS_RECORDING_CHANGED_DURING_ASR")
+                failures_before = len(issues.failures)
+                cues = None
+                with issues.isolate(str(recording.path), errors=(
+                    FileNotFoundError, PermissionError, subprocess.CalledProcessError,
+                )):
+                    cues = tuple(transcriber(recording.ref, recording.path))
+                if len(issues.failures) != failures_before:
+                    continue
+                with issues.isolate(str(recording.path), errors=(ValueError, TypeError)):
+                    # Validate timings/types before publishing a reusable transcript.
+                    cc.build_census_windows(cues, recording_group="validate", window_seconds=300,
+                                            duration_ms=recording.ref.duration_ms)
+                if len(issues.failures) != failures_before:
+                    continue
+                current_sha = None
+                with issues.isolate(str(recording.path), errors=(OSError,)):
+                    current_sha = file_sha256(recording.path)
+                if current_sha is None:
+                    continue
+                if current_sha != recording.ref.sha256:
+                    raise ItemAuthorityError("CENSUS_RECORDING_CHANGED_DURING_ASR")
                 create_only(transcript_path, canonical([asdict(c) for c in cues]))
             stop_check(out)
             cues = tuple(cc.CensusTranscriptCue(**row) for row in
@@ -270,16 +298,33 @@ def run_census(
                 if path.exists():
                     raw_label = json.loads(path.read_text(encoding="utf-8"))
                 else:
-                    raw_label = json.loads(labeler(window, prompt=prompt))
-                    cc.parse_census_window_label(raw_label, window=window, config=config)
+                    label_text = labeler(window, prompt=prompt)
+                    failures_before = len(issues.failures)
+                    with issues.isolate(window.window_id, errors=(ValueError, TypeError, KeyError)):
+                        raw_label = json.loads(label_text)
+                        if isinstance(raw_label, dict) and raw_label.get("window_id") != window.window_id:
+                            raise ItemAuthorityError("CENSUS_LABEL_WINDOW_MISMATCH")
+                        cc.parse_census_window_label(raw_label, window=window, config=config)
+                    if len(issues.failures) != failures_before:
+                        continue
                     create_only(path, canonical(raw_label))
                 labels.append(cc.parse_census_window_label(raw_label, window=window, config=config))
         stop_check(out)
         clues = cc.generate_census_clues(labels, config=config, manifest=manifest, metric_text=metric_text)
-        create_only(run_dir / "windows.json", canonical([asdict(w) for w in labels]))
-        create_only(run_dir / "selection_census_clues.v1.json", canonical(asdict(clues)))
-        create_only(run_dir / "report.md", cc.render_census_report(labels, clues).encode("utf-8"))
-        return run_dir
+        # A partial snapshot is immutable, but does not seal incomplete output as
+        # the final run. A rerun reuses successful stages and retries failures.
+        result = {"status": "PARTIAL" if issues.failures else "COMPLETE",
+                  "item_failures": issues.as_list(), "labeled_windows": len(labels),
+                  "readable_recordings": len(inputs)}
+        result_dir = run_dir / "partial" / digest(result) if issues.failures else run_dir
+        create_only(result_dir / "batch-result.json", canonical(result))
+        create_only(result_dir / "windows.json", canonical([asdict(w) for w in labels]))
+        create_only(result_dir / "selection_census_clues.v1.json", canonical(asdict(clues)))
+        report = cc.render_census_report(labels, clues)
+        if issues.failures:
+            report = ("本次普查不完整：失败条目见 batch-result.json；下列统计仅覆盖成功窗口。\n\n" + report)
+        create_only(result_dir / "report.md", report.encode("utf-8"))
+        return result_dir
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -315,7 +360,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     except KeyboardInterrupt:
         return 130
-    print(json.dumps({"status": "COMPLETE", "run_dir": str(result)}, ensure_ascii=False))
+    status = json.loads((result / "batch-result.json").read_text())["status"]
+    print(json.dumps({"status": status, "run_dir": str(result)}, ensure_ascii=False))
     return 0
 
 

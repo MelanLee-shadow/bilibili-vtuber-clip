@@ -42,7 +42,8 @@ def test_bound_narrow_asr_is_evidence_without_independent_wide_clear_authority(r
     from src.autoslice.final_review_contract import is_release_resolved_keep
     audit, captured = produce(rig, c_reply, native=native)
     assert audit.get('policy_branch') == 'SUB18_CONTEXT_MEANING_EQUIVALENT_KEEP', audit
-    assert captured['request']['terminal_contract_version'] == 4
+    from src.autoslice.semantic_terminal_adjudication import TERMINAL_CONTRACT_VERSION
+    assert captured['request']['terminal_contract_version'] == TERMINAL_CONTRACT_VERSION
     assert not captured['data']['clear_audio_constraints']
     observations = captured['data']['observations']
     assert sum(row.get('receipt_kind') == 'native_transcript' for row in observations) == len(native)

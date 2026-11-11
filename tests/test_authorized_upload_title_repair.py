@@ -6,23 +6,22 @@ import copy
 import hashlib
 import json
 from contextlib import nullcontext
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from src.autoslice.addressee_attribution import build_addressee_evidence
+from src.autoslice.bilibili_member_api import build_edit_payload
 from src.autoslice import authorized_upload_title_repair as title_repair
 from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.same_bv_repair import normalise_creator_snapshot
 from src.autoslice.source_fact_review import review_and_repair_source_facts
-from src.autoslice.channel_envelope import render_talk_title_prefix
 
 
 BVID = "BV1nsHJ65Ecx"
-ORIGINAL_TITLE = render_talk_title_prefix() + "这是一个原始标题"
-FINAL_TITLE = render_talk_title_prefix() + "游戏对白里的暧昧关系"
+ORIGINAL_TITLE = "【李豆沙】这是一个原始标题"
+FINAL_TITLE = "【李豆沙】游戏对白里的暧昧关系"
 SELECTION_HOOK = "游戏对白展示"
 
 
@@ -141,7 +140,7 @@ def _fixture(tmp_path, *, review_origin=None):
         final_reviewed_srt_path=srt,
         story_contract=record["story_contract"],
     )
-    assert review["status"] == "PASS", review
+    assert review["status"] == "PASS"
     title_result = {
         "status": "OK",
         "final_title": FINAL_TITLE,
@@ -200,27 +199,13 @@ def _fixture(tmp_path, *, review_origin=None):
             return copy.deepcopy(self.raw)
 
         def build_edit_payload(self, current, title=None, **_kwargs):
-            archive = current["archive"]
-            payload = {
-                "title": archive["title"],
-                "bvid": archive["bvid"],
-                "aid": archive["aid"],
-                "desc": archive["desc"],
-                "tag": archive["tag"],
-                "cover": archive["cover"],
-                "tid": archive["tid"],
-                "copyright": archive["copyright"],
-                "source": archive["source"],
-                "videos": copy.deepcopy(current["videos"]),
-                "csrf": "fixture-csrf",
-            }
-            if title is not None:
-                payload["title"] = title
-            return payload
+            # The production constructor, so the single-P part-name rule applies.
+            return build_edit_payload(current, csrf="fixture-csrf", title=title)
 
         def edit_archive(self, payload):
             self.edits += 1
             self.raw["archive"]["title"] = payload["title"]
+            self.raw["videos"] = copy.deepcopy(payload["videos"])
             if self.ambiguous:
                 raise TimeoutError("fixture response lost")
             return {"code": 0}
@@ -288,7 +273,8 @@ def test_title_edit_preserves_non_title_fields_and_safe_resume(tmp_path, review_
     assert receipt["status"] == "VERIFIED_TITLE_ONLY"
     assert adapter.session.edits == 1
     assert adapter.session.raw["archive"]["desc"] == "保留描述"
-    assert adapter.session.raw["videos"] == [{"cid": 22, "filename": "original", "title": "P1"}]
+    # The single part's name moved from the upload file name to the final title.
+    assert adapter.session.raw["videos"] == [{"cid": 22, "filename": "original", "title": FINAL_TITLE}]
     assert manifest_path.read_bytes() == before_manifest
 
     code, resumed = title_repair.run(args, **dependencies)
@@ -299,7 +285,7 @@ def test_title_edit_preserves_non_title_fields_and_safe_resume(tmp_path, review_
 
 def test_independently_valid_review_from_unrelated_title_cannot_authorize_edit(tmp_path):
     args, adapter, dependencies, _manifest_path = _fixture(
-        tmp_path, review_origin=render_talk_title_prefix() + "另一条没有绑定的标题"
+        tmp_path, review_origin="【李豆沙】另一条没有绑定的标题"
     )
     with pytest.raises(title_repair.TitleRepairError, match="REVIEW_SURFACE_INVALID"):
         title_repair.run(args, **dependencies)
@@ -596,7 +582,7 @@ def _successor_fixture(tmp_path):
     }
     title_input = json.loads(first_paths["input"].read_text())
     title_input["original_title"] = FINAL_TITLE
-    second_title = render_talk_title_prefix() + "游戏对白：这段暧昧关系怎么回事？"
+    second_title = "【李豆沙】游戏对白：这段暧昧关系怎么回事？"
     input_path = tmp_path / "second-input.json"
     input_path.write_text(json.dumps(title_input, ensure_ascii=False))
     inputs = title_input["source_fact_inputs"]
@@ -607,7 +593,7 @@ def _successor_fixture(tmp_path):
         selection_scorecard=inputs["selection_scorecard"],
         speaker_evidence=inputs["speaker_evidence"],
         candidate_id=title_input["candidate_id"],
-        final_reviewed_srt_path=Path(title_input["srt_path"]),
+        final_reviewed_srt_path=title_input["srt_path"],
         story_contract=inputs["story_contract"], title_repair_allowed=True,
         llm_call=lambda _p: json.dumps({
             "schema_version": "lidousha-source-fact-review.v1", "status": "KEEP",
@@ -695,3 +681,36 @@ def test_explicit_verified_title_predecessor_keeps_original_publication_immutabl
             reference, authority=authority, candidate_id="semantictalk_test_1_2", title=second_title,
         )
     assert adapter.session.edits == 2
+
+
+def test_non_fmr_manifest_still_requires_source_fact_artifacts(tmp_path):
+    """The finished-media review branch must not loosen the source-fact lane."""
+
+    args, adapter, dependencies, _manifest_path = _fixture(tmp_path)
+    args.title_input = None
+    with pytest.raises(title_repair.TitleRepairError, match="TITLE_INPUT_REQUIRED"):
+        title_repair.run(args, **dependencies)
+    args.title_input = str(tmp_path / "TITLE-INPUT.json")
+    args.title_result = None
+    with pytest.raises(title_repair.TitleRepairError, match="TITLE_INPUT_REQUIRED"):
+        title_repair.run(args, **dependencies)
+    assert adapter.session.edits == 0
+
+
+def test_non_fmr_manifest_cannot_opt_into_the_title_authority_branch(tmp_path):
+    args, adapter, dependencies, _manifest_path = _fixture(tmp_path)
+    args.title_authority = str(tmp_path / "TITLE-AUTHORITY.json")
+    with pytest.raises(title_repair.TitleRepairError, match="AUTHORITY_REQUIRES_FMR_MANIFEST"):
+        title_repair.run(args, **dependencies)
+    assert adapter.session.edits == 0
+
+
+def test_non_fmr_manifest_without_a_source_fact_review_is_still_refused(tmp_path):
+    args, adapter, dependencies, _manifest_path = _fixture(tmp_path)
+    result_path = tmp_path / "TITLE-RESULT.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    del result["source_fact_review"]
+    result_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(title_repair.TitleRepairError, match="TITLE_RESULT_SCHEMA_INVALID"):
+        title_repair.run(args, **dependencies)
+    assert adapter.session.edits == 0

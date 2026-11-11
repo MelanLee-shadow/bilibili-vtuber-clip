@@ -129,7 +129,48 @@ def _candidate_and_date(
     return candidate, date
 
 
-def _replay_source(binding: object, *, review_manifest_snapshot: object | None = None) -> dict:
+def _registry_witness(
+    source: dict, binding: dict, *,
+    registry_path: Path | None = None, runtime_path: Path | None = None,
+) -> None:
+    """Prove candidate/date from the publication registry, not from the first package.
+
+    The registry row for this BVID must be unique, published, carry the same
+    candidate/date as the receipt, and bind exactly this receipt file.
+    """
+
+    from src.autoslice.publication_registry import load_publication_registry
+
+    try:
+        entries = load_publication_registry(registry_path, runtime_path=runtime_path)["entries"]
+    except (OSError, ValueError, KeyError) as exc:
+        raise NewBvRepairAuthorityError(f"publication registry unreadable: {exc}") from exc
+    bvid = source.get("bvid")
+    rows = [row for row in entries if row.get("bvid") == bvid]
+    _need(bool(rows), "publication registry has no row for this manuscript (登记里没有这条稿件)")
+    _need(len(rows) == 1, "publication registry has more than one row for this BVID")
+    row = rows[0]
+    _need(row.get("status") == "published", "publication registry row status is not published")
+    _need(row.get("candidate_id") == source.get("candidate_id"),
+          "publication registry row candidate_id differs from the receipt")
+    _need(row.get("recording_date") == source.get("recording_date"),
+          "publication registry row recording_date differs from the receipt")
+    projection = row.get("publication_reconciliation")
+    _need(isinstance(projection, Mapping), "publication registry row carries no reconciliation")
+    if projection.get("status") == "VERIFIED_SAME_BV":
+        # The manuscript was repaired on the same BV since: the row now binds that completed repair, not the first
+        # receipt.  The registry still witnesses which manuscript this BVID is; a later repair chains from the
+        # completed one (repair-plan --predecessor-completed).
+        return
+    bound = projection.get("authority")
+    _need(isinstance(bound, Mapping) and dict(bound) == dict(binding),
+          "publication registry row does not bind this publication receipt")
+
+
+def _replay_source(
+    binding: object, *, review_manifest_snapshot: object | None = None,
+    registry_path: Path | None = None, runtime_path: Path | None = None,
+) -> dict:
     from src.autoslice import publication_reconciliation as reconciliation
 
     _need(isinstance(binding, Mapping) and set(binding) == {"path", "sha256", "bytes"},
@@ -153,9 +194,15 @@ def _replay_source(binding: object, *, review_manifest_snapshot: object | None =
         _regular(p)
         paths[key] = reconciliation._validate_sha_entry(entry, key)
     manifest = reconciliation._load_object(paths["manifest"], "first upload manifest")
-    candidate, date = _candidate_and_date(
-        manifest, review_manifest_snapshot, reconciliation=reconciliation
-    )
+    # Candidate/date are witnessed by the publication registry; the first package
+    # (record/review manifest) may be gone.  A portable review-manifest snapshot,
+    # when supplied, must additionally agree.
+    _registry_witness(source, binding, registry_path=registry_path, runtime_path=runtime_path)
+    candidate, date = source.get("candidate_id"), source.get("recording_date")
+    if review_manifest_snapshot is not None:
+        candidate, date = _candidate_and_date(
+            manifest, review_manifest_snapshot, reconciliation=reconciliation
+        )
     replayed, aid, cid = reconciliation._validate_new_public_evidence(
         manifest=manifest, manifest_path=paths["manifest"], bvid=source.get("bvid"),
         public_verify_path=paths["public_verify"],
@@ -163,8 +210,9 @@ def _replay_source(binding: object, *, review_manifest_snapshot: object | None =
     )
     _need(replayed == evidence, "publication evidence payload drifted")
     _need(source.get("candidate_id") == candidate
-          and re.fullmatch(r"[A-Za-z0-9_-]{1,96}", candidate) is not None
+          and re.fullmatch(r"[A-Za-z0-9_-]{1,96}", str(candidate)) is not None
           and source.get("recording_date") == date
+          and reconciliation._DATE_RX.fullmatch(str(date)) is not None
           and re.fullmatch(r"BV[0-9A-Za-z]{10}", str(source.get("bvid") or "")) is not None
           and type(source.get("aid")) is int and source["aid"] == aid and aid > 0
           and type(source.get("cid")) is int and source["cid"] == cid and cid > 0
@@ -178,6 +226,7 @@ def build_new_bv_repair_authority(
     publication_path: Path, *, candidate_id: str, title: str,
     review_manifest_snapshot: Path | None = None,
     published_recall_anchor: bool = False,
+    registry_path: Path | None = None, runtime_path: Path | None = None,
 ) -> dict[str, object]:
     from src.autoslice.publication_reconciliation import _sha_entry
 
@@ -188,7 +237,8 @@ def build_new_bv_repair_authority(
         snapshot_path = Path(review_manifest_snapshot)
         _regular(snapshot_path)
         snapshot_binding = _sha_entry(snapshot_path)
-    source = _replay_source(binding, review_manifest_snapshot=snapshot_binding)
+    source = _replay_source(binding, review_manifest_snapshot=snapshot_binding,
+                            registry_path=registry_path, runtime_path=runtime_path)
     value = {
         "schema_version": SCHEMA_VERSION,
         "source_kind": "verified_normal_first_publication",
@@ -204,12 +254,21 @@ def build_new_bv_repair_authority(
         value.update(publication_boundary_fields(value))
     value["authority_sha256"] = _digest(value)
     return validate_new_bv_repair_authority(value, candidate_id=candidate_id,
-                                           expected_final_title=title)
+                                           expected_final_title=title,
+                                           registry_path=registry_path, runtime_path=runtime_path)
 
 
 def validate_new_bv_repair_authority(
     value: object, *, candidate_id: str, expected_final_title: str | None = None,
+    replay_evidence: bool = True,
+    registry_path: Path | None = None, runtime_path: Path | None = None,
 ) -> dict[str, object]:
+    """Validate the authority; ``replay_evidence=False`` skips only the source-closure replay.
+
+    The shape-only form is for a host that cannot see the first-publication evidence files
+    (they live where the upload ran).  Every consumer that acts on the authority still calls
+    this with the default and replays the closure.
+    """
     from src.autoslice.title_policy import publish_title_lane, publish_title_policy_violations
 
     _need(
@@ -239,21 +298,26 @@ def validate_new_bv_repair_authority(
               title, lane=publish_title_lane(str(authority["observed_public_title"])))
           and (expected_final_title is None or title == expected_final_title),
           "normal same-BV successor title invalid or drifted")
-    source = _replay_source(
-        authority["source_publication"],
-        review_manifest_snapshot=authority.get("review_manifest_snapshot"),
-    )
-    for key in ("candidate_id", "recording_date", "bvid", "aid", "cid"):
-        _need(authority[key] == source[key], "normal same-BV target identity drifted")
-    _need(authority["observed_public_title"] == source["title"],
-          "normal same-BV original title drifted")
+    if replay_evidence:
+        source = _replay_source(
+            authority["source_publication"],
+            review_manifest_snapshot=authority.get("review_manifest_snapshot"),
+            registry_path=registry_path, runtime_path=runtime_path,
+        )
+        for key in ("candidate_id", "recording_date", "bvid", "aid", "cid"):
+            _need(authority[key] == source[key], "normal same-BV target identity drifted")
+        _need(authority["observed_public_title"] == source["title"],
+              "normal same-BV original title drifted")
     if BOUNDARY_FIELDS.intersection(authority):
         from src.autoslice.first_publication_boundary import validate_boundary_fields
         validate_boundary_fields(authority)
     return authority
 
 
-def replay_first_publication_manifest(authority: Mapping[str, object]) -> dict:
+def replay_first_publication_manifest(
+    authority: Mapping[str, object], *,
+    registry_path: Path | None = None, runtime_path: Path | None = None,
+) -> dict:
     """Load the original manifest after replaying the authority closure.
 
     Callers must validate the authority with
@@ -268,6 +332,7 @@ def replay_first_publication_manifest(authority: Mapping[str, object]) -> dict:
     source = _replay_source(
         authority.get("source_publication"),
         review_manifest_snapshot=authority.get("review_manifest_snapshot"),
+        registry_path=registry_path, runtime_path=runtime_path,
     )
     evidence = source.get("evidence")
     _need(isinstance(evidence, Mapping), "first-publication evidence closure is missing")

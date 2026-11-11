@@ -8,7 +8,7 @@ import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Callable, TypedDict
 from src.autoslice.channel_profile import (
     ChannelProfile, ChannelProfileError, binding_for_profile,
     load_channel_profile, normalize_profile_binding, require_profile_binding,
@@ -46,6 +46,18 @@ from src.autoslice.supplement_audio_budget import (
 
 
 _FOREIGN_SCRIPT_WITNESS_PROVIDERS = frozenset({"agy", "moss", "mai"})
+
+
+class TailTrimSpec(TypedDict, total=False):
+    semantic_tail_trim_cap_ms: int
+
+
+def semantic_tail_trim_cap(spec: TailTrimSpec) -> int:
+    """Resolve the ordinary request default and validate its declared cap."""
+    value = spec.get("semantic_tail_trim_cap_ms", 0)
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= SEMANTIC_TAIL_TRIM_MAX_MS:
+        raise ValueError(f"semantic_tail_trim_cap_ms must stay within 0..{SEMANTIC_TAIL_TRIM_MAX_MS}")
+    return value
 
 
 class ProducerRuntimePrerequisiteError(ValueError):
@@ -364,16 +376,7 @@ def load_producer_request(
             f"{BOUNDARY_REPAIR_EXTEND_CAP_MS}..{BOUNDARY_REPAIR_EXTEND_CAP_MAX_MS}"
         )
     boundary_repair_extend_cap_ms = repair_cap_raw
-    tail_trim_cap_raw = spec.get("semantic_tail_trim_cap_ms", 0)
-    if (
-        isinstance(tail_trim_cap_raw, bool)
-        or not isinstance(tail_trim_cap_raw, int)
-        or not 0 <= tail_trim_cap_raw <= SEMANTIC_TAIL_TRIM_MAX_MS
-    ):
-        raise ValueError(
-            f"semantic_tail_trim_cap_ms must stay within 0..{SEMANTIC_TAIL_TRIM_MAX_MS}"
-        )
-    spec["semantic_tail_trim_cap_ms"] = tail_trim_cap_raw
+    spec["semantic_tail_trim_cap_ms"] = semantic_tail_trim_cap(spec)
     truth_mode = os.environ.get("AUTOSLICE_HUMAN_TRUTH_MODE", "delivery").strip().lower()
     if truth_mode not in {"delivery", "withheld"}:
         raise ValueError("AUTOSLICE_HUMAN_TRUTH_MODE must be delivery or withheld")
@@ -438,6 +441,8 @@ def load_producer_request(
             require_branding_intro(
                 repo_root,
                 manifest_path=profile_asset_file("branding_intro_manifest"),
+                clip_identity={"recording_date": spec["date"], "candidate_id": cid}
+                if spec.get("date") is not None else None,
             )
             if requires_intro(clip_profile)
             else None

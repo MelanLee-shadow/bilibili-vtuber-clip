@@ -3,12 +3,16 @@ import subprocess
 
 import pytest
 
+
 from src.autoslice import foreign_span_witness as fsw
 from src.autoslice.subtitle_fidelity import (
     audit_foreign_script_consistency,
     has_unapproved_mixed_cjk_latin_phrase,
 )
 
+
+# These fixtures replace the original Google HTTP / AGY process boundary.
+pytestmark = pytest.mark.usefixtures("legacy_gemini_transport")
 
 def test_normal_foreign_witness_argv_selects_current_registered_family(tmp_path, monkeypatch):
     from src.autoslice import agy_gemini_client as client

@@ -38,25 +38,23 @@ TIER_ONE_BASES = frozenset(
         "explicit_gl_stance",
         "cp_positioning",
         "audience_driven_performance",
+        "cute_performance",
     }
 )
 TIER_BASES = TIER_ONE_BASES | {"personal_stance", "generic_event"}
 ADMISSION_POLICY_FIELD = "admission_policy"
-# Candidate quality is deliberately separate from the seven arithmetic
-# dimensions.  It answers the production question that a valid scorecard
-# cannot answer by itself: is this particular candidate worth spending a
-# production slot on, and what in the window supports that decision?
+# Candidate quality is separate from the seven arithmetic dimensions; a valid
+# scorecard alone does not establish candidate production eligibility.
 CANDIDATE_QUALITY_FIELD = "candidate_quality"
 CANDIDATE_QUALITY_SCHEMA = "candidate-selection-quality.v1"
 QUALITY_WATCHABILITY_VALUES = frozenset({"STRONG", "ORDINARY", "THIN"})
 QUALITY_DIFFERENTIATION_VALUES = frozenset({"DISTINCTIVE", "ORDINARY", "THIN"})
 QUALITY_DISPOSITION_VALUES = frozenset({"PRODUCTION", "RESERVE", "HOLD"})
-# New scorecards carry the policy explicitly.  Historical v1 scorecards did
-# not have this field and remain valid under their original arithmetic/admission
-# rules (see ``selection_scorecard_is_valid``).  v2 is retained as a distinct
-# historical policy because its bytes and tier facts may be receipt-bound.
+# Historical v1 cards have no policy field; v2/v3 retain their original rules
+# because card bytes and Tier facts may be receipt-bound.
 LEGACY_ADMISSION_POLICY = "selection-scorecard-admission.v2"
-CURRENT_ADMISSION_POLICY = "selection-scorecard-admission.v3"
+PREVIOUS_ADMISSION_POLICY = "selection-scorecard-admission.v3"
+CURRENT_ADMISSION_POLICY = "selection-scorecard-admission.v4"
 _CHANNEL_PROFILE = load_channel_profile(
     Path(__file__).resolve().parents[2]
 )
@@ -344,19 +342,16 @@ def _performance_tier_one_admitted(
     *,
     admission_policy: str | None,
 ) -> bool:
-    """Return whether a performance card may occupy the highest tier.
+    """Check performance admission without changing receipt-bound old policies."""
 
-    The no-policy and v2 branches intentionally remain separate from v3:
-    scorecards written under either policy can be bound by a receipt and must
-    not be silently re-scored under the current rubric.
-    """
-
+    if admission_policy == CURRENT_ADMISSION_POLICY:
+        return len(evidence_cues) >= 1
     admitted = (
         dimensions["relationship_interaction"] >= 3
         and dimensions["persona_reversal"] >= 3
         and len(evidence_cues) >= 2
     )
-    if admission_policy in {LEGACY_ADMISSION_POLICY, CURRENT_ADMISSION_POLICY}:
+    if admission_policy in {LEGACY_ADMISSION_POLICY, PREVIOUS_ADMISSION_POLICY}:
         admitted = admitted and (
             dimensions["audience_salience"] >= 2
             and dimensions["self_contained"] >= 3
@@ -494,6 +489,8 @@ def _normalize_selection_scorecard(
     tier_basis = str(raw.get("tier_basis") or "").strip()
     if tier_basis not in TIER_BASES:
         return None
+    if tier_basis == "cute_performance" and admission_policy != CURRENT_ADMISSION_POLICY:
+        return None
     quality: dict[str, object] | None = None
     if CANDIDATE_QUALITY_FIELD in raw:
         quality = _normalize_candidate_quality(
@@ -512,7 +509,9 @@ def _normalize_selection_scorecard(
             and len(evidence_cues) >= 2
         )
         performance_admitted = (
-            tier_basis == "audience_driven_performance"
+            (tier_basis == "audience_driven_performance" or (
+                tier_basis == "cute_performance" and admission_policy == CURRENT_ADMISSION_POLICY
+            ))
             and _performance_tier_one_admitted(
                 dimensions,
                 evidence_cues,
@@ -525,7 +524,7 @@ def _normalize_selection_scorecard(
             and (dimensions["lidousha_centrality"] >= 3 or dimensions["stance_intensity"] >= 3)
             and len(evidence_cues) >= 1
         )
-        if admission_policy == CURRENT_ADMISSION_POLICY:
+        if admission_policy in {PREVIOUS_ADMISSION_POLICY, CURRENT_ADMISSION_POLICY}:
             admitted = _v3_common_dimensions_gate(dimensions) and v3_quality_admitted and (
                 relationship_admitted
                 or performance_admitted
@@ -538,9 +537,9 @@ def _normalize_selection_scorecard(
         if not admitted:
             tier = 2
             reason_codes.append("TIER1_ADMISSION_DOWNGRADED")
-            if admission_policy == CURRENT_ADMISSION_POLICY and not v3_quality_admitted:
+            if admission_policy in {PREVIOUS_ADMISSION_POLICY, CURRENT_ADMISSION_POLICY} and not v3_quality_admitted:
                 reason_codes.append("TIER1_COMMON_QUALITY_GATE_FAILED")
-            if admission_policy == CURRENT_ADMISSION_POLICY and not _v3_common_dimensions_gate(dimensions):
+            if admission_policy in {PREVIOUS_ADMISSION_POLICY, CURRENT_ADMISSION_POLICY} and not _v3_common_dimensions_gate(dimensions):
                 reason_codes.append("TIER1_COMMON_DIMENSION_GATE_FAILED")
 
     # A clip whose hook/payoff cannot stand on its own is the metric's Tier 3,
@@ -573,8 +572,8 @@ def _normalize_selection_scorecard(
     }
     if quality is not None:
         normalized[CANDIDATE_QUALITY_FIELD] = quality
-    if admission_policy == CURRENT_ADMISSION_POLICY:
-        normalized[ADMISSION_POLICY_FIELD] = CURRENT_ADMISSION_POLICY
+    if admission_policy in {PREVIOUS_ADMISSION_POLICY, CURRENT_ADMISSION_POLICY}:
+        normalized[ADMISSION_POLICY_FIELD] = admission_policy
     return normalized
 
 
@@ -584,13 +583,7 @@ def normalize_selection_scorecard(
     start_cue: int,
     end_cue: int,
 ) -> dict[str, object] | None:
-    """Normalize a new scorecard under the current v3 admission policy.
-
-    The public signature is intentionally unchanged.  Scorecards produced by
-    this path carry an explicit policy identifier.  Historical v1/v2 cards
-    are accepted only by ``selection_scorecard_is_valid`` with their original
-    policy semantics.
-    """
+    """Normalize a new v4 card; validate historical cards under their own policy."""
 
     if not isinstance(raw, Mapping):
         return None
@@ -608,12 +601,7 @@ def normalize_selection_scorecard(
 
 
 def _ranking_tier(scorecard: Mapping[str, object]) -> float:
-    """Map a valid historical performance Tier 1 card to current priority.
-
-    The card itself is deliberately left untouched: its bytes may be bound by
-    source-fact or publication receipts.  Only the transient sorting key uses
-    the current stronger performance admission rule.
-    """
+    """Rank historical performance without changing receipt-bound card bytes."""
 
     tier = float(scorecard["tier"])
     if (
@@ -667,7 +655,7 @@ def selection_scorecard_production_admission(raw: object) -> dict[str, object]:
     """Return the candidate-scoped production disposition.
 
     Historical cards have no ``admission_policy`` and retain their original
-    admission fact.  v2 cards retain the previous quality gate.  Only v3
+    admission fact.  v2/v3 cards retain their original quality gate.  New
     cards use the current rubric before a normal semantic candidate can take
     a fresh production seat.
     This gate never changes Tier or either seven-dimension score.
@@ -680,7 +668,7 @@ def selection_scorecard_production_admission(raw: object) -> dict[str, object]:
         }
     assert isinstance(raw, Mapping)
     policy = raw.get(ADMISSION_POLICY_FIELD)
-    if policy not in {LEGACY_ADMISSION_POLICY, CURRENT_ADMISSION_POLICY}:
+    if policy not in {LEGACY_ADMISSION_POLICY, PREVIOUS_ADMISSION_POLICY, CURRENT_ADMISSION_POLICY}:
         return {
             "status": "ADMIT",
             "reason_code": "HISTORICAL_SCORECARD_COMPATIBILITY",
@@ -770,14 +758,14 @@ def apply_reviewed_selection_calibration(
     *,
     policy: SelectionCalibrationPolicy | None = None,
 ) -> dict[str, object] | None:
-    """Apply a reviewed v3 anchor while preserving historical card bytes."""
+    """Apply a reviewed current anchor while preserving historical card bytes."""
 
     selected_policy = policy or load_selected_selection_calibration_policy()
     if not selection_scorecard_is_valid(scorecard):
         return dict(scorecard) if isinstance(scorecard, dict) else None
     assert isinstance(scorecard, Mapping)
-    # Historical v1 cards (no policy field) and explicit v2 cards are
-    # receipt-bound facts.  Calibration is allowed to produce a fresh v3 card
+    # Historical v1/v2/v3 cards are receipt-bound facts. Calibration may
+    # produce a fresh current card
     # through the normal/rescore path, but this helper must not silently
     # rewrite an old current-pool row while rebuilding or recovering it.
     if scorecard.get(ADMISSION_POLICY_FIELD) != CURRENT_ADMISSION_POLICY:
@@ -876,6 +864,7 @@ def selection_scorecard_is_valid(raw: object) -> bool:
     if ADMISSION_POLICY_FIELD in raw:
         if raw.get(ADMISSION_POLICY_FIELD) not in {
             LEGACY_ADMISSION_POLICY,
+            PREVIOUS_ADMISSION_POLICY,
             CURRENT_ADMISSION_POLICY,
         }:
             return False

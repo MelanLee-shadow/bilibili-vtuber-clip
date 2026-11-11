@@ -98,21 +98,21 @@ def find_quote(quote: str, srt: str, *, speaker: str = "") -> dict | None:
 
 
 def check_title_quotes(title: str, final_srt: str, *, declared_quote: object = None) -> dict:
+    # A title needs no verbatim quote; every quotation mark it uses must be backed.
     phrases = [next(v for v in match if v) for match in QUOTES.findall(title)]
+    errors = []
     speaker = ""
     if isinstance(declared_quote, Mapping):
         speaker = str(declared_quote.get("speaker") or "").strip()
         declared_quote = declared_quote.get("text")
     if isinstance(declared_quote, str) and declared_quote.strip():
+        # A declared quote is a claim about this title, so it must appear in it.
         if canonical(declared_quote) not in canonical(title):
-            phrases.append("")
+            errors.append("TITLE_DECLARED_QUOTE_MISSING")
         elif declared_quote not in phrases:
             phrases.append(declared_quote)
-    errors = []
     if not final_cues(final_srt):
         errors.append("TITLE_FINAL_SUBTITLES_REQUIRED")
-    if not phrases:
-        errors.append("TITLE_VERBATIM_QUOTE_REQUIRED")
     for left, right in (("“", "”"), ("「", "」"), ("『", "』"), ("‘", "’")):
         if title.count(left) != title.count(right):
             errors.append("TITLE_QUOTE_UNBALANCED")
@@ -172,7 +172,7 @@ def check_title_candidates(payload: Mapping, final_srt: str) -> dict:
         titles.append(title)
         full_title = title if accepted_talk_title_prefix(title) is not None else render_talk_title(title)
         quote = check_title_quotes(full_title, final_srt, declared_quote=row.get("quote"))
-        if not title_policy._TITLE_MIN_LEN <= len(full_title) <= title_policy._TITLE_MAX_LEN:
+        if not title_policy.talk_title_length_ok(full_title):
             errors.append("TITLE_CANDIDATE_LENGTH_OR_LANE_INVALID")
         if (
             row.get("status") not in {"SELECTED", "REJECTED"}
@@ -237,8 +237,9 @@ def final_title_skill_receipt(
     skill = last.get("title_cover_skill") or {}
     # 60-title: a fact-repaired final title re-verifies its quote.  The selected
     # candidate's declaration is carried forward as a claim only;
-    # check_title_quotes still requires it verbatim in this title and in the
-    # final subtitles, so a repair that dropped or changed it fails closed.
+    # check_title_quotes still requires it to appear in this title (else
+    # TITLE_DECLARED_QUOTE_MISSING) and verbatim in the final subtitles, so a
+    # repair that dropped or changed it fails closed.
     declaration = skill.get("selected_quote") if last else None
     checked = check_title_quotes(title, quote_srt, declared_quote=declaration)
     if skill.get("status") != "PASS":

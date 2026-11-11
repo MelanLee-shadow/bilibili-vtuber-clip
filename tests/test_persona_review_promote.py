@@ -3,6 +3,7 @@
 All 维护者 messages here are synthetic fixtures; no real authority is asserted.
 """
 from dataclasses import asdict, replace
+import difflib
 import json
 from pathlib import Path
 import subprocess
@@ -245,7 +246,6 @@ def test_binding_matrix_and_stage_snapshot_existing_contracts_are_reused(tmp_pat
     script = tmp_path / "snapshot_contract.py"
     script.write_text(
         "import sys\nfrom pathlib import Path\nimport pytest\n"
-        f"sys.path.insert(0, {str(ROOT)!r})\n"
         f"sys.path.insert(0, {str(ROOT / 'tests')!r})\n"
         "import test_asset_write_bindings as contracts\n"
         "contracts.test_extracted_stage_constant_is_exact_original_literal()\n"
@@ -257,3 +257,84 @@ def test_binding_matrix_and_stage_snapshot_existing_contracts_are_reused(tmp_pat
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert asset_binding_surfaces("persona_facts") == ()
     assert asset_binding_surfaces("selection_census_clues") == ()
+
+
+def test_oss_classifies_b3_as_generic_code():
+    from scripts.export_oss_snapshot import classify
+    for relative in ("src/autoslice/persona_review.py", "scripts/apply_persona_review.py",
+                     "scripts/promote_persona_projection.py", "tests/test_persona_review_promote.py"):
+        assert classify(relative) == "keep"
+
+
+MESSAGE = "先说别的。\n李豆沙的毛绒形态可以亲亲，李豆沙在人形态不能亲。\n"
+EXCERPT = "李豆沙的毛绒形态可以亲亲，李豆沙在人形态不能亲"
+STATEMENT = "形态：SYNTHETIC 合成的一句。"
+
+
+def human_fact_args(tmp_path, *, message=MESSAGE, excerpt=EXCERPT, ledger=None, statement=STATEMENT, **auth_changes):
+    """Copy of the committed ledger plus a synthetic host message; nothing here is real authority."""
+    target = tmp_path / "ledger.json"
+    target.write_bytes((ROOT / "assets/lidousha/persona_facts.v1.json").read_bytes() if ledger is None else ledger)
+    raw = tmp_path / "raw.txt"
+    raw.write_bytes(message.encode())
+    value = asdict(replace(authority(message), raw_excerpt=excerpt, **auth_changes))
+    return target, raw, write(tmp_path / "authority.json", value), (
+        "human-fact", "--ledger", target, "--profile-id", "lidousha", "--authority", tmp_path / "authority.json",
+        "--raw-message", raw, "--kind", "APPEARANCE", "--statement", statement, "--recorded-at", STAMP)
+
+
+def test_human_fact_cli_previews_then_appends_without_touching_existing_bytes(tmp_path):
+    target, _, _, args = human_fact_args(tmp_path)
+    original = target.read_bytes()
+    dry = cli("apply_persona_review.py", *args)
+    assert target.read_bytes() == original and dry["mode"] == "DRY_RUN"
+    assert dry["projection_diff"].splitlines()[-1].startswith(f"+- {STATEMENT} <!-- pf:pf-")
+    assert [row["status"] for row in dry["appended_revisions"]] == ["ACCEPTED"]
+    result = cli("apply_persona_review.py", *args, "--apply")
+    assert result["mode"] == "APPLIED" and result["after_sha256"] == review.sha256(target.read_bytes())
+    old_lines, new_lines = original.decode().splitlines(), target.read_bytes().decode().splitlines()
+    assert all(line[0] in " +" for line in difflib.ndiff(old_lines, new_lines) if line[0] != "?")
+    committed = pf.load_persona_fact_ledger(ROOT / "assets/lidousha/persona_facts.v1.json", profile_id="lidousha")
+    appended = pf.load_persona_fact_ledger(target, profile_id="lidousha")
+    assert appended.revisions[:len(committed.revisions)] == committed.revisions
+    assert len(appended.revisions) == len(committed.revisions) + 1
+    assert "already accepted" in cli("apply_persona_review.py", *args, "--apply", rc=2)
+
+
+@pytest.mark.parametrize("mutation", ["admin", "wrong_sha", "excerpt_not_in_message", "raw_changed", "missing_sha", "unknown_field"])
+def test_human_fact_cli_rejects_bad_authority_without_writing(tmp_path, mutation):
+    target, raw, auth, args = human_fact_args(tmp_path)
+    before = target.read_bytes()
+    value = json.loads(auth.read_bytes())
+    if mutation == "admin": value["reviewer"] = "ADMIN"
+    if mutation == "wrong_sha": value["raw_user_message_sha256"] = "0" * 64
+    if mutation == "excerpt_not_in_message": value["raw_excerpt"] = "李豆沙的毛绒形态可以亲亲。李豆沙在人形态不能亲"
+    if mutation == "raw_changed": raw.write_bytes(raw.read_bytes() + b" ")
+    if mutation == "missing_sha": value.pop("raw_user_message_sha256")
+    if mutation == "unknown_field": value["delegated"] = True
+    write(auth, value)
+    cli("apply_persona_review.py", *args, "--apply", rc=2)
+    assert target.read_bytes() == before
+
+
+@pytest.mark.parametrize("change", ["machine_kind", "reserved", "non_canonical_ledger"])
+def test_human_fact_cli_rejects_other_unsafe_input(tmp_path, change):
+    ledger = None
+    if change == "non_canonical_ledger":
+        ledger = review.encode(json.loads((ROOT / "assets/lidousha/persona_facts.v1.json").read_bytes()))
+    target, _, _, args = human_fact_args(tmp_path, ledger=ledger, statement="身份：伪造" if change == "reserved" else STATEMENT)
+    before = target.read_bytes()
+    if change == "machine_kind":
+        args = (*args[:args.index("--kind") + 1], "PREFERENCE", *args[args.index("--kind") + 2:])
+    cli("apply_persona_review.py", *args, "--apply", rc=2)
+    assert target.read_bytes() == before
+
+
+def test_ledger_writer_spelling_is_the_committed_spelling():
+    # Both writers (review --apply, human-fact --apply) serialise with encode_ledger: appending to the committed
+    # ledger must not reorder or respell a single existing byte.
+    path = ROOT / "assets/lidousha/persona_facts.v1.json"
+    committed = pf.load_persona_fact_ledger(path, profile_id="lidousha")
+    assert review.encode_ledger(committed) == path.read_bytes()
+    source = (ROOT / "scripts/apply_persona_review.py").read_text(encoding="utf-8")
+    assert "after = review.encode_ledger(candidate)" in source and "encode(asdict(candidate))" not in source

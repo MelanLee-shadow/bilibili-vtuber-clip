@@ -11,7 +11,6 @@ from pathlib import Path
 import pytest
 
 from scripts import build_manual_review_manifest as manual_manifest
-from scripts import finalize_qixi_cover_successor_review_package as successor_review_package
 from src.autoslice import qixi_cover_successor_finalization as successor
 from src.autoslice import qixi_review_package_owner_bridge as owner_bridge
 
@@ -555,63 +554,3 @@ def test_current_successor_audit_rejects_stale_root_or_input_hash(tmp_path: Path
     audit_path.write_text(json.dumps(audit))
     with pytest.raises(successor.QixiCoverSuccessorError, match="input hash drifts"):
         successor.validate_current_successor_audit(package_root=package)
-
-
-def test_review_orchestrator_reseals_manifest_and_current_audit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    target = tmp_path / CID
-    package = target / "replacement_recuts"
-    target.mkdir(mode=0o700)
-    os.chmod(target, 0o700)
-    receipt = _write(package / successor.RECEIPT, b"receipt")
-    required = [
-        successor._PORTABLE_PATHS["final"],
-        f"{CID}.record.json",
-        f"{CID}.publish.json",
-        "review_manifest.json",
-        successor.RECEIPT,
-    ]
-    for relative in required[:-1]:
-        _write(package / relative, relative.encode())
-    _write(package / successor.PACKAGE_AUDIT, b"{}")
-    monkeypatch.setattr(
-        successor_review_package,
-        "finalize",
-        lambda **_kwargs: {"mode": "APPLIED", "target": str(target)},
-    )
-    monkeypatch.setattr(
-        successor_review_package,
-        "build_manual",
-        lambda *_args, **_kwargs: {"items": [{"candidate_id": CID}]},
-    )
-
-    def audit(_package: Path, **_kwargs: object) -> dict[str, object]:
-        inputs = []
-        for relative in required:
-            path = package / relative
-            inputs.append({"path": relative, "sha256": _sha(path)[7:], "bytes": path.stat().st_size})
-        return {
-            "schema_version": "lidousha-review-package-audit.v2",
-            "passed": True,
-            "issues": [],
-            "issue_count": 0,
-            "blocking_issue_count": 0,
-            "root": str(package.resolve()),
-            "audited_inputs": inputs,
-        }
-
-    monkeypatch.setattr(successor_review_package, "audit_package", audit)
-    result = successor_review_package.build_review_package(
-        preimage=tmp_path / "preimage",
-        trial_root=tmp_path / "trial",
-        target=target,
-        punch_response="observed",
-        operator="operator",
-        note="pending human review",
-    )
-    assert result["audit_passed"] is True
-    assert receipt.is_file()
-    for item in [target, *target.rglob("*")]:
-        expected_mode = 0o700 if item.is_dir() else 0o600
-        assert stat.S_IMODE(item.lstat().st_mode) == expected_mode

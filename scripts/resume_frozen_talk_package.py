@@ -684,7 +684,7 @@ def _materialize_resume_transaction(
     if profile_document is not None:
         preliminary_record[CLIP_PROFILE_FIELD] = profile_document
     try:
-        branding_intro = require_branding_intro(ROOT) if requires_intro(clip_form) else None
+        branding_intro = require_branding_intro(ROOT, clip_identity={"recording_date": ctx.date, "candidate_id": ctx.candidate_id}) if requires_intro(clip_form) else None
     except BrandingIntroError as exc:
         raise FrozenTalkResumeError(f"branding intro unavailable: {exc}") from exc
     burned_record = _burn_preview_subtitles(

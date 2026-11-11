@@ -14,6 +14,8 @@ from src.autoslice.agy_gemini_client import AgyRun
 from src.autoslice.producer_nested_acoustic import observe_prepared_nested_acoustics
 from tests.test_producer_nested_acoustic import _prepared
 
+pytestmark = pytest.mark.usefixtures("legacy_gemini_transport")
+
 
 def _sha(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()

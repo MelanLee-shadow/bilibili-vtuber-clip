@@ -85,6 +85,7 @@ class AssLaneStyle:
     # The external timed-lyrics tool historically delegates wrapping to libass.
     # Keep its cue grid/bytes; this affects layout, never speaker-label policy.
     preserve_cue_layout: bool = False
+    max_chars_per_line: int | None = None
 
 
 def _escape_burned_ass_text(text: str, mode: str) -> str:
@@ -112,7 +113,8 @@ def render_burned_ass(
             for cue, display in zip(cues, displays)]
     projected = ([(i, a, b, text) for i, (a, b, text) in enumerate(rows)]
                  if lane.preserve_cue_layout else
-                 _layout_cue_sequence_for_display(rows, continuity_keys=keys))
+                 _layout_cue_sequence_for_display(rows, continuity_keys=keys,
+                                                  max_chars=lane.max_chars_per_line))
     styles = {display.style for display in displays}
     if not styles <= dict(lane.styles).keys():
         raise ValueError("ASS lane lacks a required speaker style")
@@ -139,7 +141,9 @@ def render_burned_ass(
     ])
 
 
-def _write_sapphire_ass_from_srt(srt_path: Path, ass_path: Path) -> None:
+def _write_sapphire_ass_from_srt(
+    srt_path: Path, ass_path: Path, *, max_chars_per_line: int | None = None,
+) -> None:
     # The final SRT is the input authority for this display-only projection.
     # Discovering a new lexicon here could silently disagree with that file
     # (or a later operator correction) while leaving its recorded hash intact.
@@ -157,7 +161,8 @@ def _write_sapphire_ass_from_srt(srt_path: Path, ass_path: Path) -> None:
         [BurnedAssCue(c.source_start_ms, c.source_end_ms, c.text) for c in cues],
         host_speaker=HOST_SPEAKER,
         lane=AssLaneStyle(styles=(("Default", LDS_SAPPHIRE_STYLE),
-                                 ("LDS", LDS_SAPPHIRE_STYLE), ("GUEST", GUEST_WHITE_STYLE))),
+                                 ("LDS", LDS_SAPPHIRE_STYLE), ("GUEST", GUEST_WHITE_STYLE)),
+                          max_chars_per_line=max_chars_per_line),
     ), encoding="utf-8")
 
 
@@ -208,6 +213,17 @@ def _unsafe_word_cuts(text: str) -> set[int]:
     return blocked
 
 
+def _display_breaks(text: str, max_chars: int) -> set[int]:
+    """Use the manual lane's word and title boundaries for its narrower layout."""
+    if max_chars < ASS_SAFE_DISPLAY_CHARS:
+        # Import lazily: the shared boundary module also uses the renderer's
+        # existing protected-term authority when calculating its cuts.
+        from src.autoslice.manual_lane.subtitle_shape import legal_breaks
+
+        return legal_breaks(text)
+    return set(range(1, len(text))) - _unsafe_word_cuts(text)
+
+
 def _term_crosses_cue_boundary(left: str, right: str) -> bool:
     seam = len(left)
     text = left + right
@@ -218,7 +234,7 @@ def _term_crosses_cue_boundary(left: str, right: str) -> bool:
     )
 
 
-def _small_boundary_shift(left: str, right: str) -> tuple[str, str]:
+def _small_boundary_shift(left: str, right: str, *, max_chars: int = ASS_SAFE_DISPLAY_CHARS) -> tuple[str, str]:
     """Move <=2 lexical characters (plus attached punctuation), never merge cues.
 
     The concatenated spelling is immutable.  Natural punctuation breaks ties;
@@ -228,7 +244,7 @@ def _small_boundary_shift(left: str, right: str) -> tuple[str, str]:
     seam = len(left)
     if not _term_crosses_cue_boundary(left, right):
         return left, right
-    blocked = _unsafe_word_cuts(text)
+    allowed = _display_breaks(text, max_chars)
     closing = "，。！？、；：,.!?;:…~〜）)]】』」”’"
     punctuation = closing + "（([【『「“‘ "
     candidates = []
@@ -238,9 +254,9 @@ def _small_boundary_shift(left: str, right: str) -> tuple[str, str]:
         new_left, new_right = text[:cut], text[cut:]
         if (
             cut == seam
-            or cut in blocked
+            or cut not in allowed
             or not 1 <= lexical <= 2
-            or max(len(new_left), len(new_right)) > ASS_SAFE_DISPLAY_CHARS
+            or max(len(new_left), len(new_right)) > max_chars
             or not new_left.strip(punctuation)
             or not new_right.strip(punctuation)
             or new_right[0] in closing
@@ -272,6 +288,7 @@ def _layout_cue_sequence_for_display(
     cues: Sequence[tuple[int, int, str]],
     *,
     continuity_keys: Sequence[object] | None = None,
+    max_chars: int | None = None,
 ) -> list[tuple[int, int, int, str]]:
     """Source-index/start/end/display projection with bounded seam adjustments.
 
@@ -281,6 +298,9 @@ def _layout_cue_sequence_for_display(
     The source SRT remains byte-identical; deterministic long-line layout
     continues independently.
     """
+    limit = ASS_SAFE_DISPLAY_CHARS if max_chars is None else min(max_chars, ASS_SAFE_DISPLAY_CHARS)
+    if limit < 1:
+        raise ValueError("subtitle display width must be positive")
     keys = list(continuity_keys) if continuity_keys is not None else [None] * len(cues)
     if len(keys) != len(cues):
         raise ValueError("display continuity key count differs from source cues")
@@ -297,21 +317,21 @@ def _layout_cue_sequence_for_display(
             and end < next_end
             and next_end - start <= ASS_MAX_JOIN_DURATION_MS
         ):
-            texts[index], texts[index + 1] = _small_boundary_shift(texts[index], texts[index + 1])
+            texts[index], texts[index + 1] = _small_boundary_shift(texts[index], texts[index + 1], max_chars=limit)
     if "".join(text.replace("\n", "") for text in texts) != original_joined:
         raise ValueError("display boundary adjustment changed words")
     return [
         (index, a, b, text)
         for index, ((start, end, _), visible) in enumerate(zip(cues, texts, strict=True))
-        for a, b, text in _layout_cue_for_display(start, end, visible)
+        for a, b, text in _layout_cue_for_display(start, end, visible, max_chars=limit)
     ]
 
 
 def _safe_long_segments(segment: str, max_chars: int) -> list[str]:
     result: list[str] = []
     while len(segment) > max_chars:
-        blocked = _unsafe_word_cuts(segment)
-        valid = [i for i in range(1, max_chars + 1) if i not in blocked]
+        allowed = _display_breaks(segment, max_chars)
+        valid = [i for i in range(1, max_chars + 1) if i in allowed]
         if not valid:
             raise ValueError("an indivisible subtitle word exceeds display width")
         cut = valid[-1]
@@ -322,14 +342,14 @@ def _safe_long_segments(segment: str, max_chars: int) -> list[str]:
     return result
 
 
-def _split_text_segments(text: str) -> list[str]:
+def _split_text_segments(text: str, *, max_chars: int = ASS_SAFE_DISPLAY_CHARS) -> list[str]:
     """Natural punctuation first; word-safe length split only when necessary."""
     normalized = " ".join(text.replace("\r", "\n").split())
-    blocked = _unsafe_word_cuts(normalized)
+    allowed = _display_breaks(normalized, max_chars)
     segments: list[str] = []
     start = 0
     for index, char in enumerate(normalized):
-        if char in _TEXT_BREAK_STRONG + _TEXT_BREAK_WEAK and index + 1 not in blocked:
+        if char in _TEXT_BREAK_STRONG + _TEXT_BREAK_WEAK and index + 1 in allowed:
             segments.append(normalized[start : index + 1])
             start = index + 1
     if start < len(normalized):
@@ -337,7 +357,7 @@ def _split_text_segments(text: str) -> list[str]:
     return [
         part
         for segment in segments
-        for part in _safe_long_segments(segment, ASS_SAFE_DISPLAY_CHARS)
+        for part in _safe_long_segments(segment, max_chars)
     ]
 
 
@@ -355,7 +375,8 @@ def _pack_segments(segments: Sequence[str], max_chars: int) -> list[str]:
     return chunks
 
 
-def _layout_cue_for_display(start_ms: int, end_ms: int, text: str) -> list[tuple[int, int, str]]:
+def _layout_cue_for_display(start_ms: int, end_ms: int, text: str, *,
+                            max_chars: int = ASS_SAFE_DISPLAY_CHARS) -> list[tuple[int, int, str]]:
     """Prefer one complete phrase per line, with <=2 safe visual lines.
 
     This is presentation only. Existing long cues retain bounded sequential
@@ -367,17 +388,17 @@ def _layout_cue_for_display(start_ms: int, end_ms: int, text: str) -> list[tuple
     if len(physical_lines) > 1:
         if len(physical_lines) > ASS_MAX_VISUAL_LINES or any(not line for line in physical_lines):
             raise ValueError("subtitle physical line contract is invalid")
-        if any(len(line) > ASS_SAFE_DISPLAY_CHARS for line in physical_lines):
+        if any(len(line) > max_chars for line in physical_lines):
             raise ValueError("subtitle physical line exceeds the safe display width")
         return [(start_ms, end_ms, r"\N".join(physical_lines))]
 
-    segments = _split_text_segments(text)
+    segments = _split_text_segments(text, max_chars=max_chars)
     if not segments:
         return []
     duration_ms = max(0, end_ms - start_ms)
-    chunks = _pack_segments(segments, ASS_SAFE_DISPLAY_CHARS)
+    chunks = _pack_segments(segments, max_chars)
     if len(chunks) > 1 and duration_ms // len(chunks) < ASS_MIN_SUBCUE_MS:
-        chunks = _pack_segments(segments, ASS_SAFE_DISPLAY_CHARS * ASS_MAX_VISUAL_LINES)
+        chunks = _pack_segments(segments, max_chars * ASS_MAX_VISUAL_LINES)
     total_chars = sum(len(chunk) for chunk in chunks) or 1
     result: list[tuple[int, int, str]] = []
     cursor_ms = start_ms
@@ -387,7 +408,7 @@ def _layout_cue_for_display(start_ms: int, end_ms: int, text: str) -> list[tuple
             if index == len(chunks) - 1
             else min(end_ms, cursor_ms + max(1, (duration_ms * len(chunk)) // total_chars))
         )
-        display = _wrap_ass_text(chunk)
+        display = _wrap_ass_text(chunk, max_chars=max_chars)
         if chunk_end_ms > cursor_ms and display:
             result.append((cursor_ms, chunk_end_ms, display))
         cursor_ms = chunk_end_ms
@@ -399,11 +420,11 @@ def _wrap_ass_text(text: str, *, max_chars: int = ASS_MAX_CHARS_PER_LINE) -> str
     max_chars = min(max_chars, ASS_SAFE_DISPLAY_CHARS)
     if len(line) <= max_chars:
         return line
-    blocked = _unsafe_word_cuts(line)
+    allowed = _display_breaks(line, max_chars)
     valid = [
         i
         for i in range(1, len(line))
-        if i <= max_chars and len(line) - i <= max_chars and i not in blocked
+        if i <= max_chars and len(line) - i <= max_chars and i in allowed
     ]
     if not valid:
         raise ValueError("subtitle cannot fit two lines without splitting a protected word")

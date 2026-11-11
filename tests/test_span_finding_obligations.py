@@ -25,6 +25,8 @@ def closing():
     return {
         "status": "OBSERVED", "repaired": False, "timing_immutable": True,
         "decision_authority": "CPA_JUDGE", "request": request,
+        "policy_branch": "JUDGE_KEEPS_CURRENT",
+        "mutation_authority": {"status": "NOT_APPLIED"},
         "witness_judge": {
             "witness_request_sha256": witness_request["request_sha256"],
             "judge": {

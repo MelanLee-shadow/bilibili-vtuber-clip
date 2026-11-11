@@ -1,6 +1,7 @@
 import datetime as dt
 import json
 from pathlib import Path
+from types import SimpleNamespace
 import urllib.parse
 
 import pytest
@@ -1094,3 +1095,171 @@ def test_prompt_context_keeps_official_and_community_authority_separate(tmp_path
     assert "白色奶龙" in community
     assert "不是官方 roster" in community
     assert "机械改字权限" in community
+
+
+def _registry_document(generated_at):
+    members = [
+        {
+            "entity_id": f"bilibili:{1000 + index}",
+            "canonical": f"成员{index}",
+            "official_surfaces": [f"成员{index}"],
+            "aliases": [],
+            "official_mid": 1000 + index,
+            "affiliations": ["virtuareal"],
+            "official_sources": [{"source_id": "s", "kind": "k", "url": "https://example.org/s"}],
+        }
+        for index in range(20)
+    ]
+    return {
+        "schema_version": "vtuber-slice.streamer-registry.v1",
+        "generated_at": generated_at.isoformat(timespec="seconds"),
+        "expires_at": (generated_at + dt.timedelta(days=35)).isoformat(timespec="seconds"),
+        "status": "fresh",
+        "authority": "official_organization_sources",
+        "occurrence_policy": "ENTITY_EXISTENCE_ONLY_NOT_CUE_OCCURRENCE_EVIDENCE",
+        "sources": [],
+        "members": members,
+    }
+
+
+@pytest.mark.parametrize("case", ["missing", "unreadable", "invalid", "expired"])
+def test_community_names_degrades_explicitly_and_keeps_last_good_outputs(tmp_path, capsys, case):
+    from scripts.crawl_community_names import main
+
+    registry = tmp_path / "streamer_registry.json"
+    write = tmp_path / "community_names.json"
+    state = tmp_path / "community_name_state.json"
+    write.write_text("LAST-GOOD-SNAPSHOT\n", encoding="utf-8")
+    state.write_text("LAST-GOOD-STATE\n", encoding="utf-8")
+    if case == "unreadable":
+        registry.write_text("{not json", encoding="utf-8")
+    elif case == "invalid":
+        registry.write_text(json.dumps({"schema_version": "other"}), encoding="utf-8")
+    elif case == "expired":
+        old = NOW - dt.timedelta(days=40)
+        registry.write_text(json.dumps(_registry_document(old)), encoding="utf-8")
+
+    exit_code = main([
+        "--registry", str(registry),
+        "--state", str(state),
+        "--write", str(write),
+        "--now", NOW.isoformat(),
+        "--no-llm",
+    ])
+
+    err = capsys.readouterr().err
+    assert exit_code == 2
+    assert '"degraded": true' in err
+    assert f'"reason": "registry_{case}"' in err
+    assert write.read_text(encoding="utf-8") == "LAST-GOOD-SNAPSHOT\n"
+    assert state.read_text(encoding="utf-8") == "LAST-GOOD-STATE\n"
+
+
+def test_relation_batches_after_the_run_budget_are_refused_without_a_cpa_call():
+    from src.autoslice.community_name_crawler import RuntimeBudgetedLlmCall
+
+    registry, state, bundles = _semantic_review_fixture(9)
+    config = _config()
+    clock = {"now": 0.0}
+    dispatched = []
+
+    def review(prompt):
+        dispatched.append(prompt)
+        clock["now"] += 1000.0
+        cards = json.loads(prompt.split("UNTRUSTED_DATA=", 1)[1])
+        return json.dumps(
+            {
+                "relation_reviews": [
+                    {"mapping_key": card["mapping_key"], "relation_kind": "alias_of"}
+                    for card in cards
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    budgeted = RuntimeBudgetedLlmCall(review, deadline=1500.0, clock=lambda: clock["now"])
+    reviews, error, batches, cards = _judge_existing_relation_kinds(
+        state=state,
+        registry=registry,
+        bundles=bundles,
+        config=config,
+        llm_call=budgeted,
+        now=NOW,
+    )
+
+    assert len(dispatched) == 2
+    assert list(reviews) == [f"{index:064x}" for index in range(1, 9)]
+    assert error == (
+        "batch-2: CommunityNameError: community-name runtime budget exhausted before CPA request"
+    )
+    assert batches == 2
+    assert cards == 9
+
+
+def test_community_names_main_stops_cpa_batches_at_the_run_budget(tmp_path, monkeypatch):
+    import scripts.crawl_community_names as script
+    from src.autoslice.community_name_crawler import CommunityNameError
+
+    clock = {"now": 0.0}
+    monkeypatch.setattr(
+        script,
+        "time",
+        SimpleNamespace(monotonic=lambda: clock["now"], sleep=lambda seconds: None),
+    )
+    dispatched = []
+
+    def fake_build_llm_call(config):
+        del config
+
+        def call(prompt):
+            dispatched.append(prompt)
+            clock["now"] += 1000.0
+            return "{}"
+
+        return call
+
+    refused = []
+
+    def fake_crawl(*, client, registry, config, state, now, llm_call, forced_entities):
+        del client, registry, config, state, now, forced_entities
+        for index in range(3):
+            try:
+                llm_call(f"batch-{index}")
+            except CommunityNameError as exc:
+                refused.append(str(exc))
+        return {
+            "state": {
+                "mappings": [],
+                "last_run": {
+                    "judge_error": "; ".join(refused) or None,
+                    "network_requests": 0,
+                    "selected_entities": [],
+                    "successful_entities": [],
+                    "search_stats": {},
+                    "comment_stats": {},
+                    "search_circuit": {},
+                    "comment_circuit": {},
+                },
+            },
+            "snapshot": None,
+            "full_failure": False,
+        }
+
+    monkeypatch.setattr(script, "_load_registry", lambda path, now: {"members": []})
+    monkeypatch.setattr(script, "build_llm_call", fake_build_llm_call)
+    monkeypatch.setattr(script, "crawl", fake_crawl)
+
+    exit_code = script.main([
+        "--registry", str(tmp_path / "registry.json"),
+        "--state", str(tmp_path / "state.json"),
+        "--write", str(tmp_path / "community_names.json"),
+        "--cache-dir", str(tmp_path / "cache"),
+        "--max-runtime-seconds", "1500",
+        "--request-interval-seconds", "0",
+    ])
+
+    assert exit_code == 0
+    assert len(dispatched) == 2
+    assert refused == [
+        "community-name runtime budget exhausted before CPA request",
+    ]

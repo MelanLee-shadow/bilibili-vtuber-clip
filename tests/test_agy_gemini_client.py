@@ -22,6 +22,8 @@ import pytest
 
 from src.autoslice import agy_gemini_client, gemini_backup_policy
 
+pytestmark = pytest.mark.usefixtures("legacy_gemini_transport")
+
 
 # --------------------------------------------------------------------------
 # ④ 路径解析

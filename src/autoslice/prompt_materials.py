@@ -54,15 +54,27 @@ def material_multiset(values):
     return sorted(values, key=_json)
 
 
-def canonical_materials(value, *, bag_paths=EVIDENCE_BAGS, _path=()):
+def canonical_materials(value, *, bag_paths=EVIDENCE_BAGS, _path=(), _memo=None, _read_only=False):
+    if _read_only and _memo is None:
+        _memo = {}
+    # Path matters only while it can still name a configured bag. Shared
+    # ordinary subtrees can then retain one normalized graph node.
+    relevant = _path if any(path[:len(_path)] == _path for path in bag_paths) else None
+    key = (id(value), relevant)
+    if _memo is not None and isinstance(value, (Mapping, list, tuple)) and key in _memo:
+        return _memo[key]
     if isinstance(value, Mapping):
-        return {key: canonical_materials(child, bag_paths=bag_paths, _path=(*_path, key))
-                for key, child in value.items()}
-    if isinstance(value, (list, tuple)):
-        rows = [canonical_materials(child, bag_paths=bag_paths, _path=(*_path, i))
+        result = {name: canonical_materials(child, bag_paths=bag_paths, _path=(*_path, name), _memo=_memo, _read_only=_read_only)
+                  for name, child in value.items()}
+    elif isinstance(value, (list, tuple)):
+        rows = [canonical_materials(child, bag_paths=bag_paths, _path=(*_path, i), _memo=_memo, _read_only=_read_only)
                 for i, child in enumerate(value)]
-        return material_multiset(rows) if _path in bag_paths else rows
-    return value
+        result = material_multiset(rows) if _path in bag_paths else rows
+    else:
+        return value
+    if _memo is not None:
+        _memo[key] = result
+    return result
 
 
 def prompt_material_view(prompt):
@@ -72,6 +84,7 @@ def prompt_material_view(prompt):
     second equality rule. JSON formatting/key order is representation; strings
     within a block and the surrounding instructions are not normalized.
     """
+    from .discovery_evidence_presentation import expand_source_context
     decoder, end, result = json.JSONDecoder(), 0, []
     for match in re.finditer(r'(?m)^[ \t]*[\[{]', prompt):
         start = match.end() - 1
@@ -81,7 +94,7 @@ def prompt_material_view(prompt):
             value, stop = decoder.raw_decode(prompt, start)
         except ValueError:
             continue
-        result.extend([prompt[end:start], canonical_materials(value)])
+        result.extend([prompt[end:start], canonical_materials(expand_source_context(value))])
         end = stop
     result.append(prompt[end:])
     return result
@@ -147,9 +160,12 @@ def terminal_material_index(data, *, named_materials=True):
         elif isinstance(value, list):
             for i, child in enumerate(value):
                 visit(child, [*path, i])
-    if named_materials:
-        visit(data, [])
-    return refs
+    try:
+        if named_materials:
+            visit(data, [])
+        return refs
+    finally:
+        del visit
 
 
 def terminal_context_source(data, refs, reference):

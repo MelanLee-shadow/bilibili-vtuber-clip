@@ -401,12 +401,12 @@ def _deployment_repository(runtime_root: Path) -> Path:
     from src.autoslice.runtime_code_lease import VERSION_ENV, immutable_version
     pinned=os.environ.get(VERSION_ENV)
     own=Path(__file__).resolve().parents[2]
-    if pinned:
-        repo=Path(pinned)
-        if own.parent.parent==root/'versions' and repo!=own:
-            raise ProducerDeliveryTransactionError('deployed authority version differs from running code')
-    elif own.parent.parent==root/'versions':
-        repo=own
+    if pinned or own.parent.parent == root / 'versions':
+        from src.autoslice.deployed_code_root import DeployedCodeRootError, deployed_code_root
+        try:
+            repo = deployed_code_root(root, executing_repo=own)
+        except DeployedCodeRootError as exc:
+            raise ProducerDeliveryTransactionError(str(exc)) from exc
     elif (root/'current/repo').is_dir():
         repo=(root/'current/repo').resolve()
     elif repo.is_symlink():

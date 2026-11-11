@@ -144,9 +144,7 @@ def _source_inputs(
                 "speaker_session_context", "speaker_session_context_path"):
         if item.get(key):
             paths.add(Path(str(item[key])))
-    # Intro videos are runtime assets outside Git. Resolve the committed
-    # profile policy, including every rotation member, before remote staging,
-    # only when the candidate's declared clip form takes the intro.
+    # Resolve the intro policy before staging when the clip form requires it.
     from src.autoslice.clip_profile import clip_profile_from_spec, requires_intro
     clip_form = clip_profile_from_spec(item, lane="song" if lane == "song" else "talk")
     if requires_intro(clip_form) and (active_repository(base) / "profiles").is_dir():
@@ -155,9 +153,11 @@ def _source_inputs(
         repo = active_repository(base)
         profile = load_channel_profile(repo_root=repo, profile_binding=profile_binding)
         intro = require_branding_intro(repo,
-            manifest_path=profile.asset_file("branding_intro_manifest", repo_root=repo))
+            manifest_path=profile.asset_file("branding_intro_manifest", repo_root=repo),
+            clip_identity={"recording_date": date, "candidate_id": item["cid"]} if item.get("cid") else None)
+        if intro and intro.get("identity_required"): raise runtime_storage.CapacityBudgetError("branding intro needs clip identity")
         if intro:
-            paths.update(Path(row["media_path"]) for row in intro["candidates"])
+            paths.update(Path(path) for path in intro["required_media_paths"])
     for path in paths:
         if not path.is_absolute() or ".." in path.parts or path.is_symlink() or not path.is_file():
             raise runtime_storage.CapacityBudgetError(f"overflow input is unavailable or unsafe: {path}")

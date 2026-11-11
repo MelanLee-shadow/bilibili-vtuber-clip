@@ -402,9 +402,12 @@ def _review_summary(message: str) -> dict[str, object] | None:
 
 
 def run_one(args: argparse.Namespace) -> dict[str, object]:
+    from scripts.continuation_authority_preflight import sandbox_environment_report
+
     report: dict[str, object] = {"schema_version": SCHEMA_VERSION, "spec": str(args.spec),
                                  "code_root": str(args.code_root),
-                                 "isolation_problems": isolation_problems()}
+                                 "isolation_problems": isolation_problems(),
+                                 **sandbox_environment_report()}
     if report["isolation_problems"]:
         report["outcome"] = "REFUSED_NOT_ISOLATED"
         return report
@@ -512,6 +515,8 @@ def blocks_of(rows: list[dict[str, Any]], report: Mapping[str, object],
 
 def summary_row(report: Mapping[str, object]) -> dict[str, object]:
     return {"candidate_id": report.get("candidate_id"), "outcome": report.get("outcome"),
+            "sandbox_env_keys": report.get("sandbox_env_keys"),
+            "final_review_mode": report.get("final_review_mode"),
             "stage_at_stop": report.get("stage_at_stop"), "elapsed_s": report.get("elapsed_s"),
             "blocks": [{key: block.get(key) for key in ("check", "stage", "site", "pre_judgment",
                                                          "tainted", "production_stop")}

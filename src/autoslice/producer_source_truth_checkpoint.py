@@ -5,10 +5,68 @@ from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import copy
 import hashlib
 import json
+import os
 from itertools import chain
 from pathlib import Path
 from .producer_text_checkpoint import _frozen_binding, _frozen_bytes
 from .source_subtitle_truth import apply_source_subtitle_truth, build_source_truth_preview_receipt
+
+
+def build_retained_preview(text, *, stage, spec, durations, ledger_path, out_root,
+                           apply_truth, build_receipt):
+    """Build a phase preview and retain its actual preimage as one operation."""
+    _, audit = apply_truth(text, spec=spec, durations=durations, ledger_path=ledger_path)
+    receipt = build_receipt(input_srt_text=text, source_truth_audit=audit, stage=stage)
+    retain_preview_input(text, stage=stage, receipt=receipt, out_root=out_root)
+    return receipt
+
+
+def source_parent_input(spec):
+    """Follow the verified SOURCE parent instead of relabelling a repaired SRT."""
+    from collections.abc import Mapping
+    from .source_checkpoint_parent import SCHEMA, bound, validate_source_checkpoint_parent
+    retained = spec.get('retained_source_input')
+    if isinstance(retained, Mapping) and retained.get('schema_version') == SCHEMA:
+        parent = validate_source_checkpoint_parent(spec, runtime=True)
+        # A SOURCE successor's existing_srt is its repaired surface, not the
+        # original substrate named by input_srt_sha256. Follow the ordinary
+        # verified parent instead of relabelling that surface as original ASR.
+        assert parent is not None
+        return bound(parent['parent_spec'])
+    return None
+
+
+def source_review_preflight(snapshot, *, spec, durations, ledger_path,
+                            load_original_witness, error_type):
+    """Prepare truth-review and language inputs without changing release authority."""
+    authority = snapshot['chat_authority']
+    final_review = authority['final_review_audit']
+    added_terms = added_local_term_review_required(
+        authority, spec=spec, durations=durations, ledger_path=ledger_path,
+        current_text=snapshot['srt_text'],
+    )
+    if snapshot.get('source_observation_parent') is not None and not added_terms:
+        raise error_type('SOURCE_REPLAY_OBSERVATIONS_TRUTH_SCOPE_DRIFT')
+    pending_review = final_review.get('status') == 'AUDITOR_UNAVAILABLE' or added_terms
+    language_reference = snapshot.get('verified_language_reference')
+    source_language = authority.get('final_source_language_preservation_audit') or {}
+    if language_reference is None and (source_language.get('status') == 'SKIPPED_CUE_COUNT_MISMATCH'
+                                      or source_language.get('typed_language_reference') is not None):
+        language_reference = load_original_witness()
+    return added_terms, pending_review, language_reference
+
+
+def pending_source_language_scan(authority, *, attempted, error_type):
+    """Allow one ordinary G scan attempt; a persisted failed attempt stays blocked."""
+    from .discovery_channels import language_scan_complete
+    pending = (os.environ.get('AUTOSLICE_FINAL_REVIEW_MODE') == 'per_finding'
+               and not language_scan_complete(authority))
+    if pending and attempted:
+        # The ordinary finalizer has persisted this attempt's actual failure.
+        # Keep the missing G prerequisite blocked; do not recurse into another
+        # request or manufacture an OBSERVED scan from its disclosure.
+        raise error_type('AUDIO_LANGUAGE_DISCOVERY_UNAVAILABLE')
+    return pending
 
 
 def freeze_ledger(path: Path | None, out_root: Path) -> Path | None:
@@ -55,6 +113,34 @@ def _preview(text, *, stage, path, spec, durations):
     return build_source_truth_preview_receipt(
         input_srt_text=text, source_truth_audit=audit, stage=stage
     )
+
+
+def retain_preview_input(text, *, stage, receipt, out_root):
+    """Keep a phase receipt's exact preimage before later stages replace it."""
+    if (stage not in {'pre_entity_arbitration', 'pre_correction_review'}
+            or receipt.get('stage') != stage
+            or _sha(text.encode('utf-8')) != receipt.get('input_srt_sha256')):
+        raise ValueError('SOURCE_TRUTH_PREVIEW_INPUT_DRIFT')
+    return _frozen_bytes(out_root / 'source-truth-input', stage, text.encode('utf-8'), '.srt')
+
+
+def _retained_phase_inputs(stage, expected_sha, roots):
+    digest = str(expected_sha or '').removeprefix('sha256:')
+    if len(digest) != 64 or any(c not in '0123456789abcdef' for c in digest):
+        raise ValueError('SOURCE_TRUTH_PREVIEW_INPUT_DRIFT')
+    for root in dict.fromkeys(roots):
+        for directory, role in (('source-truth-input', stage),
+                                ('partial-source-text-input', 'name_reference'),
+                                ('partial-source-text-input', 'language_witness')):
+            path = root / directory / f'{role}.{digest}.srt'
+            if not path.exists() and not path.is_symlink():
+                continue
+            if any(p.is_symlink() for p in (path, *path.parents)) or not path.is_file():
+                raise ValueError('SOURCE_TRUTH_PREVIEW_INPUT_DRIFT')
+            raw = path.read_bytes()
+            if _sha(raw) != expected_sha:
+                raise ValueError('SOURCE_TRUTH_PREVIEW_INPUT_DRIFT')
+            yield raw.decode('utf-8')
 
 
 def added_local_term_review_required(authority, *, spec, durations, ledger_path, current_text):
@@ -135,6 +221,7 @@ def rebase_pending_previews(
     current_text,
     out_root,
     allow_added_local_terms=False,
+    source_input_roots=(),
 ):
     """Regenerate both active previews from one frozen ledger, keep old proof.
 
@@ -240,22 +327,11 @@ def rebase_pending_previews(
         old = previews.get(stage)
         if not isinstance(old, dict):
             raise ValueError("SOURCE_TRUTH_PREVIEW_RECEIPTS_MISSING")
-        retained_inputs = []
-        # A completed source checkpoint need not still use its pre-review
-        # name reference. The ordinary partial emitter retained those exact
-        # bytes before finalization; they are only an old receipt's preimage.
-        for role in ('name_reference', 'language_witness'):
-            digest = str(old.get('input_srt_sha256') or '').removeprefix('sha256:')
-            if len(digest) != 64 or any(c not in '0123456789abcdef' for c in digest):
-                raise ValueError('SOURCE_TRUTH_PREVIEW_INPUT_DRIFT')
-            path = out_root/'partial-source-text-input'/f'{role}.{digest}.srt'
-            if path.exists() or path.is_symlink():
-                if path.is_symlink() or not path.is_file():
-                    raise ValueError('SOURCE_TRUTH_PREVIEW_INPUT_DRIFT')
-                raw = path.read_bytes()
-                if _sha(raw) != old['input_srt_sha256']:
-                    raise ValueError('SOURCE_TRUTH_PREVIEW_INPUT_DRIFT')
-                retained_inputs.append(raw.decode('utf-8'))
+        # SOURCE successors have their own output root. The caller supplies
+        # only roots from its already validated immutable SOURCE parent;
+        # matching bytes remain preimages, never text or release authority.
+        retained_inputs = list(_retained_phase_inputs(stage, old.get('input_srt_sha256'),
+                                                     (out_root, *source_input_roots)))
         texts = {
             text
             for text in [*inputs, *retained_inputs, *(t for s, t in phase_inputs if s == stage)]
@@ -265,6 +341,7 @@ def rebase_pending_previews(
             raise ValueError("SOURCE_TRUTH_PREVIEW_INPUT_DRIFT")
         text = texts.pop()
         matched = original_ledger(text, stage, old)
+        retain_preview_input(text, stage=stage, receipt=old, out_root=out_root)
         refreshed = _preview(text, stage=stage, path=ledger_path, spec=spec, durations=durations)
         identity_keys = {"ledger_sha256", "source_truth_audit_sha256", "receipt_sha256"}
         if {k: v for k, v in old.items() if k not in identity_keys} != {

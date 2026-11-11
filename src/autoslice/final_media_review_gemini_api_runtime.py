@@ -1,9 +1,9 @@
 """Create-only runtime manifest for direct Gemini Files API final review.
 
-The route is explicit and provider-free at provisioning time.  It binds the
-normal hidden-sentinel runner, the direct API adapter, ffmpeg/ffprobe and one
-configured model ID.  At least one free Gemini API key must already be present
-in the ordinary runner environment, but no credential value is persisted.
+Provisioning is provider-free. It binds the normal hidden-sentinel runner,
+adapter, ffmpeg/ffprobe and one configured model ID. CPA is the default;
+configured free keys enable the registered Files exception and require a
+joint physical proof. No credential value is persisted.
 
 Provisioning never claims audio/video capability.  Only the independent
 hidden dual-media sentinel may seal the short-lived raw-AV capability.
@@ -35,6 +35,7 @@ PROVIDER = "gemini_api"
 VIDEO_FPS = 5.0
 ENDPOINT_FAMILY = "files_api_generate_content_static_5fps"
 CPA_ENDPOINT_FAMILY = "cpa_native_inline_generate_content_static_5fps"
+CPA_FILES_ENDPOINT_FAMILY = "cpa_inline_and_files_generate_content_static_5fps"
 CAPABILITY_ID = "gemini-api-files-dual-media"
 ENABLED_ENV = "AUTOSLICE_FINAL_MEDIA_GEMINI_API_ENABLED"
 MODEL_ENV = "AUTOSLICE_FINAL_MEDIA_GEMINI_API_MODEL"
@@ -57,7 +58,10 @@ _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 def selected_endpoint_family(environment: Mapping[str, str] | None = None) -> str:
     """Capability proof follows the wire protocol; ruling/model identity does not."""
-    return CPA_ENDPOINT_FAMILY if cpa_gemini_enabled(environment) else ENDPOINT_FAMILY
+    selected = os.environ if environment is None else environment
+    if not cpa_gemini_enabled(selected):
+        return ENDPOINT_FAMILY
+    return CPA_FILES_ENDPOINT_FAMILY if configured_free_keys(selected) else CPA_ENDPOINT_FAMILY
 
 
 class FinalMediaReviewGeminiApiRuntimeError(ValueError):
@@ -202,7 +206,9 @@ def _manifest(
     model = _model(environment)
     from .cpa_gemini_client import enabled
     cpa_managed = enabled(environment)
-    keys = [] if cpa_managed else configured_free_keys(environment)
+    endpoint_family = selected_endpoint_family(environment)
+    keys = (configured_free_keys(environment)
+            if endpoint_family != CPA_ENDPOINT_FAMILY else [])
     if not keys and not cpa_managed:
         raise _error(
             "FINAL_MEDIA_REVIEW_GEMINI_API_KEYS_MISSING",
@@ -242,11 +248,13 @@ def _manifest(
         {
             "schema_version": SENTINEL_RUNTIME_SCHEMA_VERSION,
             **({"code_binding": code_binding} if code_binding is not None else {}),
-            "capability_id": "gemini-cpa-native-dual-media" if cpa_managed else CAPABILITY_ID,
+            "capability_id": ("gemini-cpa-files-dual-media"
+                if endpoint_family == CPA_FILES_ENDPOINT_FAMILY
+                else "gemini-cpa-native-dual-media" if cpa_managed else CAPABILITY_ID),
             "provider": PROVIDER,
             "transport": "content_bound_command",
             "model": model,
-            "endpoint_family": selected_endpoint_family(environment),
+            "endpoint_family": endpoint_family,
             "runner": {
                 "path": runner.relative_to(root).as_posix(),
                 "sha256": runner_sha,
@@ -388,6 +396,7 @@ def ensure_gemini_api_sentinel_runtime(
 
 __all__ = [
     "CPA_ENDPOINT_FAMILY",
+    "CPA_FILES_ENDPOINT_FAMILY",
     "selected_endpoint_family",
     "ADAPTER_RELATIVE",
     "CAPABILITY_ID",

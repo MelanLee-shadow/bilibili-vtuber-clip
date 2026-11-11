@@ -302,3 +302,44 @@ def test_package_title_replay_uses_verified_portable_speaker_subtitles(tmp_path)
             cover_path=cover,
             speaker_srt_path=speaker,
         )
+# Draft only (not in worktree): appended to tests/test_title_cover_title_policy.py
+
+
+
+
+def test_title_without_quotation_marks_passes_without_subtitle_quote():
+    result = check_title_quotes("【李豆沙】她这次真的破防了，连说了三遍", SRT)
+    assert result["status"] == "PASS" and result["reason_codes"] == []
+    assert result["matches"] == []
+
+
+def test_quoted_phrase_not_in_final_subtitles_fails():
+    result = check_title_quotes("【李豆沙】李豆沙说“我最喜欢你”", SRT)
+    assert result["status"] == "FAIL"
+    assert "TITLE_QUOTE_NOT_IN_FINAL_SUBTITLES" in result["reason_codes"]
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "【李豆沙】怎么“我讨厌你还不许讨厌我",
+        "【李豆沙】怎么我讨厌你”还不许讨厌我",
+        '【李豆沙】怎么"我讨厌你还不许讨厌我',
+    ],
+)
+def test_unpaired_quotation_marks_fail(title):
+    result = check_title_quotes(title, SRT)
+    assert result["status"] == "FAIL"
+    assert "TITLE_QUOTE_UNBALANCED" in result["reason_codes"]
+
+
+def test_declared_quote_missing_from_title_uses_its_own_code():
+    for declared in ("我讨厌你", {"text": "我讨厌你", "speaker": "李豆沙"}):
+        result = check_title_quotes("【李豆沙】没有引号的标题", SRT, declared_quote=declared)
+        assert result["status"] == "FAIL"
+        assert result["reason_codes"] == ["TITLE_DECLARED_QUOTE_MISSING"]
+
+
+def test_declared_quote_present_and_verbatim_passes():
+    result = check_title_quotes(TITLE, SRT, declared_quote="我讨厌你")
+    assert result["status"] == "PASS" and result["reason_codes"] == []

@@ -162,7 +162,7 @@ def test_terminal_b_rejects_tampered_or_incomplete_real_evidence(
     )
 
 
-def test_real_terminal_c_cannot_close_an_independent_span(tmp_path, monkeypatch):
+def test_real_terminal_c_requires_its_full_finding_to_close_an_independent_span(tmp_path, monkeypatch):
     audit, _ = _terminal_audit(tmp_path, monkeypatch, c_reply)
     request = audit["request"]
     assert audit["keep_route"] == "C_MEANING_EQUIVALENT"
@@ -172,6 +172,11 @@ def test_real_terminal_c_cannot_close_an_independent_span(tmp_path, monkeypatch)
         after=request["current_cue"],
         window=[request["matched_start_ms"], request["matched_end_ms"]],
         keep=True,
+    )
+    assert _valid_closing_adjudication(
+        audit, before=request["current_cue"], after=request["current_cue"],
+        window=[request["matched_start_ms"], request["matched_end_ms"]], keep=True,
+        finding={**audit["rebuilt_finding"], "exact_release_adjudication": audit},
     )
 
 

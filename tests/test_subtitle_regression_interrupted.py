@@ -119,7 +119,9 @@ def specimen(tmp_path, monkeypatch):
     def unknown(prompt):
         raise TimeoutError("synthetic timeout")
     unknown.cpa_cache_identity = success.cpa_cache_identity
-    with pytest.raises(TimeoutError):
+    # The synthetic timeout exhausts the ordinary retry ladder; skip its real backoff waits.
+    with pytest.raises(TimeoutError), monkeypatch.context() as quick:
+        quick.setattr("src.autoslice.cpa_request_lifecycle.time.sleep", lambda _seconds: None)
         recorder.wrap(unknown)("synthetic unknown transport")
     cpa = folder / "cpa-text-exchanges/request-synthetic"
     prompt, completion = b"synthetic prompt", b'{"status":"UNRESOLVED"}'

@@ -589,6 +589,12 @@ def validated_observation_nominations(
             continue
         verdict = json_object(validated.get('verdict'))
         start, end = verdict.get('audio_start_ms'), verdict.get('audio_end_ms')
+        if start is None and end is None:
+            # The segmented Gemini reader returns the validated physical crop
+            # separately from its transcript. Its nominal complete block is
+            # range evidence, not a native single-cue/word timestamp.
+            window = json_object(validated.get('source_window'))
+            start, end = window.get('crop_start_ms'), window.get('crop_end_ms')
         if type(start) is not int or type(end) is not int or end <= start:
             rejected.append('DISCOVERY_OBSERVATION_CLOCK_INVALID')
             continue
@@ -708,6 +714,27 @@ def prefetch_fullclip(
             for future in pending:
                 result.extend(json_object(row) for row in future.result())
     return tuple(result)
+
+
+def fullclip_scan_observations(observations: Sequence[object]) -> tuple[object, ...]:
+    """Retain failures in the audit; only definite service failures aren't audio."""
+    from src.autoslice.native_range_routing import native_range_service_failure
+    return tuple(row for row in observations if not (
+        isinstance(row, Mapping) and native_range_service_failure(row)))
+
+
+def fullclip_scan_complete(observations: Sequence[object]) -> bool:
+    """C0 needs two actual listening models; transport aliases add no coverage.
+
+    The ordinary nomination reader still reopens every successful artifact and
+    source/window binding. This predicate does not grant evidence authority.
+    """
+    rows = fullclip_scan_observations(observations)
+    if not rows or any(not isinstance(row, Mapping) or row.get('status') != 'OBSERVED'
+                       for row in rows):
+        return False
+    return len({model_identity_key(str(row.get('model') or '')) for row in rows
+                if isinstance(row, Mapping) and row.get('provider') and row.get('model')}) >= 2
 
 
 def _legacy_call(function: object, *args: object, **kwargs: object) -> object:
@@ -1004,8 +1031,8 @@ class _ClosureDiscoveryPorts:
         observations = prefetch_fullclip(request.srt_text, verifier=verifier,
             source=full_source, source_offset_ms=inputs.timeline_offset_ms)
         acoustic['fullclip_discovery_observations'] = json_value(observations)
-        acoustic['fullclip_discovery_status'] = ('OBSERVED' if observations
-            and all(row.get('status') == 'OBSERVED' for row in observations) else 'INCOMPLETE')
+        acoustic['fullclip_discovery_status'] = ('OBSERVED'
+            if fullclip_scan_complete(observations) else 'INCOMPLETE')
         if source is None:
             raise DiscoveryContractError('DISCOVERY_SCAN_SOURCE_MISSING')
 
@@ -1115,8 +1142,8 @@ class _ClosureDiscoveryPorts:
             or request.work.task is None
             or request.state.source_sha256.removeprefix('sha256:') != self.inputs.source_sha256.removeprefix('sha256:')):
             raise DiscoveryContractError('DISCOVERY_TERMINAL_EVENT_INVALID')
-        original = request.artifacts.get(request.work.task.finding_ref).value()
-        current = request.artifacts.get(event.spec.finding_ref).value()
+        original = request.artifacts.get(request.work.task.finding_ref).read_view()
+        current = request.artifacts.get(event.spec.finding_ref).read_view()
         values = original.get('discovery_nominations')
         if values is None:
             metadata = original.get('discovery_task')

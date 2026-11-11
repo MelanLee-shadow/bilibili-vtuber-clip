@@ -30,7 +30,6 @@ _CAPTION_DISPLAY_SURFACE_RULES = tuple(
     for rule in CHANNEL_PROFILE.canonical_surface_rules
     if rule.authority == _CAPTION_DISPLAY_CANON_AUTHORITY
 )
-_EXPECTED_VALUE_SURFACE_RULES = expected_value_surface_rules()
 _JAPANESE_NATIVE_SCRIPT_RULES = tuple(
     rule
     for rule in CHANNEL_PROFILE.canonical_surface_rules
@@ -50,7 +49,7 @@ def _partition_expected_value_surface_rules():
     registered = registered_terms()
     eligible = []
     conflicts = []
-    for rule in _EXPECTED_VALUE_SURFACE_RULES:
+    for rule in expected_value_surface_rules():
         if rule.surface in registered and rule.canonical in registered:
             conflicts.append(rule)
         else:

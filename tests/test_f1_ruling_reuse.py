@@ -264,10 +264,13 @@ def test_recorder_actual_answer_roundtrip_and_top_claim_generation(tmp_path, mon
     replay = recorder().wrap(call)('same question')
     assert first == replay and replay.answering_model == 'fallback' and len(call.calls) == 1
     call.cpa_cache_identity['models'] = ['top']
-    recorder().wrap(call)('same question')
-    assert len(call.calls) == 2
+    current = recorder()
+    restored = current.wrap(call)('same question')
+    assert restored == first and restored.answering_model == 'fallback'
+    assert len(call.calls) == 1
+    assert current.audit()['events'][-1]['provider_calls'] == 0
     entries = [json.loads(p.read_text()) for p in (tmp_path / 'cache/semantic-cpa-attempts').rglob('*.json')]
-    assert len(entries) == 2
+    assert len(entries) == 1  # Request replay is not another unresolved observation.
     assert all(e['request']['model']['models'] == ['top'] and
         e['answering_model_identity']['models'] == ['fallback'] for e in entries)
 
