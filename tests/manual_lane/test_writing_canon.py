@@ -277,6 +277,7 @@ def _package_ctx(tmp_path, final_text, *, title="【李豆沙】她破防了", c
         (ctx.clip_dir / rel).parent.mkdir(parents=True, exist_ok=True)
         (ctx.clip_dir / rel).write_text("{}", encoding="utf-8")
     (ctx.clip_dir / "title/title.txt").write_text(title + "\n", encoding="utf-8")
+    (ctx.clip_dir / "burn/intro_result.json").write_text(json.dumps({"intro_offset_ms": 0}), encoding="utf-8")
     (ctx.clip_dir / "title/candidates.json").write_text(json.dumps({"cover_lines": list(cover)}, ensure_ascii=False),
                                                         encoding="utf-8")
     srt = f"1\n00:00:00,000 --> 00:00:02,000\n{final_text}\n"

@@ -1,4 +1,4 @@
-"""Three guards at the start of the package step (step 8), before anything is built or deleted.
+"""Four guards at the start of the package step (step 8), before anything is built or deleted.
 
 SPEECH_WITHOUT_SUBTITLES  a finished clip must not carry a stretch of real speech that has no subtitle (incident:
     the owner marked gift-thanks sentences 删, the import kept only the rest, the video was not cut, and the video went out with
@@ -11,6 +11,9 @@ PUBLISHED_PACKAGE_PROTECTED  a package that is sealed (review_manifest.json) and
     deleted or overwritten: the first-publication evidence binds the package by path and hash.  Redoing a published clip is
     done in another directory (a successor clip: `revise`, or trim_run).  The registry cannot be read: also stops (cannot
     confirm).
+AUDIO_SILENT_UNDER_SUBTITLE  a finished clip must have sound under its subtitles: a subtitle of at least a second whose whole
+    time is digital silence in burn/final.mp4 (intro included) fails the step, naming the line and its time (package_audio;
+    numbers and their evidence: lane_rules.json audio_under_subtitle).  Where the silence came from does not matter.
 REVISION_AUTHORITY_UNBUILT  a successor of a published manuscript gets its same-BV repair authority here (revision_authority);
     when it cannot be built the step stops, so that no package is made that cannot be used for the revision.
 """
@@ -20,7 +23,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TypedDict
 
-from . import doubt_policy, normalize, revision_authority, subtitle_track, title_history
+from . import doubt_policy, normalize, package_audio, revision_authority, subtitle_track, title_history
 from .publication_id import publication_cid
 from .runner import Ctx, StepOutcome
 from .srt_text import SrtCue, parse_srt
@@ -74,6 +77,10 @@ def check(ctx: Ctx, old_package: Path) -> tuple[StepOutcome | None, list[str]]:
     refused, notes = revision_authority.prepare(ctx, old_package.name)
     if refused:
         return refused, []
+    refused, audio_notes = package_audio.check(ctx)         # the clip itself: sound under every subtitle (AUDIO_SILENT_UNDER_SUBTITLE)
+    if refused:
+        return refused, []
+    notes = [*notes, *audio_notes]
     dictation_file = ctx.clip_dir / "asr/bcut.srt"
     if not dictation_file.is_file():
         return None, [*notes, "没有机器听写（asr/bcut.srt），未做有声无字幕检查"]

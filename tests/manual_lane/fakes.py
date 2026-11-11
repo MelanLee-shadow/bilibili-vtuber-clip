@@ -107,6 +107,7 @@ class FakeRemote:
         self.files: dict[str, bytes] = {}
         self.on_script = on_script
         self.rc = 0
+        self.silences: list[list[float]] = []    # what the audio-silence check of step 8 finds in the finished clip (none: sound everywhere)
         self._lock = threading.Lock()
 
     def run_script(self, *, name, body, timeout):
@@ -122,6 +123,8 @@ class FakeRemote:
                 return RemoteResult(45, '', '')
             payload = {'out': base64.b64encode(out).decode('ascii'), 'prompt': base64.b64encode(prompt).decode('ascii')}
             return RemoteResult(0, json.dumps(payload), '')
+        if name == "s8-audio-silences":
+            return RemoteResult(0, json.dumps({"duration": 60.0, "silences": self.silences}) + "\n", "")
         if self.on_script:
             return self.on_script(name, body, self)
         return RemoteResult(self.rc, "", "")

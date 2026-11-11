@@ -41,12 +41,16 @@ def _as_root(command: str, owned_dir: str, *, recursive: bool = True) -> str:
 def source_cut_script(source: str, *, start_s: float, duration_s: float, output: str, fade: str | None = None) -> str:
     """The script that cuts `duration_s` seconds from `start_s` of the recording `source` into `output`: coarse input
     seek, then exact seek on the output side, constant 60 fps, the audio clock gap-filled; `fade` is an extra audio
-    filter (the short fades at the seams of a joined clip).  The script ends with `exit <rc of the cut>`: put it in a
-    subshell to go on after it."""
+    filter (the short fades at the seams of a joined clip) whose clock is the product's: its time 0 is the first frame of
+    `output`, however far before the cut point the coarse seek lands.  The filters run on the clock of the coarse seek
+    (the part before the cut point is thrown away only after them, by the output-side seek), so the clock is moved back
+    by that part around `fade` and forward again after it: the cut point, the throw-away and the audio/video offset are
+    the ones of a cut without `fade`.  The script ends with `exit <rc of the cut>`: put it in a subshell to go on after it."""
     coarse = max(0.0, start_s - PREROLL_S)
-    audio = AUDIO_FILTER + (f",{fade}" if fade else "")
+    lead = start_s - coarse
+    audio = AUDIO_FILTER + (f",asetpts=PTS-{lead:.6f}/TB,{fade},asetpts=PTS+{lead:.6f}/TB" if fade else "")
     argv = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{coarse:.3f}", "-i", source,
-            "-ss", f"{start_s - coarse:.3f}", "-map", "0:v:0", "-map", "0:a:0", *VIDEO_ENCODE, "-af", audio,
+            "-ss", f"{lead:.3f}", "-map", "0:v:0", "-map", "0:a:0", *VIDEO_ENCODE, "-af", audio,
             *AUDIO_ENCODE, "-t", f"{duration_s:.3f}", "-movflags", "+faststart", output]
     return _as_root(shlex.join(argv), str(PurePosixPath(output).parent))
 

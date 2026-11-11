@@ -41,7 +41,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 
-from . import compilation, gates, publication_id, subtitle_track, trim, writing_canon
+from . import compilation, cover_import, gates, publication_id, subtitle_track, trim, writing_canon
 from .adapters import Adapters
 from .lane_rules import rules
 from .recorder_events import Danmaku
@@ -331,6 +331,7 @@ def _build(task: Path, ctx: Ctx, mat: _Material, passed: list[trim.Span], adapte
     from .step_import import owner_decided, record_import
     record_import(state_y, ctx_y.clip_dir, push, source="trim", authority=f"片中剪除：{cid}", verbatim=True,
                   decided_by="owner" if owner_decided(ctx) else None)
+    cover_import.carry(ctx.state, state_y, ctx.clip_dir, ctx_y.clip_dir)      # the owner's finished cover follows the manuscript
     _run_to(ctx_y, 4)
 
     cut_text = " ".join(" ".join(str(mat.final_cues[n - 1]["text"]).split()) for a, b in passed for n in range(a, b + 1))

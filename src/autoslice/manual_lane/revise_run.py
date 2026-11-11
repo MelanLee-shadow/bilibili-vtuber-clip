@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, cast
 
 from . import compilation, cover_import, publication_id, title_history, writing_canon
 from .reselect import SUPERSEDED, supersede_candidate
+from .runner import Ctx
 from .state import ClipState, StateError, utc_now
 from .step_import import record_import
 from .trim_run import MAX_CID, AdaptersFor
@@ -51,12 +52,20 @@ def successor_id(task: Path, cid: str) -> str:
     return f"{base}{publication_id.REVISE_SUFFIX}{n}"
 
 
-def _check_source(task: Path, cid: str, state: ClipState) -> None:
+def _check_source(task: Path, cid: str, state: ClipState, adapters_for: AdaptersFor) -> None:
     clip = state.data["clip"]
     if clip.get("status") == SUPERSEDED:
         raise StateError(f"{cid} is superseded by {clip.get('superseded_by')}; revise that one")
     manuscript = publication_id.publication_cid(cid)
-    if not title_history.is_published(manuscript):
+    clip_dir = task / "clips" / cid
+    ctx = Ctx(state=state, session=state.data["session"], clip_dir=clip_dir, remote_dir=clip["remote_dir"],
+              adapters=adapters_for(clip["remote_dir"]))
+    try:
+        published = title_history.published_status(ctx, manuscript)      # the registry is root-only on the media host
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise StateError(f"{cid}: the publication registry cannot be read, so whether {manuscript} is published is not known: "
+                         f"{type(exc).__name__}: {exc!s:.300}") from exc
+    if not published:
         raise StateError(f"{cid}: the registry holds no published row for {manuscript}; an unpublished clip is redone in place")
     for key in (*FROM_STEP_3, "subtitles"):
         if state.step(key).get("status") != "DONE":
@@ -115,18 +124,6 @@ def _import_subtitles(task: Path, state_x: ClipState, state: ClipState, cid: str
                   decided_by="owner" if prior is not None and prior.get("decided_by") == "owner" else None)
 
 
-def _carry_cover(task: Path, state_x: ClipState, state: ClipState, cid: str, successor: str) -> None:
-    rec = state_x.data.get("imported_cover")
-    if rec is None:
-        return
-    xdir, ydir = task / "clips" / cid / cover_import.IMPORT_DIR, task / "clips" / successor / cover_import.IMPORT_DIR
-    shutil.copytree(xdir, ydir)
-    carried = copy.deepcopy(rec)
-    carried["files"] = {name: str(ydir / Path(path).name) for name, path in rec["files"].items()}
-    state.data["imported_cover"] = carried
-    state.save()
-
-
 def revise_clip(*, task: Path, cid: str, reason: str, adapters_for: AdaptersFor) -> str:
     """Build the successor of the published clip `cid` of `task` and supersede `cid` by it; returns the successor's id.
     StateError (or the OSError of a copy) with the reason when it cannot be done; then nothing of the successor is left."""
@@ -134,7 +131,7 @@ def revise_clip(*, task: Path, cid: str, reason: str, adapters_for: AdaptersFor)
     if not reason.strip():
         raise StateError("revise needs a non-empty reason")
     state_x = ClipState.load(task / "state" / f"{cid}.json")
-    _check_source(task, cid, state_x)
+    _check_source(task, cid, state_x, adapters_for)
     successor = successor_id(task, cid)
     if len(successor) > MAX_CID:
         raise StateError(f"the successor id {successor} is longer than {MAX_CID} characters")
@@ -145,7 +142,7 @@ def revise_clip(*, task: Path, cid: str, reason: str, adapters_for: AdaptersFor)
         _copy_local(task / "clips" / cid, task / "clips" / successor)
         state = _successor_state(task, state_x, successor, remote_y, cid, reason)
         _import_subtitles(task, state_x, state, cid, successor, reason)
-        _carry_cover(task, state_x, state, cid, successor)
+        cover_import.carry(state_x, state, task / "clips" / cid, task / "clips" / successor)
         done = supersede_candidate(
             task_dir=task, cid=cid, by=successor, authority=f"修订（revise 命令）：{cid}", quote=reason,
             reason=f"已发布稿件的修订：{reason}；另建 {successor}，原片与它的成品包保持原样")

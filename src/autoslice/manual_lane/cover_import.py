@@ -6,11 +6,13 @@ clips/<cid>/import_cover/ and records the import in state["imported_cover"]; ste
 next run produces them from it.  Step 6 (step6_title.step6_title_cover) then does its title half as ever and, for the cover,
 only writes the imported picture and lines to the places the generated cover has (cover/cover.png, cover/cand/choose.json,
 title/candidates.json): nothing draws, looks at or replaces it, and step 9's objections to it are recorded and kept
-(review_owner, dissent_register).  The cover follows the manuscript: a successor clip (revise_run) takes the record over.  The checks of the
+(review_owner, dissent_register).  The cover follows the manuscript: every successor clip (`revise`, `trim`; any generation) takes the record
+and its files over when it is made (`carry`), and an import into the successor replaces them.  The checks of the
 finished-media lane (canvas, font, cover words against the subtitles) run on it as on any cover."""
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import shutil
@@ -96,6 +98,21 @@ def import_cover(state: ClipState, clip_dir: Path, src: Path, *, decided_by: str
     state.data["imported_cover"] = rec
     state.save()
     return rec
+
+
+def carry(state_x: ClipState, state_y: ClipState, dir_x: Path, dir_y: Path) -> bool:
+    """A successor clip Y (clips dir `dir_y`) of X (`dir_x`) takes X's imported cover over: the files are copied into Y's own
+    import_cover/ and the record, with its basis and sha256, points at them.  False when X has none.  Y's steps are not touched
+    (it has not run step 6); an `import-cover` on Y later replaces the record and the files as on any clip."""
+    rec = state_x.data.get("imported_cover")
+    if rec is None:
+        return False
+    shutil.copytree(dir_x / IMPORT_DIR, dir_y / IMPORT_DIR)
+    carried = copy.deepcopy(rec)
+    carried["files"] = {name: str(dir_y / IMPORT_DIR / Path(path).name) for name, path in rec["files"].items()}
+    state_y.data["imported_cover"] = carried
+    state_y.save()
+    return True
 
 
 def adopt(ctx: Ctx, rec: CoverRecord, *, title: str, process: list[str], cpa: list) -> StepOutcome:

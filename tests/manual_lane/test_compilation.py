@@ -544,14 +544,17 @@ def test_a_single_piece_has_no_fade():
 
 def test_two_pieces_fade_out_at_the_end_of_the_first_and_in_at_the_head_of_the_second():
     first, second = _piece_commands(2)
-    assert " -af aresample=async=1:first_pts=0,afade=t=out:st=9.985:d=0.015 " in first and "afade=t=in" not in first
-    assert " -af aresample=async=1:first_pts=0,afade=t=in:st=0:d=0.015 " in second and "afade=t=out" not in second
+    # the fade's times are the piece's own (0 = its first frame); the reader moves the clock around them (source_read)
+    assert " -af aresample=async=1:first_pts=0,asetpts=PTS-1.000000/TB,afade=t=out:st=9.985:d=0.015,asetpts=PTS+1.000000/TB " in first
+    assert "afade=t=in" not in first
+    assert " -af aresample=async=1:first_pts=0,asetpts=PTS-21.000000/TB,afade=t=in:st=0:d=0.015,asetpts=PTS+21.000000/TB " in second
+    assert "afade=t=out" not in second
 
 
 def test_three_pieces_the_middle_one_fades_in_and_out_and_the_ends_only_on_the_seam_side():
     first, middle, last = _piece_commands(3, length_ms=4_000)
     assert "afade=t=in" not in first and first.count("afade=t=out:st=3.985:d=0.015") == 1
-    assert middle.count("-af aresample=async=1:first_pts=0,afade=t=in:st=0:d=0.015,afade=t=out:st=3.985:d=0.015 ") == 1
+    assert middle.count("asetpts=PTS-21.000000/TB,afade=t=in:st=0:d=0.015,afade=t=out:st=3.985:d=0.015,asetpts=PTS+21.000000/TB ") == 1
     assert "afade=t=out" not in last and last.count("afade=t=in:st=0:d=0.015") == 1
 
 

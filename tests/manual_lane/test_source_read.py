@@ -63,10 +63,10 @@ def _bodies(ctx, *names: str) -> dict[str, str]:
 
 
 def _encoding(command: str) -> list[str]:
-    """The encoder arguments of an ffmpeg command: from the stream mapping to the output path, the seam fade taken out
-    of the audio filter (it is the one thing that differs between the pieces of a joined clip)."""
+    """The encoder arguments of an ffmpeg command: from the stream mapping to the output path, the seam fade (and the clock
+    moved around it) taken out of the audio filter (it is the one thing that differs between the pieces of a joined clip)."""
     words = shlex.split(command)
-    words[words.index("-af") + 1] = words[words.index("-af") + 1].split(",afade")[0]
+    words[words.index("-af") + 1] = words[words.index("-af") + 1].split(",asetpts")[0]
     del words[words.index("-t"):words.index("-t") + 2]                       # the length is the cut's own
     return words[words.index("-map"):-1]
 

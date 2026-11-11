@@ -267,5 +267,12 @@
       "community"
     ],
     "limits_source": "防呆，非真实限制：neighbours_per_entity 和 lines_per_clip 只是防止一条片提到很多实体时把提示灌满，不对应任何模型或服务的限制。"
+  },
+  "audio_under_subtitle": {
+    "_doc": "第 8 步打包前对成片（burn/final.mp4，含片头）查掉声：字幕（subs/final.srt 的时间加片头偏移）里时长不短于 min_subtitle_s 的任何一句，若它所在时间段（两端各容 edge_tolerance_s）整段是数字静音（所有声道所有采样都不高于 noise_db，ffmpeg silencedetect），第 8 步以 AUDIO_SILENT_UNDER_SUBTITLE 失败，原因写明第几句与时间段。这是成品坏了不该发，不是对频道主决定的拦截；切片、合集、烧录、片头任一环节造成的掉声都在这里被拦下。字幕之间本来就安静的地方不查。",
+    "source": "2026-11 九条片实跑：按标记剪画面后接缝前约 30 秒是数字静音，实测缺陷段 -91 dB（max -90.3 至 -91.0），同一段在原片里的正常人声 -17 至 -26 dB（mean_volume）。-80 dB 在两者之间（实现选择，不是别处的既定值）；min_subtitle_s 与 edge_tolerance_s 也是实现选择：太短的字幕所在段不查，免得为一两个字的停顿拦下。",
+    "noise_db": -80,
+    "min_subtitle_s": 1.0,
+    "edge_tolerance_s": 0.1
   }
 }

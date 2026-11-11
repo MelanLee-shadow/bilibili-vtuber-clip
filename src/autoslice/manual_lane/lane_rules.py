@@ -121,10 +121,16 @@ class GraphContextRules(_RuleMetadata, total=False):
     limits_source: str
 
 
+class AudioUnderSubtitleRules(_RuleMetadata, total=False):
+    noise_db: float
+    min_subtitle_s: float
+    edge_tolerance_s: float
+
+
 if TYPE_CHECKING:
     RuleSection: TypeAlias = (DetectionRules | ListeningRules | CandidateRules | OrphanRules | SplitRules
                               | SpeakerRules | OtherVoicesRules | EffortRules | NameConsistencyRules | ConcurrencyRules
-                              | TrimThanksWordsRules | ScreenWorkRules | GraphContextRules | dict[str, JsonValue])
+                              | TrimThanksWordsRules | ScreenWorkRules | GraphContextRules | AudioUnderSubtitleRules | dict[str, JsonValue])
 
 
 @lru_cache(maxsize=4)
@@ -161,6 +167,8 @@ def rules(section: Literal["trim_thanks_words"]) -> TrimThanksWordsRules: ...
 def rules(section: Literal["screen_work"]) -> ScreenWorkRules: ...
 @overload
 def rules(section: Literal["graph_context"]) -> GraphContextRules: ...
+@overload
+def rules(section: Literal["audio_under_subtitle"]) -> AudioUnderSubtitleRules: ...
 @overload
 def rules(section: str) -> RuleSection: ...
 

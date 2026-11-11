@@ -1,5 +1,6 @@
-"""The two guards at the start of step 8: speech with no subtitle (SPEECH_WITHOUT_SUBTITLES) and a sealed, published package
-that must not be deleted (PUBLISHED_PACKAGE_PROTECTED).  The finished-media lane is the recorder of test_fmr_calls; the
+"""The guards at the start of step 8: speech with no subtitle (SPEECH_WITHOUT_SUBTITLES), a sealed, published package
+that must not be deleted (PUBLISHED_PACKAGE_PROTECTED), and sound under every subtitle of the finished clip
+(AUDIO_SILENT_UNDER_SUBTITLE; the remote only reports the clip's silences, the fake remote says which).  The finished-media lane is the recorder of test_fmr_calls; the
 registry is a fake."""
 
 from __future__ import annotations
@@ -216,3 +217,56 @@ def test_a_projection_that_fails_or_answers_badly_stops_step_8_and_leaves_the_pa
     ctx, old, _seen = _through_the_media_host(tmp_path, monkeypatch, answer)
     out = sp.step8_package(ctx)
     assert out.reason == "PUBLISHED_PACKAGE_PROTECTED" and "读不到出版登记" in out.note and (old / "marker").is_file()
+
+
+# ----- AUDIO_SILENT_UNDER_SUBTITLE ----------------------------------------------------------------------------------------
+AUDIO_FINAL = [(0.0, 2.0, "第一句"), (3.0, 3.5, "短"), (4.0, 8.0, "第三句")]      # line 2 is shorter than a second
+
+
+def _audio_clip(tmp_path, silences, *, offset_ms=0, final=AUDIO_FINAL):
+    ctx = _clip(tmp_path, final, None)
+    (ctx.clip_dir / "burn/intro_result.json").write_text(
+        json.dumps({"status": "PREPENDED", "intro_id": "Z1", "intro_offset_ms": offset_ms}), encoding="utf-8")
+    ctx.adapters.remote.silences = silences
+    return ctx
+
+
+def test_a_subtitle_that_lies_whole_in_a_digital_silence_fails_step_8_with_its_number_and_time(tmp_path, monkeypatch):
+    ctx = _audio_clip(tmp_path, [[3.9, 8.0]])
+    rec = Recorder()
+    _patch(monkeypatch, rec)
+    out = sp.step8_package(ctx)
+    assert not out.ok and out.reason == "AUDIO_SILENT_UNDER_SUBTITLE" and "第 3 句 4.0-8.0s" in out.note
+    assert rec.calls == [] and not (ctx.clip_dir / "pkg/final.mp4").exists()            # nothing built
+
+
+def test_the_intro_offset_moves_the_subtitles_onto_the_finished_clip_clock(tmp_path, monkeypatch):
+    silences = [[14.0, 18.0]]                       # the same silence, 10 s later in the clip because of the intro
+    _patch(monkeypatch, Recorder())
+    assert sp.step8_package(_audio_clip(tmp_path / "late", silences, offset_ms=10_000)).reason == "AUDIO_SILENT_UNDER_SUBTITLE"
+    assert sp.step8_package(_audio_clip(tmp_path / "early", silences, offset_ms=0)).ok         # without the offset it is not under line 3
+
+
+def test_a_clip_with_sound_everywhere_passes_and_process_says_the_check_was_done(tmp_path, monkeypatch):
+    _patch(monkeypatch, Recorder())
+    out = sp.step8_package(_audio_clip(tmp_path, []))
+    assert out.ok and "成片字幕下有声音：2 句已查" in out.process
+
+
+def test_silence_between_the_subtitles_is_not_a_fault(tmp_path, monkeypatch):
+    _patch(monkeypatch, Recorder())
+    assert sp.step8_package(_audio_clip(tmp_path, [[2.0, 4.0], [8.0, 60.0]])).ok
+
+
+def test_a_silence_over_part_of_a_subtitle_or_over_a_short_one_is_not_a_fault(tmp_path, monkeypatch):
+    _patch(monkeypatch, Recorder())
+    assert sp.step8_package(_audio_clip(tmp_path / "part", [[5.0, 8.0]])).ok            # line 3 has sound in 4.0-5.0
+    assert sp.step8_package(_audio_clip(tmp_path / "short", [[3.0, 3.5]])).ok           # line 2 is 0.5 s long
+
+
+def test_a_check_that_gave_no_result_stops_step_8_with_its_own_reason(tmp_path, monkeypatch):
+    ctx = _audio_clip(tmp_path, [])
+    ctx.adapters.remote.run_script = lambda *, name, body, timeout: RemoteResult(1, "", "no audio stream")
+    _patch(monkeypatch, Recorder())
+    out = sp.step8_package(ctx)
+    assert not out.ok and out.reason == "AUDIO_CHECK_FAILED" and "no audio stream" in out.note

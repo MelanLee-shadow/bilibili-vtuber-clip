@@ -157,7 +157,10 @@ def test_a_decision_on_a_doubt_of_an_untouched_sentence_is_adopted(tmp_path, mon
 # ----- an objection is kept by default; a person may replace that -------------------------------------------------------------------------------------
 def _with_objections(tmp_path):
     ctx = make_ctx(tmp_path, remote=FakeRemote(), cpa=None)
-    ctx.clip_dir.mkdir(parents=True)
+    (ctx.clip_dir / "burn").mkdir(parents=True)
+    (ctx.clip_dir / "burn/intro_result.json").write_text('{"intro_offset_ms": 0}', encoding="utf-8")      # what the audio check of step 8 reads
+    (ctx.clip_dir / "subs").mkdir()
+    (ctx.clip_dir / "subs/final.srt").write_text("1\n00:00:00,000 --> 00:00:02,000\n句\n", encoding="utf-8")
     dissent_register.add(ctx.state, [
         {"kind": "text", "cue": 2, "text": "戊己庚辛", "proposed": "戊己庚壬", "value": "戊己庚壬", "reason": "上下文不通"},
         {"kind": "hold", "cue": 3, "text": "壬癸子丑", "proposed": "听不清", "value": "听不清", "reason": "听不清"}])

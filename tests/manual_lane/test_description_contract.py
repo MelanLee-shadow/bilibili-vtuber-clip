@@ -47,7 +47,7 @@ def _step8_ctx(tmp_path, title: str):
     files = {"title/title.txt": title + "\n", "title/candidates.json": json.dumps({"cover_lines": ["甲"]}),
              "cover/cover.png": "png", "subs/final.srt": "1\n00:00:00,000 --> 00:00:01,000\n句\n",
              "speaker/speaker.srt": "x", "tags/tags.json": "{}",
-             "burn/intro_result.json": json.dumps({"status": "PREPENDED", "intro_id": "Z1"}),
+             "burn/intro_result.json": json.dumps({"status": "PREPENDED", "intro_id": "Z1", "intro_offset_ms": 0}),
              "dedup/result.json": json.dumps({"decision": "UNKNOWN", "block_upload": False}),
              "cut/probe.json": json.dumps({"format": {"duration": "60.0"}}), "subs/doubts.json": "[]"}
     for name, body in files.items():

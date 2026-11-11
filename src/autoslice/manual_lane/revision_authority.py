@@ -3,7 +3,8 @@ record of what the successor changes against the published version.
 
 A manuscript that the registry holds as published is only ever redone in a successor clip, whose package replaces the
 published one on the same BV.  Step 8 therefore builds the authority for the successor itself (from the registry row and the
-first-publication receipt it binds; scripts/build_new_bv_repair_authority.py is the same builder) and hands it to the
+first-publication receipt it binds, read where the receipt is readable: title_history.through_boundary; scripts/
+build_new_bv_repair_authority.py is the same builder) and hands it to the
 finished-media lane's check and seal (`--repair-authority`).  A successor whose authority cannot be built stops step 8
 with the builder's reason: no package is made that could not be used for the revision.  A clip that is not a successor, or
 whose manuscript is not published, gets neither the authority nor the flag.
@@ -18,8 +19,6 @@ import hashlib
 import json
 from pathlib import Path
 
-from src.autoslice.new_bv_repair_authority import build_new_bv_repair_authority, replay_first_publication_manifest
-
 from . import title_history
 from .publication_id import publication_cid
 from .runner import Ctx, StepOutcome
@@ -28,7 +27,10 @@ from .step_io import _fail
 AUTHORITY_UNBUILT = "REVISION_AUTHORITY_UNBUILT"
 AUTHORITY_FILE = "repair_authority.json"
 REVISION_FILE = "revision.json"
+ORIGIN_FILE = "repair_authority.origin"      # where the first-publication evidence was replayed and checked: BOUNDARY or DIRECT
+BOUNDARY, DIRECT = "BOUNDARY", "DIRECT"
 FLAG = "--repair-authority"
+SHAPE_ONLY = "--authority-shape-only"
 SCHEMA = "published-revision.v1"
 
 
@@ -37,21 +39,16 @@ def authority_path(ctx: Ctx) -> Path:
 
 
 def fmr_args(ctx: Ctx) -> list[str]:
-    """The finished-media lane's arguments for the authority step 8 built for this clip; [] when it built none."""
+    """The finished-media lane's arguments for the authority step 8 built for this clip; [] when it built none.  When the
+    authority was built (its first-publication closure replayed and checked) inside the root boundary, this process cannot
+    read those root-only files, so check and seal take it as to its shape and bindings only (`--authority-shape-only`: the
+    lane skips just the replay of the evidence files); built by this process, they replay it in full."""
     path = authority_path(ctx)
-    return [FLAG, str(path)] if path.is_file() else []
-
-
-def _first_receipt(manuscript: str) -> Path:
-    """The first-publication receipt the registry row of the published manuscript binds."""
-    rows = [r for r in title_history.load_publication_registry()["entries"]
-            if r["status"] == "published" and title_history.same_clip(str(r["candidate_id"]), manuscript)]
-    if len(rows) != 1:
-        raise ValueError(f"the registry holds {len(rows)} published rows for {manuscript} (登记里要有且只有一条)")
-    binding = (rows[0].get("publication_reconciliation") or {}).get("authority")
-    if not isinstance(binding, dict) or not binding.get("path"):
-        raise ValueError(f"the registry row of {manuscript} binds no first-publication receipt (登记行没有首发回执)")
-    return Path(str(binding["path"]))
+    if not path.is_file():
+        return []
+    origin = ctx.clip_dir / ORIGIN_FILE
+    shape_only = origin.is_file() and origin.read_text(encoding="utf-8").strip() == BOUNDARY
+    return [FLAG, str(path), *([SHAPE_ONLY] if shape_only else [])]
 
 
 def prepare(ctx: Ctx, package_name: str) -> tuple[StepOutcome | None, list[str]]:
@@ -68,17 +65,20 @@ def prepare(ctx: Ctx, package_name: str) -> tuple[StepOutcome | None, list[str]]
         return _fail(AUTHORITY_UNBUILT, f"{cid} 是「{manuscript}」的后继片，读不到出版登记，无法确认是否已发布，不打包："
                      f"{type(exc).__name__}: {exc!s:.200}"), []
     if not published:
-        path.unlink(missing_ok=True)
-        (ctx.clip_dir / REVISION_FILE).unlink(missing_ok=True)
+        for stale in (path, ctx.clip_dir / REVISION_FILE, ctx.clip_dir / ORIGIN_FILE):
+            stale.unlink(missing_ok=True)
         return None, []
     try:
         title = (ctx.clip_dir / "title/title.txt").read_text(encoding="utf-8").strip()
-        authority = build_new_bv_repair_authority(_first_receipt(manuscript), candidate_id=package_name, title=title)
-    except (OSError, ValueError, KeyError) as exc:
+        authority, via_boundary = title_history.build_authority(ctx, manuscript, package=package_name, title=title)
+    except (OSError, ValueError, KeyError, RuntimeError) as exc:
         return _fail(AUTHORITY_UNBUILT, f"{cid} 是已发布稿件「{manuscript}」的后继片，建不出同稿件修订的换源授权，不打包："
                      f"{type(exc).__name__}: {exc!s:.300}"), []
     path.write_text(json.dumps(authority, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return None, [f"后继片：同稿件修订的换源授权已建（{path.name}，BV {authority['bvid']}），成品审查 check、seal 带上它"]
+    (ctx.clip_dir / ORIGIN_FILE).write_text((BOUNDARY if via_boundary else DIRECT) + "\n", encoding="utf-8")
+    where = ("首发证据已在 root 边界内重放核对，本进程读不到那些文件：check、seal 加 --authority-shape-only（只跳过证据重放，授权形状与候选/标题绑定照查；上传步骤仍完整重放）"
+             if via_boundary else "首发证据由本进程直接读到并完整重放，check、seal 不加 --authority-shape-only")
+    return None, [f"后继片：同稿件修订的换源授权已建（{path.name}，BV {authority['bvid']}），成品审查 check、seal 带上它；{where}"]
 
 
 def _sha(path: Path) -> str:
@@ -92,8 +92,8 @@ def record(ctx: Ctx, staged: Path) -> dict[str, str]:
     if not path.is_file():
         return {}
     authority = json.loads(path.read_text(encoding="utf-8"))
-    first = replay_first_publication_manifest(authority)
-    published = {"video_sha256": first["video"]["sha256"], "cover_sha256": first["cover"]["sha256"]}
+    video, cover = title_history.first_digests(ctx, publication_cid(str(ctx.state.data["clip"]["cid"])), authority)
+    published = {"video_sha256": video, "cover_sha256": cover}
     now = {"video_sha256": _sha(staged / "final.mp4"), "cover_sha256": _sha(staged / "cover.png")}
     out = ctx.clip_dir / REVISION_FILE
     out.write_text(json.dumps({
