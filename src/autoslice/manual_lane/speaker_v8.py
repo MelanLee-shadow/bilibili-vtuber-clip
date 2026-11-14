@@ -1,7 +1,7 @@
 """Host or guest, per subtitle cue, for a linked (联动) clip (TASK-5 item 8; U110 联动必分, U114 二分, U115 两类样式).
 
 The decision uses the frozen v8 classifier's own rule, not a threshold fitted on any truth labels: a unit is the host
-when the classifier's top class is 李豆沙 and its probability reaches the v8 classifier's own 中档 minimum
+when the classifier's top class is the host and its probability reaches the v8 classifier's own 中档 minimum
 (classifier.json tiers.mid.min_conf = 0.6).  Anything else is the guest colour: uncertain means guest (U114).
 A final cue takes the probability mean over the ASR units it overlaps; a unit the model could not embed is ignored.
 """
@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from itertools import pairwise
-from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, cast
+from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 
 from src.autoslice.branding_intro import CHANNEL_PROFILE
+from . import text_overlap
 
 if TYPE_CHECKING:
     from .config import SpeakerPeople
@@ -419,19 +420,15 @@ def acoustic_tie(row: AcousticRow) -> bool:
     return votes.count(HOST) * 2 == len(votes)
 
 
-def _alnum(text: Any) -> str:
-    return "".join(ch for ch in str(text) if ch.isalnum())
-
-
 def content_evidence(answer: SpeakerReview | None, text: str) -> str:
     """Empty when the answer carries explicit content evidence for its speaker: evidence is one of EVIDENCE_KINDS and
     quote is copied from this cue's own words and has the speaker speaking of themself (FIRST_PERSON).  Otherwise the
     reason it is not evidence."""
     answer = answer or {}
-    kind, quote = str(answer.get("evidence") or "").strip(), _alnum(answer.get("quote") or "")
+    kind, quote = str(answer.get("evidence") or "").strip(), text_overlap.letters(answer.get("quote") or "")
     if kind not in EVIDENCE_KINDS:
         return f"依据不是明确的内容证据（{kind or '未写'}）"
-    if not quote or quote not in _alnum(text):
+    if not quote or quote not in text_overlap.letters(text):
         return "摘抄的证据不在本句原文里"
     if not any(p in quote.replace("我们", "").replace("咱们", "") for p in FIRST_PERSON):   # plural: not who spoke
         return "摘抄的证据里没有说话人说自己"
@@ -500,11 +497,11 @@ def split_at_switch(cue: MillisecondSpan, text: str, split: SpeakerSplit | None,
         return None
     first, second = str(split.get("first") or "").strip(), str(split.get("second") or "").strip()
     who = (str(split.get("first_speaker") or ""), str(split.get("second_speaker") or ""))
-    if not first or not second or _alnum(first + second) != _alnum(text) or who[0] == who[1] \
+    if not first or not second or text_overlap.letters(first + second) != text_overlap.letters(text) or who[0] == who[1] \
             or not set(who) <= {HOST, GUEST_LABEL}:
         return None
     c0, c1 = int(cue["start_ms"]), int(cue["end_ms"])
-    at = c0 + (c1 - c0) * len(_alnum(first)) / max(1, len(_alnum(text)))
+    at = c0 + (c1 - c0) * len(text_overlap.letters(first)) / max(1, len(text_overlap.letters(text)))
     t = min(switches, key=lambda s: abs(s - at))
     if switch_sides(cue, t, segments, names or {}) != who:
         return None

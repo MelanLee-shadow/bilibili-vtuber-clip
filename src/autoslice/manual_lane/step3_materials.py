@@ -8,15 +8,15 @@ from __future__ import annotations
 
 import json
 
-from . import channel_facts, work_context
+from . import channel, channel_facts, work_context
 from .step_io import AGENT_PRINCIPLES, PRONOUN_RULE, PROMPTS
 
 
 def base_prompt(bcut, jianying, others, cut_len, clip, work, refs, task=None) -> str:
     return '\n'.join((
-        (PROMPTS / 'subtitle_agent.md').read_text(encoding='utf-8'),
-        (PROMPTS / 'subtitle_playbook.md').read_text(encoding='utf-8'),
-        (PROMPTS / 'subtitle_playbook_rules.md').read_text(encoding='utf-8'), PRONOUN_RULE, AGENT_PRINCIPLES,
+        *(channel.fill((PROMPTS / name).read_text(encoding='utf-8'))
+          for name in ('subtitle_agent.md', 'subtitle_playbook.md', 'subtitle_playbook_rules.md')),
+        PRONOUN_RULE, AGENT_PRINCIPLES,
         channel_facts.for_subtitles(task),
         '初始转写与片长：' + json.dumps({'bcut': list(bcut), 'jianying': list(jianying), **others,
                                          'cut_duration_s': cut_len, 'work_context': work_context.agent_view(work),

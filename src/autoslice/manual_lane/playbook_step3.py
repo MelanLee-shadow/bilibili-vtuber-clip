@@ -8,7 +8,7 @@ import re
 import threading
 import time
 
-from . import (doubt_policy, evidence_attach, mishearing, name_match, normalize, parallel,
+from . import (channel, doubt_policy, evidence_attach, mishearing, name_match, normalize, parallel,
                playbook_evidence as pe, playbook_vote, references, step3_materials,
                step3_text_classes, work_context, work_lookup)
 from .lane_rules import rules
@@ -57,7 +57,7 @@ def _save(ctx, name, obj):
 
 def _listen(ctx, windows, model, label, on_quota_wait=None):
     """Dispatch only windows selected by CPA; keep each exact request."""
-    template = (PROMPTS / 'listen_single.md').read_text(encoding='utf-8')
+    template = channel.fill((PROMPTS / 'listen_single.md').read_text(encoding='utf-8'))
     for window in windows:
         lead = window['core'][0] - window['audio'][0]
         tail = window['audio'][1] - window['core'][1]

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from src.autoslice.channel_profile import load_channel_profile
 
+from . import channel
 from . import (
     doubt_policy,
 )
@@ -35,7 +36,7 @@ if TYPE_CHECKING:
 PKG_ROOT = Path(__file__).resolve().parents[3]
 PROMPTS = PKG_ROOT / "assets" / "manual_lane" / "prompts"
 REMOTE_TOOLS = PKG_ROOT / "assets" / "manual_lane" / "remote"
-REMOTE_FONTS = f"{REMOTE_REPO}/assets/lidousha/fonts"
+REMOTE_FONTS = f"{REMOTE_REPO}/{channel.ASSETS_REL}/fonts"
 ROOM_ID = int(layout().room_id)   # the channel's live room (profile identity.room_id)
 
 
@@ -244,6 +245,30 @@ def _cpa_ok(record: CpaEvent) -> bool:
     return record.get("rc") == 0 and bool(record.get("response_text", "").strip())
 
 
+def failure_line(record: CpaEvent) -> str:
+    """Why a call that is not `_cpa_ok` failed, in one line."""
+    return str(record.get("reason") or record.get("stderr_tail") or "no answer").strip().splitlines()[0][:200]
+
+
+def ask_json(ctx: Ctx, call_id: str, prompt_text: str, *, purpose: str, problem: Callable[[Any], str], shape: str,
+             cpa_calls: list[CpaEvent], unparseable: str = "CPA_RESPONSE_UNPARSEABLE") -> tuple[Any, str]:
+    """One model call whose answer must be a JSON value `problem` has nothing against (`problem` returns "" for a usable
+    value, else what is wrong with it).  Returns (value, "") or (None, why there is no value).  An answer outside the
+    contract is asked again while the tries last (the `accepts` of _ask_cpa; the failure then begins with `shape`).  The
+    call's record is appended to cpa_calls whether or not it gave a value."""
+    record = _ask_cpa(ctx, call_id, prompt_text, purpose=purpose,
+                      accepts=lambda value: f"{shape} ({found})" if (found := problem(value)) else "")
+    cpa_calls.append(_log(record))
+    if not _cpa_ok(record):
+        return None, failure_line(record)
+    try:
+        value = _json_from_text(record["response_text"])
+    except ValueError as exc:
+        return None, f"{unparseable} ({str(exc)[:160]})"
+    found = problem(value)
+    return (None, found) if found else (value, "")
+
+
 def _principle_section(heading: str, what: str) -> str:
     path = load_channel_profile(PKG_ROOT).asset_file("subtitle_correction_principles")
     text = path.read_text(encoding="utf-8")
@@ -272,7 +297,7 @@ AGENT_PRINCIPLES = _agent_principles()
 
 
 def _render(prompt_name: str, **fields: str) -> str:
-    text = (PROMPTS / prompt_name).read_text(encoding="utf-8")
+    text = channel.fill((PROMPTS / prompt_name).read_text(encoding="utf-8"))
     fields.setdefault("pronoun_rule", PRONOUN_RULE)
     fields.setdefault("strict_rules", "")   # optional block: empty unless a variant asks for it
     fields.setdefault("window_asr_doc", "")   # the window ASR sources, only where a doubt carries one
@@ -294,7 +319,7 @@ def _fail(reason: str, note: str, *, cpa: Sequence[CpaEvent] = (), process: Sequ
     return StepOutcome(False, reason=reason, note=note, cpa=[_log(c) for c in cpa], process=list(process))
 
 
-HOST_LABEL = "李豆沙"   # the canonical host label (CHANNEL_PROFILE.host_speaker_label); the lane's A3 check needs it
+HOST_LABEL = channel.HOST_LABEL   # the canonical host label (the channel profile's host_speaker_label); the lane's A3 check needs it
 
 
 # Word separation is available whenever existing evidence identifies two voices.  The optional extra per-speaker

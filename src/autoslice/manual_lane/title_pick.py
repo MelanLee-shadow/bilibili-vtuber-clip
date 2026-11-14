@@ -17,13 +17,13 @@ nothing to rank and is not asked.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypedDict
 
+from . import channel, text_overlap
 from .runner import Ctx
-from .srt_text import _json_from_text
-from .step_io import _ask_cpa, _cpa_ok, _log, _render
+from .step_io import _render, ask_json
 
 if TYPE_CHECKING:
     from .state import CpaEvent
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 PICK_PURPOSE = "title-pick"
 # How the owner is called in the title skill's section 4 table of forms of address (the 称呼表): a title that ends on one
 # of these followed by words of the editor's own is the failure the owner rejects.
-EDITOR_NICKNAMES = ("熊猫头", "李姐", "小李")
+EDITOR_NICKNAMES = tuple(str(n) for n in channel.text()["editor_nicknames"])   # what the editor, not she, calls her
 CLAUSE_BREAKS = re.compile("[，？！]")
 COVERAGE_MIN = 0.5            # below this share of the last clause's characters found in the subtitles, it is the editor's
 BAD_GRADE = "差"              # predicted 差 exactly, or any grade containing 尤其差, is a rejection
@@ -75,11 +75,6 @@ class RoundPick:
     top_is_bad: bool = False            # the first-ranked candidate is predicted to be rejected
 
 
-def _keep(text: str) -> str:
-    """Han characters, letters and digits only, lower-cased: what two texts are compared on."""
-    return "".join(ch for ch in text.lower() if ch.isalnum())
-
-
 def last_clause(body: str) -> str:
     parts = [p for p in CLAUSE_BREAKS.split(body.strip()) if p.strip()]
     return parts[-1] if parts else body
@@ -92,7 +87,7 @@ def editor_tail(body: str, subtitles: str) -> bool:
     clause = last_clause(body)
     if not any(n in clause for n in EDITOR_NICKNAMES):
         return False
-    chars, said = _keep(clause), _keep(subtitles)
+    chars, said = text_overlap.key(clause), text_overlap.key(subtitles)
     if len(chars) < 2:
         return False
     pairs = {said[i:i + 2] for i in range(len(said) - 1)}
@@ -141,17 +136,6 @@ def normalized_order(order: Sequence[object], n: int) -> list[int]:
     return out + [i for i in range(n) if i not in out]
 
 
-def _contract(n: int) -> Callable[[object], str]:
-    def accepts(value: object) -> str:
-        found = answer_problem(value, n)
-        return f"TITLE_PICK_SHAPE ({found})" if found else ""
-    return accepts
-
-
-def _failure(record: CpaEvent) -> str:
-    return str(record.get("reason") or record.get("stderr_tail") or "no answer").strip().splitlines()[0][:200]
-
-
 def rank_round(ctx: Ctx, call_id: str, basis: PickBasis, *, titles: Sequence[str], bodies: Sequence[str],
                passing: Sequence[bool], model_order: Sequence[int], cpa_calls: list[CpaEvent]) -> RoundPick:
     """Order one round's candidates.  `titles`/`bodies` are each candidate's whole title and its body (after the prefix),
@@ -169,19 +153,8 @@ def rank_round(ctx: Ctx, call_id: str, basis: PickBasis, *, titles: Sequence[str
     prompt = _render("title_pick.md", corpus=basis.corpus, main_line=basis.main_line, punchline=basis.punchline,
                      circle_context=f"\n{basis.circle}" if basis.circle else "",
                      candidates="\n".join(f"{k} {titles[i]}" for k, i in enumerate(ranked_ids)))
-    record = _ask_cpa(ctx, call_id, prompt, purpose=PICK_PURPOSE, accepts=_contract(n))
-    cpa_calls.append(_log(record))
-    answer: object = None
-    reason = ""
-    if not _cpa_ok(record):
-        reason = _failure(record)
-    else:
-        try:
-            answer = _json_from_text(record["response_text"])
-        except ValueError as exc:
-            reason = f"TITLE_PICK_UNPARSEABLE ({exc})"
-        else:
-            reason = answer_problem(answer, n)
+    answer, reason = ask_json(ctx, call_id, prompt, purpose=PICK_PURPOSE, shape="TITLE_PICK_SHAPE", cpa_calls=cpa_calls,
+                              problem=lambda value: answer_problem(value, n), unparseable="TITLE_PICK_UNPARSEABLE")
     if reason or not isinstance(answer, dict):
         return RoundPick(order=[*model_ranked, *rest],
                          call=PickCall(call_id=call_id, fell_back=True, reason=reason or "no answer", first="",

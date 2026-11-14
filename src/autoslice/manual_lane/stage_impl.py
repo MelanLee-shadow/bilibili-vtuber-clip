@@ -16,7 +16,6 @@ from .srt_text import (
     _as_int as _as_int,
     _context_lines as _context_lines,
     _json_from_text as _json_from_text,
-    _norm_text as _norm_text,
     _parse_ts as _parse_ts,
     fmt_ts as fmt_ts,
     format_srt as format_srt,

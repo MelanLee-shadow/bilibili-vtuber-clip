@@ -12,13 +12,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from typing import Any
+from . import text_overlap
 
 TOP = "top"
 COLUMNS = ("left", "right")
-
-
-def _letters(text: object) -> str:
-    return "".join(ch for ch in str(text) if ch.isalnum())
 
 
 def rows_of(lines: Sequence[str], answer: object, rules: Mapping[str, Any]) -> list[dict[str, Any]] | None:
@@ -38,7 +35,7 @@ def rows_of(lines: Sequence[str], answer: object, rules: Mapping[str, Any]) -> l
     for punch, text in ((False, "".join(lines[:-1])), (True, lines[-1])):
         part = [r["text"] for r in rows if r["punch"] is punch]
         most = int(rules["column_punch_row_max_chars" if punch else "column_context_row_max_chars"])
-        if _letters("".join(part)) != _letters(text) or any(len(row) > most for row in part):
+        if text_overlap.letters("".join(part)) != text_overlap.letters(text) or any(len(row) > most for row in part):
             return None
     return rows
 

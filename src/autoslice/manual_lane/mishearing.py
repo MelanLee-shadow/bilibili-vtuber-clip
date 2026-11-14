@@ -9,6 +9,7 @@ import argparse
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
+from . import channel
 
 if TYPE_CHECKING:
     from src.autoslice.cpa_gemini_client import JsonValue
@@ -73,10 +74,10 @@ class PairsDocument(TypedDict):
 ROOT = Path(__file__).resolve().parents[3]
 OUTPUT = ROOT / "assets/manual_lane/mishearing_pairs.json"
 SOURCES = {
-    "entities": "assets/lidousha/entity_confusables.json",
-    "ledger": "assets/lidousha/subtitle_truth_ledger.v1.json",
-    "memory": "assets/lidousha/speech_memory_ledger.v1.json",
-    "roster": "assets/lidousha/psplive_roster_sources.v1.json",
+    "entities": f"{channel.ASSETS_REL}/entity_confusables.json",
+    "ledger": f"{channel.ASSETS_REL}/subtitle_truth_ledger.v1.json",
+    "memory": f"{channel.ASSETS_REL}/speech_memory_ledger.v1.json",
+    "roster": f"{channel.ASSETS_REL}/psplive_roster_sources.v1.json",
     "names": "assets/manual_lane/proper_nouns.json",
 }
 

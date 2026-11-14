@@ -24,12 +24,27 @@ import urllib.error
 import urllib.request
 
 MODEL = "gpt-6.1-sol"
+
+
+def _channel():
+    """The host's name and how to tell her in a picture, from the channel profile of the deployed repo (the lane names
+    the repo, adapters.remote_python; read in place, the tool's own repo); a nameless host when there is no repo."""
+    try:
+        sys.path.insert(0, os.environ.get("MANUAL_LANE_REMOTE_REPO") or os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
+        from src.autoslice.manual_lane import channel
+        doc = channel.text()
+        return channel.HOST, str(doc.get("picture_body_hint") or ""), str(doc.get("picture_face_hint") or "")
+    except (ImportError, ValueError, OSError):
+        return "主播", "", ""
+
+
+HOST, BODY_HINT, FACE_HINT = _channel()
 QUESTION = ("这是直播切片的一帧（1920x1080）。画面里是否出现与本段直播内容无关的页面、测试页或界面（例如和直播无关的网页、"
             "测试用的页面标题、系统界面）？如果有，只回答 DIRTY；如果画面干净，只回答 CLEAN。只回答这一个词。")
 BOX_QUESTION = ("这是直播画面（1920x1080 像素）。请给出三类矩形，坐标是整幅画面的像素，格式 [x0,y0,x1,y1]：\n"
                 "danmaku：直播间右侧的弹幕框和礼物栏（聊天、礼物、弹幕区域）；\n"
-                "person：主播李豆沙本人的身体范围（白发，造型以当场画面为准），依据名牌和画面辨认；她可能戴帽子或眼罩，不能以熊猫耳不可见就认作别人；\n"
-                "guest：画面里另一位主播（不是李豆沙）的身体范围。\n"
+                "person：主播" + HOST + "本人的身体范围" + (BODY_HINT or "，依据名牌和画面辨认") + "；\n"
+                "guest：画面里另一位主播（不是" + HOST + "）的身体范围。\n"
                 "只输出一个 JSON 对象：{\"danmaku\": [[x0,y0,x1,y1]], \"person\": [[x0,y0,x1,y1]], \"guest\": [[x0,y0,x1,y1]]}；"
                 "找不到的类别写空数组，不要编造。")
 

@@ -21,6 +21,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
+from . import text_overlap
 from . import channel_facts, speaker_v8
 from .lane_rules import rules
 from .runner import Ctx
@@ -32,12 +33,8 @@ MARK = "persona/observed.json"          # under the clip: this clip was read
 CALL = "persona-observe"
 
 
-def _letters(text: object) -> str:
-    return "".join(ch for ch in str(text) if ch.isalnum())
-
-
 def _same(a: str, b: str) -> bool:
-    x, y = _letters(a), _letters(b)
+    x, y = text_overlap.letters(a), text_overlap.letters(b)
     return bool(x and y) and SequenceMatcher(None, x, y, autojunk=False).ratio() >= float(rules("persona")["same_statement_ratio"])
 
 
@@ -71,7 +68,7 @@ def host_text(ctx: Ctx) -> tuple[str, str]:
     guest = f"[{speaker_v8.GUEST_LABEL}]"
     own = [c for c in cues if not str(c["text"]).startswith(guest)]
     return ("\n".join(f"{c['id']} {' '.join(str(c['text']).split())}" for c in cues),
-            _letters("".join(re.sub(r"^\[[^\]]+\]\s*", "", str(c["text"])) for c in own)))
+            text_overlap.letters("".join(re.sub(r"^\[[^\]]+\]\s*", "", str(c["text"])) for c in own)))
 
 
 def _kept(answer: object, own: str, known: str) -> list[dict[str, Any]]:
@@ -80,7 +77,7 @@ def _kept(answer: object, own: str, known: str) -> list[dict[str, Any]]:
     for item in (answer.get("traits") if isinstance(answer, dict) else None) or []:
         if not (isinstance(item, dict) and isinstance(item.get("statement"), str) and isinstance(item.get("quotes"), list)):
             continue
-        quotes = [str(q).strip() for q in item["quotes"] if _letters(q) and _letters(q) in own]
+        quotes = [str(q).strip() for q in item["quotes"] if text_overlap.letters(q) and text_overlap.letters(q) in own]
         statement = item["statement"].strip()
         if statement and quotes and not any(_same(statement, line) for line in known.splitlines()):
             rows.append({"statement": statement, "kind": str(item.get("kind") or ""), "quotes": quotes})

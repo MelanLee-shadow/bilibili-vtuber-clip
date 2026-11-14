@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, Final, NotRequired, TypedDict, cast
 from src.autoslice.channel_envelope import EnvelopeError
 from src.autoslice.upload_description import description_for_title
 
-from . import (compilation, cover_import, dissent_register, doubt_policy, focused_retry, gates, normalize, package_guards,
+from . import (channel, compilation, cover_import, dissent_register, doubt_policy, focused_retry, gates, normalize, package_guards,
                publication_id, review_owner, revision_authority, speaker_v8, step10_run, subtitle_track, title_authority, writing_canon)
 from .adapters import CPA_JUDGE_MODEL, recover_cpa_terminal
 from .compilation import MemberPiece
@@ -527,8 +527,8 @@ def _review_materials(ctx: Ctx) -> tuple[str, str, str]:
     track = subtitle_track.read_track(ctx.clip_dir)
     names = participant_description(ctx.session)
     if linked:
-        session_line = (f"本场是联动，参与者：{names}。字幕带说话人标签：[{speaker_v8.HOST}] 是李豆沙本人，"
-                        f"[{speaker_v8.GUEST_LABEL}] 是不是李豆沙的另一个人（不辨是谁）。要按上下文复审说话人。")
+        session_line = (f"本场是联动，参与者：{names}。字幕带说话人标签：[{speaker_v8.HOST}] 是{channel.HOST}本人，"
+                        f"[{speaker_v8.GUEST_LABEL}] 是不是{channel.HOST}的另一个人（不辨是谁）。要按上下文复审说话人。")
         speaker_item = ("2. 说话人：标签来自声音证据（第 4 步已按语境复核过声音打平的句子），是默认值。只有这一句里有明确的"
                         "内容证据才写进 fixes.speakers：说话人自称、自报身份，或者说的是只有这一方才会说的、关于自己的事；"
                         f"evidence 写「{'」或「'.join(speaker_v8.EVIDENCE_KINDS)}」，quote 从这一句原文里逐字摘出说话人说自己"

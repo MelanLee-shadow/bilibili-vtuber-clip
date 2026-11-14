@@ -16,6 +16,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, TypedDict, cast
 
+from . import channel
+from . import text_overlap
 from . import compilation, doubt_policy, subtitle_track
 from .recorder_events import Danmaku
 from .srt_text import SrtCue, TimedText, TimeSpan
@@ -58,7 +60,7 @@ def prompt(hook: str, events_text: str, cues: Sequence[TimedText], *, run: int =
     second independent ask carries a closing `（第 2 遍）` line, as in the trial, so it is a distinct request."""
     lines = [f"{number} {float(c['start_s']):.1f}-{float(c['end_s']):.1f} {' '.join(str(c['text']).split())}"
              for number, c in enumerate(cues, 1)]
-    template = (PROMPTS / "trim.md").read_text(encoding="utf-8")
+    template = channel.fill((PROMPTS / "trim.md").read_text(encoding="utf-8"))
     text = (template.replace("{hook}", hook).replace("{events}", events_text or "（无记录）")
             .replace("{cues}", "\n".join(lines)))
     return text if run == 1 else text.rstrip("\n") + f"\n（第 {run} 遍）\n"
@@ -138,10 +140,10 @@ def guard(spans: Sequence[Span], cues: Sequence[TimedText], *,
     prompts/trim.md, asked twice; no code rule second-guesses it.  `thanks_words=None`: the spans are the channel owner's
     own cut marks (not a model's guess), so NO_THANKS does not apply; EDGE and TOO_SHORT cannot be done mechanically
     and still veto."""
-    words = [doubt_policy.norm_text(w) for w in thanks_words or ()]
+    words = [text_overlap.key(w) for w in thanks_words or ()]
     if thanks_words is not None and not all(words):
         raise ValueError(f"thanks_words must not hold an empty word: {list(thanks_words)!r}")
-    texts = [doubt_policy.norm_text(str(c["text"])) for c in cues]
+    texts = [text_overlap.key(str(c["text"])) for c in cues]
     passed: list[Span] = []
     vetoed: list[Veto] = []
     for a, b in spans:

@@ -12,13 +12,14 @@ from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 
+from . import text_overlap
 from . import (
     doubt_policy,
     normalize,
     speaker_v8,
 )
 from .runner import Ctx, StepOutcome
-from .srt_text import TimedText, _json_from_text, _norm_text
+from .srt_text import TimedText, _json_from_text
 from .step3_adjudicate import hold_line, lone_char_line, record_lone
 from .step_io import _ask_cpa, _cpa_ok, _fail, _local, _log, _render, linked_session
 
@@ -171,7 +172,7 @@ def _import_doubts(rows: Sequence[Mapping[str, str]], source: str) -> list[Impor
         text, bcut_text = str(r.get("text") or ""), str(r.get("bcut_text") or "")
         out.append({"id": f"imp-{r.get('id') or r.get('no')}", "cue_id": None,
                     "start_s": float(r["start"]), "end_s": float(r["end"]), "current": bcut_text,
-                    "state": "KEEP" if _norm_text(text) == _norm_text(bcut_text) else "ADOPT", "final_text": text,
+                    "state": "KEEP" if text_overlap.key(text) == text_overlap.key(bcut_text) else "ADOPT", "final_text": text,
                     "confidence": "低" if str(r.get("text_conf") or "") == "低" else "高", "affects_meaning": None,
                     "source": source, "basis": str(r.get("basis") or "").strip() or f"{source} 手推",
                     "alternatives": [a.strip() for a in str(r.get("alt") or "").split(" / ") if a.strip()],

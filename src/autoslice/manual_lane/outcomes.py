@@ -15,6 +15,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from . import text_overlap
 from . import owner_edits, subtitle_track
 from .state import ClipState, utc_now
 
@@ -22,15 +23,11 @@ FILE = "calibration/outcomes.jsonl"            # under the lane's task directory
 KNOWN = ("state", "confidence", "runs_same", "affects_meaning")
 
 
-def _letters(text: object) -> str:
-    return "".join(ch for ch in str(text) if ch.isalnum()).lower()
-
-
 def _doubt_of(text: str, doubts: list[dict[str, Any]]) -> dict[str, Any]:
     """The doubt row this sentence was written from: the one whose decided text holds it (or is held by it)."""
-    want = _letters(text)
+    want = text_overlap.key(text)
     for row in doubts:
-        got = _letters(row.get("final_text") or row.get("current") or "")
+        got = text_overlap.key(row.get("final_text") or row.get("current") or "")
         if want and got and (want in got or got in want):
             return row
     return {}
@@ -55,7 +52,7 @@ def record(state: ClipState, clip_dir: Path, push: Path) -> int:
         doubt = _doubt_of(str(cue["text"]), doubts if isinstance(doubts, list) else [])
         rows.append({"cid": state.data["clip"]["cid"], "recorded_at": utc_now(), "n": n,
                      "start_s": float(cue["start_s"]), "end_s": float(cue["end_s"]), "pipeline": str(cue["text"]),
-                     "owner": owner, "text_changed": _letters(cue["text"]) != _letters(owner),
+                     "owner": owner, "text_changed": text_overlap.key(cue["text"]) != text_overlap.key(owner),
                      **{key: doubt.get(key) for key in KNOWN}})
     path = clip_dir.parent.parent / FILE
     path.parent.mkdir(parents=True, exist_ok=True)

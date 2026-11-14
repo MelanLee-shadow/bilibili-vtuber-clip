@@ -7,13 +7,18 @@ that really results is recorded.  Pure functions on plain numbers and lists; no 
 """
 import json
 import math
+import os
 import re
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))     # the tools sit side by side, on the media host and here
+from pick_frame import FACE_HINT, HOST
 
 FRAME_W, FRAME_H = 1920, 1080
 CHEST = 0.8
 
-HEAD_LOCATE = ("这张图（{w}x{h} 像素）里有虚拟主播李豆沙；以画面实际造型和名牌辨认，她白发，也可能戴帽子或眼罩，"
-               "不要假定熊猫耳一定可见；身份提示：{identity}；图里可能还有别人。请给出李豆沙本人主脸（眉毛到下巴、"
+HEAD_LOCATE = ("这张图（{w}x{h} 像素）里有虚拟主播" + HOST + "；以画面实际造型和名牌辨认，" + FACE_HINT
+               + "身份提示：{identity}；图里可能还有别人。请给出" + HOST + "本人主脸（眉毛到下巴、"
                "左脸颊到右脸颊）的像素框，以及她头部最高处（头发、耳朵、发饰都算）的 y 像素。只输出一个 JSON 对象："
                '{{"host_face": [x0, y0, x1, y1], "host_head_top": y}}，整数；看不出就写 null。')
 

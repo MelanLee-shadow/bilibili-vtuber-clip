@@ -34,9 +34,9 @@ from . import channel_facts
 from .lane_rules import rules
 from .layout import layout
 from .runner import Ctx
-from .srt_text import SrtCue, _json_from_text
+from .srt_text import SrtCue
 from .state import utc_now
-from .step_io import _ask_cpa, _cpa_ok, _local, _log, _render
+from .step_io import _local, _render, ask_json
 
 if TYPE_CHECKING:
     from .circle_context import TermContext
@@ -131,19 +131,12 @@ def _spot(ctx: Ctx, numbered: dict[int, str], cpa_calls: list[CpaEvent]) -> tupl
     most = int(rules("references")["spot_max_terms"])
     prompt = _render("reference_spot.md", persona=channel_facts.spoken(), max_terms=str(most), lines="\n".join(numbered.values()))
     try:
-        record = _ask_cpa(ctx, SPOT_CALL, prompt, purpose=SPOT_CALL,
-                          accepts=lambda value: f"REFERENCE_SPOT_SHAPE ({_spot_problem(value)})" if _spot_problem(value) else "")
+        answer, reason = ask_json(ctx, SPOT_CALL, prompt, purpose=SPOT_CALL, shape="REFERENCE_SPOT_SHAPE", cpa_calls=cpa_calls,
+                                  problem=_spot_problem)
     except Exception as exc:  # noqa: BLE001 - a lead for the agent, never a reason to stop the step
         return [], f"{type(exc).__name__}: {str(exc)[:160]}"
-    cpa_calls.append(_log(record))
-    if not _cpa_ok(record):
-        return [], str(record.get("reason") or record.get("stderr_tail") or "no answer").strip().splitlines()[0][:160]
-    try:
-        answer = _json_from_text(record["response_text"])
-    except ValueError as exc:
-        return [], f"CPA_RESPONSE_UNPARSEABLE ({str(exc)[:120]})"
-    if _spot_problem(answer):
-        return [], _spot_problem(answer)
+    if reason:
+        return [], reason
     seen: dict[str, dict[str, Any]] = {}
     for row in answer["references"]:
         cues = [n for n in row["cues"] if n in numbered]

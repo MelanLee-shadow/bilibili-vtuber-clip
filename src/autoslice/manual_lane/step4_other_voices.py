@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 
+from . import channel
+from . import text_overlap
 from .adapters import remote_python, root_script
 from .lane_rules import rules
 from .runner import Ctx
@@ -154,20 +156,12 @@ def call_records(mode: str, calls: Sequence[dict[str, object]]) -> list[CpaEvent
 
 # ----- facts for the review ------------------------------------------------------------------------------
 
-def _alnum(text: object) -> str:
-    return "".join(ch for ch in str(text) if ch.isalnum())
-
-
 _MARK_RUN = re.compile(r"([，。！？、；：,.!?])(?:\s*[，。！？、；：,.!?])+")     # marks left side by side by a removed line: the first stays
 
 
 def coverage(cue_text: str, subtitle: str) -> float:
     """The share of the cue's characters that appear, in order, in the screen subtitle (0 to 1).  Text comparison only."""
-    a, b = _alnum(cue_text), _alnum(subtitle)
-    if not a or not b:
-        return 0.0
-    blocks = SequenceMatcher(None, a, b, autojunk=False).get_matching_blocks()
-    return sum(m.size for m in blocks) / len(a)
+    return text_overlap.share(text_overlap.letters(cue_text), text_overlap.letters(subtitle), empty=0.0)
 
 
 def own_subtitles(frames: Sequence[FrameReading]) -> bool:
@@ -188,7 +182,7 @@ def _spoken_lines(frames: Sequence[FrameReading]) -> list[tuple[float, list[str]
         for piece in set(row):
             seen[piece] = seen.get(piece, 0) + 1
     most = float(rules("other_voices")["static_text_share"]) * len(showing)
-    return [(float(f["t"]), [_alnum(x) for x in row if (seen[x] < most or len(showing) < 4) and _alnum(x)])
+    return [(float(f["t"]), [text_overlap.letters(x) for x in row if (seen[x] < most or len(showing) < 4) and text_overlap.letters(x)])
             for f, row in zip(showing, pieces, strict=True)]
 
 
@@ -202,20 +196,19 @@ def _near(start_s: float, end_s: float, frames: Sequence[FrameReading]) -> list[
 def shown_on_screen(cue_text: str, start_s: float, end_s: float, frames: Sequence[FrameReading]) -> float:
     """The share of the cue's letters that the watched video's own subtitles show around the cue: runs of two or more
     letters found in the lines read there, or the whole of a one-letter cue."""
-    text, lines = _alnum(cue_text), _near(start_s, end_s, frames)
+    text, lines = text_overlap.letters(cue_text), _near(start_s, end_s, frames)
     if not text or not lines:
         return 0.0
     if len(text) < 2:
         return float(text in lines)
-    blocks = SequenceMatcher(None, text, " ".join(lines), autojunk=False).get_matching_blocks()
-    return sum(m.size for m in blocks if m.size >= 2) / len(text)
+    return text_overlap.share(text, " ".join(lines), min_run=2)
 
 
 def without_shown(cue_text: str, start_s: float, end_s: float, frames: Sequence[FrameReading]) -> str:
     """The cue's text without the lines the video's own subtitles show (what is left is what only the host said).  A
     line is taken out only when the cue holds nearly all of it (`on_screen_min` of its letters): two letters a sentence
     happens to share with another line of the video stay.  Punctuation left at the front goes with what was removed."""
-    text = _alnum(cue_text)
+    text = text_overlap.letters(cue_text)
     gone = [False] * len(text)
     least = float(rules("other_voices")["on_screen_min"])
     for line in dict.fromkeys(_near(start_s, end_s, frames)):
@@ -247,8 +240,8 @@ def host_part(unshown: str, quoted: object) -> str:
     """The part of a cue's unshown words the review says the host speaks, when it really is a run of those words (the
     same letters in a row); otherwise all of them.  A recogniser mishears the video's speech, so a line of the video
     can stay among the unshown words under another spelling: the review, which reads the screen, says which are hers."""
-    want = _alnum(quoted)
-    at = _alnum(unshown).find(want) if want else -1
+    want = text_overlap.letters(quoted)
+    at = text_overlap.letters(unshown).find(want) if want else -1
     if at < 0:
         return unshown
     start = end = None
@@ -285,8 +278,8 @@ def best_match(cue_text: str, frames: Sequence[FrameReading]) -> tuple[float, st
 
 def quote_in_readings(quote: str, frames: Sequence[FrameReading]) -> bool:
     """The review's cited screen-subtitle words really were read from one of this cue's frames."""
-    q = _alnum(quote)
-    return bool(q) and any(q in _alnum(f.get("video_subtitle") or "") for f in frames if f["ok"])
+    q = text_overlap.letters(quote)
+    return bool(q) and any(q in text_overlap.letters(f.get("video_subtitle") or "") for f in frames if f["ok"])
 
 
 def frame_line(f: FrameReading) -> str:
@@ -304,10 +297,10 @@ def evidence_line(index: int, cue_text: str, frames: Sequence[FrameReading], hos
     of this cue that a video with its own subtitles does not show; the voiceprint then gives no direction and its
     number is not printed (a number the review reads is a number it follows)."""
     voiceprint = ("声纹被视频的声音盖住，不给方向" if unshown else
-                  "声纹无可用证据" if host_prob is None else f"声纹李豆沙概率 {host_prob:.2f}（{voice}）")
+                  "声纹无可用证据" if host_prob is None else f"声纹{channel.HOST}概率 {host_prob:.2f}（{voice}）")
     screen = "；".join(frame_line(f) for f in frames) or "没有取帧"
     score, _ = best_match(cue_text, frames)
-    n = len(_alnum(cue_text))
+    n = len(text_overlap.letters(cue_text))
     note = f"；本句仅 {n} 字，吻合度参考价值低" if n < 3 else ""
     rest = f"；视频自带字幕，本句不在画面字幕里的字：「{unshown}」" if unshown else ""
     return f"{index + 1}「{cue_text}」：{voiceprint}；画面字幕：{screen}；与画面字幕吻合度 {round(score * 100)}%{note}{rest}"

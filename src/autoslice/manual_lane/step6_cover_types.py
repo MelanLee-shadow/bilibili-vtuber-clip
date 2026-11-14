@@ -39,7 +39,7 @@ class CoverBrief(TypedDict, total=False):
     scene_needed: bool
     scene_reason: JsonValue
     setting: JsonValue
-    kmx: bool
+    on_fans: bool
     column_rows: JsonValue      # the cover lines broken into a column's rows, as the brief proposed them
     _cpa: CpaEvent
     _failed: str
@@ -227,7 +227,7 @@ class RecentCover(TypedDict):
 class CoverPlan(TypedDict, total=False):
     recent: RecentCovers
     emote: CoverEmote | None
-    kmx_emote: CoverEmote | None
+    fans_emote: CoverEmote | None
     line: str
     participants: list[str]
     brief: CoverBrief

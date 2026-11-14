@@ -21,10 +21,11 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, cast
 
+from . import text_overlap
 from .adapters import RemoteResult
 from .doubt_policy import witness_family
 from .gates import match_label_anchors
-from .stage_impl import REVIEWER_SOURCE, _norm_text, fmt_ts, parse_srt
+from .stage_impl import REVIEWER_SOURCE, fmt_ts, parse_srt
 from .state import ClipState, utc_now
 
 if TYPE_CHECKING:
@@ -133,7 +134,7 @@ def _candidates(current: str, cpa_text: str | None, readings: Mapping[str, str])
     pool.extend((src, txt) for src, txt in readings.items() if txt)
     merged: dict[str, QueueCandidate] = {}
     for source, text in pool:
-        key = _norm_text(text)
+        key = text_overlap.key(text)
         if not key:
             continue
         slot = merged.setdefault(key, {"text": text, "sources": []})
@@ -154,7 +155,7 @@ _SOURCE_NAME = {"asr:jianying": "剪映", "asr:mai": "MAI", "asr:moss": "MOSS", 
 
 def _collapsed(text: str) -> str:
     """Normalised text with immediately repeated characters collapsed, so 对对 and 对 compare equal (display only)."""
-    return re.sub(r"(.)\1+", r"\1", _norm_text(text))
+    return re.sub(r"(.)\1+", r"\1", text_overlap.key(text))
 
 
 def _focus_candidates(burned: str, before: str, readings: Mapping[str, str]) -> list[QueueCandidate]:

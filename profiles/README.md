@@ -31,6 +31,23 @@ python3 scripts/validate_channel_profile.py \
   --manifest "profiles/$profile_id/profile.json" --config-only
 ```
 
+Setting the clip pipeline up from nothing (media host, profile files, recordings, the first clip) is in
+[SETUP.md](SETUP.md).
+
+The clip pipeline (`scripts/manual_lane.py`) reads two more files beside `profile.json`; copy both from
+`profiles/_template/` as well:
+
+- `manual_lane.json`: where the pipeline runs for this channel (the media host, its work directory, the recordings,
+  the title-cover scripts, the speaker workspace). Each key can be overridden by `MANUAL_LANE_<KEY>`.
+- `manual_lane_channel.json`: the few sentences the pipeline's prompts say about the channel (what the host calls
+  the audience, how she refers to herself and how recognisers mis-hear it, names likely to be spoken, how to tell her
+  in a picture, the forms of her name used in titles). Every field is explained in the template; fill them from what
+  the channel owner tells you and leave a field empty rather than invent it.
+
+The pipeline's own prompts, rule numbers and code name no channel: they say `{host}`, `{fans_name}` and so on, and the
+active profile fills them in (`src/autoslice/manual_lane/channel.py`). A test fails when a profile's names are spelled
+in the pipeline again, so switching channel stays a matter of switching profile.
+
 The asset directory is the customization surface:
 
 | Knowledge or behavior | Profile-owned asset |

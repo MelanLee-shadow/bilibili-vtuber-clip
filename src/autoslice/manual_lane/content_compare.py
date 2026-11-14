@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from difflib import SequenceMatcher
 
-from . import doubt_policy
+from . import doubt_policy, text_overlap
 from .lane_rules import rules
 
 _DIGIT_OF = {ch: str(i) for i, ch in enumerate("零一二三四五六七八九")} | {"〇": "0", "两": "2"}
@@ -61,10 +61,7 @@ def differs_in_content(a: str, b: str) -> bool:
 
 def overlap_share(part: str, other: str) -> float:
     """The share of `part`'s content characters that `other` also has, in order (1.0 when part has none)."""
-    p, o = content_key(part), content_key(other)
-    if not p:
-        return 1.0
-    return sum(b.size for b in SequenceMatcher(None, p, o, autojunk=False).get_matching_blocks()) / len(p)
+    return text_overlap.share(content_key(part), content_key(other))
 
 
 def unsupported_additions(text: str, current: str, independent: list[str], min_chars: int) -> list[str]:

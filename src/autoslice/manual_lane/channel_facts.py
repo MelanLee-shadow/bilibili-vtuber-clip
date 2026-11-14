@@ -8,8 +8,9 @@ from the fact ledger (persona_facts), so a fact accepted later reaches every rea
 from __future__ import annotations
 
 from pathlib import Path
+from . import channel
 
-PERSONA = Path(__file__).resolve().parents[3] / "assets" / "lidousha" / "persona.md"
+PERSONA = channel.asset("persona.md")
 COVER_SECTION = "## 封面表情/角色映射"
 COVER_WORD = "封面"            # a fact line labelled with this word is about the cover picture, not about how she talks
 
