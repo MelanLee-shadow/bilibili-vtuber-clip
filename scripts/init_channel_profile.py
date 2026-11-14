@@ -95,6 +95,8 @@ def init_profile(
         if isinstance(node, list):
             return [walk(value) for value in node]
         if isinstance(node, str):
+            if display_name:                           # the host's name wherever the template wrote its placeholder
+                node = node.replace("替换为主播名", display_name)
             return (
                 node.replace("assets/replace_me", f"assets/{profile_id}")
                 .replace("replace_me", profile_id)
@@ -110,15 +112,11 @@ def init_profile(
             for key in ("display_name",):
                 identity[key] = display_name
             identity["self_reference_aliases"] = [          # 模板里的「主播」是占位，不是她的自称
-                display_name for alias in identity.get("self_reference_aliases", []) if alias == "替换为主播名"
-            ]
+                alias for alias in identity.get("self_reference_aliases", []) if alias != "主播"
+            ] or [display_name]
             for key in ("short_name", "host_speaker_label"):
                 if identity.get(key) == "主播":
                     identity[key] = display_name
-            identity["speaker_identity_aliases"] = [
-                display_name if alias == "替换为主播名" else alias
-                for alias in identity.get("speaker_identity_aliases", [])
-            ]
         if prompt_name:
             identity["prompt_name"] = prompt_name
         if room:
@@ -148,6 +146,10 @@ def init_profile(
             cwd=repo_root,
         )
         validator_output = (validate.stdout or validate.stderr).strip()
+        try:
+            validator_output = json.loads(validator_output)
+        except ValueError:
+            pass
     else:
         validator_output = "(validator script not found — run it manually)"
     return {
@@ -158,6 +160,7 @@ def init_profile(
         "validator": validator_output,
         "next_steps": [
             "按 profiles/SETUP.md 第 3 节逐项填：profiles/<id>/ 下的 profile.json、manual_lane.json、manual_lane_channel.json，和 assets/<id>/",
+            "profile.json 里还要手改的键：identity.prompt_name（没给 --prompt-name 时）、speaker_identity_aliases（说话人记录里代表主播的名字）、cover_identity 九键、titles 里的歌切前缀",
             "层 1 身份四件套按模板内问题清单问频道主人后填写：glossary.txt / persona.md / title_style.md / cover_identity_prompt.txt",
             "profile.json 的 identity（display_name/room_id/cover_identity 九键）按真实频道改——封面外貌事实务必先抽真实直播帧取证；每次改完运行 scripts/archive_channel_profile.py",
             "外貌事实三处必须同步：profile.json cover_identity + persona.md + cover_identity_prompt.txt",

@@ -82,6 +82,10 @@ class OtherVoicesRules(_RuleMetadata, total=False):
     unshown_min_letters: int
     own_time_reach_s: float
     unshown_max_shown: float
+    whole_witness_only_with_others: bool
+    voice_min_share: float
+    voice_min_run: int
+    voice_source: str
 
 
 class EffortPurpose(TypedDict, total=False):
