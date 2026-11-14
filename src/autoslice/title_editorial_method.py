@@ -17,7 +17,16 @@ JUDGE_RULES_START = "3. **意思**"
 JUDGE_RULES_LAST = "**判官守则**"
 JUDGE_TEMPLATE_SLOT = "@@RULES@@"
 JUDGE_SOURCE_NAME = "lidousha-title-cover/references/judge-prompt.md"
-TITLE_EDITORIAL_METHOD = Path(__file__).resolve().parents[2] / "assets/lidousha/title_editorial_method.json"
+
+
+def _method_path() -> Path:
+    """The active channel's title method (its asset directory): a channel writes titles by its own method."""
+    from src.autoslice.channel_profile import load_channel_profile
+
+    return load_channel_profile(Path(__file__).resolve().parents[2]).asset_root / "title_editorial_method.json"
+
+
+TITLE_EDITORIAL_METHOD = _method_path()
 
 
 class AuthorityError(RuntimeError):

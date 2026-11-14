@@ -163,3 +163,26 @@ def validate_manifest_history(repo: Path, manifest: Path) -> None:
         raise ValueError("manifest history not updated; archive the new version while retaining previous bytes")
 
 
+def archive_manifest(repo: Path, manifest: Path) -> str:
+    """Register a new version only after verifying all previously registered raw bytes."""
+    locator = _manifest_locator(repo, manifest)
+    index = repo / HISTORY / "index.json"
+    manifests = _index(repo) if index.exists() else {}
+    raw = manifest.read_bytes()
+    _document(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    target = repo / HISTORY / f"{digest}.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists() or target.is_symlink():
+        _archive_bytes(repo, digest)
+    else:
+        with target.open("xb") as output:
+            output.write(raw)
+    history = manifests.setdefault(locator, [])
+    if not history or history[-1] != digest:
+        history.append(digest)
+    temporary = index.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps({"schema_version": HISTORY_SCHEMA, "manifests": manifests},
+                                    indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temporary.replace(index)
+    return digest

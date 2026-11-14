@@ -143,6 +143,7 @@ def _mixed_by_cue(chunks: Mapping[int, Sequence[speaker_v8.ChunkPrediction]]) ->
 def _speaker_v8(ctx: Ctx) -> StepOutcome:
     """A linked clip (two or more participants, U110): host or guest per cue from the frozen v8 classifier, run on OCI3
     in this clip's own workspace.  Uncertain means guest colour (U114); a failed run stops the step (no guessing)."""
+    layout().need_speaker_v8()
     got = _v8_predictions(ctx)
     if isinstance(got, StepOutcome):
         return got

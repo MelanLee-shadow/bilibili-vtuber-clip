@@ -35,6 +35,7 @@ ASSETS_DIR = "assets"                                  # <work_root>/assets: the
 INTRO_SUBDIR = "intro"                                 # ... /intro: verified copies of the branding intros
 COVER_FONT_FILE = "fonts/RuiZiZhenYan.ttf"             # ... /fonts/RuiZiZhenYan.ttf: the cover font
 _SPEAKER_V8 = ("code_dir", "python", "model", "score")
+TOPOLOGY_FILE = REPO_ROOT / "ops" / "recording" / "oci3-recording-topology.json"
 _FREE_ASR = ("min_interval_s", "rate_limit_cooldown_s", "attempts", "rate_limit_attempts")
 
 
@@ -70,6 +71,21 @@ class Layout:
     #                                    optional: a day found there is read from there, any other day from the archive
     recordings_direct_host: str = ""   # the media host's ssh alias of the recorder's recordings (read-only rsync); optional:
     #                                    with it and the root, discover copies the newest days before it looks
+    archive_root: str = ""             # the recordings on the media host, <root>/<room id>/<date>/ (video and chat files);
+    #                                    optional: unset = the archive root of the recorder topology (ops/recording)
+
+    @property
+    def archive_room_dir(self) -> str:
+        """The room's recordings on the media host: the one place discover and the chat reader look."""
+        root = self.archive_root or str(json.loads(TOPOLOGY_FILE.read_text(encoding="utf-8"))["n100_archive_root"])
+        return f"{root}/{self.room_id}"
+
+    def need_speaker_v8(self) -> None:
+        """The voiceprint workspace is per channel; a clip with one voice never asks for it."""
+        missing = [k for k, v in self.speaker_v8.items() if not v]
+        if missing:
+            raise LayoutError(f"{LAYOUT_FILE}: speaker_v8.{'/'.join(missing)} is not set: this clip has more than one "
+                              "voice (a guest, or a watched video) and telling them apart needs the channel's voiceprint workspace")
 
     @property
     def remote_repo(self) -> str:
@@ -155,8 +171,11 @@ def load_layout(environ: Mapping[str, str] | None = None, *, path: Path | None =
                                              or doc.get("recordings_direct_root") or ""),
                   recordings_direct_host=str(env.get(ENV_PREFIX + "RECORDINGS_DIRECT_HOST")
                                              or doc.get("recordings_direct_host") or ""),
+                  archive_root=str(env.get(ENV_PREFIX + "ARCHIVE_ROOT") or doc.get("archive_root") or ""),
                   room_id=str(env.get(ENV_PREFIX + "ROOM_ID") or _room_id(env)),
-                  speaker_v8={k: str(_value(doc, k, env, section="speaker_v8")) for k in _SPEAKER_V8},
+                  speaker_v8={k: str(env.get(f"{ENV_PREFIX}SPEAKER_V8_{k.upper()}")
+                                     or cast("Mapping[str, JsonValue]", doc.get("speaker_v8") or {}).get(k) or "")
+                              for k in _SPEAKER_V8},
                   free_asr=FreeAsrPacing(min_interval_s=float(cast("str | float | int", pacing["min_interval_s"])),
                                          rate_limit_cooldown_s=float(cast("str | float | int", pacing["rate_limit_cooldown_s"])),
                                          attempts=int(cast("str | float | int", pacing["attempts"])),

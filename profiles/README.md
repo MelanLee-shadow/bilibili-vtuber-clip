@@ -20,6 +20,11 @@ Profile manifests are strict and fail on unknown keys, unsafe paths, missing
 pipeline fields, or malformed protocol tokens. Start a new channel from the
 neutral template instead of deleting Li Dousha knowledge in place:
 
+One command does the mechanical part (copies the templates, replaces every placeholder id, registers the manifest):
+`python3 scripts/init_channel_profile.py <profile-id> --display-name <name> --room <room id>`. After each edit of
+`profile.json` run `python3 scripts/archive_channel_profile.py profiles/<profile-id>/profile.json`. The manual steps below
+are what that command does:
+
 ```bash
 profile_id=my_channel
 mkdir -p "profiles/$profile_id"
