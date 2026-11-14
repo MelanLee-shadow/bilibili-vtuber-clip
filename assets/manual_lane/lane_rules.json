@@ -56,15 +56,18 @@
     "_doc": "The listening ladder and the whole-clip ASR witnesses: the production defaults TASK-11 measured and accepted, kept as they were at ed5428bb1 (TASK-29 ruling 1; this file only records them in one place).  asr_first: each doubt window is first re-recognised by MAI and MOSS, Gemini 3.8 then argon only for what that leaves unsettled; the whole clip is also recognised by MAI and MOSS (step 4 then labels speakers by the MOSS clusters named by the host voiceprint, 8c1).  escalate_without_reading (COACH e05 §1.2): on a listening level that has a next level, a doubt whose window gave no reading from that level stays open for the next one even when CPA wrote 高.  change_needs_listening (TASK-30, COACH e05 §2/§4; change_source): on a level that does not listen (window ASR, text only) and has a listening level after it, a doubt CPA decided to change in content while no Gemini reading of it exists stays open for that listening level.  MANUAL_LANE_LADDER / MANUAL_LANE_WHOLE_WITNESS still override for experiments.",
     "source": "TASK-11 (ladder asr_first, whole_witness mai,moss); COACH-ADVICE e05 §1.2 (escalate_without_reading)",
     "models": {
-      "_doc": "Which CPA models each listening level asks, in order; the first that answers is the level's hearing, and one the account or the route refuses is skipped (listen_windows.py, LEVELS). The keys are the level labels and do not change with the model. argon, the second hearing of a hard sentence: Carbon while it costs what Argon does, Argon again when Carbon costs more (公开规则). Measured 2026-11-13 on 14 windows against the finals (pinyin similarity): 3.8 Low 0.88, Argon 0.91, Carbon low/medium/high 0.92/0.93/0.93, Hydrogen low 0.93; per window 3.8 takes 5 s and 1k tokens, Carbon low 29 s and 2k, Hydrogen low 30 s and 5.6k.",
+      "_doc": "Which CPA models each listening level asks, in order; the first that answers is the level's hearing, and one the account or the route refuses is skipped (listen_windows.py, LEVELS); so is one that gives no answer (an empty reply or a timeout after minutes: 2026-11-14 the first level's model did that all afternoon and a clip's subtitles took five hours), which is why the first level names a second model. It is the second level's own model (the only other one the gateway routed that day): while it stands in, the two levels are the same hearing. The keys are the level labels and do not change with the model. argon, the second hearing of a hard sentence: Carbon while it costs what Argon does, Argon again when Carbon costs more (公开规则). Measured 2026-11-13 on 14 windows against the finals (pinyin similarity): 3.8 Low 0.88, Argon 0.91, Carbon low/medium/high 0.92/0.93/0.93, Hydrogen low 0.93; per window 3.8 takes 5 s and 1k tokens, Carbon low 29 s and 2k, Hydrogen low 30 s and 5.6k.",
       "38m": [
-        "Gemini 3.8 Flash (Low)"
+        "Gemini 3.8 Flash (Low)",
+        "gemini-4-carbon-low"
       ],
       "argon": [
         "gemini-4-carbon-low",
         "gemini-4-argon-low"
       ]
     },
+    "probe_model": "gemini-3.1-flash-lite",
+    "probe_model_doc": "The gateway's cheapest model. The first time a listening model fails in a run, one one-line request goes to it and, when that fails too, one to this model: a relay says why a model is down (公开规则：当前分组「Gemini argon下模型 gemini-3.1-flash-lite 暂无可用服务」), and then the model is not asked again for ten minutes instead of again and again (listen_windows.py, PROBE).",
     "ladder": "asr_first",
     "whole_witness": "mai,moss",
     "escalate_without_reading": true,
@@ -264,6 +267,31 @@
     "enabled": true,
     "min_syllables": 2,
     "max_syllables": 5
+  },
+  "knowledge_observe": {
+    "_doc": "做片时顺带补知识图（knowledge_observe.py）：每条片复审完成后，一次模型调用读最终字幕和知识图已有的写法，列出最多 observe_max 条知识图里还没有的名字：已有条目的另一个叫法（alias），或还没有的条目（entity）；名字已是图里的写法、alias 指向的条目不存在、或原句不逐字在字幕里且不含这个名字的，不留。留下的写进任务目录 knowledge/observations.json（同一个名字在别的片再出现就多记一个见证），在运行输出里列出来给审片的人入图，并交给新闻爬虫当种子；至少 observed_min_sessions 场直播的切片都见证过的，作为“尚未审定”的线索交给字幕代理。知识图本身只由提交改。",
+    "source": "频道主 2026-11-14：“这种切片过程中补知识图的过程也很重要，李李一听就知道是李豆沙的昵称，你这个补的很对。”",
+    "observe_max": 5,
+    "observed_min_sessions": 2,
+    "viewer_thanks": {
+      "_doc": "一条 entity 的每句原话都是在谢观众的礼物（同时有 thanks 里的一个词和 gifts 里的一个词）时，这个名字是送礼的观众，不是圈内知识，不留（11-14 实测：四条片里三个观众名被当成人物）",
+      "thanks": [
+        "谢谢",
+        "感谢",
+        "多谢"
+      ],
+      "gifts": [
+        "SC",
+        "醒目留言",
+        "舰长",
+        "上舰",
+        "提督",
+        "总督",
+        "礼物",
+        "大航海",
+        "续舰"
+      ]
+    }
   },
   "persona": {
     "_doc": "做片时顺带补人设（persona_observe.py）：每条片复审完成后，一次模型调用读最终字幕，列出最多 observe_max 条“人设里还没有、换一条片仍成立”的特点，每条要有她自己的原话（逐字出现在她说的句子里才留）。同一个特点（文字相似度不低于 same_statement_ratio）在不同切片里再出现就多记一个见证。至少 observed_min_sessions 场直播的切片都见证过的特点，作为“片中多次观察到、尚未审定”的线索交给读人设的各步（字幕、标题理解）。已审定的人设仍只由台账改（persona_facts → persona.md）。",

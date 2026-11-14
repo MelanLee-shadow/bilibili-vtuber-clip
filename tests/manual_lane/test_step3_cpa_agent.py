@@ -269,7 +269,7 @@ def test_a_second_hearing_nobody_can_give_is_handed_over_once_and_not_asked_agai
     handed = next(r for r in results if r.get('record', {}).get('status') == 'UNAVAILABLE')
     assert handed['other_recognisers'] == [{'recogniser': 'mai', 'status': 'OK', 'text': '结果'}]
     assert any('cannot be heard now' in str(r.get('error', '')) for r in results)
-    assert len(si.ARGON['then']) >= 1 and si.M38 == {'name': si.M38['name'], 'slug': '38m'}
+    assert len(si.ARGON['then']) >= 1 and si.M38['slug'] == '38m'
 
 
 def test_every_listening_path_waits_out_a_rate_limit_and_reuse_only_never_waits(tmp_path, monkeypatch):

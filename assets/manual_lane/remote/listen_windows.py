@@ -22,6 +22,9 @@ or the route (not routed, no balance, no credential: see _refused) is not asked 
 in later ones; when no model of the level answers the record is QUOTA if one of them only asked to wait, else UNAVAILABLE
 or ERROR, with what each model said under "tried".  An entry without "then" is asked exactly as before.
 
+PROBE: the first failure of a model in a run (other than a 429, which says itself what it is) also sends a one-line
+request to that model and, when it does not answer either, to the gateway's cheapest model; see probe().
+
 --reuse-only: never call a model.  Only OK records with a matching key are read; everything else is left missing.
 
 Run on OCI3 as root with cpa.env loaded by the caller; the repo is read-only.
@@ -40,6 +43,11 @@ REPO_ENV = "MANUAL_LANE_REMOTE_REPO"   # the deployed repo, set by the lane (ada
 DEFAULT_QUOTA_WAIT_S = 1800   # a 429 without Retry-After: the longest wait before asking that model again
 FIRST_QUOTA_WAIT_S = 60       # ... the first such wait; each further refusal within the hour waits five times longer
 UNAVAILABLE_S = 1800          # a level's model that refused for the account or the route is skipped for this long
+STALL_AFTER_S = 120           # an attempt that fails after this long gave no answer at all (an empty reply, a timeout)
+STALLED_S = 600               # ... and that model is not asked again for this long: each such attempt costs minutes
+WAIT_DOWN_S = 600             # a model the probe found down (PROBE) is not asked again for this long
+PROBE_TIMEOUT_S = 90
+PROBE_PROMPT = "Reply with the single word OK."
 
 
 def _cpa_generate(prompt, model_name, mp3):
@@ -57,6 +65,83 @@ def _cpa_generate(prompt, model_name, mp3):
     receipt_path = prefix.with_name(prefix.name + f'.{suffix}.receipt.json')
     receipt_path.write_text(json.dumps(dict(result.receipt), ensure_ascii=False), encoding='utf-8')
     return result.text
+
+
+def _probe_generate(model_name):
+    """One one-line text request (the probe, see PROBE)."""
+    sys.path.insert(0, os.environ[REPO_ENV])
+    from src.autoslice import cpa_gemini_client as cg
+    return cg.generate(prompt=PROBE_PROMPT, model=model_name, purpose="manual_lane_listen_probe",
+                       generation_config={"maxOutputTokens": 16}, timeout_seconds=PROBE_TIMEOUT_S).text
+
+
+def probe_model_name():
+    """The cheapest model of the gateway (lane_rules listening.probe_model); None when the repo or the key is absent."""
+    try:
+        rules = json.loads((Path(os.environ[REPO_ENV]) / "assets/manual_lane/lane_rules.json").read_text(encoding="utf-8"))
+        return rules["listening"].get("probe_model") or None
+    except (KeyError, OSError, ValueError):
+        return None
+
+
+def _probe_one(name, ask, clock):
+    started = clock()
+    try:
+        ask(name)
+        return {"model": name, "answered": True, "said": "", "seconds": round(clock() - started, 1)}
+    except Exception as exc:  # noqa: BLE001 - what the gateway said is the evidence
+        said = getattr(exc, "said", "") or f"{type(exc).__name__}: {str(exc)[:160]}"
+        code = getattr(exc, "code", None)
+        # Only a refusal the gateway states (an HTTP error) says the model is down.  A one-line request that times out
+        # says the gateway is slow (2026-11-14 16:41Z: 72-333 s for one word, 1-28 s thirteen minutes later): that is
+        # the stall rule's business, not a reason to stop asking.
+        refused = isinstance(code, int) and code >= 400
+        return {"model": name, "answered": not refused, "http_status": code if isinstance(code, int) else None,
+                "said": said, "seconds": round(clock() - started, 1)}
+
+
+def probe(state, name, *, outdir, cheapest=None, ask=_probe_generate, clock=time.time):
+    """PROBE: the first time a model fails in a run, one one-line request to it and one to the gateway's cheapest model
+ (公开规则: a relay says why a model is down, 「当前分组下模型…暂无可用服务」, and then asking again and again
+ is no use). Asked once per model per run; the other windows wait for the same answer. Returns
+ {"down": False} the model answers a one-line request (or is only slow): retried as before;
+ {"down": True, "said": …} the gateway refuses it: not asked again until the wait (WAIT_DOWN_S) is over;
+ {"gateway_down": True} it refuses the cheapest model too: no model of the gateway is asked until then.
+ Both answers are written to OUTDIR/.probe.json (what the gateway said, masked by the client)."""
+    with state["lock"]:
+        probes = state.setdefault("probes", {})
+        entry = probes.get(name)
+        if entry is None:
+            entry = probes[name] = {"done": threading.Event()}
+            mine = True
+        else:
+            mine = False
+    if not mine:
+        entry["done"].wait(4 * PROBE_TIMEOUT_S)
+        return entry.get("verdict", {"down": False})
+    try:
+        target = _probe_one(name, ask, clock)
+        verdict = {"down": not target["answered"], "said": target["said"], "asked": [target]}
+        if not target["answered"] and cheapest and cheapest != name:
+            gateway = _probe_one(cheapest, ask, clock)
+            verdict["asked"].append(gateway)
+            verdict["gateway_down"] = not gateway["answered"]
+            if verdict["gateway_down"] and gateway["said"]:
+                verdict["said"] = f"{target['said']}; {cheapest}: {gateway['said']}"
+        verdict["at"] = clock()
+        with state["lock"]:
+            seen = _read(outdir / ".probe.json") or []
+            (outdir / ".probe.json").write_text(json.dumps([*seen, verdict], ensure_ascii=False, indent=1),
+                                               encoding="utf-8")
+            if verdict["down"]:
+                until = clock() + WAIT_DOWN_S
+                state["exhausted"][name] = max(state["exhausted"].get(name, 0.0), until)
+                if verdict.get("gateway_down"):
+                    state["gateway_down"] = max(state.get("gateway_down", 0.0), until)
+        entry["verdict"] = verdict
+        return verdict
+    finally:
+        entry["done"].set()
 
 
 def excerpt(win, cut, audio_dir):
@@ -181,9 +266,10 @@ def one(job, *, outdir, prompt_tpl, state, clock=time.time, **how):
 
 
 def _ask(job, *, outdir, prompt_tpl, state, generate=_cpa_generate, clock=time.time, reuse_only=False, max_attempts=3,
-         refusable=False):
+         refusable=False, probe_ask=None, cheapest=None):
     """state: {"exhausted": {model name: retry_at}, "lock": Lock}, shared by the jobs of one run.  `refusable`: the
-    level has other models, so a refusal (_refused) is recorded as UNAVAILABLE at once instead of being asked again."""
+    level has other models, so a refusal (_refused) is recorded as UNAVAILABLE at once instead of being asked again.
+    `probe_ask` (one-line request) and `cheapest` (model name): PROBE; without `probe_ask` nothing is probed."""
     win, model = job
     slug = model["slug"]
     dest = outdir / f"{win['win']}.{slug}.json"
@@ -194,7 +280,7 @@ def _ask(job, *, outdir, prompt_tpl, state, generate=_cpa_generate, clock=time.t
         return dest.name, "missing"
     now = clock()
     with state["lock"]:
-        exhausted_until = state["exhausted"].get(model["name"], 0.0)
+        exhausted_until = max(state["exhausted"].get(model["name"], 0.0), state.get("gateway_down", 0.0))
     if exhausted_until <= now:
         exhausted_until = model_wait_until(outdir, model, now)
     if exhausted_until > now:
@@ -217,6 +303,7 @@ def _ask(job, *, outdir, prompt_tpl, state, generate=_cpa_generate, clock=time.t
         except FileExistsError:
             return dest.name, "dispatch_unknown"
     for attempt in range(1, max_attempts + 1):
+        started = clock()
         try:
             text = generate(prompt, model["name"], win["mp3"])
             # Keep even a malformed provider response for the agent and its receipt (the last try's).
@@ -239,6 +326,25 @@ def _ask(job, *, outdir, prompt_tpl, state, generate=_cpa_generate, clock=time.t
             if refusable and _refused(exc):
                 record.update(status="UNAVAILABLE", http_status=exc.code)
                 break
+            stalled = clock() - started >= STALL_AFTER_S
+            verdict = (probe(state, model["name"], outdir=outdir, cheapest=cheapest, ask=probe_ask, clock=clock)
+                       if probe_ask is not None else {"down": False})
+            if stalled or verdict["down"]:
+                # The model is not answering (measured 2026-11-14: empty replies after six minutes, three attempts a
+                # window, a clip's subtitles took five hours), or a one-line request to it fails too (PROBE).  Not
+                # asked again in this window; the level's next model is, and a level with no other model waits as it
+                # does for a quota.
+                why = (f"gateway said: {verdict.get('said') or 'no answer to a one-line request'}" if verdict["down"]
+                       else f"no answer in {int(clock() - started)} s")
+                until = clock() + (WAIT_DOWN_S if verdict["down"] else STALLED_S)
+                with state["lock"]:
+                    state["exhausted"][model["name"]] = max(state["exhausted"].get(model["name"], 0.0), until)
+                if refusable:
+                    record.update(status="UNAVAILABLE", error=record["error"] + f" ({why})")
+                    break
+                _write_quota(dest, win, model, prompt, retry_at=until, retry_after=None,
+                             note=f"{why} on attempt {attempt}")
+                return dest.name, "QUOTA"
             if max_attempts != 1:
                 time.sleep(45 * attempt)  # transient provider errors: short backoff, same run only
     dest.write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -260,7 +366,9 @@ def _write_quota(dest, win, model, prompt, *, retry_at, retry_after, note, refus
 
 
 def run(windows, models, cut, outdir, prompt_tpl, *, excerpt_fn=excerpt, generate=_cpa_generate,
-        clock=time.time, reuse_only=False, workers=16, max_attempts=3):
+        clock=time.time, reuse_only=False, workers=16, max_attempts=3, probe_ask=None, cheapest=None):
+    if probe_ask is None and generate is _cpa_generate:     # the production call is probed through the same gateway
+        probe_ask, cheapest = _probe_generate, cheapest or probe_model_name()
     audio_dir = outdir / "audio"
     audio_dir.mkdir(parents=True, exist_ok=True)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -274,7 +382,8 @@ def run(windows, models, cut, outdir, prompt_tpl, *, excerpt_fn=excerpt, generat
     with ThreadPoolExecutor(max_workers=max(1, min(workers, len(jobs)))) as pool:
         results = list(pool.map(lambda job: one(job, outdir=outdir, prompt_tpl=prompt_tpl, state=state,
                                                 generate=generate, clock=clock, reuse_only=reuse_only,
-                                                max_attempts=max_attempts), jobs))
+                                                max_attempts=max_attempts, probe_ask=probe_ask,
+                                                cheapest=cheapest), jobs))
     for name, status in results:
         print(name, status, flush=True)
     collected = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(outdir.glob("*.json"))

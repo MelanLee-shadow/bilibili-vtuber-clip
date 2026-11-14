@@ -19,6 +19,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
+from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 
 from . import channel
@@ -99,13 +100,15 @@ def video_playing(frames: Sequence[FrameReading]) -> bool:
     return hits >= int(rules("other_voices")["screen_min_hits"])
 
 
-def read_frames(ctx: Ctx, mode: str, requests: Sequence[FrameRequest]) -> Readings:
+def read_frames(ctx: Ctx, mode: str, requests: Sequence[FrameRequest], *, script: Path = SCREEN_TOOL,
+                question: str = "", purpose: str = SCREEN_PURPOSE) -> Readings:
     """Read `requests` on OCI3 (mode names the pass: files speaker/<mode>-*).  The same frames asked the same question
     are read from the earlier reading when it was complete: nothing is asked again.  A tool failure or a pass in which
-    no frame could be read returns `error`."""
+    no frame could be read returns `error`.  `script` is the remote reader (this step's, or agent_frame's, which is
+    handed `question`); `purpose` names its paid calls."""
     rd = ctx.remote_dir
-    request = {"frames": list(requests)}
-    tool = SCREEN_TOOL.read_text(encoding="utf-8")
+    request = {"frames": list(requests), **({"question": question} if question else {})}
+    tool = script.read_text(encoding="utf-8")
     stamp = hashlib.sha256(json.dumps([request, tool], ensure_ascii=False).encode("utf-8")).hexdigest()
     reading_local = _local(ctx, f"speaker/{mode}-readings.json")
     try:
@@ -119,10 +122,10 @@ def read_frames(ctx: Ctx, mode: str, requests: Sequence[FrameRequest]) -> Readin
     frames_local.write_text(json.dumps(request, ensure_ascii=False), encoding="utf-8")
     out_remote = f"{rd}/speaker/{mode}-out.json"
     ctx.adapters.remote.put(PICK_FRAME_TOOL, f"{rd}/speaker/pick_frame.py")
-    ctx.adapters.remote.put(SCREEN_TOOL, f"{rd}/speaker/read_screen_subtitles.py")
+    ctx.adapters.remote.put(script, f"{rd}/speaker/{script.name}")
     ctx.adapters.remote.put(frames_local, f"{rd}/speaker/{mode}-frames.json")
     body = (f"mkdir -p {rd}/speaker/{mode}-frames\n"
-            + root_script(remote_python(f"{rd}/speaker/read_screen_subtitles.py {rd}/cut/cut.mp4 "
+            + root_script(remote_python(f"{rd}/speaker/{script.name} {rd}/cut/cut.mp4 "
                                         f"{rd}/speaker/{mode}-frames {rd}/speaker/{mode}-frames.json {out_remote}"),
                           env=["cpa"], owned=f"{rd}/speaker/{mode}-frames {out_remote}", recursive=True))
     res = _run_remote(ctx, f"s4-screen-{mode}", body, timeout=1800)
@@ -133,7 +136,7 @@ def read_frames(ctx: Ctx, mode: str, requests: Sequence[FrameRequest]) -> Readin
         reading_local.unlink(missing_ok=True)
         return Readings(error=f"看图（{mode}）没有结果：rc={res.rc} {type(exc).__name__} {res.stderr[-160:]}")
     frames = cast("list[FrameReading]", doc["frames"])
-    calls = call_records(mode, doc.get("calls") or [])
+    calls = call_records(mode, doc.get("calls") or [], purpose)
     doc["stamp"] = stamp
     reading_local.write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
     ok = sum(1 for f in frames if f["ok"])
@@ -145,11 +148,11 @@ def read_frames(ctx: Ctx, mode: str, requests: Sequence[FrameRequest]) -> Readin
     return Readings(frames, calls, line)
 
 
-def call_records(mode: str, calls: Sequence[dict[str, object]]) -> list[CpaEvent]:
+def call_records(mode: str, calls: Sequence[dict[str, object]], purpose: str = SCREEN_PURPOSE) -> list[CpaEvent]:
     """The vision requests the tool made (it calls CPA directly, not through _ask_cpa) as cpa records for the state
     and PROCESS: every paid call of a step is in its record (TASK-9), as cover_vision_calls does."""
     return [cast("CpaEvent", {"call_id": f"speaker-{mode}-{i}", "model": c.get("model"), "effort": VISION_EFFORT,
-                              "purpose": SCREEN_PURPOSE, "rc": c.get("rc"), "elapsed_s": c.get("elapsed_s"),
+                              "purpose": purpose, "rc": c.get("rc"), "elapsed_s": c.get("elapsed_s"),
                               "kind": "vision", "usage": c.get("usage")})
             for i, c in enumerate(calls, 1)]
 

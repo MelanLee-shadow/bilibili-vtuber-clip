@@ -93,3 +93,26 @@ def test_a_prompt_gets_the_channel_from_the_profile() -> None:
 def test_the_template_profile_has_every_field() -> None:
     template = json.loads((REPO / "profiles/_template" / channel.TEXT_FILE).read_text(encoding="utf-8"))
     assert all(key in template for key in channel.TEXT_KEYS)
+
+
+def test_tools_on_the_media_host_are_started_for_the_active_channel():
+    """A tool on the media host reads the default profile unless it is told the channel (another channel's
+    clip got the example channel's tags and its cover tools looked for the example channel's host)."""
+    from src.autoslice.manual_lane import adapters
+
+    assert adapters.remote_python("tool.py").startswith(f"AUTOSLICE_PROFILE={channel.PROFILE_ID} ")
+    assert adapters.PROFILE_ENV in adapters.root_script(adapters.remote_python("tool.py"), env=["cpa"])
+
+
+def test_the_task_directory_is_recorded_as_an_absolute_path(tmp_path, monkeypatch, capsys):
+    """A relative --task-dir went into the clip's records and the package step refused them an hour and a half later."""
+    from src.autoslice.manual_lane import cli
+
+    (tmp_path / "task").mkdir()
+    monkeypatch.chdir(tmp_path)
+    seen = {}
+    parser = cli.build_parser()
+    monkeypatch.setattr(cli, "build_parser", lambda: parser)
+    parser._subparsers._group_actions[0].choices["status"].set_defaults(func=lambda args: seen.update(task=args.task_dir) or 0)
+    assert cli.main(["status", "--task-dir", "task"]) == 0
+    assert seen["task"] == str((tmp_path / "task").resolve())

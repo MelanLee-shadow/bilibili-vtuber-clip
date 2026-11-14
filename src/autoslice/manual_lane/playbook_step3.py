@@ -8,7 +8,7 @@ import re
 import threading
 import time
 
-from . import (channel, doubt_policy, evidence_attach, mishearing, name_match, normalize, parallel,
+from . import (agent_frame, channel, doubt_policy, evidence_attach, mishearing, name_match, normalize, parallel,
                playbook_evidence as pe, playbook_vote, references, step3_materials,
                step3_text_classes, work_context, work_lookup)
 from .lane_rules import rules
@@ -395,6 +395,8 @@ class _Agent:
             return [{'id': c['id'], 'bcut': c['text'], 'jianying': self.jy.text(c['id']),
                      'slots': pe.slots(c['text'], self.jy.text(c['id'])), 'notes': self.jy.notes(c['id'])}
                     for c in self.bcut if c['id'] in ids]
+        if tool == agent_frame.TOOL:    # the picture at a moment; its vision calls are paid like the agent's own
+            return agent_frame.look(self.ctx, req, self.cut_len, self.tag, lambda c: (self.calls.append(c), self.charge(c.get('usage'))))
         if tool == 'work':
             query = req.get('query')
             if not isinstance(query, str) or not query.strip():
@@ -536,6 +538,9 @@ class _Agent:
                             return False
                         if dict(current[index], index=index) != word:
                             return False
+                for record in agent_frame.paid(pending_tool, event.get('result')):
+                    tokens += _token_count(record.get('usage')) or 0
+                    calls.append(record)
                 pending_tool = None
             elif kind == 'listen_dispatch':
                 model = event.get('model')

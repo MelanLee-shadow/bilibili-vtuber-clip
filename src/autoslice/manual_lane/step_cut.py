@@ -15,7 +15,7 @@ from . import (
     gates,
     normalize,
 )
-from .adapters import REMOTE_PY, REMOTE_REPO
+from .adapters import PROFILE_ENV, REMOTE_PY, REMOTE_REPO
 from .runner import Ctx, StepOutcome
 from .source_read import (
     SourceMissing,
@@ -164,7 +164,7 @@ def step0_dedupe(ctx: Ctx) -> StepOutcome:
     ctx.adapters.remote.put(local_pkg, f"{rd}/dedup/package.json")
     ctx.adapters.remote.put(local_srt, f"{rd}/dedup/window.srt")
     body = (f"mkdir -p {rd}/dedup/evidence {rd}/dedup/audio\ncd {REMOTE_REPO}\n"
-            f"PYTHONDONTWRITEBYTECODE=1 {REMOTE_PY} -B scripts/check_external_duplicate_clips.py "
+            f"PYTHONDONTWRITEBYTECODE=1 {PROFILE_ENV} {REMOTE_PY} -B scripts/check_external_duplicate_clips.py "
             f"--package {rd}/dedup/package.json --output {rd}/dedup/result.json "
             f"--evidence-dir {rd}/dedup/evidence --audio-work-dir {rd}/dedup/audio > {rd}/dedup/run.log 2>&1\n"
             "echo rc=$?\n")

@@ -98,6 +98,13 @@ def _offer(ctx: Ctx, terms: Sequence[TermContext]) -> None:
     fresh = [{"name": (t.get("wording") or t.get("likely") or t["term"]).strip(), "term": t["term"], "kind": t.get("kind", ""),
               "status": t["status"], "cid": ctx.state.data["clip"]["cid"], "seen": utc_now()}
              for t in terms if t.get("kind", "") in kinds or (t.get("kind", "") in when_found and t["status"] == FOUND)]
+    offer_seeds(fresh)
+
+
+def offer_seeds(fresh: Sequence[dict[str, Any]]) -> None:
+    """Add rows ({name, term, kind, status, cid, seen}) to the crawler's seeds; the newest `crawler_seeds_keep` stay.
+    Also used by knowledge_observe for the names a sealed clip showed."""
+    cfg = rules("references")
     fresh = [row for row in fresh if sum(ch.isalnum() for ch in row["name"]) >= 2]      # one character is no name to search
     if not fresh:
         return

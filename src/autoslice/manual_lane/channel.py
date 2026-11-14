@@ -51,6 +51,7 @@ def text() -> dict[str, Any]:
     return doc
 
 
+PROFILE_ID = profile().profile_id             # the active channel; tools on the media host are started with it
 HOST = profile().display_name                 # how the host is named in prompts and process notes
 HOST_LABEL = profile().host_speaker_label     # the speaker label of the host's lines
 ASSETS = profile().asset_root                 # the channel's asset directory (persona, glossary, title style, fonts ...)
