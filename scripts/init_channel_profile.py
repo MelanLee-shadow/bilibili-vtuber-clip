@@ -31,6 +31,27 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_SCOPED = re.compile(r'("(?:schema_version|profile_id)":\s*")(?:REPLACE_ME|lidousha)(?:（[^"]*）)?')   # names scoped to the channel
+_TODO = re.compile(r"REPLACE_ME[-（]?")                # every other placeholder is a field the owner still has to fill
+_EXAMPLE_ROWS = {"timely_term_seeds.json": "terms", "timely_term_sources.json": "entity_watches"}    # rows read as real terms
+
+
+def _fill_template(path: Path, profile_id: str) -> bool:
+    """One copied template file: channel-scoped names become the id, example rows go, the rest is marked as unfilled."""
+    text = path.read_text(encoding="utf-8")
+    new = _SCOPED.sub(lambda m: m.group(1) + profile_id, text)
+    key = _EXAMPLE_ROWS.get(path.name)
+    if key:
+        doc = json.loads(new)
+        node = doc["bilibili_community"] if key == "entity_watches" else doc
+        node[key] = []
+        if key == "terms":                             # an empty, already expired list: a valid file with nothing in it
+            doc["generated_at"], doc["expires_at"] = "1970-01-01T00:00:00Z", "1970-01-02T00:00:00Z"
+        new = json.dumps(doc, ensure_ascii=False, indent=2) + "\n"
+    new = _TODO.sub(lambda m: "（待填）" if m.group(0).endswith("-") or m.group(0) == "REPLACE_ME" else "（待填：", new)
+    if new != text:
+        path.write_text(new, encoding="utf-8")
+    return new != text
 
 
 def init_profile(
@@ -58,12 +79,13 @@ def init_profile(
     replaced_files = 0
     for path in assets_dst.rglob("*"):
         if path.is_file() and path.suffix in {".json", ".md", ".txt"}:
-            text = path.read_text(encoding="utf-8")
-            if "REPLACE_ME" in text:
-                path.write_text(
-                    text.replace("REPLACE_ME", profile_id), encoding="utf-8"
-                )
-                replaced_files += 1
+            replaced_files += _fill_template(path, profile_id)
+
+    method_dir = assets_dst / "title_method"          # the title method's editable text; the pipeline reads its projection
+    if method_dir.is_dir():
+        from src.autoslice.title_editorial_method import extract_title_editorial_method, projection_data
+        (assets_dst / "title_editorial_method.json").write_text(json.dumps(
+            projection_data(extract_title_editorial_method(method_dir)), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     doc = json.loads(manifest_src.read_text(encoding="utf-8"))
 
@@ -87,10 +109,12 @@ def init_profile(
         if display_name:
             for key in ("display_name",):
                 identity[key] = display_name
-            identity["self_reference_aliases"] = [
-                display_name if alias == "替换为主播名" else alias
-                for alias in identity.get("self_reference_aliases", [])
+            identity["self_reference_aliases"] = [          # 模板里的「主播」是占位，不是她的自称
+                display_name for alias in identity.get("self_reference_aliases", []) if alias == "替换为主播名"
             ]
+            for key in ("short_name", "host_speaker_label"):
+                if identity.get(key) == "主播":
+                    identity[key] = display_name
             identity["speaker_identity_aliases"] = [
                 display_name if alias == "替换为主播名" else alias
                 for alias in identity.get("speaker_identity_aliases", [])
@@ -133,9 +157,12 @@ def init_profile(
         "replace_me_files_rewritten": replaced_files,
         "validator": validator_output,
         "next_steps": [
+            "按 profiles/SETUP.md 第 3 节逐项填：profiles/<id>/ 下的 profile.json、manual_lane.json、manual_lane_channel.json，和 assets/<id>/",
             "层 1 身份四件套按模板内问题清单问频道主人后填写：glossary.txt / persona.md / title_style.md / cover_identity_prompt.txt",
-            "profile.json 的 identity（display_name/room_id/cover_identity 九键）按真实频道改——封面外貌事实务必先抽真实直播帧取证",
+            "profile.json 的 identity（display_name/room_id/cover_identity 九键）按真实频道改——封面外貌事实务必先抽真实直播帧取证；每次改完运行 scripts/archive_channel_profile.py",
             "外貌事实三处必须同步：profile.json cover_identity + persona.md + cover_identity_prompt.txt",
+            "标题方法在 assets/<id>/title_method/（通用写法）；改了就运行 scripts/build_title_editorial_method.py 重新生成 title_editorial_method.json",
+            "assets/<id>/ 里写着「（待填」的字段是还没填的说明，不是值",
         ],
     }
 

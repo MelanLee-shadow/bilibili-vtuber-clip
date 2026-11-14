@@ -12,7 +12,7 @@
   "danmaku_root": "replace_me_recordings_root",
   "cover_skill_scripts": "skills/title-cover/scripts",
   "cover_font": "",
-  "_cover_font": "The cover font file on the media host. Empty: <work_root>/assets/fonts/RuiZiZhenYan.ttf, which is not shipped; either put a font there under that name or name another font file here (assets/<profile>/fonts has open fonts).",
+  "_cover_font": "The cover font file on the media host. Empty: <work_root>/assets/fonts/RuiZiZhenYan.ttf, which is not shipped; either put a font there under that name or give the full path on the media host of another font file here (assets/<profile>/fonts has open fonts; after syncing they are under <autoslice_base>/current/repo/assets/<profile>/fonts).",
   "intro_dir": "",
   "_intro_dir": "Directory of the branding intro clips on the media host. Empty: <work_root>/assets/intro. A channel without an intro turns the intro off in its branding-intro asset.",
   "search_mcp_url": "",

@@ -16,7 +16,6 @@ SKILL_TITLE_SECTIONS = (("## 四、", "## 五、"), ("## 五、", "## 六、"))
 JUDGE_RULES_START = "3. **意思**"
 JUDGE_RULES_LAST = "**判官守则**"
 JUDGE_TEMPLATE_SLOT = "@@RULES@@"
-JUDGE_SOURCE_NAME = "lidousha-title-cover/references/judge-prompt.md"
 
 
 def _method_path() -> Path:
@@ -121,10 +120,11 @@ def cover_text(method: EditorialMethod) -> str:
 
 
 def extract_title_editorial_method(root: Path) -> EditorialMethod:
-    """Read the same source sections and byte hashes used by the manual lane."""
-    skill, s_skill = _read("lidousha-title-cover/SKILL.md", root / SKILL_FILE)
-    examples, s_examples = _read("lidousha-title-cover/references/examples.md", root / EXAMPLES_FILE)
-    judge, s_judge = _read(JUDGE_SOURCE_NAME, root / JUDGE_FILE)
+    """Read the same source sections and byte hashes used by the manual lane; sources are named after the directory."""
+    name = root.resolve().name
+    skill, s_skill = _read(f"{name}/{SKILL_FILE}", root / SKILL_FILE)
+    examples, s_examples = _read(f"{name}/{EXAMPLES_FILE}", root / EXAMPLES_FILE)
+    judge, s_judge = _read(f"{name}/{JUDGE_FILE}", root / JUDGE_FILE)
     return EditorialMethod(
         sections="\n\n".join(_between(skill, a, b, where="SKILL.md") for a, b in SKILL_TITLE_SECTIONS),
         judge_rules=judge_rules(skill),
@@ -137,7 +137,7 @@ def extract_title_editorial_method(root: Path) -> EditorialMethod:
 
 def format_title_editorial_method(method: EditorialMethod) -> str:
     return "\n\n".join([
-        "### lidousha-title-cover skill 第四、五节\n" + method.sections,
+        f"### {method.sources[0].name.split('/', 1)[0]} skill 第四、五节\n" + method.sections,
         "### skill 第八节第 3 条（事实核与修辞的判法，标题写完后会按它验收）\n" + method.judge_rules,
         "### skill 示范写法（references/examples.md）\n" + method.examples,
     ])
@@ -155,13 +155,16 @@ def projection_data(method: EditorialMethod) -> ProjectionData:
             "sources": sources, "judge_template": method.judge_template, "judge_source": judge_source}
 
 
-def _source_record(source: object, name: str, source_path: str, path: Path) -> Source:
+def _source_record(source: object, skill: str | None, source_path: str, path: Path) -> Source:
+    """One recorded source, named `<method directory>/<file>`; every source of a projection names the same directory."""
     if (not isinstance(source, dict) or set(source) != {"name", "path", "sha256"}
-            or source["name"] != name or source["path"] != source_path
+            or not isinstance(source["name"], str)
+            or re.fullmatch(r"[^/\s]+/" + re.escape(source_path), source["name"]) is None
+            or (skill is not None and source["name"] != f"{skill}/{source_path}") or source["path"] != source_path
             or not isinstance(source["sha256"], str)
             or re.fullmatch(r"[0-9a-f]{64}", source["sha256"]) is None):
         raise AuthorityError(f"title editorial method malformed: {path}: invalid source record")
-    return Source(name, source_path, source["sha256"])
+    return Source(source["name"], source_path, source["sha256"])
 
 
 def load_title_editorial_method() -> EditorialMethod:
@@ -183,11 +186,10 @@ def load_title_editorial_method() -> EditorialMethod:
             or JUDGE_TEMPLATE_SLOT not in template):
         raise AuthorityError(f"title editorial method malformed: {path}: missing required editorial text")
     raw_sources = payload["sources"]
-    expected = (("lidousha-title-cover/SKILL.md", SKILL_FILE),
-                ("lidousha-title-cover/references/examples.md", EXAMPLES_FILE))
-    if not isinstance(raw_sources, list) or len(raw_sources) != len(expected):
+    if not isinstance(raw_sources, list) or len(raw_sources) != 2:
         raise AuthorityError(f"title editorial method malformed: {path}: invalid sources")
-    sources = [_source_record(source, name, source_path, path)
-               for source, (name, source_path) in zip(raw_sources, expected, strict=True)]
-    judge_source = _source_record(payload["judge_source"], JUDGE_SOURCE_NAME, JUDGE_FILE, path)
-    return EditorialMethod(sections, rules, examples, (sources[0], sources[1]), template, judge_source)
+    first = _source_record(raw_sources[0], None, SKILL_FILE, path)
+    skill = first.name.split("/", 1)[0]
+    second = _source_record(raw_sources[1], skill, EXAMPLES_FILE, path)
+    judge_source = _source_record(payload["judge_source"], skill, JUDGE_FILE, path)
+    return EditorialMethod(sections, rules, examples, (first, second), template, judge_source)

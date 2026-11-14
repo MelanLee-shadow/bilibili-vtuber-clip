@@ -41,12 +41,16 @@ def committed_skill(skill_root: Path) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--skill-root", type=Path, required=True)
+    parser.add_argument("--skill-root", type=Path, help="the method's source directory (default: the active "
+                        "channel's own assets/<id>/title_method, which ships with the repository and needs no pin)")
     parser.add_argument("--output", type=Path, default=TITLE_EDITORIAL_METHOD)
     parser.add_argument("--pin", type=Path, help="pin file to move with the projection (default: the repo's pin "
                         "when --output is the deployed projection, none otherwise)")
     args = parser.parse_args()
-    pin = args.pin or (PIN if args.output.resolve() == TITLE_EDITORIAL_METHOD.resolve() else None)
+    own = args.skill_root is None
+    if own:
+        args.skill_root = TITLE_EDITORIAL_METHOD.parent / "title_method"
+    pin = args.pin or (PIN if not own and args.output.resolve() == TITLE_EDITORIAL_METHOD.resolve() else None)
     commit = committed_skill(args.skill_root) if pin else None
     method = extract_title_editorial_method(args.skill_root)
     args.output.write_text(json.dumps(projection_data(method), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

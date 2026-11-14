@@ -41,6 +41,7 @@ from .discover_media import (
     DayInventory,
     DiscoverError,
     Segment,
+    archive_room,
     inventory,
     copy_direct,
     list_dates,
@@ -246,7 +247,9 @@ def discover(*, task: Path, adapters: Adapters, dates: Sequence[str] | None = No
         if dates:
             wanted = list(dict.fromkeys(dates))
         else:
-            known, _now = list_dates(remote)
+            known, _now, recorded = list_dates(remote)
+            if not recorded:
+                report.deferred.append({"date": "", "reason": "NO_RECORDINGS_YET", "detail": f"{archive_room()} does not exist yet: nothing has been recorded for this room"})
             recent = [d for d in known if d >= str(cfg["auto_not_before"])][-int(cfg["auto_recent_dates"]):]
             wanted = recent
         for date in wanted:

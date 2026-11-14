@@ -91,13 +91,15 @@ class Host:
     def __init__(self, now=2_000_000_000.0, written=1_000_000_000.0, arrived=None):
         self.now, self.written, self.asr_calls, self.failing = now, written, [], set()
         self.arrived = set(SEGMENTS) if arrived is None else set(arrived)        # the recordings in the archive; danmaku always is
-        self.copy_rc, self.bodies = 0, {}
+        self.copy_rc, self.bodies, self.listing = 0, {}, None
 
     def __call__(self, name, body, remote):
         self.bodies[name] = body
         if name == "disc-direct-copy":                      # the recorder's newest days, copied straight to the host
             return RemoteResult(self.copy_rc, "DIRECT_COPY_OK\n" if self.copy_rc == 0 else "", "ssh: no route" if self.copy_rc else "")
         if name.startswith("disc-dates"):
+            if self.listing is not None:                    # a host with no recordings root, or no directory for the room yet
+                return RemoteResult(0, f"NOW {self.now}\n{self.listing}\n", "")
             return RemoteResult(0, f"NOW {self.now}\nD\t2026-11-07\nD\t{DATE}\n", "")       # 11-07: made by hand, before auto_not_before
         if name.startswith("disc-inv-"):
             rows = "".join((f"F\t{ARCHIVE}/{seg}.flv\t{size}\t{self.written}\n" if seg in self.arrived else "")
@@ -179,6 +181,18 @@ def test_a_failed_recording_leaves_the_day_partial_and_the_others_go_on(tmp_path
     assert day["status"] == dv.PARTIAL and len(day["built"]) == 2
     host.failing.clear()
     assert run(tmp_path, host, dates=[DATE]).days[0]["status"] == dv.COMPLETE and len(list((tmp_path / "task/state").iterdir())) == 4
+
+
+def test_a_room_never_recorded_is_said_and_a_wrong_recordings_root_stops(tmp_path):
+    never = Host()
+    never.listing = "NO_ROOM_DIR"                           # the root is there, the room has no directory yet
+    report = run(tmp_path, never)
+    assert [d["reason"] for d in report.deferred] == ["NO_RECORDINGS_YET"] and "does not exist yet" in report.deferred[0]["detail"]
+    assert not report.days and not report.failures
+    wrong = Host()
+    wrong.listing = "NO_ARCHIVE_ROOT"                       # a mistyped archive_root must not look like a quiet room
+    with pytest.raises(dv.DiscoverError, match="ARCHIVE_ROOT_MISSING"):
+        run(tmp_path, wrong)
 
 
 def test_without_a_date_a_day_that_may_still_be_recording_is_left_alone(tmp_path):
