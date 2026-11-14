@@ -224,6 +224,7 @@ def test_the_recorders_own_copy_is_fetched_first_and_read_before_the_archive(tmp
     direct = dm.direct_room()
     copy, listing, days = host.bodies["disc-direct-copy"], host.bodies[f"disc-inv-{DATE}"], host.bodies["disc-dates"]
     assert "rsync -a --partial" in copy and f"{dm.layout().recordings_direct_host}:{dm.layout().room_id}/" in copy
+    assert copy.index('!= host ]; then continue') < copy.index("rsync -a --partial") < copy.index('echo host > "$mark"')   # one source a day
     assert listing.index(f"{direct}/{DATE}") < listing.index(f"{ARCHIVE}") and "elif [ -d" in listing      # the copy, else the archive
     assert direct in days and dm.archive_room() in days                                             # days of either place count
     assert DATE not in copy.split("for skip in", 1)[1].split(";", 1)[0]       # the first round: the day is not completed yet

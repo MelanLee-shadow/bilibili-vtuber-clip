@@ -1,0 +1,10 @@
+[Unit]
+Description=Every two minutes: closed segments of the host's own recording go to the clip lane
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=2min
+AccuracySec=20s
+
+[Install]
+WantedBy=timers.target

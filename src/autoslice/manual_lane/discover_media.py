@@ -153,7 +153,8 @@ def direct_room() -> str | None:
 def copy_direct(remote: Remote, done: Sequence[str] = ()) -> dict[str, str] | None:
     """Copy the recorder's newest days straight to the media host (layout `recordings_direct_host` / `_root`): of the
     newest `discover.auto_recent_dates` days, those not earlier than `auto_not_before` and not in `done` (the days
-    discover has completed: nothing reads them again).  `direct_keep_days` copies are kept.  None when it is not
+    discover has completed: nothing reads them again).  A day directory whose `.source` names another supplier is left
+    to that supplier.  `direct_keep_days` copies are kept.  None when it is not
     configured; a failure is said and stops nothing: the days that are here, and the archive, are still read."""
     host, room = layout().recordings_direct_host, direct_room()
     if not host or not room:
@@ -166,7 +167,11 @@ def copy_direct(remote: Remote, done: Sequence[str] = ()) -> dict[str, str] | No
             f"days=$(rsync --list-only {source} | awk '{{print $NF}}' | grep -E '{day}' | sort | tail -n {int(cfg['auto_recent_dates'])}"
             f" | awk -v first={shlex.quote(str(cfg['auto_not_before']))} '$0 >= first') || exit 21\n"
             f"for skip in {skip}; do days=$(printf '%s\\n' $days | grep -vxF \"$skip\"); done\n"
-            f"for d in $days; do rsync -a --partial --chmod=Du+rwx,Fu+rw {source}\"$d\" {shlex.quote(room + '/')} || exit 22; done\n"
+            # a day has one source: one the media host's own recorder supplied (ops/recording/oci3_lane_spool_copy.sh
+            # writes `.source`) is not also fetched from the recorder's host, whose files of the same names differ
+            f"for d in $days; do mark={shlex.quote(room)}/\"$d\"/.source; "
+            f"if [ -f \"$mark\" ] && [ \"$(cat \"$mark\")\" != host ]; then continue; fi; "
+            f"rsync -a --partial --chmod=Du+rwx,Fu+rw {source}\"$d\" {shlex.quote(room + '/')} || exit 22; echo host > \"$mark\"; done\n"
             f"ls {shlex.quote(room)} | grep -E '{day}' | sort | head -n -{int(cfg['direct_keep_days'])} | "
             f"while read -r d; do rm -rf {shlex.quote(room)}/\"$d\"; done\n"
             "echo DIRECT_COPY_OK $days\n")
