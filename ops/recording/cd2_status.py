@@ -10,13 +10,35 @@ from __future__ import annotations
 
 import struct
 import stat
+import re
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
 
 class CD2Error(RuntimeError):
-    pass
+    def __init__(self, message: str = "CD2 RPC failed", *, code: str = "CD2_RPC_ERROR") -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class CD2IdleTimeout(CD2Error):
+    """PushMessage timed out between frames, not during connection or data."""
+
+    def __init__(self) -> None:
+        super().__init__("CD2 status stream was idle", code="CD2_PUSH_IDLE_TIMEOUT")
+
+
+def error_code(exc: Exception) -> str:
+    """Local reason codes only; never include an exception's remote text."""
+    if isinstance(exc, CD2Error):
+        return exc.code
+    if isinstance(exc, urllib.error.HTTPError):
+        return {401: "CD2_AUTH_REJECTED", 403: "CD2_PERMISSION_DENIED"}.get(exc.code, "CD2_HTTP_ERROR")
+    if isinstance(exc, TimeoutError):
+        return "CD2_TIMEOUT"
+    return "CD2_IO_ERROR" if isinstance(exc, OSError) else "CD2_UNEXPECTED_ERROR"
 
 
 # Only the read-only RPC subset used here. No auth/login, cancel, restart,
@@ -119,12 +141,22 @@ class GrpcWeb:
                on_open: Callable[[], None] | None = None) -> Iterator[dict[str, Any]]:
         # This file is supplied on the server by its operator. Never persisted
         # in state, subprocess argv, diagnostic text or RPC receipts.
-        info = self.token_file.lstat()
+        try:
+            info = self.token_file.lstat()
+        except FileNotFoundError:
+            raise CD2Error("CD2 token file is missing", code="CD2_TOKEN_FILE_MISSING") from None
         if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
-            raise CD2Error("CD2 token file must be private and regular")
-        token = self.token_file.read_text(encoding="utf-8").strip()
-        if not token or "\n" in token or "\r" in token:
-            raise CD2Error("CD2 token is unavailable")
+            raise CD2Error("CD2 token file must be private and regular", code="CD2_TOKEN_FILE_UNSAFE")
+        try:
+            token = self.token_file.read_text(encoding="utf-8").strip()
+        except UnicodeError:
+            raise CD2Error("CD2 token file is not UTF-8 text", code="CD2_TOKEN_FILE_FORMAT") from None
+        # RFC 6750 permits padding '=' only at the end. Do not reject valid
+        # padded opaque tokens or silently reinterpret an exported name=value.
+        if not re.fullmatch(r"[A-Za-z0-9._~+/-]+=*", token):
+            if re.fullmatch(r"[^=\s]+=[^\s]+", token) and token.split("=", 1)[1].strip("="):
+                raise CD2Error("store only the bearer value, without name=", code="CD2_TOKEN_NAME_PREFIX")
+            raise CD2Error("CD2 token file must contain one bearer value", code="CD2_TOKEN_FILE_FORMAT")
         payload = request_bytes(fields)
         request = urllib.request.Request(
             f"{self.endpoint}/clouddrive.CloudDriveFileSrv/{method}",
@@ -137,9 +169,17 @@ class GrpcWeb:
                 on_open()
             trailers_seen = False
             while True:
-                header = _exact(response, 5)
-                if not header:
+                # read(1) distinguishes no next frame from a timeout after
+                # consuming part of a frame (HTTPResponse.read(5) cannot).
+                try:
+                    first = _exact(response, 1)
+                except TimeoutError:
+                    if method == "PushMessage":
+                        raise CD2IdleTimeout() from None
+                    raise
+                if not first:
                     break
+                header = first + _exact(response, 4)
                 if len(header) != 5:
                     raise CD2Error("truncated grpc-web header")
                 flags, length = header[0], struct.unpack(">I", header[1:])[0]
@@ -151,8 +191,11 @@ class GrpcWeb:
                 if flags == 128:
                     trailers = dict(line.split(":", 1) for line in
                                     data.decode("ascii").split("\r\n") if ":" in line)
-                    if trailers.get("grpc-status", "").strip() != "0":
-                        raise CD2Error("CD2 RPC did not succeed")
+                    status = trailers.get("grpc-status", "").strip()
+                    if status != "0":
+                        code = {"16": "CD2_AUTH_REJECTED", "7": "CD2_PERMISSION_DENIED"}.get(
+                            status, "CD2_RPC_REJECTED")
+                        raise CD2Error("CD2 RPC did not succeed", code=code)
                     trailers_seen = True
                     break
                 if flags != 0:
@@ -165,6 +208,11 @@ class GrpcWeb:
 class CD2Status:
     def __init__(self, transport: GrpcWeb):
         self.transport = transport
+
+    def check_auth(self) -> None:
+        # Protected, read-only RPC already required by verification. A public
+        # method such as GetSystemInfo cannot establish authentication.
+        self.upload_list(".recording-spool-auth-check")
 
     @staticmethod
     def _upload_defaults(row: dict[str, Any]) -> dict[str, Any]:

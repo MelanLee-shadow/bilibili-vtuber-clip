@@ -1,0 +1,23 @@
+{
+  "schema": "manual-lane.runtime-layout.v1",
+  "_doc": "Where the manual lane runs for this channel (read by src/autoslice/manual_lane/layout.py; each key can be overridden by MANUAL_LANE_<KEY>, nested keys joined by _). Replace every replace_me before use.",
+  "remote_host": "replace_me_ssh_alias_of_the_media_host",
+  "remote_user": "replace_me_unprivileged_user",
+  "autoslice_base": "replace_me_/opt/.../autoslice",
+  "work_root": "replace_me_lane_work_root",
+  "danmaku_host": "replace_me_ssh_alias_of_the_recording_archive",
+  "danmaku_root": "replace_me_recordings_root",
+  "cover_skill_scripts": "replace_me_local_title_cover_scripts",
+  "speaker_v8": {
+    "code_dir": "replace_me",
+    "python": "replace_me",
+    "model": "replace_me",
+    "score": "replace_me"
+  },
+  "free_asr": {
+    "min_interval_s": 60,
+    "rate_limit_cooldown_s": 900,
+    "attempts": 4,
+    "rate_limit_attempts": 3
+  }
+}

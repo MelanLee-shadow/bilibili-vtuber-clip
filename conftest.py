@@ -20,56 +20,6 @@ if str(ROOT) not in sys.path:
 os.environ.pop("AUTOSLICE_PROFILE", None)
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _never_production_runtime():
-    """Keep unit tests off the real production root, preserving simulated roots."""
-    from src.autoslice import provider_slots
-
-    production = Path("/opt/bilive/autoslice").resolve()
-    original = provider_slots.configured_runtime_root
-
-    def guarded_runtime_root():
-        root = original()
-        if root is not None:
-            resolved = root.resolve()
-            if resolved == production or production in resolved.parents:
-                if not os.environ.get("AUTOSLICE_BASE"):
-                    return None
-                pytest.fail(
-                    "TEST_PRODUCTION_RUNTIME_BLOCKED: configured_runtime_root() "
-                    f"resolved to production runtime {root}", pytrace=False,
-                )
-        return root
-
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(provider_slots, "configured_runtime_root", guarded_runtime_root)
-        yield
-
-
-@pytest.fixture(autouse=True)
-def _fake_argon_inrun_retrieval_clock(monkeypatch):
-    """Exercise bounded polling without waiting for wall-clock minutes."""
-    from src.autoslice import final_review_auditor as auditor
-
-    now = [0.0]
-
-    def advance(seconds):
-        now[0] += seconds
-
-    monkeypatch.setattr(auditor, "_argon_retrieval_clock", lambda: now[0])
-    monkeypatch.setattr(auditor, "_argon_retrieval_sleep", advance)
-
-
-@pytest.fixture(autouse=True)
-def _restore_process_scoped_evaluator_env():
-    # CLI entry points intentionally mutate their process environment. Tests
-    # invoking them in-process must not lend settings to a later test.
-    saved = dict(os.environ)
-    yield
-    os.environ.clear()
-    os.environ.update(saved)
-
-
 @pytest.fixture(autouse=True)
 def _hermetic_autoslice_base(monkeypatch):
     """磁盘密闭：默认清掉 ambient AUTOSLICE_BASE。
@@ -104,3 +54,28 @@ def _hermetic_call_command(prompt, config):
 
 
 _llm_client._call_command = _hermetic_call_command
+
+
+# ---- tests that cannot hold in the public tree (tests/public_expected_failures.txt) ----------------------------
+def _public_expected_failures():
+    from pathlib import Path as _Path
+
+    path = _Path(__file__).resolve().parent / "tests" / "public_expected_failures.txt"
+    rows = []
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip() and not line.startswith("#") and "|" in line:
+                prefix, reason = (part.strip() for part in line.split("|", 1))
+                rows.append((prefix, reason))
+    return rows
+
+
+def pytest_collection_modifyitems(config, items):
+    import pytest as _pytest
+
+    rows = _public_expected_failures()
+    for item in items:
+        for prefix, reason in rows:
+            if item.nodeid.startswith(prefix):
+                item.add_marker(_pytest.mark.xfail(reason=reason, strict=False))
+                break

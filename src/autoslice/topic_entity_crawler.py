@@ -24,6 +24,7 @@ import urllib.parse
 from scripts.gemini_slice_jingting import validate_timely_terms_payload
 from src.autoslice.timely_term_crawler import BoundedHttpClient, CrawlError
 from src.autoslice.topic_entity_graph import MAX_TOPICS as MAX_GRAPH_TOPICS
+from src.autoslice.topic_entity_graph import dedupe_key
 from src.autoslice.topic_entity_graph import validate_topic_entity_graph
 
 
@@ -109,7 +110,7 @@ def _unique(values: Iterable[object], *, limit: int = 32) -> list[str]:
     seen: set[str] = set()
     for raw in values:
         value = _clean(raw)
-        key = _identity(value)
+        key = dedupe_key(value)
         if not value or not key or key in seen:
             continue
         seen.add(key)
@@ -537,6 +538,10 @@ def _character_node(raw: Mapping[str, Any], *, work_id: str, aired_from: str) ->
     aliases, readings, spaced_native = _aliases_from_info(raw.get("info"))
     short_aliases, short_readings = _short_name_aliases(canonical_zh, spaced_native, readings)
     native_names = _unique([native, spaced_native], limit=8)
+    if not native_names:
+        # Nothing usable survives cleaning (for example a punctuation-only source
+        # name).  Drop the record like the other unusable-character cases above.
+        return None
     aliases = _unique([*aliases, *short_aliases], limit=24)
     readings = _unique([*readings, *short_readings], limit=20)
     if not readings:

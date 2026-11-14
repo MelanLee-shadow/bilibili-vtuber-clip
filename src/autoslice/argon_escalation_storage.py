@@ -2,46 +2,14 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-import fcntl
-import errno
 import os
 from pathlib import Path
-import shutil
 import stat
 import tempfile
 
-from .argon_escalation_contract import (
-    canonical,
-    require,
-    sha,
-    stat_identity,
-    strict_json,
-    valid_sha,
-)
+from .argon_escalation_contract import require, sha, stat_identity, valid_sha
 
 MAX_ARTIFACT_BYTES = 32_000_000
-# Create-only markers the runtime leaves on a lane whose route definitively
-# refused with zero inference; the next route then opens the next lane.
-ROUTE_REFUSAL_MARKERS = ("quota-rejected.json", "route-unservable.json")
-
-
-def route_refused(lane: Path) -> bool:
-    return any((Path(lane) / name).exists() for name in ROUTE_REFUSAL_MARKERS)
-
-
-def serving_lane(root: Path) -> int:
-    """Index of the lane that holds the batch root's current route.
-
-    The runtime opens ``attempt-1`` and moves to the next lane only after a
-    create-only refusal marker. A lane index is therefore not a key ordinal:
-    AGY and the first API route share lane 1, and a provider-tier-closed free
-    chain consumes no lane before the paid route. Read-only; nothing is created.
-    """
-    index = 1
-    while route_refused(Path(root) / f"attempt-{index}"):
-        index += 1
-    return index
 
 
 def _private_directory(path: Path) -> None:
@@ -52,13 +20,6 @@ def _private_directory(path: Path) -> None:
         and not stat.S_IMODE(info.st_mode) & 0o077,
         "STORE_DIRECTORY_NOT_PRIVATE",
     )
-
-
-def existing_directory(path: Path) -> None:
-    """Validate a previously created store without creating or repairing it."""
-    path = Path(path).absolute()
-    require(not any(p.is_symlink() for p in (path, *path.parents)), "STORE_PATH_UNSAFE")
-    _private_directory(path)
 
 
 def directory(path: Path) -> None:
@@ -203,68 +164,6 @@ def immutable(path: Path, raw: bytes) -> None:
         require(read(path) == raw, "IMMUTABLE_ARTIFACT_CONFLICT")
 
 
-@contextmanager
-def staged_directory(path: Path):
-    """Private sibling workspace; only a completed rename exposes its files."""
-    require(not any(p.is_symlink() for p in (path, *path.parents)), "STORE_PATH_UNSAFE")
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    temp = Path(tempfile.mkdtemp(prefix="." + path.name + "-", dir=path.parent))
-    try:
-        yield temp
-    finally:
-        shutil.rmtree(temp, ignore_errors=True)
-
-
-def _directory_bytes(path: Path) -> dict[str, bytes]:
-    require(path.is_dir() and not path.is_symlink(), "STORE_PATH_UNSAFE")
-    files = {}
-    for item in sorted(path.rglob("*")):
-        require(not item.is_symlink(), "STORE_PATH_UNSAFE")
-        if item.is_file():
-            files[str(item.relative_to(path))] = item.read_bytes()
-        else:
-            require(item.is_dir(), "STORE_PATH_UNSAFE")
-    return files
-
-
-def publish_directory(temp: Path, path: Path) -> bool:
-    """Rename a complete bundle, or verify the existing winner byte for byte."""
-    files = _directory_bytes(temp)
-    for name in files:
-        with (temp / name).open("rb") as handle:
-            os.fsync(handle.fileno())
-    for subdir in sorted((p for p in temp.rglob("*") if p.is_dir()), reverse=True):
-        _sync_directory(subdir)
-    _sync_directory(temp)
-    require(not any(p.is_symlink() for p in (path, *path.parents)), "STORE_PATH_UNSAFE")
-    if os.path.lexists(path):
-        require(_directory_bytes(path) == files, "IMMUTABLE_ARTIFACT_CONFLICT")
-        return False
-    try:
-        os.rename(temp, path)
-    except OSError as exc:
-        if exc.errno not in {errno.EEXIST, errno.ENOTEMPTY}:
-            raise
-        require(_directory_bytes(path) == files, "IMMUTABLE_ARTIFACT_CONFLICT")
-        return False
-    _sync_directory(path.parent)
-    return True
-
-
-def immutable_directory(path: Path, files: dict[str, bytes]) -> None:
-    """Publish related cache files together using the same file publisher."""
-    with staged_directory(path) as temp:
-        for name, raw in files.items():
-            relative = Path(name)
-            require(not relative.is_absolute() and ".." not in relative.parts, "STORE_PATH_UNSAFE")
-            atomic_write(temp / relative, raw)
-        publish_directory(temp, path)
-
-
-def put_json(path: Path, value: dict) -> None:
-    immutable(path, canonical(value))
-
-
 def blob(root: Path, raw: bytes) -> str:
     digest = sha(raw)
     # A blob name is its complete content identity.  Writers may therefore
@@ -286,27 +185,3 @@ def get_blob(root: Path, digest: str) -> bytes:
     return raw
 
 
-def get_json(path: Path) -> dict:
-    return strict_json(read(path))
-
-
-@contextmanager
-def locked(root: Path):
-    directory(root)
-    lock = root / "advance.lock"
-    fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
-    try:
-        info = os.fstat(fd)
-        require(
-            stat.S_ISREG(info.st_mode)
-            and info.st_nlink == 1
-            and info.st_size == 0
-            and info.st_uid == os.geteuid()
-            and not stat.S_IMODE(info.st_mode) & 0o077,
-            "EXECUTION_LOCK_UNSAFE",
-        )
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        require(lock.stat(follow_symlinks=False).st_ino == info.st_ino, "EXECUTION_LOCK_REPLACED")
-        yield
-    finally:
-        os.close(fd)

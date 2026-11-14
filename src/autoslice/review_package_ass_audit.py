@@ -9,19 +9,14 @@ SRT and compares every expected event with the packaged ASS.
 from __future__ import annotations
 
 from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
-import json
 import re
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
 from src.autoslice.channel_profile import LABEL_RE, load_channel_profile
 from src.autoslice.speaker_label_display import speaker_display
-from src.autoslice.subtitle_rendering import (
-    _layout_cue_sequence_for_display,
-    _write_sapphire_ass_from_srt,
-)
+from src.autoslice.subtitle_rendering import ASS_SAFE_DISPLAY_CHARS, _layout_cue_sequence_for_display
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -370,6 +365,7 @@ def _expected_events(
     cues: list[_SpeakerCue],
     *,
     host_style: str = "LDS",
+    max_chars: int | None = None,
 ) -> list[_AssEvent]:
     events: list[_AssEvent] = []
     rows = [(cue.start_ms, cue.end_ms,
@@ -377,7 +373,7 @@ def _expected_events(
             for cue in cues]
     keys = [cue.speaker for cue in cues]
     for source_index, start_ms, end_ms, display_text in _layout_cue_sequence_for_display(
-        rows, continuity_keys=keys
+        rows, continuity_keys=keys, max_chars=max_chars
     ):
         style = host_style if cues[source_index].speaker == HOST_SPEAKER else "GUEST"
         events.append(_AssEvent(
@@ -428,6 +424,7 @@ def _pair_issues(
     events: list[_AssEvent],
     ass_is_valid: bool,
     uniform_host_speaker: str | None = None,
+    max_chars: int | None = None,
 ) -> list[ReviewPackageAssIssue]:
     cues, srt_issues = _speaker_cues(
         speaker_srt_path, uniform_host_speaker=uniform_host_speaker
@@ -441,6 +438,7 @@ def _pair_issues(
             # The daily burn lane renders every cue with its single Default
             # style; LDS/GUEST styles only exist in the speaker-finalized lane.
             host_style="Default" if uniform_host_speaker is not None else "LDS",
+            max_chars=max_chars,
         )
     except ValueError as exc:
         issues.append(ReviewPackageAssIssue(
@@ -676,6 +674,7 @@ def audit_review_package_ass(
                 events=events,
                 ass_is_valid=not event_issues,
                 uniform_host_speaker=HOST_SPEAKER if uniform_fallback else None,
+                max_chars=min(max_visual_line_chars, ASS_SAFE_DISPLAY_CHARS),
             )
         )
 
@@ -686,53 +685,3 @@ def audit_review_package_ass(
     )
 
 
-def audit_song_burn_ass(
-    *, root: Path, item: Mapping[str, Any], subtitle_path: Path,
-    max_visual_lines: int, max_visual_line_chars: int,
-) -> tuple[bool, tuple[ReviewPackageAssIssue, ...]]:
-    """Use actual bound Song burn events for display QC, retaining lyric SRT.
-
-    Legacy packages without ASS keep their existing SRT display checks. A
-    declared ASS must be portable, bound to the current SRT/video by the recut
-    receipt, and byte-identical to the canonical Sapphire projection. This is
-    display authority only; it grants neither singing nor publication proof.
-    """
-    if item.get("ass_path") is None or item.get("recut_manifest") is None:
-        return False, ()
-    result = audit_review_package_ass(
-        root=root, item=item, portable_required=False,
-        max_visual_lines=max_visual_lines,
-        max_visual_line_chars=max_visual_line_chars,
-    )
-    issues = list(result.issues)
-    ass = _portable_regular_file(root, item.get("ass_path"), portable_required=True)
-    recut = _portable_regular_file(root, item.get("recut_manifest"), portable_required=True)
-    video = _portable_regular_file(root, item.get("video"), portable_required=True)
-    hashes = item.get("sha256")
-    try:
-        if ass is None or recut is None or video is None or not isinstance(hashes, Mapping):
-            raise ValueError("portable burn ASS/recut/hash authority is missing")
-        if not _hash_matches(recut, hashes.get("recut_manifest")):
-            raise ValueError("recut manifest hash differs from package")
-        output = json.loads(recut.read_text())["verified_output_binding"]
-        if not isinstance(output, Mapping) or not isinstance(output.get("artifacts"), Mapping):
-            raise ValueError("verified Song burn artifact authority is invalid")
-        bound = output["artifacts"]
-        burn = output.get("burn_transform")
-        if (output.get("schema_version") != "verified-song-output-binding.v1"
-                or not isinstance(burn, Mapping)
-                or burn.get("subtitle_style") != "lidousha-final-sapphire72"
-                or not _hash_matches(ass, bound.get("ass_sha256"))
-                or not _hash_matches(subtitle_path, bound.get("subtitle_sha256"))
-                or not _hash_matches(video, bound.get("burned_media_sha256"))):
-            raise ValueError("ASS/SRT/burned video differ from verified Song burn")
-        with tempfile.TemporaryDirectory(prefix="song-ass-audit-") as directory:
-            expected = Path(directory) / "expected.ass"
-            _write_sapphire_ass_from_srt(subtitle_path, expected)
-            if ass.read_bytes() != expected.read_bytes():
-                raise ValueError("burn ASS differs from current canonical SRT display projection")
-    except (OSError, UnicodeError, ValueError, KeyError, TypeError) as exc:
-        issues.append(ReviewPackageAssIssue(
-            "SONG_BURN_ASS_BINDING_INVALID", ass or root / "review_manifest.json", str(exc),
-        ))
-    return not issues, tuple(issues)

@@ -558,6 +558,16 @@ def build_llm_call(config: LlmConfig) -> LlmCall:
         def physical(actual):
             if not cpa_text:
                 return _archive_text_exchange(actual, config, lambda: transport_call(actual))
+            from .cpa_request_lifecycle import physical_text_call, typed_contract_receipt
+            base=os.environ.get('AUTOSLICE_BASE') or config.runtime_root
+            current_identity=getattr(call,'cpa_cache_identity',None)
+            if base and current_identity:
+                return physical_text_call(
+                    lambda value: _archive_text_exchange(value,config,lambda:transport_call(value)),
+                    actual,model=current_identity,root=Path(base)/'cache/completed-reviews',
+                    provider=getattr(call,'provider_runtime_binding',config.command_diagnostic_context or {}),
+                    contract=typed_contract_receipt(response_schema=config.response_schema,
+                        json_mode=config.json_mode or None,prompt=actual),record=record_unknown)
             logical_call_id = uuid.uuid4().hex
             return cpa_text_retry_call(
                 lambda: _archive_text_exchange(actual, config, lambda: transport_call(actual)),
@@ -624,6 +634,7 @@ def build_llm_call(config: LlmConfig) -> LlmCall:
     if config.runtime_root:
         call.completed_review_root = Path(config.runtime_root).absolute() / 'cache/completed-reviews'
     call.structured_output_transport = True
+    setattr(call, "durable_text_transport", cpa_text)
     call.terminal_retry_capable = True
     call.timeout_seconds = config.timeout_seconds
     return call
@@ -898,6 +909,7 @@ def _call_direct_once(prompt: str, config: LlmConfig) -> str:
             request_body['response_format'] = ({'type': 'json_schema', 'json_schema': {
                 key: value for key, value in response_format.items() if key != 'type'}}
                 if response_format['type'] == 'json_schema' else response_format)
+    from .cpa_request_lifecycle import request_headers
     request = urllib.request.Request(
         endpoint,
         data=json.dumps(request_body).encode("utf-8"),
@@ -907,6 +919,7 @@ def _call_direct_once(prompt: str, config: LlmConfig) -> str:
             # CPA-style endpoints behind Cloudflare 403 (error 1010) the
             # default Python-urllib user agent
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+            **request_headers(),
         },
     )
     response_received = False
@@ -1130,6 +1143,8 @@ def _call_command(prompt: str, config: LlmConfig) -> str:
             child_env = {**(child_env if child_env is not None else os.environ), **observation}
         from .infra_retry_policy import cpa_text_attempt_environment, terminal_retry_state, CPA_TEXT_MAX_ATTEMPTS, CPA_TEXT_RETRY_EXHAUSTED
         budget = cpa_text_attempt_environment()
+        from .cpa_request_lifecycle import request_environment
+        budget.update(request_environment())
         if _cpa_cache_identity(config) is not None:
             terminal = terminal_retry_state()
             if not budget and terminal is not None:
@@ -1139,8 +1154,8 @@ def _call_command(prompt: str, config: LlmConfig) -> str:
                         provider_diagnostics={'provider_error_code': CPA_TEXT_RETRY_EXHAUSTED})
                 terminal['cpa_bridge_attempts'] = used + 1
                 budget = {'AUTOSLICE_CPA_TEXT_ATTEMPT': str(used + 1)}
-            if budget:
-                child_env = {**(child_env if child_env is not None else os.environ), **budget}
+        if budget:
+            child_env = {**(child_env if child_env is not None else os.environ), **budget}
         try:
             completed = subprocess.run(
                 command,

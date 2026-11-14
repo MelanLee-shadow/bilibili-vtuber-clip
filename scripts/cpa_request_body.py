@@ -29,6 +29,10 @@ def load_response_format(prompt_file):
 
 
 if __name__ == '__main__':
+    if sys.argv[1:] == ['--text-retry-limit']:
+        from src.autoslice.infra_retry_policy import CPA_TEXT_MAX_ATTEMPTS
+        print(CPA_TEXT_MAX_ATTEMPTS)
+        raise SystemExit(0)
     response_format = load_response_format(sys.argv[1])
     print(json.dumps(build_body(Path(sys.argv[1]).read_text(encoding='utf-8'),
         sys.argv[2], sys.argv[3], response_format), ensure_ascii=False))

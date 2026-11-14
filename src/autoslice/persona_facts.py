@@ -23,15 +23,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, fields, is_dataclass, replace
 from pathlib import Path
-from typing import Literal, Protocol, Union, cast, get_args, get_origin, get_type_hints
+from typing import Literal, Union, cast, get_args, get_origin, get_type_hints
 import hashlib
 import json
 import re
 import types
 import unicodedata
 
-PERSONA_FACTS_ASSET_KEY = "persona_facts"
-PERSONA_PROJECTION_ASSET_KEY = "persona"
 EXTRACTION_RECEIPT_SCHEMA = "persona-fact-extraction-receipt.v1"
 REVIEW_QUEUE_SCHEMA = "channel-knowledge-review-queue.v1"
 # Ledger schema is profile-scoped like other evidence: f"{profile_id}-persona-facts.v1".
@@ -84,9 +82,6 @@ EvidenceClass = Literal[
     "ATOMIC_HUMAN_PERSONA_TRUTH",
     "LEGACY_PERSONA_MD_GRANDFATHERED",
 ]
-# One value per member of ``FactEvidence``.  CORRECTION_RECORD is absent on
-# purpose: corrections only yield ``DirectionalSurfaceObservation``.
-ProvenanceKind = Literal["FINAL_SUBTITLE_TEXT", "HUMAN_TRUTH", "LEGACY_PERSONA_MD"]
 # subtitle_acceptability_policy grades/choices.  They are written per
 # adjudicated finding (semantic_terminal_adjudication), not per cue: a cue that
 # was never disputed has no grade, and that is the clean case.
@@ -378,29 +373,6 @@ class AssetBindingSurface:
     detail: str
 
 
-@dataclass(frozen=True)
-class InflightBinding:
-    candidate_id: str
-    surface: BindingSurfaceKind
-    bound_sha256: str
-    pinned_deploy_sha: str | None
-
-
-@dataclass(frozen=True)
-class WriteDecision:
-    asset_key: str
-    decision: WriteDecisionKind
-    surfaces: tuple[AssetBindingSurface, ...]
-    blocking_inflight: tuple[InflightBinding, ...]
-
-
-class PersonaFactExtractor(Protocol):
-    """Reads only the sealed subtitle bundle; never titles, hooks or persona.md."""
-
-    def propose(self, sealed: SealedFinalSubtitle) -> Sequence[ProposedFact]:
-        ...
-
-
 def claim_fingerprint(claim: FactClaim) -> str:
     """sha256 of canonical (kind, predicate, object_key, polarity)."""
 
@@ -412,25 +384,6 @@ def claim_fingerprint(claim: FactClaim) -> str:
                             "object_key": object_key, "polarity": claim.polarity},
                            ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
-def screen_proposals(
-    proposals: Sequence[ProposedFact],
-    *,
-    ledger: PersonaFactLedger,
-    sealed: SealedFinalSubtitle,
-) -> tuple[ScreenOutcome, ...]:
-    """Deterministic screen; can propose, append evidence or screen out, never accept."""
-
-    from .persona_fact_extraction import screen
-    return screen(proposals, ledger=ledger, sealed=sealed).outcomes
-
-
-def observations_from_corrections(sealed: SealedFinalSubtitle) -> tuple[DirectionalSurfaceObservation, ...]:
-    """Turn correction records into interval-scoped observations for owner review."""
-
-    from .persona_fact_extraction import observations_from_corrections as observations
-    return observations(sealed)
 
 
 def append_screened(
@@ -485,6 +438,38 @@ def apply_review_decisions(
         verify_append_only(result, updated)
         result = updated
     return result
+
+
+HUMAN_TRUTH_KINDS: frozenset[str] = frozenset({"IDENTITY_BACKGROUND", "APPEARANCE"})
+
+
+def append_human_truth(
+    ledger: PersonaFactLedger,
+    *,
+    kind: FactKind,
+    predicate: Predicate,
+    statement_zh: str,
+    render: RenderSlot,
+    authority: HumanAuthorityEvidence,
+    recorded_at: str,
+) -> PersonaFactLedger:
+    """Append one ACCEPTED row for a fact about the host that 维护者 (the reviewer) states himself."""
+    if kind not in HUMAN_TRUTH_KINDS:
+        raise ValueError("Kind is not a human-only persona truth kind")
+    _validate_ledger(ledger)
+    _validate_authority(authority)
+    if (not statement_zh.strip() or statement_zh.lstrip(" \t-*#").startswith(PROJECTION_RESERVED_LINE_PREFIXES)
+            or "\n" in statement_zh or "\r" in statement_zh or "<!--" in statement_zh):
+        raise ValueError("Reserved, empty or multiline human projection")
+    claim = FactClaim(kind, predicate, statement_zh, None, "AFFIRM", TemporalScope(True, None, None))
+    fingerprint = claim_fingerprint(claim)
+    if any(row.claim_fingerprint == fingerprint and row.status == "ACCEPTED" for row in current_revisions(ledger)):
+        raise ValueError("Fact is already accepted")
+    row = PersonaFactRevision("pf-" + fingerprint, "r1", "ACCEPTED", claim, fingerprint, statement_zh, render,
+                              (authority,), "ATOMIC_HUMAN_PERSONA_TRUTH", None, authority, None, recorded_at)
+    updated = replace(ledger, revisions=(*ledger.revisions, row))
+    verify_append_only(ledger, updated)
+    return updated
 
 
 def verify_append_only(previous: PersonaFactLedger, current: PersonaFactLedger) -> None:
@@ -664,30 +649,6 @@ def _git_blob_sha(body: bytes) -> str:
     return hashlib.sha1(f"blob {len(body)}\0".encode() + body).hexdigest()
 
 
-def migrate_legacy_persona_md(text: str, *, git_blob_sha: str, profile_id: str, recorded_at: str) -> PersonaFactLedger:
-    """One grandfathered row per exact line; no human approval is invented."""
-    if _git_blob_sha(text.encode("utf-8")) != git_blob_sha:
-        raise ValueError("Legacy git blob SHA mismatch")
-    rows: list[PersonaFactRevision] = []
-    section = ""
-    for index, line in enumerate(text.splitlines(keepends=True), 1):
-        if line.startswith("#"):
-            section = line.rstrip("\r\n")
-        directive = any(word in line for word in ("规则", "必须", "严禁", "禁止", "一律", "默认", "仅当")) or (
-            any(word in section for word in ("规则", "映射")) and line.lstrip().startswith("- ")
-        )
-        kind: FactKind = "EDITORIAL_DIRECTIVE" if directive else "LEGACY_TEXT"
-        claim = FactClaim(kind, "STATES", line, None, "AFFIRM", TemporalScope(True, None, None))
-        rows.append(PersonaFactRevision(
-            f"legacy-line-{index:03}", "r1", "ACCEPTED", claim, claim_fingerprint(claim), line,
-            RenderSlot(section, index), (LegacyLineEvidence(git_blob_sha, index, index),),
-            "LEGACY_PERSONA_MD_GRANDFATHERED", None, None, None, recorded_at,
-        ))
-    ledger = PersonaFactLedger(f"{profile_id}-{LEDGER_SCHEMA_SUFFIX}", profile_id, tuple(rows), ())
-    _validate_ledger(ledger)
-    return ledger
-
-
 # Strict JSON boundary: deserialize only the declared frozen data classes and
 # Literal unions. Unknown fields and scalar coercion (e.g. bool as int) fail.
 JSONValue = Union[None, bool, int, float, str, list["JSONValue"], dict[str, "JSONValue"]]
@@ -746,12 +707,3 @@ def load_persona_fact_ledger(path: Path, *, profile_id: str) -> PersonaFactLedge
     return ledger
 
 
-def asset_binding_surfaces(asset_key: str) -> tuple[AssetBindingSurface, ...]:
-    """Compatibility entry point; binding definitions live in their own module."""
-    from .asset_write_bindings import asset_binding_surfaces as derive
-    return derive(asset_key)
-
-
-def plan_knowledge_write(asset_key: str, *, inflight: Sequence[InflightBinding]) -> WriteDecision:
-    from .asset_write_bindings import plan_knowledge_write as plan
-    return plan(asset_key, inflight=inflight)

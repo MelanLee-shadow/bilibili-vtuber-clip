@@ -19,10 +19,10 @@ from typing import Any
 
 try:
     from ops.recording import recording_archive as identity
-    from ops.recording.cd2_status import CD2Status, GrpcWeb
+    from ops.recording.cd2_status import CD2Error, CD2IdleTimeout, CD2Status, GrpcWeb, error_code
 except ModuleNotFoundError:  # installed host-side siblings, no repo/PYTHONPATH dependency
     import recording_archive as identity
-    from cd2_status import CD2Status, GrpcWeb
+    from cd2_status import CD2Error, CD2IdleTimeout, CD2Status, GrpcWeb, error_code
 
 
 def capacity(path: Path) -> dict[str, int]:
@@ -109,18 +109,36 @@ class UploadObservations:
             return dict(self.rows.get(path, {}))
 
     def watch(self) -> None:
+        # This runs in the status thread: even the startup check cannot hold
+        # up copying. It never creates credentials or changes CD2 state.
+        try:
+            self.client.check_auth()
+        except Exception as exc:
+            print(f"CD2_AUTH_CHECK_FAILED code={error_code(exc)}", flush=True)
+        else:
+            print("CD2_AUTH_CHECK_OK", flush=True)
         delay = 5
         while True:
+            failed = False
             try:
                 for row in self.client.push_uploads(on_open=self.ready.set):
                     self.note(row)
                     delay = 5
+            except CD2IdleTimeout:
+                # Only a between-frame timeout on an opened PushMessage is
+                # classified idle. Connect/partial-frame failures still retry.
+                print("CD2_PUSH_IDLE code=CD2_PUSH_IDLE_TIMEOUT", flush=True)
+                delay = 5
+                continue
             except Exception as exc:
                 # Do not print remote messages (which may contain URLs/tokens).
-                print(f"CD2_PUSH_RETRY error={type(exc).__name__} delay={delay}", flush=True)
+                print(f"CD2_PUSH_RETRY error={type(exc).__name__} code={error_code(exc)} delay={delay}", flush=True)
+                failed = True
+            else:
+                delay = 5
             self.ready.clear()
             time.sleep(delay)
-            delay = min(300, delay * 2)
+            delay = min(300, delay * 2) if failed else 5
 
 
 class Mover:
@@ -172,10 +190,25 @@ class Mover:
             raise identity.ArchiveError("source preimage changed")
         # No mkdir/write before the exact CloudFS mount has been checked.
         require_cloud_mount(self.mount, self.mount)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        require_cloud_mount(target.parent, self.mount)
         if any(parent.is_symlink() for parent in (target, *target.parents)):
             raise identity.ArchiveError("destination traverses a symlink")
+        length = 0
+        exists = target.exists()
+        if exists:
+            if not item.get("destination_created"):
+                raise identity.ArchiveError("destination exists without this mover's creation receipt")
+            length = target.stat().st_size
+            if length > item["size"]:
+                raise identity.ArchiveError("destination larger than sealed source")
+        # Spool and CD2's local cache share the root disk. Auth may stay
+        # unavailable indefinitely, so reserve space without assuming eviction.
+        pending_bytes = item["size"] - length
+        minimum = 8 * 1024**3 + pending_bytes
+        if (pending_bytes or not exists) and capacity(self.spool)["available_bytes"] < minimum:
+            disk_guard(self.spool, minimum=minimum)
+            raise identity.ArchiveError("copy would leave less than 8 GiB for local recording")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        require_cloud_mount(target.parent, self.mount)
         try:
             out = target.open("xb")
         except FileExistsError:
@@ -294,6 +327,11 @@ class Mover:
                         item = row["files"][name]
                         if not item.get("copy_complete"):
                             self.copy_file(name, item)
+                    # Verification needs authenticated CD2 evidence; copying
+                    # each sealed artifact does not. A failed RPC must not
+                    # block the remaining artifacts in this group.
+                    for name in identity.artifact_paths(relative):
+                        item = row["files"][name]
                         self.verify_file(item)
                     row["phase"] = "verified"
                     row.pop("error", None)
@@ -318,6 +356,10 @@ class Mover:
                 # exceptions may contain authentication/URL details: omit them.
                 if isinstance(exc, identity.ArchiveError):
                     row["reason"] = str(exc)
+                elif isinstance(exc, CD2Error):
+                    # The health audit already consumes this safe string field;
+                    # do not lose the cause after a unary verification failure.
+                    row["reason"] = error_code(exc)
             self.save()
 
 
@@ -353,12 +395,10 @@ def main() -> int:
                 disk_guard(args.spool)
                 last_capacity_check = time.time()
             try:
-                # Subscribe before any create: a rapid upload can otherwise
-                # finish before the daemon has a chance to observe its event.
-                if observations.ready.is_set():
-                    mover.tick()
-                else:
-                    print("SPOOL_WAIT_CD2_STATUS_STREAM", flush=True)
+                # Watch starts first to catch rapid Finished events, but its
+                # readiness is not a prerequisite for create-only copying.
+                # Missed events require upload_list evidence or retain local.
+                mover.tick()
             except Exception as exc:
                 print(f"SPOOL_RETRY error={type(exc).__name__}", flush=True)
             time.sleep(5)

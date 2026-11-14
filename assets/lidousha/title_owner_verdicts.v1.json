@@ -1,0 +1,6 @@
+{
+  "schema_version": "title-owner-verdicts.v1",
+  "recorded_at": "2026-11-10T08:06:05Z",
+  "_doc": "频道主 公开规则对候选标题的逐条评语；owner_comment 是他的原话，grade/label 是按原话整理的数字化；只追加，不改旧条目；只含训练片，测试片的评语不得进入。",
+  "clips": []
+}

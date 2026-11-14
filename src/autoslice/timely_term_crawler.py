@@ -37,6 +37,12 @@ SCHEMA_VERSION = "lidousha-timely-term-sources.v2"
 DEFAULT_NETWORK_REQUEST_BUDGET = 14
 NETWORK_RETRY_RESERVE = 1
 BILIBILI_WBI_NAV_ENDPOINT = "https://api.bilibili.com/x/web-interface/nav"
+# Anonymous visitor identity (buvid3/buvid4) that Bilibili web APIs require; no
+# login cookie or credential file is ever read.
+BILIBILI_VISITOR_SPI_ENDPOINT = "https://api.bilibili.com/x/frontend/finger/spi"
+_VISITOR_TOKEN_RX = re.compile(r"[A-Za-z0-9_+/=.\-]{1,512}")
+_VISITOR_RESPONSE_MAX_BYTES = 64 * 1024
+_MAX_VISITOR_BOOTSTRAPS = 2
 DEFAULT_ALLOWED_HOSTS = frozenset(
     {
         "graphql.anilist.co",
@@ -537,6 +543,24 @@ class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+def _is_bilibili_host(url: str) -> bool:
+    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    return host == "bilibili.com" or host.endswith(".bilibili.com")
+
+
+def _validate_referer(referer: str) -> None:
+    parsed = urllib.parse.urlsplit(referer)
+    if (
+        len(referer) > 512
+        or re.search(r"[\x00-\x20\x7f]", referer)
+        or parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+    ):
+        raise CrawlError("unsafe Referer header")
+
+
 class BoundedHttpClient:
     def __init__(
         self,
@@ -565,6 +589,11 @@ class BoundedHttpClient:
         self.requests_made = 0
         self.cache_hits = 0
         self.stale_hits = 0
+        # Visitor-cookie bootstrap requests are deliberately not charged to
+        # max_requests; they are capped by _MAX_VISITOR_BOOTSTRAPS instead.
+        self.bootstrap_requests = 0
+        self._visitor_cookie: str | None = None
+        self._visitor_bootstraps = 0
         self._opener = urllib.request.build_opener(_SafeRedirectHandler(allowed_hosts))
 
     def _validate_endpoint(self, url: str) -> None:
@@ -595,9 +624,46 @@ class BoundedHttpClient:
             result["User-Agent"] = user_agent
         referer = headers.get("Referer")
         if referer:
-            self._validate_endpoint(referer)
+            # A Referer is a header, not a fetch target: it is checked for
+            # safety only and never matched against the host allowlist.
+            _validate_referer(referer)
             result["Referer"] = referer
         return result
+
+    def _visitor_cookie_for(self, url: str) -> str | None:
+        if not _is_bilibili_host(url):
+            return None
+        if self._visitor_cookie is None and self._visitor_bootstraps < _MAX_VISITOR_BOOTSTRAPS:
+            self._bootstrap_visitor_cookie()
+        return self._visitor_cookie
+
+    def _bootstrap_visitor_cookie(self) -> None:
+        self._visitor_bootstraps += 1
+        self._visitor_cookie = None
+        try:
+            self._validate_endpoint(BILIBILI_VISITOR_SPI_ENDPOINT)
+        except CrawlError:
+            return
+        self.bootstrap_requests += 1
+        request = urllib.request.Request(
+            BILIBILI_VISITOR_SPI_ENDPOINT,
+            headers={"User-Agent": BILIBILI_USER_AGENT, "Accept": "application/json, text/plain, */*"},
+        )
+        try:
+            with self._opener.open(request, timeout=self.timeout_seconds) as response:
+                raw = response.read(_VISITOR_RESPONSE_MAX_BYTES + 1)
+            if len(raw) > _VISITOR_RESPONSE_MAX_BYTES:
+                return
+            payload = json.loads(raw)
+            data = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(data, dict):
+                return
+            buvid3 = str(data.get("b_3") or "")
+            buvid4 = str(data.get("b_4") or "")
+            if _VISITOR_TOKEN_RX.fullmatch(buvid3) and _VISITOR_TOKEN_RX.fullmatch(buvid4):
+                self._visitor_cookie = f"buvid3={buvid3}; buvid4={buvid4}"
+        except (OSError, ValueError, TypeError):
+            return
 
     def fetch(
         self,
@@ -636,28 +702,47 @@ class BoundedHttpClient:
         }
         if content_type:
             request_headers["Content-Type"] = content_type
-        request = urllib.request.Request(url, data=body, method=method, headers=request_headers)
-        try:
-            with self._opener.open(request, timeout=self.timeout_seconds) as response:
-                length = response.headers.get("Content-Length")
-                if length and int(length) > self.max_response_bytes:
-                    raise FetchLimitError("response Content-Length exceeds budget")
-                response_body = response.read(self.max_response_bytes + 1)
-                if len(response_body) > self.max_response_bytes:
-                    raise FetchLimitError("response body exceeds budget")
-                result = CachedResponse(
-                    response_body,
-                    response.headers.get_content_type(),
-                    self.now,
-                )
-                if self.cache:
-                    self.cache.store(key, result)
-                return result
-        except (OSError, ValueError, urllib.error.URLError):
-            if cached and self.now - cached.fetched_at <= self.stale_if_error:
-                self.stale_hits += 1
-                return CachedResponse(cached.body, cached.content_type, cached.fetched_at, stale=True)
-            raise
+        refreshed = False
+        while True:
+            cookie = self._visitor_cookie_for(url)
+            attempt_headers = dict(request_headers)
+            if cookie:
+                attempt_headers["Cookie"] = cookie
+            request = urllib.request.Request(url, data=body, method=method, headers=attempt_headers)
+            try:
+                with self._opener.open(request, timeout=self.timeout_seconds) as response:
+                    length = response.headers.get("Content-Length")
+                    if length and int(length) > self.max_response_bytes:
+                        raise FetchLimitError("response Content-Length exceeds budget")
+                    response_body = response.read(self.max_response_bytes + 1)
+                    if len(response_body) > self.max_response_bytes:
+                        raise FetchLimitError("response body exceeds budget")
+                    result = CachedResponse(
+                        response_body,
+                        response.headers.get_content_type(),
+                        self.now,
+                    )
+                    if self.cache:
+                        self.cache.store(key, result)
+                    return result
+            except urllib.error.HTTPError as exc:
+                # One refresh of the visitor identity per request, then give up.
+                if exc.code == 412 and cookie and not refreshed and _is_bilibili_host(url):
+                    if self.requests_made >= self.max_requests:
+                        raise FetchLimitError("network request budget exhausted") from exc
+                    refreshed = True
+                    self.requests_made += 1
+                    self._visitor_cookie = None
+                    continue
+                if cached and self.now - cached.fetched_at <= self.stale_if_error:
+                    self.stale_hits += 1
+                    return CachedResponse(cached.body, cached.content_type, cached.fetched_at, stale=True)
+                raise
+            except (OSError, ValueError, urllib.error.URLError):
+                if cached and self.now - cached.fetched_at <= self.stale_if_error:
+                    self.stale_hits += 1
+                    return CachedResponse(cached.body, cached.content_type, cached.fetched_at, stale=True)
+                raise
 
 
 class Adapter(Protocol):

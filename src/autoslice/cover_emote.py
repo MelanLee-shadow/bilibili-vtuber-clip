@@ -1,14 +1,17 @@
-"""Official emote stickers as an alternate cover subject (维护者).
+"""Official emote stickers as cover candidates (维护者 10/19, CVR-02: "作默认很不错").
 
 The library is a committed per-channel manifest (``emote_library`` profile
 asset); the sticker media ships with this repo under the profile tree
 (``assets/<profile>/emote/``; override the root via ``AUTOSLICE_EMOTE_DIR``).  Policy, enforced by the callers
-in ``cover_generation``/``publish_staging``:
+in ``title_cover_staging`` (the candidate producer) and the legacy routes:
 
-- The cover subject DEFAULTS to the live-frame character redraw.  An emote may
-  REPLACE it only on a strong, articulated reason (the clip's reaction matches
-  a sticker so well that the sticker is clearly more expressive), decided by
-  the art-direction judge and never by the deterministic baseline.
+- An official emote is a DEFAULT candidate, like a screenshot, a collage, a cut-out
+  or an AI route. No route is preset: candidates are compared on the finished cover by
+  the scorecard, and the highest total wins (``title_cover_candidates.score_candidate``).
+  The 7/19 "only on a strong reason" rule is superseded.
+- When the planner omits an emote candidate, ``pick_emote_for_text`` picks one by
+  manifest keywords (deterministic, no model call). A hook with no matching sticker
+  only records a reason; it never blocks the cover.
 - ``companion`` mode (emote AND character in one frame) is reserved for
   分身/复数小李 memes or drawing a panda-class sticker to depict kmx —
   kmx (读 kimo熊) is the NAME OF HER FANS, not a mascot; the sticker stands
@@ -24,26 +27,21 @@ itself stays fail-closed in the staging pipeline.
 
 from __future__ import annotations
 
-from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import json
-import os
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
 from src.autoslice.channel_profile import ChannelProfileError, load_channel_profile
-from src.autoslice.surface_canon import CHANNEL_PROFILE
 
 
 ROOT = Path(__file__).resolve().parents[2]
 
-EMOTE_MEDIA_ROOT_ENV = "AUTOSLICE_EMOTE_DIR"
-_EMOTE_MEDIA_REPO_DEFAULT = Path("assets") / CHANNEL_PROFILE.profile_id / "emote"
 _EMOTE_SCHEMA_PREFIX = "lidousha-emote-library"
-_EMOTE_MODES = ("replace", "companion")
-# A strong reason must be articulated, not a bare "好看"; length is a cheap
-# proxy that rejects empty/one-word justifications without judging content.
-_EMOTE_MIN_REASON_CHARS = 1
+# Keyword split for manifest ``use_when`` phrases; the skill copy (choose_cover.py) uses the same pattern.
+_EMOTE_KEYWORD_SPLIT = re.compile(r"[/、，,；;：:（）()“”\"'\s]+")
+_EMOTE_KEYWORD_MIN_CHARS = 2
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -170,141 +168,36 @@ def load_emote_library(repo_root: Path | None = None) -> EmoteLibrary:
     )
 
 
-def emote_media_roots(
-    repo_root: Path | None = None, *, runtime_roots: tuple[str, ...] = ()
-) -> tuple[Path, ...]:
-    """Candidate media roots in probe order: explicit env override, then the
-    manifest-declared runtime roots (free's tree-out install), then the in-repo
-    default used on dev machines."""
+def emote_keywords(entry: EmoteEntry) -> tuple[str, ...]:
+    """Deterministic match keys: the label plus the manifest's ``use_when`` phrases."""
 
-    root = repo_root or ROOT
-    candidates: list[Path] = []
-    env_value = os.environ.get(EMOTE_MEDIA_ROOT_ENV, "").strip()
-    if env_value:
-        candidates.append(Path(env_value))
-    for raw in runtime_roots:
-        declared = Path(raw)
-        candidates.append(declared if declared.is_absolute() else root / declared)
-    candidates.append(root / _EMOTE_MEDIA_REPO_DEFAULT)
-    unique: list[Path] = []
-    for candidate in candidates:
-        if candidate not in unique:
-            unique.append(candidate)
-    return tuple(unique)
+    parts = [entry.label, *_EMOTE_KEYWORD_SPLIT.split(entry.use_when)]
+    return tuple(dict.fromkeys(p for p in parts if len(p) >= _EMOTE_KEYWORD_MIN_CHARS))
 
 
-def _sha256_file(path: Path) -> str:
-    digest = _evidence_file_sha256(path)
-    return digest
+def pick_emote_for_text(
+    text: str, library: EmoteLibrary, *, excluded: Iterable[str] = ()
+) -> tuple[str | None, str]:
+    """Pick the lidousha sticker whose keywords occur most often in ``text``.
 
-
-def resolve_emote_reference(
-    entry: EmoteEntry,
-    *,
-    repo_root: Path | None = None,
-    runtime_roots: tuple[str, ...] = (),
-) -> tuple[Path | None, str]:
-    """Locate and integrity-check the sticker's HD reference image.
-
-    Probes every candidate media root in order and returns ``(path, "")`` for
-    the first whose on-disk bytes match the committed manifest sha256, else
-    ``(None, all attempts)`` — callers must then fall back to the default
-    character redraw (never ship a sticker whose bytes drifted)."""
-
-    attempts: list[str] = []
-    for media_root in emote_media_roots(repo_root, runtime_roots=runtime_roots):
-        candidate = media_root / entry.hd_file
-        if not candidate.is_file():
-            attempts.append(f"EMOTE_MEDIA_MISSING: {candidate}")
-            continue
-        try:
-            actual = _sha256_file(candidate)
-        except OSError as exc:
-            attempts.append(f"EMOTE_MEDIA_UNREADABLE: {candidate}: {type(exc).__name__}: {exc}")
-            continue
-        if actual != entry.hd_sha256:
-            attempts.append(
-                f"EMOTE_MEDIA_SHA_MISMATCH: {candidate} sha256:{actual} != manifest sha256:{entry.hd_sha256}"
-            )
-            continue
-        return candidate, ""
-    return None, "; ".join(attempts)
-
-
-def emote_catalog_prompt_block(library: EmoteLibrary) -> str:
-    """The art-direction judge's sticker catalog: one line per emote so the
-    judge can cite an id, plus the source-and-emotion policy it must obey."""
+    ``text`` is the cover lines plus the final-subtitle quotes. ``excluded`` holds
+    emote ids that may not be the main emote (same source session or last five covers).
+    The panda creature is never a main emote; it is the kmx layer. Ties keep manifest
+    order. No match returns ``(None, reason)``: a record, never a gate.
+    """
 
     if not library:
-        return ""
-    lines = [
-        "\n官方表情包是 lidousha-title-cover 的正式候选素材。情绪贴合原话时优先考虑，"
-        "与截图、拼贴、抠图及必要的AI路线先列候选再按实际成品评分，不预设重绘获胜。"
-        "选择要写具体贴合理由，主表情包同源场次及近5张不得重复。"
-        "replace/companion 均须保持真实人物与素材来源，25号可代表粉丝kmx。"
-        "歌切封面继续独立规则，不用表情包。"
-    ]
+        return None, "EMOTE_LIBRARY_DISABLED"
+    blocked = set(excluded)
+    best: tuple[EmoteEntry, list[str]] | None = None
     for entry in library.entries:
-        parts = [f"- {entry.id} {entry.label}: {entry.description}"]
-        if entry.use_when:
-            parts.append(f"(适用: {entry.use_when})")
-        if entry.subject == "panda_creature":
-            parts.append("(兽形熊猫本体,非人形小李)")
-        lines.append(" ".join(parts))
-    lines.append(
-        '输出 JSON 里额外加一个字段 "emote": null 或 {"id":"清单里的id","mode":"replace"|"companion","reason":"一句话说明与哪句原话贴合"}。'
-    )
-    return "\n".join(lines) + "\n"
+        if entry.subject != "lidousha" or entry.id in blocked:
+            continue
+        matched = [key for key in emote_keywords(entry) if key in text]
+        if matched and (best is None or len(matched) > len(best[1])):
+            best = (entry, matched)
+    if best is None:
+        return None, "NO_EMOTION_MATCH: 官方表情包清单中没有与这段原话情绪相符的条目"
+    return best[0].id, "MATCHED: " + "、".join(best[1])
 
 
-def normalize_emote_choice(
-    payload_value: object, *, library: EmoteLibrary, is_song: bool
-) -> tuple[str, str, str]:
-    """Validate the judge's ``emote`` field into ``(id, mode, reason)``.
-
-    Anything short of a fully-formed source-and-emotion pick — unknown id, bad mode,
-    unarticulated reason, song cover, disabled library — normalizes to the
-    empty choice (remaining feasible candidates)."""
-
-    if not library or is_song or not isinstance(payload_value, dict):
-        return "", "", ""
-    emote_id = payload_value.get("id")
-    mode = payload_value.get("mode")
-    reason = payload_value.get("reason")
-    if not (isinstance(emote_id, str) and library.get(emote_id.strip()) is not None):
-        return "", "", ""
-    if mode not in _EMOTE_MODES:
-        return "", "", ""
-    if not (isinstance(reason, str) and len(reason.strip()) >= _EMOTE_MIN_REASON_CHARS):
-        return "", "", ""
-    return emote_id.strip(), mode, reason.strip()
-
-
-def compose_companion_reference(
-    frame_path: Path, emote_path: Path, output_path: Path
-) -> Path:
-    """Build the companion-mode reference image: the live frame with the sticker
-    pasted as a bottom-right INSET (the single-image CPA edit endpoint gets both
-    identities in one reference; the prompt tells the model the inset's role)."""
-
-    from PIL import Image, ImageOps
-
-    with Image.open(frame_path) as frame_img:
-        frame = frame_img.convert("RGB")
-        inset_height = max(1, int(round(frame.height * 0.30)))
-        with Image.open(emote_path) as emote_img:
-            emote = emote_img.convert("RGBA")
-            scale = inset_height / emote.height
-            emote = emote.resize(
-                (max(1, int(round(emote.width * scale))), inset_height), Image.LANCZOS
-            )
-        inset = ImageOps.expand(emote, border=6, fill=(255, 255, 255, 255))
-        margin = max(8, frame.width // 96)
-        position = (
-            frame.width - inset.width - margin,
-            frame.height - inset.height - margin,
-        )
-        frame.paste(inset, position, inset)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        frame.save(output_path)
-    return output_path

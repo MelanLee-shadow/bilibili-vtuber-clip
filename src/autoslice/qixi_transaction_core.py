@@ -2,77 +2,15 @@
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import os
 import stat
-import tempfile
-import base64
-import threading
-from contextlib import contextmanager, nullcontext
-from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 
 class QixiTransactionCoreError(ValueError):
     """A fixed-lane transaction cannot establish exclusive ownership."""
-
-
-_LEASE_CAPABILITY = object()
-_lease_local = threading.local()
-_recovery_reference_local = threading.local()
-
-
-class RunnerCommitLease:
-    """Opaque proof that this process owns one runtime's short commit mutex.
-
-    Construction is private to :func:`exclusive_runner_commit`; callers pass
-    the live lease to APIs that require a commit authority rather than treating
-    a lock path or a boolean as synchronization.
-    """
-
-    __slots__ = ("runtime_root", "lock_path", "device", "inode", "_capability", "_owner_pid")
-
-    def __init__(
-        self, *, runtime_root: Path, lock_path: Path, device: int, inode: int, capability: object,
-    ) -> None:
-        if capability is not _LEASE_CAPABILITY:
-            raise QixiTransactionCoreError("runner commit lease cannot be constructed")
-        self.runtime_root = runtime_root
-        self.lock_path = lock_path
-        self.device = device
-        self.inode = inode
-        self._capability = capability
-        self._owner_pid = os.getpid()
-
-
-def require_runner_commit_lease(lease: RunnerCommitLease, *, runtime_root: Path) -> None:
-    """Reject a forged, released, or cross-runtime lease."""
-
-    if (
-        not isinstance(lease, RunnerCommitLease)
-        or lease._capability is not _LEASE_CAPABILITY
-        or lease.runtime_root != runtime_root
-        or getattr(_lease_local, "active", None) is not lease
-        or lease._owner_pid != os.getpid()
-    ):
-        raise QixiTransactionCoreError("runner commit lease is invalid")
-
-
-def current_runner_commit_lease(*, runtime_root: Path) -> RunnerCommitLease | None:
-    """Return this thread's live canonical lease, if it is for ``runtime_root``.
-
-    Legacy/manual orchestration can call the normal state writer while it owns
-    the opaque capability.  Exposing this read-only accessor avoids a second
-    flock attempt without allowing callers to forge or reuse a released lease.
-    """
-
-    lease = getattr(_lease_local, "active", None)
-    if lease is None:
-        return None
-    require_runner_commit_lease(lease, runtime_root=runtime_root)
-    return lease
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,72 +31,6 @@ class FileSnapshot:
     size: int = 0
     mtime_ns: int = 0
     ctime_ns: int = 0
-
-
-@dataclass(frozen=True, slots=True)
-class InstallCallbacks:
-    """Lane-owned journal callbacks around one authority-neutral install.
-
-    The core deliberately cannot choose a journal schema or after-image.  A
-    fixed lane supplies its durable checkpoint and immediate replay assertion;
-    both run after the core owns the installed inode and before the next entry.
-    """
-
-    checkpoint_installed: Callable[[FileSnapshot], None]
-    verify_installed: Callable[[FileSnapshot], None]
-
-
-def journal_after_snapshot(entry: Mapping[str, object], *, staged_path: Path) -> FileSnapshot:
-    """Decode the fixed transaction-entry after-image without lane semantics."""
-
-    device, inode = entry.get("staged_device"), entry.get("staged_inode")
-    if any(isinstance(value, bool) or not isinstance(value, int) for value in (device, inode)):
-        raise QixiTransactionCoreError("transaction staged inode evidence drifts")
-    encoded = entry.get("after_bytes_b64")
-    if not isinstance(encoded, str):
-        raise QixiTransactionCoreError("transaction after-image is invalid")
-    try:
-        payload = base64.b64decode(encoded.encode("ascii"), validate=True)
-    except (UnicodeEncodeError, ValueError) as exc:
-        raise QixiTransactionCoreError("transaction after-image is invalid") from exc
-    sha256, mode = entry.get("after_sha256"), entry.get("after_mode")
-    if not isinstance(sha256, str) or isinstance(mode, bool) or not isinstance(mode, int):
-        raise QixiTransactionCoreError("transaction after-image metadata drifts")
-    return FileSnapshot(staged_path, device, inode, sha256, mode, payload)
-
-
-def journal_installed_snapshot(entry: Mapping[str, object], *, target: Path) -> FileSnapshot:
-    """Decode the same after-image after its journaled install checkpoint."""
-
-    projected = dict(entry)
-    projected["staged_device"], projected["staged_inode"] = (
-        entry.get("installed_device"), entry.get("installed_inode"),
-    )
-    return journal_after_snapshot(projected, staged_path=target)
-
-
-def journal_before_snapshot(entry: Mapping[str, object], *, target: Path) -> FileSnapshot | None:
-    """Decode the fixed transaction-entry preimage used for CAS and rollback."""
-
-    encoded = entry.get("before_bytes_b64")
-    if encoded is None:
-        return None
-    if not isinstance(encoded, str):
-        raise QixiTransactionCoreError("transaction preimage is invalid")
-    try:
-        payload = base64.b64decode(encoded.encode("ascii"), validate=True)
-    except (UnicodeEncodeError, ValueError) as exc:
-        raise QixiTransactionCoreError("transaction preimage is invalid") from exc
-    device, inode, mode, sha256 = (
-        entry.get("before_device"), entry.get("before_inode"),
-        entry.get("before_mode"), entry.get("before_sha256"),
-    )
-    if (
-        any(isinstance(value, bool) or not isinstance(value, int) for value in (device, inode, mode))
-        or not isinstance(sha256, str)
-    ):
-        raise QixiTransactionCoreError("transaction preimage metadata drifts")
-    return FileSnapshot(target, device, inode, sha256, mode, payload)
 
 
 def _safe_parent(path: Path) -> None:
@@ -322,57 +194,6 @@ def install_staged_inode(
     return installed
 
 
-def install_checkpointed_inode(
-    staged: FileSnapshot,
-    *,
-    target: Path,
-    expected_before: FileSnapshot | None,
-    callbacks: InstallCallbacks,
-    label: str,
-) -> FileSnapshot:
-    """Install one inode and let the fixed lane durably checkpoint/replay it."""
-
-    installed = install_staged_inode(
-        staged, target=target, expected_before=expected_before, label=label
-    )
-    callbacks.checkpoint_installed(installed)
-    callbacks.verify_installed(installed)
-    return installed
-
-
-def restore_owned_inode(
-    installed: FileSnapshot, *, before: FileSnapshot | None, label: str
-) -> FileSnapshot | None:
-    """Rollback only a target still owned by this transaction's installed inode."""
-
-    require_snapshot(installed, label=label)
-    if before is None:
-        _unlink_owned(installed.path, device=installed.device, inode=installed.inode, label=label)
-        directory = os.open(installed.path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
-        return None
-    # A fresh same-directory inode is needed: never overwrite through a stale
-    # staging name while rollback owns the installed target.
-    fd, temporary_name = tempfile.mkstemp(prefix=f".{installed.path.name}.qixi-rollback-", dir=installed.path.parent)
-    temporary = Path(temporary_name)
-    opened = os.fstat(fd)
-    try:
-        view = memoryview(before.payload)
-        while view:
-            view = view[os.write(fd, view) :]
-        os.fchmod(fd, before.mode)
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-    staged = stable_regular_snapshot(temporary, label=label)
-    if staged is None or (staged.device, staged.inode) != (opened.st_dev, opened.st_ino):
-        raise QixiTransactionCoreError(f"{label} rollback temporary ownership drifted")
-    return install_staged_inode(staged, target=installed.path, expected_before=installed, label=label)
-
-
 def _unlink_owned(path: Path, *, device: int, inode: int, label: str) -> None:
     try:
         info = os.lstat(path)
@@ -416,117 +237,3 @@ def _same_safe_runner_lock(path: Path, descriptor: int, opened: os.stat_result) 
         raise QixiTransactionCoreError("runner lock identity unsafe")
 
 
-@contextmanager
-def exclusive_runner_commit(runtime_root: Path):
-    """Acquire one inode-validated, non-reentrant runner commit lease."""
-
-    if getattr(_lease_local, "active", None) is not None:
-        raise QixiTransactionCoreError("runner commit lease nesting is forbidden")
-
-    lock = runtime_root / "runner.lock"
-    _safe_parent(lock)
-    try:
-        descriptor = os.open(lock, _runner_lock_open_flags(), 0o600)
-    except OSError as exc:
-        raise QixiTransactionCoreError("runner lock cannot be opened safely") from exc
-    try:
-        opened = os.fstat(descriptor)
-        _same_safe_runner_lock(lock, descriptor, opened)
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise QixiTransactionCoreError("runner lock busy") from exc
-        _same_safe_runner_lock(lock, descriptor, opened)
-        lease = RunnerCommitLease(
-            runtime_root=runtime_root,
-            lock_path=lock,
-            device=opened.st_dev,
-            inode=opened.st_ino,
-            capability=_LEASE_CAPABILITY,
-        )
-        _lease_local.active = lease
-        try:
-            yield lease
-        finally:
-            _lease_local.active = None
-    finally:
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
-        finally:
-            os.close(descriptor)
-
-
-@contextmanager
-def exclusive_runner_lock(runtime_root: Path):
-    """Compatibility spelling for callers not yet upgraded to a lease value."""
-
-    with exclusive_runner_commit(runtime_root):
-        yield
-
-
-@contextmanager
-def _recovery_reference_window(runtime_root: Path, *, maintenance: bool):
-    """Exclude GC while private APIs publish references to original inputs.
-
-    Shared writers can copy independent private artifacts concurrently without
-    taking the runner commit mutex. Maintenance owns the exclusive side.
-    """
-    active = getattr(_recovery_reference_local, "active", None)
-    if active is not None and active[1] == os.getpid():
-        if active[0] != runtime_root or active[2] != maintenance:
-            raise QixiTransactionCoreError("recovery reference window nesting is forbidden")
-        _same_safe_runner_lock(active[3], active[4], active[5])
-        yield
-        return
-    lock = runtime_root / "recovery-reference.lock"
-    _safe_parent(lock)
-    try:
-        descriptor = os.open(lock, _runner_lock_open_flags(), 0o600)
-    except OSError as exc:
-        raise QixiTransactionCoreError("recovery reference lock cannot be opened safely") from exc
-    try:
-        opened = os.fstat(descriptor)
-        _same_safe_runner_lock(lock, descriptor, opened)
-        try:
-            mode = fcntl.LOCK_EX if maintenance else fcntl.LOCK_SH
-            fcntl.flock(descriptor, mode | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise QixiTransactionCoreError("recovery reference lock busy") from exc
-        _same_safe_runner_lock(lock, descriptor, opened)
-        previous = active
-        _recovery_reference_local.active = (
-            runtime_root, os.getpid(), maintenance, lock, descriptor, opened,
-        )
-        try:
-            yield
-            _same_safe_runner_lock(lock, descriptor, opened)
-        finally:
-            _recovery_reference_local.active = previous
-    finally:
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
-        finally:
-            os.close(descriptor)
-
-
-@contextmanager
-def recovery_reference_write_window(runtime_root: Path):
-    """Protect one private filesystem publication, without provider work."""
-    with _recovery_reference_window(runtime_root, maintenance=False):
-        yield
-
-
-@contextmanager
-def exclusive_recovery_maintenance(runtime_root: Path):
-    """Freeze state/journals and private recovery references for cleanup.
-
-    Reuse this thread's actual live runner lease. An external shell flock is
-    not an opaque lease; callers should use this API instead of nesting it
-    beneath that shell lock.
-    """
-    lease = current_runner_commit_lease(runtime_root=runtime_root)
-    runner_window = nullcontext(lease) if lease is not None else exclusive_runner_commit(runtime_root)
-    with runner_window as owned:
-        require_runner_commit_lease(owned, runtime_root=runtime_root)
-        with _recovery_reference_window(runtime_root, maintenance=True):
-            yield owned

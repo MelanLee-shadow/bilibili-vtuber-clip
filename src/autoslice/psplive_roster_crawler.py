@@ -7,7 +7,6 @@ name/alias exists; it never proves that a particular subtitle cue contains it.
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
 import json
 import re
 from pathlib import Path
@@ -182,5 +181,3 @@ def snapshot_json(payload: Mapping[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
 
-def snapshot_sha256(payload: Mapping[str, Any]) -> str:
-    return hashlib.sha256(snapshot_json(payload).encode("utf-8")).hexdigest()

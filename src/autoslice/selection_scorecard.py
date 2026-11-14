@@ -8,14 +8,11 @@ recall time and by the unattended runner when it allocates delivery slots.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import math
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
-from src.autoslice.channel_profile import ChannelProfile, load_channel_profile
+from src.autoslice.channel_profile import load_channel_profile
 
 
 # schema 按 profile 派生（默认 profile 渲染与历史字面量逐字相同）；定义见 _CHANNEL_PROFILE 加载后。
@@ -38,53 +35,27 @@ TIER_ONE_BASES = frozenset(
         "explicit_gl_stance",
         "cp_positioning",
         "audience_driven_performance",
+        "cute_performance",
     }
 )
 TIER_BASES = TIER_ONE_BASES | {"personal_stance", "generic_event"}
 ADMISSION_POLICY_FIELD = "admission_policy"
-# Candidate quality is deliberately separate from the seven arithmetic
-# dimensions.  It answers the production question that a valid scorecard
-# cannot answer by itself: is this particular candidate worth spending a
-# production slot on, and what in the window supports that decision?
+# Candidate quality is separate from the seven arithmetic dimensions; a valid
+# scorecard alone does not establish candidate production eligibility.
 CANDIDATE_QUALITY_FIELD = "candidate_quality"
 CANDIDATE_QUALITY_SCHEMA = "candidate-selection-quality.v1"
 QUALITY_WATCHABILITY_VALUES = frozenset({"STRONG", "ORDINARY", "THIN"})
 QUALITY_DIFFERENTIATION_VALUES = frozenset({"DISTINCTIVE", "ORDINARY", "THIN"})
 QUALITY_DISPOSITION_VALUES = frozenset({"PRODUCTION", "RESERVE", "HOLD"})
-# New scorecards carry the policy explicitly.  Historical v1 scorecards did
-# not have this field and remain valid under their original arithmetic/admission
-# rules (see ``selection_scorecard_is_valid``).  v2 is retained as a distinct
-# historical policy because its bytes and tier facts may be receipt-bound.
+# Historical v1 cards have no policy field; v2/v3 retain their original rules
+# because card bytes and Tier facts may be receipt-bound.
 LEGACY_ADMISSION_POLICY = "selection-scorecard-admission.v2"
-CURRENT_ADMISSION_POLICY = "selection-scorecard-admission.v3"
+PREVIOUS_ADMISSION_POLICY = "selection-scorecard-admission.v3"
+CURRENT_ADMISSION_POLICY = "selection-scorecard-admission.v4"
 _CHANNEL_PROFILE = load_channel_profile(
     Path(__file__).resolve().parents[2]
 )
 SCHEMA_VERSION = f"{_CHANNEL_PROFILE.profile_id}-selection-scorecard.v1"
-CALIBRATION_SCHEMA_VERSION = (
-    f"{_CHANNEL_PROFILE.profile_id}-selection-score-calibration.v1"
-)
-
-
-class SelectionCalibrationPolicyError(ValueError):
-    """The reviewed selection-calibration authority is unusable."""
-
-    def __init__(self, reason_code: str, path: Path, detail: str = "") -> None:
-        self.reason_code = reason_code
-        self.path = path
-        self.detail = detail
-        message = f"{reason_code}: {path}"
-        if detail:
-            message += f": {detail}"
-        super().__init__(message)
-
-
-@dataclass(frozen=True)
-class SelectionCalibrationPolicy:
-    source_path: Path
-    source_sha256: str
-    anchors: Mapping[str, Mapping[str, object]]
-    ordering_constraints: tuple[Mapping[str, object], ...]
 
 
 def _number(value: object, *, minimum: float, maximum: float) -> float | None:
@@ -96,267 +67,22 @@ def _number(value: object, *, minimum: float, maximum: float) -> float | None:
     return number
 
 
-def _calibration_error(path: Path, code: str, detail: str = "") -> None:
-    raise SelectionCalibrationPolicyError(code, path, detail)
-
-
-def _require_exact_keys(
-    value: Mapping[str, object],
-    expected: set[str],
-    *,
-    path: Path,
-    label: str,
-) -> None:
-    actual = set(value)
-    if actual != expected:
-        _calibration_error(
-            path,
-            "SELECTION_CALIBRATION_KEYS_INVALID",
-            f"{label}: missing={sorted(expected - actual)} extra={sorted(actual - expected)}",
-        )
-
-
-def _calibrated_effective_score(anchor: Mapping[str, object]) -> float:
-    dimensions = anchor["dimensions"]
-    assert isinstance(dimensions, Mapping)
-    raw_score = sum(
-        DIMENSION_WEIGHTS[name] * int(dimensions[name]) / 4
-        for name in DIMENSION_WEIGHTS
-    )
-    return round(
-        max(
-            0.0,
-            raw_score
-            - float(anchor["uncertainty_penalty"])
-            - float(anchor["fatigue_penalty"]),
-        ),
-        2,
-    )
-
-
-def load_selection_calibration_policy(path: Path) -> SelectionCalibrationPolicy:
-    """Load and fully validate the reviewed calibration authority.
-
-    Missing or malformed authority is a production blocker.  Returning an
-    empty anchor table would make a bad policy indistinguishable from a valid
-    policy that intentionally names no candidate.
-    """
-
-    path = path.resolve()
-    try:
-        raw_bytes = path.read_bytes()
-    except OSError as exc:
-        _calibration_error(
-            path, "SELECTION_CALIBRATION_POLICY_UNREADABLE", type(exc).__name__
-        )
-    try:
-        payload = json.loads(raw_bytes.decode("utf-8"))
-    except (UnicodeError, json.JSONDecodeError) as exc:
-        _calibration_error(
-            path, "SELECTION_CALIBRATION_POLICY_JSON_INVALID", type(exc).__name__
-        )
-    if not isinstance(payload, Mapping):
-        _calibration_error(path, "SELECTION_CALIBRATION_POLICY_ROOT_INVALID")
-    _require_exact_keys(
-        payload,
-        {"schema_version", "authority", "anchors", "ordering_constraints"},
-        path=path,
-        label="root",
-    )
-    if payload.get("schema_version") != CALIBRATION_SCHEMA_VERSION:
-        _calibration_error(path, "SELECTION_CALIBRATION_POLICY_SCHEMA_INVALID")
-    if not str(payload.get("authority") or "").strip():
-        _calibration_error(path, "SELECTION_CALIBRATION_AUTHORITY_MISSING")
-    raw_anchors = payload.get("anchors")
-    raw_constraints = payload.get("ordering_constraints")
-    if not isinstance(raw_anchors, list) or not isinstance(raw_constraints, list):
-        _calibration_error(path, "SELECTION_CALIBRATION_COLLECTION_INVALID")
-
-    anchors: dict[str, Mapping[str, object]] = {}
-    anchor_scores: dict[str, float] = {}
-    anchor_keys = {
-        "candidate_id",
-        "label",
-        "expected_tier",
-        "effective_score_min",
-        "effective_score_max",
-        "dimensions",
-        "uncertainty_penalty",
-        "fatigue_penalty",
-    }
-    for index, raw_anchor in enumerate(raw_anchors):
-        if not isinstance(raw_anchor, Mapping):
-            _calibration_error(
-                path, "SELECTION_CALIBRATION_ANCHOR_INVALID", f"anchors[{index}]"
-            )
-        _require_exact_keys(
-            raw_anchor,
-            anchor_keys,
-            path=path,
-            label=f"anchors[{index}]",
-        )
-        candidate_id = str(raw_anchor.get("candidate_id") or "")
-        if not candidate_id or candidate_id in anchors:
-            _calibration_error(
-                path,
-                "SELECTION_CALIBRATION_CANDIDATE_ID_INVALID",
-                f"anchors[{index}]={candidate_id!r}",
-            )
-        if not str(raw_anchor.get("label") or "").strip():
-            _calibration_error(
-                path, "SELECTION_CALIBRATION_LABEL_MISSING", candidate_id
-            )
-        expected_tier = raw_anchor.get("expected_tier")
-        if isinstance(expected_tier, bool) or expected_tier not in (1, 2, 3):
-            _calibration_error(
-                path, "SELECTION_CALIBRATION_TIER_INVALID", candidate_id
-            )
-        dimensions = raw_anchor.get("dimensions")
-        if not isinstance(dimensions, Mapping) or set(dimensions) != set(
-            DIMENSION_WEIGHTS
-        ):
-            _calibration_error(
-                path, "SELECTION_CALIBRATION_DIMENSIONS_INVALID", candidate_id
-            )
-        if any(
-            isinstance(dimensions[name], bool)
-            or not isinstance(dimensions[name], int)
-            or not 0 <= dimensions[name] <= 4
-            for name in DIMENSION_WEIGHTS
-        ):
-            _calibration_error(
-                path, "SELECTION_CALIBRATION_DIMENSIONS_INVALID", candidate_id
-            )
-        minimum = _number(
-            raw_anchor.get("effective_score_min"), minimum=0, maximum=100
-        )
-        maximum = _number(
-            raw_anchor.get("effective_score_max"), minimum=0, maximum=100
-        )
-        uncertainty = _number(
-            raw_anchor.get("uncertainty_penalty"), minimum=0, maximum=15
-        )
-        fatigue = _number(
-            raw_anchor.get("fatigue_penalty"), minimum=0, maximum=10
-        )
-        if (
-            minimum is None
-            or maximum is None
-            or minimum > maximum
-            or uncertainty is None
-            or fatigue is None
-        ):
-            _calibration_error(
-                path, "SELECTION_CALIBRATION_NUMERIC_RANGE_INVALID", candidate_id
-            )
-        anchor = dict(raw_anchor)
-        effective = _calibrated_effective_score(anchor)
-        if not minimum <= effective <= maximum:
-            _calibration_error(
-                path,
-                "SELECTION_CALIBRATION_FIXED_SCORE_OUT_OF_RANGE",
-                f"{candidate_id}={effective}",
-            )
-        anchors[candidate_id] = anchor
-        anchor_scores[candidate_id] = effective
-
-    constraints: list[Mapping[str, object]] = []
-    seen_constraints: set[tuple[str, str]] = set()
-    constraint_keys = {
-        "higher_candidate_id",
-        "lower_candidate_id",
-        "reason",
-    }
-    for index, raw_constraint in enumerate(raw_constraints):
-        if not isinstance(raw_constraint, Mapping):
-            _calibration_error(
-                path,
-                "SELECTION_CALIBRATION_ORDERING_INVALID",
-                f"ordering_constraints[{index}]",
-            )
-        _require_exact_keys(
-            raw_constraint,
-            constraint_keys,
-            path=path,
-            label=f"ordering_constraints[{index}]",
-        )
-        higher = str(raw_constraint.get("higher_candidate_id") or "")
-        lower = str(raw_constraint.get("lower_candidate_id") or "")
-        pair = (higher, lower)
-        if (
-            not higher
-            or not lower
-            or higher == lower
-            or higher not in anchors
-            or lower not in anchors
-            or pair in seen_constraints
-            or not str(raw_constraint.get("reason") or "").strip()
-        ):
-            _calibration_error(
-                path,
-                "SELECTION_CALIBRATION_ORDERING_INVALID",
-                f"{higher!r}>{lower!r}",
-            )
-        higher_rank = (
-            int(anchors[higher]["expected_tier"]),
-            -anchor_scores[higher],
-        )
-        lower_rank = (
-            int(anchors[lower]["expected_tier"]),
-            -anchor_scores[lower],
-        )
-        if not higher_rank < lower_rank:
-            _calibration_error(
-                path,
-                "SELECTION_CALIBRATION_ORDERING_CONTRADICTED",
-                f"{higher}>{lower}",
-            )
-        seen_constraints.add(pair)
-        constraints.append(dict(raw_constraint))
-
-    return SelectionCalibrationPolicy(
-        source_path=path,
-        source_sha256="sha256:" + hashlib.sha256(raw_bytes).hexdigest(),
-        anchors=anchors,
-        ordering_constraints=tuple(constraints),
-    )
-
-
-def load_selected_selection_calibration_policy(
-    profile: ChannelProfile | None = None,
-) -> SelectionCalibrationPolicy:
-    selected = profile or _CHANNEL_PROFILE
-    try:
-        path = selected.asset_file("selection_score_calibration")
-    except (KeyError, ValueError) as exc:
-        fallback = selected.manifest_path
-        _calibration_error(
-            fallback,
-            "SELECTION_CALIBRATION_PROFILE_BINDING_INVALID",
-            type(exc).__name__,
-        )
-    return load_selection_calibration_policy(path)
-
-
 def _performance_tier_one_admitted(
     dimensions: Mapping[str, int],
     evidence_cues: list[int],
     *,
     admission_policy: str | None,
 ) -> bool:
-    """Return whether a performance card may occupy the highest tier.
+    """Check performance admission without changing receipt-bound old policies."""
 
-    The no-policy and v2 branches intentionally remain separate from v3:
-    scorecards written under either policy can be bound by a receipt and must
-    not be silently re-scored under the current rubric.
-    """
-
+    if admission_policy == CURRENT_ADMISSION_POLICY:
+        return len(evidence_cues) >= 1
     admitted = (
         dimensions["relationship_interaction"] >= 3
         and dimensions["persona_reversal"] >= 3
         and len(evidence_cues) >= 2
     )
-    if admission_policy in {LEGACY_ADMISSION_POLICY, CURRENT_ADMISSION_POLICY}:
+    if admission_policy in {LEGACY_ADMISSION_POLICY, PREVIOUS_ADMISSION_POLICY}:
         admitted = admitted and (
             dimensions["audience_salience"] >= 2
             and dimensions["self_contained"] >= 3
@@ -494,6 +220,8 @@ def _normalize_selection_scorecard(
     tier_basis = str(raw.get("tier_basis") or "").strip()
     if tier_basis not in TIER_BASES:
         return None
+    if tier_basis == "cute_performance" and admission_policy != CURRENT_ADMISSION_POLICY:
+        return None
     quality: dict[str, object] | None = None
     if CANDIDATE_QUALITY_FIELD in raw:
         quality = _normalize_candidate_quality(
@@ -512,7 +240,9 @@ def _normalize_selection_scorecard(
             and len(evidence_cues) >= 2
         )
         performance_admitted = (
-            tier_basis == "audience_driven_performance"
+            (tier_basis == "audience_driven_performance" or (
+                tier_basis == "cute_performance" and admission_policy == CURRENT_ADMISSION_POLICY
+            ))
             and _performance_tier_one_admitted(
                 dimensions,
                 evidence_cues,
@@ -525,7 +255,7 @@ def _normalize_selection_scorecard(
             and (dimensions["lidousha_centrality"] >= 3 or dimensions["stance_intensity"] >= 3)
             and len(evidence_cues) >= 1
         )
-        if admission_policy == CURRENT_ADMISSION_POLICY:
+        if admission_policy in {PREVIOUS_ADMISSION_POLICY, CURRENT_ADMISSION_POLICY}:
             admitted = _v3_common_dimensions_gate(dimensions) and v3_quality_admitted and (
                 relationship_admitted
                 or performance_admitted
@@ -538,9 +268,9 @@ def _normalize_selection_scorecard(
         if not admitted:
             tier = 2
             reason_codes.append("TIER1_ADMISSION_DOWNGRADED")
-            if admission_policy == CURRENT_ADMISSION_POLICY and not v3_quality_admitted:
+            if admission_policy in {PREVIOUS_ADMISSION_POLICY, CURRENT_ADMISSION_POLICY} and not v3_quality_admitted:
                 reason_codes.append("TIER1_COMMON_QUALITY_GATE_FAILED")
-            if admission_policy == CURRENT_ADMISSION_POLICY and not _v3_common_dimensions_gate(dimensions):
+            if admission_policy in {PREVIOUS_ADMISSION_POLICY, CURRENT_ADMISSION_POLICY} and not _v3_common_dimensions_gate(dimensions):
                 reason_codes.append("TIER1_COMMON_DIMENSION_GATE_FAILED")
 
     # A clip whose hook/payoff cannot stand on its own is the metric's Tier 3,
@@ -573,8 +303,8 @@ def _normalize_selection_scorecard(
     }
     if quality is not None:
         normalized[CANDIDATE_QUALITY_FIELD] = quality
-    if admission_policy == CURRENT_ADMISSION_POLICY:
-        normalized[ADMISSION_POLICY_FIELD] = CURRENT_ADMISSION_POLICY
+    if admission_policy in {PREVIOUS_ADMISSION_POLICY, CURRENT_ADMISSION_POLICY}:
+        normalized[ADMISSION_POLICY_FIELD] = admission_policy
     return normalized
 
 
@@ -584,13 +314,7 @@ def normalize_selection_scorecard(
     start_cue: int,
     end_cue: int,
 ) -> dict[str, object] | None:
-    """Normalize a new scorecard under the current v3 admission policy.
-
-    The public signature is intentionally unchanged.  Scorecards produced by
-    this path carry an explicit policy identifier.  Historical v1/v2 cards
-    are accepted only by ``selection_scorecard_is_valid`` with their original
-    policy semantics.
-    """
+    """Normalize a new v4 card; validate historical cards under their own policy."""
 
     if not isinstance(raw, Mapping):
         return None
@@ -608,12 +332,7 @@ def normalize_selection_scorecard(
 
 
 def _ranking_tier(scorecard: Mapping[str, object]) -> float:
-    """Map a valid historical performance Tier 1 card to current priority.
-
-    The card itself is deliberately left untouched: its bytes may be bound by
-    source-fact or publication receipts.  Only the transient sorting key uses
-    the current stronger performance admission rule.
-    """
+    """Rank historical performance without changing receipt-bound card bytes."""
 
     tier = float(scorecard["tier"])
     if (
@@ -667,7 +386,7 @@ def selection_scorecard_production_admission(raw: object) -> dict[str, object]:
     """Return the candidate-scoped production disposition.
 
     Historical cards have no ``admission_policy`` and retain their original
-    admission fact.  v2 cards retain the previous quality gate.  Only v3
+    admission fact.  v2/v3 cards retain their original quality gate.  New
     cards use the current rubric before a normal semantic candidate can take
     a fresh production seat.
     This gate never changes Tier or either seven-dimension score.
@@ -680,7 +399,7 @@ def selection_scorecard_production_admission(raw: object) -> dict[str, object]:
         }
     assert isinstance(raw, Mapping)
     policy = raw.get(ADMISSION_POLICY_FIELD)
-    if policy not in {LEGACY_ADMISSION_POLICY, CURRENT_ADMISSION_POLICY}:
+    if policy not in {LEGACY_ADMISSION_POLICY, PREVIOUS_ADMISSION_POLICY, CURRENT_ADMISSION_POLICY}:
         return {
             "status": "ADMIT",
             "reason_code": "HISTORICAL_SCORECARD_COMPATIBILITY",
@@ -729,138 +448,6 @@ def selection_scorecard_production_admission(raw: object) -> dict[str, object]:
     }
 
 
-def selection_calibration_violations(
-    candidate_id: str,
-    scorecard: object,
-    *,
-    policy: SelectionCalibrationPolicy | None = None,
-) -> list[str]:
-    """Enforce reviewed score ranges for named regression anchors."""
-
-    selected_policy = policy or load_selected_selection_calibration_policy()
-    anchor = selected_policy.anchors.get(str(candidate_id or ""))
-    if anchor is None:
-        return []
-    if not selection_scorecard_is_valid(scorecard):
-        return ["SELECTION_CALIBRATION_SCORECARD_INVALID"]
-    assert isinstance(scorecard, Mapping)
-    violations: list[str] = []
-    if scorecard.get("tier") != anchor.get("expected_tier"):
-        violations.append("SELECTION_CALIBRATION_TIER_MISMATCH")
-    effective = float(scorecard["effective_score"])
-    minimum = _number(
-        anchor.get("effective_score_min"), minimum=0, maximum=100
-    )
-    maximum = _number(
-        anchor.get("effective_score_max"), minimum=0, maximum=100
-    )
-    if (
-        minimum is None
-        or maximum is None
-        or minimum > maximum
-        or not minimum <= effective <= maximum
-    ):
-        violations.append("SELECTION_CALIBRATION_SCORE_OUT_OF_RANGE")
-    return violations
-
-
-def apply_reviewed_selection_calibration(
-    candidate_id: str,
-    scorecard: object,
-    *,
-    policy: SelectionCalibrationPolicy | None = None,
-) -> dict[str, object] | None:
-    """Apply a reviewed v3 anchor while preserving historical card bytes."""
-
-    selected_policy = policy or load_selected_selection_calibration_policy()
-    if not selection_scorecard_is_valid(scorecard):
-        return dict(scorecard) if isinstance(scorecard, dict) else None
-    assert isinstance(scorecard, Mapping)
-    # Historical v1 cards (no policy field) and explicit v2 cards are
-    # receipt-bound facts.  Calibration is allowed to produce a fresh v3 card
-    # through the normal/rescore path, but this helper must not silently
-    # rewrite an old current-pool row while rebuilding or recovering it.
-    if scorecard.get(ADMISSION_POLICY_FIELD) != CURRENT_ADMISSION_POLICY:
-        return dict(scorecard)
-    anchor = selected_policy.anchors.get(str(candidate_id or ""))
-    if anchor is None:
-        evidence = list(scorecard.get("tier_evidence_cues") or [])
-        quality = scorecard.get(CANDIDATE_QUALITY_FIELD)
-        quality_evidence = (
-            list(quality.get("evidence_cues") or [])
-            if isinstance(quality, Mapping)
-            and isinstance(quality.get("evidence_cues"), list)
-            else []
-        )
-        calibration_evidence = evidence + quality_evidence
-        normalized = normalize_selection_scorecard(
-            {
-                "tier": scorecard.get("requested_tier"),
-                "tier_basis": scorecard.get("tier_basis"),
-                "tier_reason": scorecard.get("tier_reason"),
-                "tier_evidence_cues": evidence,
-                "dimensions": scorecard.get("dimensions"),
-                "uncertainty_penalty": scorecard.get("uncertainty_penalty"),
-                "fatigue_penalty": scorecard.get("fatigue_penalty"),
-                **(
-                    {CANDIDATE_QUALITY_FIELD: scorecard.get(CANDIDATE_QUALITY_FIELD)}
-                    if CANDIDATE_QUALITY_FIELD in scorecard
-                    else {}
-                ),
-            },
-            start_cue=min(calibration_evidence, default=0),
-            end_cue=max(calibration_evidence, default=0),
-        )
-        if normalized is None:
-            return None
-        # Keep refresh/review metadata while replacing the scorecard's
-        # arithmetic and admission fields with the current policy result.
-        return {**dict(scorecard), **normalized}
-    dimensions = anchor.get("dimensions")
-    if not isinstance(dimensions, Mapping):
-        raise SelectionCalibrationPolicyError(
-            "SELECTION_CALIBRATION_DIMENSIONS_INVALID",
-            selected_policy.source_path,
-            str(candidate_id or ""),
-        )
-    evidence = list(scorecard.get("tier_evidence_cues") or [])
-    quality = scorecard.get(CANDIDATE_QUALITY_FIELD)
-    quality_evidence = (
-        list(quality.get("evidence_cues") or [])
-        if isinstance(quality, Mapping)
-        and isinstance(quality.get("evidence_cues"), list)
-        else []
-    )
-    calibration_evidence = evidence + quality_evidence
-    normalized = normalize_selection_scorecard(
-        {
-            "tier": anchor.get("expected_tier"),
-            "tier_basis": scorecard.get("tier_basis"),
-            "tier_reason": scorecard.get("tier_reason"),
-            "tier_evidence_cues": evidence,
-            "dimensions": dict(dimensions),
-            "uncertainty_penalty": anchor.get("uncertainty_penalty"),
-            "fatigue_penalty": anchor.get("fatigue_penalty"),
-            **(
-                {CANDIDATE_QUALITY_FIELD: scorecard.get(CANDIDATE_QUALITY_FIELD)}
-                if CANDIDATE_QUALITY_FIELD in scorecard
-                else {}
-            ),
-        },
-        start_cue=min(calibration_evidence, default=0),
-        end_cue=max(calibration_evidence, default=0),
-    )
-    if normalized is None or selection_calibration_violations(
-        candidate_id, normalized, policy=selected_policy
-    ):
-        raise SelectionCalibrationPolicyError(
-            "SELECTION_CALIBRATION_APPLICATION_INVALID",
-            selected_policy.source_path,
-            str(candidate_id or ""),
-        )
-    return normalized
-
-
 def selection_scorecard_is_valid(raw: object) -> bool:
     if (
         not isinstance(raw, Mapping)
@@ -876,6 +463,7 @@ def selection_scorecard_is_valid(raw: object) -> bool:
     if ADMISSION_POLICY_FIELD in raw:
         if raw.get(ADMISSION_POLICY_FIELD) not in {
             LEGACY_ADMISSION_POLICY,
+            PREVIOUS_ADMISSION_POLICY,
             CURRENT_ADMISSION_POLICY,
         }:
             return False

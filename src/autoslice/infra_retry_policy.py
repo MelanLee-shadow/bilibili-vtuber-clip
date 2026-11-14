@@ -25,14 +25,8 @@ import json
 import math
 import random
 import re
-from contextlib import contextmanager
 from contextvars import ContextVar
 from collections.abc import Mapping
-
-from src.autoslice import provider_failure as _provider_failure
-from src.autoslice.runner_proxy import RunnerProxy
-
-_runner = RunnerProxy()
 
 
 # The terminal judge can take several minutes for a large request.  A transport
@@ -227,7 +221,8 @@ def cpa_text_retry_call(call, *, record, sleeper=None, clock=None, jitter=None):
     only closed metadata, not prompts, exception messages or credentials.
     The public text transport supplies the existing CPA usage recorder.
     """
-    if terminal_retry_state() is not None:
+    from .cpa_request_lifecycle import active_request
+    if active_request() or terminal_retry_state() is not None:
         return call()
     sleeper = sleeper or time.sleep
     clock = clock or time.monotonic
@@ -266,30 +261,6 @@ def cpa_text_retry_call(call, *, record, sleeper=None, clock=None, jitter=None):
             started = clock()
             sleeper(delay)
             waited = max(0.0, clock() - started)
-
-
-SONG_INFRA_TRANSIENT_REASON_CODES = frozenset(
-    {
-        "AGY_SOURCE_CONTEXT_RUNNER_FAILED",
-        "AGY_QUOTA_EXHAUSTED",
-        "AGY_EMPTY_OUTPUT",
-        "AGY_FAILED_RC",
-        "AGY_TIMEOUT",
-        "AGY_AND_GEMINI_API_FAILED",
-        "JINGTING_PROVENANCE_MISSING",
-        "JINGTING_PROVIDER_NOT_AGY",
-        "JINGTING_AGY_FAILED",
-        "JINGTING_MODEL_MISSING",
-        "JINGTING_PROVIDER_FALLBACK_USED",
-        "JINGTING_PROVIDER_FALLBACK_UNKNOWN",
-        "SONG_WINDOW_CUT_FAILED",
-        "SONG_SOURCE_TRANSCRIPT_EMPTY",
-        "CPA_RATE_LIMITED",
-        "CPA_MODEL_DOWN",
-        "CPA_UPSTREAM_5XX",
-        "CPA_UPSTREAM_TIMEOUT",
-    }
-)
 
 
 def _bounded_retry_delay_seconds(completed_retry_count: int, *,
@@ -348,40 +319,6 @@ def terminal_retry_remaining_seconds() -> float | None:
         return None
     remaining = float(state["deadline_monotonic"]) - float(state["clock"]())
     return max(0.0, remaining)
-
-
-@contextmanager
-def terminal_retry_scope(
-    *,
-    wallclock_seconds: float | int | None = None,
-    clock=None,
-    sleeper=None,
-):
-    """Install one bounded wall-clock retry scope for a terminal judge call."""
-
-    if wallclock_seconds is None:
-        wallclock_seconds = TERMINAL_RETRY_DEFAULT_WALLCLOCK_SECONDS
-    if isinstance(wallclock_seconds, bool) or float(wallclock_seconds) < 0:
-        raise ValueError("terminal retry wall-clock budget must be non-negative")
-    clock = clock or time.monotonic
-    sleeper = sleeper or time.sleep
-    started = float(clock())
-    state: dict[str, object] = {
-        "started_monotonic": started,
-        "deadline_monotonic": started + float(wallclock_seconds),
-        "wallclock_seconds": float(wallclock_seconds),
-        "clock": clock,
-        "sleeper": sleeper,
-        "attempts": 0,
-        "retries": 0,
-        "unknown_attempts": 0,
-        "events": [],
-    }
-    token = _terminal_retry_scope.set(state)
-    try:
-        yield state
-    finally:
-        _terminal_retry_scope.reset(token)
 
 
 def terminal_failure_is_transient(exc: BaseException) -> bool:
@@ -509,6 +446,9 @@ def _mark_terminal_retry_failure(
 def terminal_retry_call(call, *, timeout_seconds: float | int | None = None):
     """Run one provider call with transient retry inside the active scope."""
 
+    from .cpa_request_lifecycle import active_request
+    if active_request():
+        return call()
     state = terminal_retry_state()
     if state is None:
         return call()
@@ -576,35 +516,6 @@ def terminal_retry_call(call, *, timeout_seconds: float | int | None = None):
                 "attempt": state["attempts"], "status": "COMPLETED"
             })
             return result
-
-
-def talk_infra_retry_delay_seconds(result: Mapping[str, object]) -> int:
-    """这次失败之后应当等待的秒数。
-
-    配额类失败直接从下一档起步：配额窗口按小时/天计（AGY 周配额尤甚），用 15
-    分钟去撞一个还要几小时才开的窗口只是纯浪费一次整条重产。
-    """
-
-    completed_retries = int(result.get("talk_transient_retry_count") or 0)
-    if result.get("failure_provider_class") == _provider_failure.QUOTA:
-        completed_retries += 1
-    return int(_runner.song_infra_retry_delay_seconds(completed_retries))
-
-
-def talk_infra_retry_schedule(result: Mapping[str, object]) -> dict[str, object]:
-    """``result`` 上要落盘的重排时刻三件套。
-
-    ``next_retry_at_epoch`` 是 ``_talk_retry_decision`` 与
-    ``scheduled_talk_retry_epoch`` 读的那一个字段；另外两个是给人看的。
-    """
-
-    delay = talk_infra_retry_delay_seconds(result)
-    epoch = int(time.time()) + delay
-    return {
-        "retry_after_seconds": delay,
-        "next_retry_at_epoch": epoch,
-        "next_retry_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch)),
-    }
 
 
 __all__ = [

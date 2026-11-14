@@ -20,6 +20,7 @@ from src.autoslice.cpa_model_ladder import TOP_CPA_MODEL, cpa_call_timeout_secon
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.community_name_crawler import (
     CommunityNameError,
+    RuntimeBudgetedLlmCall,
     canonical_json,
     crawl,
     load_config,
@@ -68,6 +69,8 @@ class _PacedClient:
         self._interval = interval_seconds
         self._started = time.monotonic()
         self._deadline = self._started + max_runtime_seconds
+        # The CPA batches share this run deadline; see RuntimeBudgetedLlmCall.
+        self.deadline = self._deadline
         self._last_fetch: float | None = None
 
     def __getattr__(self, name):  # noqa: ANN001, ANN204
@@ -121,6 +124,33 @@ def _atomic_write(path: Path, text: str, *, mode: int) -> bool:
             temporary.unlink(missing_ok=True)
 
 
+class _RegistryUnavailable(Exception):
+    def __init__(self, reason: str, detail: str) -> None:
+        super().__init__(detail)
+        self.reason = reason
+
+
+def _load_registry(path: Path, now: dt.datetime) -> dict:
+    """Return a fresh official registry, or name why the daily crawl must not run."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise _RegistryUnavailable("registry_missing", str(exc)) from exc
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise _RegistryUnavailable("registry_unreadable", str(exc)) from exc
+    try:
+        checked = validate_registry(raw, as_of=None)
+        expires_at = dt.datetime.fromisoformat(str(checked.get("expires_at")))
+    except (ValueError, TypeError) as exc:
+        raise _RegistryUnavailable("registry_invalid", str(exc)) from exc
+    if expires_at.tzinfo is None or now > expires_at:
+        raise _RegistryUnavailable("registry_expired", f"expired at {expires_at.isoformat()}")
+    try:
+        return validate_registry(checked, as_of=now)
+    except ValueError as exc:
+        raise _RegistryUnavailable("registry_invalid", str(exc)) from exc
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     now = (
@@ -130,9 +160,27 @@ def main(argv: list[str] | None = None) -> int:
     )
     registry_path = args.registry or PROFILE.asset_file("streamer_registry")
     try:
-        registry = validate_registry(
-            json.loads(registry_path.read_text(encoding="utf-8")), as_of=now
+        registry = _load_registry(registry_path, now)
+    except _RegistryUnavailable as exc:
+        # Degraded: no crawl, and --write/--state are left exactly as they were.
+        print(
+            json.dumps(
+                {
+                    "community_names": "degraded",
+                    "degraded": True,
+                    "reason": exc.reason,
+                    "detail": str(exc),
+                    "registry": str(registry_path),
+                    "snapshot_changed": False,
+                    "state_changed": False,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            file=sys.stderr,
         )
+        return 2
+    try:
         config = load_config(args.config)
         state = load_state(args.state)
         llm_call = None
@@ -176,6 +224,10 @@ def main(argv: list[str] | None = None) -> int:
             interval_seconds=interval,
             max_runtime_seconds=runtime,
         )
+        if llm_call is not None:
+            llm_call = RuntimeBudgetedLlmCall(
+                llm_call, deadline=client.deadline, clock=time.monotonic
+            )
         result = crawl(
             client=client,
             registry=registry,

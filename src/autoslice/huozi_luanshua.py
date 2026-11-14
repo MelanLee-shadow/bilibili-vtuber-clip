@@ -1,14 +1,22 @@
 """High-confidence "活字乱刷" phrase planning and evidence gates.
 
-The planner treats historical speech as immutable timed tokens.  It never
-invents phonetic substitutions: every character in a requested sentence must
-be covered by an exact, token-boundary-aligned source span.  Speaker and text
-authority are carried into every selected piece so rendering can fail closed.
+Historical speech stays immutable and token-aligned. Text must match the source
+or use a hash-bound human proper-name review tied to both timed observations.
+Speaker and text authority travel with each piece so rendering can fail closed.
 """
 
 from __future__ import annotations
 
 from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
+from src.autoslice.huozi_name_review import (
+    NameReviewBinding,
+    _find_timed_observation,
+    bind_name_review,
+    expected_for_authority,
+    reviewed_occurrences,
+    validate_piece_review,
+    validate_reviewed_corpus,
+)
 import hashlib
 import json
 import re
@@ -175,6 +183,7 @@ class CorpusUtterance:
     content_kind: str
     source_asr_path: str
     source_asr_sha256: str
+    proper_name_reviews: tuple[NameReviewBinding, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -207,6 +216,7 @@ class CorpusUtterance:
             "content_kind": self.content_kind,
             "source_asr_path": self.source_asr_path,
             "source_asr_sha256": self.source_asr_sha256,
+            "proper_name_reviews": [dict(row) for row in self.proper_name_reviews],
         }
 
     @classmethod
@@ -254,6 +264,9 @@ class CorpusUtterance:
             content_kind=str(value.get("content_kind") or "talk"),
             source_asr_path=str(value["source_asr_path"]),
             source_asr_sha256=str(value["source_asr_sha256"]),
+            proper_name_reviews=tuple(
+                dict(row) for row in value.get("proper_name_reviews", []) if isinstance(row, Mapping)
+            ),
         )
 
     def token_boundaries(self) -> tuple[dict[int, int], dict[int, int]]:
@@ -685,6 +698,9 @@ def build_corpus(
             base=base,
             label=f"source {source_id} transcript",
         )
+        name_review = bind_name_review(
+            {**source, "asr_json_path": str(asr_path)}, transcript_evidence, base=base
+        )
         if not set(transcript_authorities).issubset(
             {str(row["authority"]) for row in transcript_evidence}
         ):
@@ -831,6 +847,11 @@ def build_corpus(
                     content_kind=kind,
                     source_asr_path=str(asr_path),
                     source_asr_sha256=asr_sha256,
+                    proper_name_reviews=(
+                        (name_review,)
+                        if name_review and name_review["primary_utterance_index"] == row_index - 1
+                        else ()
+                    ),
                 )
             )
 
@@ -852,7 +873,9 @@ def load_corpus(value: Mapping[str, object]) -> list[CorpusUtterance]:
     rows = value.get("utterances")
     if not isinstance(rows, list):
         raise CorpusValidationError("corpus utterances must be a list")
-    return [CorpusUtterance.from_dict(row) for row in rows if isinstance(row, Mapping)]
+    return validate_reviewed_corpus(
+        [CorpusUtterance.from_dict(row) for row in rows if isinstance(row, Mapping)]
+    )
 
 
 @dataclass(frozen=True)
@@ -869,10 +892,12 @@ class MatchPiece:
     cut_end_ms: int
     boundary_score: int
     terminal_tail_evidence: Mapping[str, object] | None = None
+    display_text: str | None = None
+    proper_name_review: NameReviewBinding | None = None
 
     @property
     def char_count(self) -> int:
-        return len(self.text)
+        return len(self.display_text or self.text)
 
     def to_dict(self, *, order: int, clause_index: int) -> dict[str, object]:
         return {
@@ -880,6 +905,10 @@ class MatchPiece:
             "order": order,
             "clause_index": clause_index,
             "text": self.text,
+            **(
+                {"display_text": self.display_text, "proper_name_review": dict(self.proper_name_review)}
+                if self.proper_name_review is not None else {}
+            ),
             "char_count": self.char_count,
             "source_id": self.utterance.source_id,
             "source_date": self.utterance.source_date,
@@ -1086,6 +1115,7 @@ def _corroborating_transcript_authorities(
     timing_tolerance_ms: int = 1_200,
 ) -> set[str]:
     authorities: set[str] = set()
+    piece_row = piece.to_dict(order=0, clause_index=0)
     for evidence in piece.utterance.transcript_evidence:
         authority = str(evidence.get("authority") or "")
         path_value = str(evidence.get("path") or "")
@@ -1105,7 +1135,7 @@ def _corroborating_transcript_authorities(
             payload_cache[cache_key] = payload
         observation = _find_timed_observation(
             payload,
-            expected_text=piece.text,
+            expected_text=expected_for_authority(piece_row, authority),
             core_start_ms=piece.core_start_ms,
             core_end_ms=piece.core_end_ms,
             timeline_offset_ms=int(evidence.get("timeline_offset_ms", 0)),
@@ -1151,7 +1181,7 @@ def plan_clause(
             occurrences = [
                 piece
                 for utterance in corpus
-                for piece in _occurrences(utterance, fragment)
+                for piece in reviewed_occurrences(utterance, fragment)
                 if len(
                     _corroborating_transcript_authorities(
                         piece,
@@ -1234,7 +1264,8 @@ def plan_text(target: str, corpus_payload: Mapping[str, object]) -> dict[str, ob
             "transcript_discovery_minimum": DEFAULT_MIN_TRANSCRIPT_CONFIDENCE,
             "transcript_authority_minimum": DEFAULT_MIN_TRANSCRIPT_AUTHORITIES,
             "render_transcript_minimum": RENDER_MIN_TRANSCRIPT_CONFIDENCE,
-            "exact_character_coverage": True,
+            "exact_character_coverage": not any(piece.proper_name_review for piece in all_pieces),
+            "reviewed_proper_name_coverage": any(piece.proper_name_review for piece in all_pieces),
             "token_boundary_alignment": True,
         },
     }
@@ -1327,81 +1358,6 @@ def rank_suggestions(
     return ranked
 
 
-def _find_timed_observation(
-    payload: Mapping[str, object],
-    *,
-    expected_text: str,
-    core_start_ms: int,
-    core_end_ms: int,
-    timeline_offset_ms: int,
-    timing_tolerance_ms: int,
-) -> dict[str, object] | None:
-    expected = normalize_spoken_evidence(expected_text)
-    rows = payload.get("utterances")
-    if not expected or not isinstance(rows, list):
-        return None
-    candidates: list[tuple[int, int, dict[str, object]]] = []
-    for utterance_index, raw_utterance in enumerate(rows):
-        if not isinstance(raw_utterance, Mapping):
-            continue
-        raw_words = raw_utterance.get("words")
-        if not isinstance(raw_words, list) or not raw_words:
-            continue
-        tokens: list[tuple[str, int, int, int, int]] = []
-        cursor = 0
-        for raw_word in raw_words:
-            if not isinstance(raw_word, Mapping):
-                continue
-            token = normalize_spoken_evidence(
-                str(raw_word.get("label") or raw_word.get("text") or "")
-            )
-            start_ms = int(raw_word.get("start_time", raw_word.get("start_ms", -1)))
-            end_ms = int(raw_word.get("end_time", raw_word.get("end_ms", -1)))
-            if not token or start_ms < 0 or end_ms < start_ms:
-                continue
-            tokens.append((token, cursor, cursor + len(token), start_ms, end_ms))
-            cursor += len(token)
-        joined = "".join(token[0] for token in tokens)
-        search_from = 0
-        while tokens:
-            found = joined.find(expected, search_from)
-            if found < 0:
-                break
-            stop = found + len(expected)
-            search_from = found + 1
-            first = next((token for token in tokens if token[1] <= found < token[2]), None)
-            last = next((token for token in tokens if token[1] < stop <= token[2]), None)
-            if first is None or last is None:
-                continue
-            observed_start = first[3] + timeline_offset_ms
-            observed_end = last[4] + timeline_offset_ms
-            endpoint_delta = max(
-                abs(observed_start - core_start_ms), abs(observed_end - core_end_ms)
-            )
-            if endpoint_delta > timing_tolerance_ms:
-                continue
-            total_delta = abs(observed_start - core_start_ms) + abs(observed_end - core_end_ms)
-            candidates.append(
-                (
-                    total_delta,
-                    utterance_index,
-                    {
-                        "observed_text": str(raw_utterance.get("transcript") or joined),
-                        "observed_interval_ms": [observed_start, observed_end],
-                        "timing_delta_ms": {
-                            "start": observed_start - core_start_ms,
-                            "end": observed_end - core_end_ms,
-                            "maximum_absolute": endpoint_delta,
-                        },
-                        "utterance_index": utterance_index,
-                    },
-                )
-            )
-    if not candidates:
-        return None
-    return min(candidates, key=lambda row: (row[0], row[1]))[2]
-
-
 def build_verification(
     plan: Mapping[str, object],
     *,
@@ -1424,7 +1380,7 @@ def build_verification(
         if not isinstance(raw_piece, Mapping):
             raise VerificationError("invalid plan piece")
         piece_id = str(raw_piece.get("piece_id") or "")
-        expected = str(raw_piece.get("text") or "")
+        validate_piece_review(raw_piece)
         specs = raw_piece.get("transcript_evidence")
         if not isinstance(specs, list):
             raise VerificationError(f"piece {piece_id} has no transcript evidence")
@@ -1451,7 +1407,7 @@ def build_verification(
                 evidence_cache[cache_key] = payload
             observation = _find_timed_observation(
                 payload,
-                expected_text=expected,
+                expected_text=expected_for_authority(raw_piece, authority),
                 core_start_ms=int(raw_piece["core_start_ms"]),
                 core_end_ms=int(raw_piece["core_end_ms"]),
                 timeline_offset_ms=int(raw_spec.get("timeline_offset_ms", 0)),
@@ -1525,25 +1481,30 @@ def apply_verification(
         if not isinstance(raw_piece, Mapping):
             raise VerificationError("invalid plan piece")
         piece = dict(raw_piece)
+        validate_piece_review(piece)
         piece_id = str(piece.get("piece_id") or "")
         row = verification_rows.get(piece_id)
         if not isinstance(row, Mapping) or row.get("status") != "VERIFIED":
             raise VerificationError(f"piece {piece_id} lacks VERIFIED evidence")
-        observed = normalize_spoken_evidence(str(row.get("observed_text") or ""))
-        expected = normalize_spoken_evidence(str(piece.get("text") or ""))
-        if expected not in observed:
-            raise VerificationError(f"piece {piece_id} text was not independently observed")
         authorities = [str(item) for item in row.get("transcript_authorities", [])]
         if len(set(authorities)) < 2:
             raise VerificationError(f"piece {piece_id} needs two transcript authorities")
         evidence_rows = row.get("evidence")
         if not isinstance(evidence_rows, list) or len(evidence_rows) < 2:
             raise VerificationError(f"piece {piece_id} needs two hash-bound evidence files")
+        first_authority = (
+            str(evidence_rows[0].get("authority") or "")
+            if isinstance(evidence_rows[0], Mapping) else ""
+        )
+        expected = normalize_spoken_evidence(expected_for_authority(piece, first_authority))
+        if expected not in normalize_spoken_evidence(str(row.get("observed_text") or "")):
+            raise VerificationError(f"piece {piece_id} text was not independently observed")
         evidence_authorities: set[str] = set()
         for evidence in evidence_rows:
             if not isinstance(evidence, Mapping):
                 raise VerificationError(f"piece {piece_id} has malformed evidence")
             evidence_authority = str(evidence.get("authority") or "")
+            expected = normalize_spoken_evidence(expected_for_authority(piece, evidence_authority))
             evidence_sha = str(evidence.get("sha256") or "").removeprefix("sha256:")
             evidence_path = str(evidence.get("path") or "")
             evidence_observed = normalize_spoken_evidence(
@@ -1609,6 +1570,15 @@ def validate_renderable_plan(plan: Mapping[str, object]) -> None:
     pieces = plan.get("pieces")
     if not isinstance(pieces, list) or not pieces:
         raise VerificationError("verified plan has no pieces")
+    clauses = plan.get("clauses")
+    if (
+        not isinstance(clauses, list)
+        or any(not isinstance(clause, Mapping) for clause in clauses)
+        or "".join(normalize_text(str(clause.get("display") or "")) for clause in clauses)
+        != str(plan.get("normalized_target") or "")
+        or normalize_text(str(plan.get("target") or "")) != str(plan.get("normalized_target") or "")
+    ):
+        raise VerificationError("verified plan display text drift")
     tail_statuses: set[str] = set()
     reconstructed = ""
     checked_speaker_evidence: dict[str, str] = {}
@@ -1616,6 +1586,7 @@ def validate_renderable_plan(plan: Mapping[str, object]) -> None:
     for piece in pieces:
         if not isinstance(piece, Mapping):
             raise VerificationError("invalid verified piece")
+        validate_piece_review(piece)
         _validate_terminal_tail_piece(piece)
         raw_tail = piece.get("terminal_tail_evidence")
         if isinstance(raw_tail, Mapping):
@@ -1702,7 +1673,7 @@ def validate_renderable_plan(plan: Mapping[str, object]) -> None:
             human_only=speaker_authority in HUMAN_SPEAKER_AUTHORITIES,
         ):
             raise VerificationError("speaker evidence does not cover piece range")
-        reconstructed += normalize_text(str(piece.get("text") or ""))
+        reconstructed += normalize_text(str(piece.get("display_text") or piece.get("text") or ""))
     if tail_statuses:
         expected_acceptance_status = (
             TERMINAL_TAIL_PENDING_STATUS

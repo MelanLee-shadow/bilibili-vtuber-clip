@@ -27,11 +27,42 @@ def _absolute(value: object, label: str) -> Path:
     return Path(value)
 
 
+RECORDER_PROBES = {"normalized_status", "container_files"}
+
+
+def _recorders(value: object) -> dict[str, dict[str, str]]:
+    """Which recorders exist and whether each is in use (read by the monitor)."""
+    if not isinstance(value, dict) or not value:
+        raise ValueError("recorders must be a nonempty object")
+    result = {}
+    for name, spec in value.items():
+        if not isinstance(spec, dict) or not name:
+            raise ValueError("each recorder must be a named object")
+        probe, state = spec.get("probe"), spec.get("state")
+        keys = {"ssh_host", "probe", "state"}
+        if probe == "container_files":
+            keys |= {"container", "videos_root"}
+        if state == "paused":
+            keys |= {"paused_since", "paused_basis"}
+        if probe not in RECORDER_PROBES or state not in {"active", "paused"} or set(spec) != keys:
+            raise ValueError(f"recorder {name} keys or probe/state differ from the contract")
+        if any(not isinstance(spec[k], str) or not spec[k].strip() for k in keys):
+            raise ValueError(f"recorder {name} has an empty field")
+        if "videos_root" in spec:
+            _absolute(spec["videos_root"], f"recorder {name} videos_root")
+        if "paused_since" in spec and re.fullmatch(r"\d{4}-\d{2}-\d{2}", spec["paused_since"]) is None:
+            raise ValueError(f"recorder {name} paused_since must be YYYY-MM-DD")
+        result[name] = dict(spec)
+    if not any(spec["state"] == "active" for spec in result.values()):
+        raise ValueError("at least one recorder must be active")
+    return result
+
+
 class RecordingTopology:
     def __init__(self, document: dict):
         required = {"schema_version", "spool_root", "cloud_mount", "archive_root",
                     "n100_archive_root", "backup_root", "rooms", "consumer_mounts",
-                    "state_dir", "legacy_state_dirs"}
+                    "state_dir", "legacy_state_dirs", "recorders"}
         if not isinstance(document, dict) or set(document) != required:
             raise ValueError("recording topology keys differ from the contract")
         if document["schema_version"] != "oci3-recording-topology.v1":
@@ -59,6 +90,7 @@ class RecordingTopology:
         if (self.state_dir in self.legacy_state_dirs
                 or not self.state_dir.is_relative_to(self.legacy_state_dirs[0])):
             raise ValueError("local recording must use a fresh ledger")
+        self.recorders = _recorders(document["recorders"])
         roots = (self.archive_root, self.n100_archive_root, self.backup_root)
         if any(not p.is_relative_to(self.cloud_mount) or p == self.cloud_mount for p in roots):
             raise ValueError("cloud roots must be below the configured mount")

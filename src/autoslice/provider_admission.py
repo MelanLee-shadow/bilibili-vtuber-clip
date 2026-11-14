@@ -17,7 +17,6 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from functools import update_wrapper
 import math
 from threading import Condition
 import time
@@ -204,28 +203,3 @@ def provider_admission(provider: str, modality: Modality, *,
             max(feedback.retry_after, failed.retry_after), feedback.successful and error is None))
 
 
-class FinalReviewCall:
-    """Transparent admission adapter for the main factory's existing transport.
-
-    update_wrapper preserves the transport's module and closure introspection,
-    including CompletedReviewCheckpoint.for_call's existing binding/decline path.
-    No canonical metadata is invented for an unidentified legacy callable.
-    """
-    def __init__(self, primary: Callable[[str], str], *, provider: str,
-                 controller: ProviderController | None = None) -> None:
-        update_wrapper(self, primary)
-        self.primary = primary
-        self.provider = provider
-        self.controller = PROVIDER_CONTROLLER if controller is None else controller
-
-    def __getattr__(self, name: str) -> object:
-        return cast(object, getattr(self.primary, name))
-
-    def __call__(self, prompt: str) -> str:
-        # Canonical physical transports admit after checkpoint/cache lookup.
-        # Keep this transparent wrapper for identity/introspection, without
-        # charging cache hits or layering another process-local window.
-        if self.controller.shared_runtime and self.provider.startswith('canonical-runtime-cpa:'):
-            return self.primary(prompt)
-        with provider_admission(self.provider, 'text', controller=self.controller):
-            return self.primary(prompt)

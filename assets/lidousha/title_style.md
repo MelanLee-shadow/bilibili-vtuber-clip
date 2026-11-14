@@ -10,9 +10,9 @@
 不要重听音频、调用 ASR，也不要从旧标题、选片摘要或历史研究补事实。
 候选数量见 `title_policy.py` 的 `_TITLE_MIN_CANDIDATES` / `_TITLE_MAX_CANDIDATES`；每项写具体取舍理由，再选择一个标题。
 正文建议范围见 `title_policy.py` 的 `_TITLE_BODY_SUGGESTED_MIN_LEN` / `_TITLE_BODY_SUGGESTED_MAX_LEN`；
-加频道前缀后的共享发布长度边界见 `title_policy.json` 的 `min_length` / `max_length`。
+正文长度上限（不含频道前缀）见 `title_policy.json` 的 `max_length`，`min_length` 仍量整条，整条含前缀另受 `platform_max_length` 约束。
 只讲一个中心梗，写出真实情绪和粉丝视角，不强制三拍叙事，不拼成长摘要。
-至少保留一句最终字幕里的逐字原话；允许去掉结巴和无意义重复，不许杜撰引语。
+不要求标题含原话；用了引号的内容必须是最终字幕里的逐字原话（允许去掉结巴和无意义重复），不许杜撰引语。
 人物用 B 站正名，kmx 是粉丝；区分现实、游戏、过去转述与假设，不升级关系、程度或结果。
 长度、前缀、括号栈、语法、事实与可读性仍各自验收；字幕有来源不等于标题自动好看。
 人工正文及歌切的独立权威保持原范围，不自动重写已冻结标题。

@@ -1,0 +1,16 @@
+# Tests that cannot hold in the public tree, each with the reason.  The pipeline's tests run unchanged in the private
+# repository; here these are marked "expected to fail" (not removed), so `pytest -q` is green and the list stays visible.
+# One entry per line: <node id prefix> | <reason>
+tests/test_talk_quota_authority.py | the committed quota grants are one channel's operating record; the public asset is a template
+tests/manual_lane/test_title_verdicts.py | the owner's title verdicts are private review material; the public asset is empty
+tests/test_record_health_audit.py | the recording topology in this tree is a sanitised example without the private hosts and paths
+tests/test_recording_topology.py | the recording topology in this tree is a sanitised example without the private hosts and paths
+tests/test_recording_local_first_deployment.py | the installer of the private recording host is not part of this tree
+tests/manual_lane/test_wide_listen_level.py::test_ordinary_step3_ladder_windows_and_cache_keys_equal_base | compares against a commit of the private history
+tests/test_visible_subtitle_developer_markers.py::test_uploader_fixed_public_description_has_no_internal_markers | reads the upload tool, which is part of the publication chain
+tests/test_title_editorial_method.py::test_the_pinned_skill_commit_holds_the_text_the_projection_was_built_from | checks a pinned commit of the private skill repository
+tests/manual_lane/test_prompts_and_witnesses.py::test_no_versioned_prompt_files_remain | pins an older list of prompt files (stale in the private repository as well)
+tests/manual_lane/test_pronoun_rule_authority.py::test_no_second_pronoun_rule_is_stated_in_lane_sources | the export's sanitised wording of one prompt trips the detector
+tests/manual_lane/test_task11_speaker_clusters.py::test_the_session_keyword_reaches_the_adjudicator_with_its_context_note_and_is_not_a_person | reads an example-channel asset whose wording the export rewrites
+tests/manual_lane/test_title_authority_guard.py::test_the_title_prompt_carries_the_skill_the_style_note_and_the_corpus_with_their_sha256 | pins wording of the title method that the export sanitises
+tests/manual_lane/test_title_authority_guard.py::test_the_review_prompt_carries_the_skills_title_rules_and_hash | pins wording of the title method that the export sanitises
