@@ -51,6 +51,16 @@ def _no_other_recognisers_by_default(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_voiceprint_answer_by_default(monkeypatch):
+    """Before the whole clip goes to the paid recognisers the lane asks the host's voiceprint whether anyone else is
+    heard (voices.others_heard, a run on the media host); a test without that run gets no answer, which leaves the
+    recognisers as configured.  test_voices_gate.py supplies the answers it tests."""
+    from src.autoslice.manual_lane import voices
+
+    monkeypatch.setattr(voices, "others_heard", lambda _ctx: {"others": None, "basis": "", "share": None, "longest_run": None})
+
+
+@pytest.fixture(autouse=True)
 def _no_real_waiting_for_a_rate_limit(monkeypatch):
     """A listening pass waits out a provider rate limit (step3_evidence._listen_pass); no test sleeps for real."""
     from src.autoslice.manual_lane import step3_evidence

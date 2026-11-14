@@ -290,6 +290,10 @@
   "other_voices": {
     "_doc": "第 4 步：单人场次（只有主播一位参与者）里有没有他人的声音（主播在看视频、看动画）。判断先看画面：在 screen_frames 个均匀取的帧上让 CPA 视觉读「是否正在播放别人做的视频」，任一帧读到就进入有他人声音的路径（screen_min_hits）。进入后每句在其时间内取 1 到 cue_frames_max 帧（每 cue_frame_every_s 秒多取一帧），让 CPA 视觉读被看视频画面自带的字幕，系统只算该字幕与本句识别文字的吻合度，再与 v8 声纹一起交 CPA 逐句定李豆沙或非李豆沙。看图用封面步的同一个视觉客户端（pick_frame.py），思考档 low；CPA 文本复核的档位见 effort.purposes.speaker-video。screen_frames 为 0 时不看图，单人场一律 uniform host。",
     "source": "公开规则18:50Z：看动画的切片里有李豆沙之外的声音，应尽最大努力分辨说话人；被看视频的字幕就是别人在说话",
+    "whole_witness_only_with_others": true,
+    "voice_min_share": 0.05,
+    "voice_min_run": 3,
+    "voice_source": "2026-11-14 实测。①整片 MAI、MOSS 的作用：六条训练片都不带时三批真错合计 22、22、20（带时各轮 19–27）；其中五条只有主播说话的片 9、10、6，不比带着差，看视频的一条 13、12、14，比带着（8–11）差。②声纹分段能分开两类：20 条片里 18 条只有主播说话的，不像主播的占 0–3.4%、最长连续 1 段；两条在看视频的占 12% 和 40%、连续 5 和 8 段（数据在媒体主机 subacc-20261111/v8probe）。所以只听到主播的片不送整片识别；占比达到 voice_min_share 或连续 voice_min_run 段算有他人的声音。没配声纹工作区或声纹没跑出结果时不判断，照 listening.whole_witness 送。",
     "screen_frames": 6,
     "screen_min_hits": 1,
     "cue_frame_every_s": 1.0,

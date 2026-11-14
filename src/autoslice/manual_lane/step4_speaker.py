@@ -103,6 +103,12 @@ def _speaker_chunks(ctx: Ctx, bcut: Sequence[SrtCue]) -> tuple[dict[int, list[sp
     The run is reused when the chunk list is unchanged."""
     if not linked_session(ctx.session):
         return {}, "单人场次，不分说话人"
+    return voice_chunks(ctx, bcut)
+
+
+def voice_chunks(ctx: Ctx, bcut: Sequence[SrtCue]) -> tuple[dict[int, list[speaker_v8.ChunkPrediction]], str]:
+    """The voiceprint's reading of ~1.2 s chunks of the given cues, whoever the clip belongs to: ({cue id: [{s, e,
+    host_prob}]}, error text).  `_speaker_chunks` is this for a linked clip; `voices.others_heard` asks it of every clip."""
     cid = ctx.state.data["clip"]["cid"]
     units = [u for c in bcut for u in speaker_v8.cue_chunks(int(c["id"]), round(c["start_s"] * 1000),
                                                              round(c["end_s"] * 1000), cid)]

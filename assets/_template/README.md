@@ -25,9 +25,9 @@ cp -r assets/_template "assets/<your-profile-id>"
   `entity_confusables.json`/`known_songs.json`/`clip_opening_address.json`
   （积累类，空起步）。
 - **层 0.5 · 框架直用、定义必改**：`slice_selection_metric.md`——分层框架与
-  七维算术通用，但**第一层「频道命脉题材」的定义必须换成你频道自己的**；
-  该文件会注入选题 prompt，判例人名已全部占位化——把占位角色换成你
-  频道的真实对应者即可。
+  七维算术通用，但**「优先级分层」里以「第一层」开头的那一条必须换成你频道自己的**；
+  该文件会注入选题 prompt，示例频道的判例已经去掉——你频道的判例攒到之后
+  写在对应条目下面。
 - **层 1 · 先确认后写（使用者按问题清单填写）**：
   `glossary.txt`、`persona.md`、`title_style.md`、`cover_identity_prompt.txt`
   ——每个文件内已写好该问的问题与示例；先写 3–5 条就能开跑，之后边用

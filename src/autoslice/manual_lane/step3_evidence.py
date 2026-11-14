@@ -28,6 +28,7 @@ from .lane_rules import rules
 from .layout import layout
 from .runner import Ctx
 from . import session_events
+from . import voices
 from .step_io import REMOTE_TOOLS, _clip, _local, _run_remote
 
 if TYPE_CHECKING:
@@ -554,6 +555,13 @@ def _asr_witnesses(ctx: Ctx) -> tuple[dict[str, list[evidence_attach.WitnessLine
     lines: dict[str, list[evidence_attach.WitnessLine]] = {}
     status: dict[str, WitnessStatus] = {n: {"status": "NOT_USED", "reason_code": "WHOLE_CLIP_WITNESS_OFF"}
                               for n in ("moss", "mai") if n not in names}
+    # a clip in which only the host is heard is not sent whole to the paid recognisers (voices.py); an explicit
+    # MANUAL_LANE_WHOLE_WITNESS is the operator's choice and is run as given
+    if names and "MANUAL_LANE_WHOLE_WITNESS" not in os.environ and rules("other_voices").get("whole_witness_only_with_others"):
+        heard = voices.others_heard(ctx)
+        if heard["others"] is False:
+            status.update({n: {"status": "NOT_USED", "reason_code": "ONLY_HOST_HEARD", "message": heard["basis"]} for n in names})
+            names = []
     if not names:
         return lines, status
     ctx.adapters.remote.put(REMOTE_TOOLS / "witness_asr.py", f"{rd}/witness/witness_asr.py")
@@ -591,7 +599,7 @@ def witness_status_line(status: Mapping[str, WitnessStatus]) -> str:
         if row.get("status") == "OK":
             parts.append(f"{name.upper()} 成功 {row.get('segments')} 段（返回用量 {row.get('billed') or '无'}）")
         elif row.get("status") == "NOT_USED":
-            parts.append(f"{name.upper()} 不跑整片")
+            parts.append(f"{name.upper()} 不跑整片" + (f"（只听到主播：{row['message']}）" if row.get("message") else ""))
         else:
             parts.append(f"{name.upper()} 不可用（{row.get('reason_code')}：{row.get('message', '')}）")
     return "整片 ASR 证人：" + "；".join(parts)

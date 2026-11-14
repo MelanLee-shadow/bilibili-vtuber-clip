@@ -97,10 +97,28 @@ def main(argv: list[str] | None = None) -> int:
         profile.asset_files.get(CENSUS_CLUES_ASSET_KEY), profile_id=profile.profile_id,
     )
     payload["census_clues_status"] = census_status
+    notes = []
     if status == "READY" and voiceprint_status != "READY":
-        payload["notes"] = [
-            "voiceprint 未 enroll（声纹栈/歌切人声证明用；不影响 talk 产包）"
-        ]
+        notes.append("voiceprint 未 enroll（声纹栈/歌切人声证明用；不影响 talk 产包）")
+    if any(path.endswith("scripts/regenerate_channel_cover.py") for path in missing):
+        notes.append("scripts/regenerate_channel_cover.py（tools.cover_regenerator）属于早先的流水线：缺它是预期的，切片流水线不用它")
+    # the clip pipeline's own two files beside the manifest: a value still carrying the template's placeholder
+    unfilled = []
+    for name in ("manual_lane.json", "manual_lane_channel.json"):
+        lane_file = profile.manifest_path.parent / name
+        if lane_file.is_file():
+            try:
+                doc = json.loads(lane_file.read_text(encoding="utf-8"))
+            except ValueError as exc:
+                unfilled.append(f"{name}: unreadable ({exc})")
+                continue
+            unfilled += [f"{name}: {key}" for key, value in doc.items()
+                         if not key.startswith("_") and isinstance(value, str) and "replace_me" in value.lower()]
+    if unfilled:
+        payload["lane_config_unfilled"] = unfilled
+        notes.append("lane_config_unfilled 列出的键还是模板占位值：切片流水线第一次连主机时会失败，按 profiles/SETUP.md 填")
+    if notes:
+        payload["notes"] = notes
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
     return 0 if status == "READY" else 2
 

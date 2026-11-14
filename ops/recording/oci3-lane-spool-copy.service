@@ -1,0 +1,8 @@
+[Unit]
+Description=Copy closed segments of the host's own recording to the clip lane's recordings directory
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/bilive/ops/oci3_lane_spool_copy.sh /opt/bilive/recording-spool/22966160 /home/user/manual-work/recordings-direct/22966160 ubuntu:ubuntu
+Nice=10
+IOSchedulingClass=idle
