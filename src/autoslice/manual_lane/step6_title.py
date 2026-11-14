@@ -47,6 +47,7 @@ from .step6_cover import (
     _cover_brief,
     _compilation_context,
     _pick_cover_frame,
+    chosen_action,
     _rect_overlap,
     _render_cover,
     blur_boxes,
@@ -621,6 +622,7 @@ def step6_title_cover(ctx: Ctx) -> StepOutcome:
     if brief.get("_failed"):
         return _fail(brief["_failed"], brief.get("_detail", ""), cpa=cpa_calls, process=process)
     plan = cover_plan(ctx, cover_lines, brief, names)
+    plan["action_frame"] = chosen_action(ctx)
     process.append(plan["line"])
 
     budget = RetryBudget(COVER_RETRIES)      # one budget for the shortenings below and the redo of routes inside the render

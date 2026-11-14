@@ -901,7 +901,7 @@ def _write_review_md(ctx: Ctx, review: ReviewAnswer, record: ReviewRecord,
                      focused: ReviewAnswer | None = None) -> Path:
     """REVIEW.md = the reviewer's own report, then what the pipeline did with it (applied fixes, holds, notes), so the
     report bound into the receipt says that the fixes were adopted without a second reading."""
-    doubts, _numbers = current_doubts(ctx)
+    doubts, numbers = current_doubts(ctx)
     held = doubt_policy.holds(doubts)
     applied = record["applied"]
     if focused is None:
@@ -914,8 +914,7 @@ def _write_review_md(ctx: Ctx, review: ReviewAnswer, record: ReviewRecord,
              f"标题{'已改' if applied['title'] else '未改'}，标签{'已改' if applied['tags'] else '未改'}；复审新增定不下 "
              f"{applied['holds']} 句；明确处置疑点 {applied['decisions']} 条",
              *(f"- 未采用：{s}" for s in record["skipped"]),
-             f"- 定不下且影响意思：{len(held)} 句"
-             + ("" if not held else "：" + "；".join(f"{d['id']}「{d.get('final_text')}」" for d in held)),
+             f"- 定不下且影响意思：{len(held)} 句" + ("" if not held else "：" + doubt_policy.held_summary(held, numbers)),
              *(f"- 最终疑点判断 {d['id']}：confidence={d.get('confidence')}，"
                f"affects_meaning={d.get('affects_meaning')}；{d.get('review_note')}"
                for d in doubts if str(d.get("review_note") or "").startswith("复审最终判断：")),
@@ -1176,9 +1175,9 @@ def _write_wide_review(ctx: Ctx, wide: WideProgress) -> None:
         if row.get("phase") == "applied":
             lines += [f"\n### 第 {number} 轮（仅指定疑点）", str(row.get("review_md") or "").strip(),
                       *(f"- 未采用：{s}" for s in row.get("skipped", []))]
-    held = doubt_policy.holds(current_doubts(ctx)[0])
-    lines.append(f"\n- 当前定不下且影响意思：{len(held)} 句" +
-                 ("：" + "；".join(f"{d['id']}「{d.get('final_text')}」" for d in held) if held else ""))
+    doubts, numbers = current_doubts(ctx)
+    held = doubt_policy.holds(doubts)
+    lines.append(f"\n- 当前定不下且影响意思：{len(held)} 句" + ("：" + doubt_policy.held_summary(held, numbers) if held else ""))
     _write_atomic(_pkg(ctx) / "REVIEW.md", "\n".join(lines).strip() + "\n")
 
 

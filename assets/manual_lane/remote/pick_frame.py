@@ -8,7 +8,12 @@ the danmaku box and gift bar (to blur), the host's body (to keep clear of the bl
 generated layers) and the guest's body (the guest's layer of a composed cover).  The host is identified from the
 frame and nameplate, allowing the headwear actually shown instead of assuming her ears are visible.
 
-OUT.json = {"chosen": seconds or null, "checked": [{t, verdict, text}], "calls": [{kind, t, model, rc, elapsed_s, usage}], "boxes": {"danmaku": [[x0,y0,x1,y1]...],
+Before that, the whole cut is looked at for the host's signature move (owner 2026-11-14: a clip that has a classic
+action, such as squatting down holding her head when shy, takes its screenshot there): frames every ACTION_STEP_S
+seconds are tiled into numbered sheets and each sheet is asked once; when several sheets have one, one more question
+picks among them.  That frame is the first candidate.
+
+OUT.json = {"chosen": seconds or null, "action": {"t", "what"} or {"t": null, "why"}, "checked": [{t, verdict, text}], "calls": [{kind, t, model, rc, elapsed_s, usage}], "boxes": {"danmaku": [[x0,y0,x1,y1]...],
 "person": [[...]...], "guest": [[...]...]} or null}.  A box read that fails leaves boxes null; the caller then uses the fixed layout.
 
 Runs on OCI3 under the root wrapper that loads cpa.env (CPA_BASE_URL / CPA_API_KEY); the key is never printed.
@@ -47,6 +52,89 @@ BOX_QUESTION = ("这是直播画面（1920x1080 像素）。请给出三类矩�
                 "guest：画面里另一位主播（不是" + HOST + "）的身体范围。\n"
                 "只输出一个 JSON 对象：{\"danmaku\": [[x0,y0,x1,y1]], \"person\": [[x0,y0,x1,y1]], \"guest\": [[x0,y0,x1,y1]]}；"
                 "找不到的类别写空数组，不要编造。")
+
+
+ACTION_STEP_S = 2.0
+ACTION_CELLS = (5, 4)              # columns, rows of one sheet
+ACTION_CELL_PX = (384, 216)
+ACTION_QUESTION = ("这是一段直播切片按时间顺序抽出的若干帧，拼成一张图，每格左上角的黄色数字是这一格的编号。看主播" + HOST
+                   + (f"（{BODY_HINT.strip('，')}）" if BODY_HINT else "") + "：有没有哪一格里她做出了一眼就能认出、带着情绪的标志性动作——"
+                   "例如蹲下抱头、双手捂脸、弯腰捂脸、跳起来、趴下、比心？站着说话、摆手、普通手势都不算。"
+                   "只输出一个 JSON 对象：{\"cell\": 编号, \"what\": \"动作的简短描述\"}；没有这样的格就输出 {\"cell\": null}。")
+ACTION_PICK = ("这几格是同一段直播切片里不同时刻、主播" + HOST + "做出标志性动作的画面，格子左上角是编号。哪一格的动作最完整、"
+               "最能一眼认出、最适合当视频封面？只输出一个 JSON 对象：{\"cell\": 编号, \"what\": \"动作的简短描述\"}。")
+READING_KEY = BOX_QUESTION + "\n" + ACTION_QUESTION + "\n" + ACTION_PICK   # a reading made with other questions is not reused
+
+
+def duration(cut):
+    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", cut],
+                         check=True, capture_output=True, text=True).stdout
+    return float(out.strip())
+
+
+def sheet(cut, times, path):
+    """One numbered sheet of the frames at `times` (cell k = times[k-1]), as base64 jpeg."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    try:
+        font = ImageFont.truetype("DejaVuSans-Bold.ttf", 24)
+    except OSError:
+        font = ImageFont.load_default()
+
+    cols = min(ACTION_CELLS[0], len(times))
+    rows = (len(times) + cols - 1) // cols
+    w, h = ACTION_CELL_PX
+    canvas = Image.new("RGB", (cols * w, rows * h))
+    draw = ImageDraw.Draw(canvas)
+    for k, t in enumerate(times):
+        one = path + f".{k}.jpg"
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{t:.3f}", "-i", cut,
+                        "-frames:v", "1", "-vf", f"scale={w}:{h}", one], check=True)
+        with Image.open(one) as im:
+            x, y = (k % cols) * w, (k // cols) * h
+            canvas.paste(im.convert("RGB"), (x, y))
+        os.remove(one)
+        draw.rectangle([x, y, x + 44, y + 30], fill="black")
+        draw.text((x + 6, y + 2), str(k + 1), fill="yellow", font=font)
+    canvas.save(path, quality=85)
+    with open(path, "rb") as fh:
+        return base64.b64encode(fh.read()).decode("ascii")
+
+
+def read_cell(text, count):
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    try:
+        raw = json.loads(match.group(0)) if match else {}
+    except ValueError:
+        raw = {}
+    cell = raw.get("cell")
+    if isinstance(cell, int) and not isinstance(cell, bool) and 1 <= cell <= count:
+        return cell, str(raw.get("what") or "").strip()
+    return None, ""
+
+
+def find_action(cut, frame_dir, base, key):
+    """{"t": seconds, "what": description} of the host's signature move in the cut, or {"t": None, "why": ...}."""
+    length = duration(cut)
+    grid = [round(ACTION_STEP_S / 2 + i * ACTION_STEP_S, 3) for i in range(int(length // ACTION_STEP_S))]
+    per = ACTION_CELLS[0] * ACTION_CELLS[1]
+    found = []
+    for n in range(0, len(grid), per):
+        times = grid[n:n + per]
+        image = sheet(cut, times, os.path.join(frame_dir, f"action-{n // per}.jpg"))
+        cell, what = read_cell(ask(base, key, image, ACTION_QUESTION, max_tokens=120, kind="action", t=times[0]), len(times))
+        if cell:
+            found.append((times[cell - 1], what))
+    if not found:
+        return {"t": None, "why": f"{len(grid)} 帧里没有标志性动作"}
+    t, what = found[0]
+    if len(found) > 1:
+        image = sheet(cut, [f[0] for f in found], os.path.join(frame_dir, "action-pick.jpg"))
+        cell, _ = read_cell(ask(base, key, image, ACTION_PICK, max_tokens=120, kind="action-pick"), len(found))
+        t, what = found[(cell or 1) - 1]
+    # the frame of the sheet the move was seen in is kept as it is: asked again about frames half a second apart, the
+    # model took her standing up from the squat as "the most complete" (1305990, 2026-11-14)
+    return {"t": t, "what": what, "seen": [{"t": f[0], "what": f[1]} for f in found]}
 
 
 def extract(cut, t, path):
@@ -115,11 +203,18 @@ def read_boxes(text):
 
 def main(argv):
     cut, frame_dir, out_json, times = argv[1], argv[2], argv[3], [float(x) for x in argv[4].split(",") if x]
+    asked = list(times)          # the caller's frames: the key a later run reuses this reading by
     base = os.environ.get("CPA_BASE_URL", "").rstrip("/")
     key = os.environ.get("CPA_API_KEY", "")
     if not base or not key:
         raise SystemExit("CPA_BASE_URL / CPA_API_KEY not set (load cpa.env first)")
     os.makedirs(frame_dir, exist_ok=True)
+    try:
+        action = find_action(cut, frame_dir, base, key)
+    except (subprocess.CalledProcessError, urllib.error.URLError, OSError, ValueError) as exc:
+        action = {"t": None, "why": f"找动作失败：{type(exc).__name__}"}
+    if action.get("t") is not None:     # the move's own frame first, then the frames around the cover line
+        times = [action["t"], *[t for t in times if abs(t - action["t"]) >= 0.01]]
     checked, chosen, boxes = [], None, None
     for index, t in enumerate(times):
         path = os.path.join(frame_dir, f"frame-{index}.jpg")
@@ -139,9 +234,10 @@ def main(argv):
                 boxes = None
             break
     with open(out_json, "w", encoding="utf-8") as fh:
-        json.dump({"chosen": chosen, "checked": checked, "boxes": boxes, "calls": CALLS, "times": times, "question": BOX_QUESTION},
+        json.dump({"chosen": chosen, "checked": checked, "boxes": boxes, "calls": CALLS, "times": asked, "question": READING_KEY,
+                   "action": action, "looked_at": times},
                   fh, ensure_ascii=False, indent=1)
-    print(f"{out_json}: chosen={chosen} checked={len(checked)} boxes={'yes' if boxes else 'no'}")
+    print(f"{out_json}: chosen={chosen} action={action.get('t')} checked={len(checked)} boxes={'yes' if boxes else 'no'}")
     return 0
 
 

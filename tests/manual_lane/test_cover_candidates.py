@@ -215,7 +215,7 @@ def test_a_scene_is_drawn_only_when_the_brief_gives_the_reason(tmp_path):
 
 def test_an_unchanged_frame_reading_is_not_asked_again(tmp_path):
     ctx, remote = _ctx(tmp_path)
-    FRAMES_WITH_TIMES = dict(FRAMES, question=si._box_question())
+    FRAMES_WITH_TIMES = dict(FRAMES, question=si._reading_key())
     first = si.step6_title_cover(ctx)
     assert first.ok
     doc = json.loads((ctx.clip_dir / "cover/frames.json").read_text(encoding="utf-8"))

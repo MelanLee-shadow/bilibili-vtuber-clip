@@ -115,6 +115,14 @@ python3 scripts/manual_lane.py run --task-dir <任务目录> --cid <片号> --un
 - **第 9 步扣下了句子**（`PROCESS.md` 的“定不下且影响意思”、`pkg/REVIEW.md`）：是名字、自称、梗的写法拿不准时，把写法补进
   `assets/<id>/glossary.txt`（听错的写法也写进去），再 `redo --task-dir <任务目录> --cid <片号> --from subtitles` 重做；要人听才能定的，
   `listen-queue` 列出要听的句子，人听后用 `listen-import` 记下，再 `run`。
+  - `REVIEW.md` 里扣下的句子写成 `d050（成片第 34 句）「…」`：`d050` 是疑点号（`subs/doubts.json` 的 `id`，
+    `listen-queue --doubt <片号>:d050` 要的就是它），成片第几句是 `subs/final.srt` 的序号。复听页上的“识别稿第 N 句”是识别稿里的序号，和成片序号不同。
+  - 复听页（`--out` 目录里的 `index.html`）用浏览器打开：每句有音频（默认静音，点播放前先开声音）、几种候选写法和“手填”；
+    听完选一个或手填，最后点“导出标注 JSON”，存下 `reviewer_labels_<时间>.json`，再 `listen-import --task-dir <任务目录> --export <这个文件>`。
+    导出文件是 `{"labels": {"<片号>:<疑点号>": {"cid", "doubt_id", "cue_id", "abs_start_ms", "abs_end_ms", "current", "text",
+    "choice": "candidate"|"custom", "note"}}, "exported_at", "cues_version"}`，导入时逐条核对，有一条对不上就整份不导。
+  - 往 `glossary.txt` 写一个名字的误听写法，要有人听过这一句、确定她说的是这个名字；只看画面（比如画面上有这个名字）不够，
+    它说明名字存在，不说明这一句说的是它。没人能听时就让这句扣着：片不发，或删掉这句再发，都由频道主定。
 - `cover/spec.json` 是截图那条路线的输入，不代表最后选了哪条路线；选了哪条看 `PROCESS.md` 第 6 步和 `cover/choose.json`。
 - 早先用相对路径的 `--task-dir` 建的任务，状态里留着相对路径，第 8 步报 `FMR_MEMBER_SOURCE_PATH_NOT_ABSOLUTE` 并列出是哪些：
   重新用绝对路径 `discover`，或把列出的字段改成绝对路径后从第 8 步接着跑。现在建任务时路径都按绝对路径记录。

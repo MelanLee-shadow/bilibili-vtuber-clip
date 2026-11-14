@@ -32,6 +32,7 @@ from .step6_cover_types import (
     CoverEmote as CoverEmote,
     CoverPeers as CoverPeers,
     CoverPeople as CoverPeople,
+    CoverAction as CoverAction,
     CoverPlan as CoverPlan,
     CoverProducts as CoverProducts,
     CoverRender as CoverRender,
@@ -174,7 +175,7 @@ def _pick_cover_frame(ctx: Ctx, cues: Sequence[SrtCue], cover_lines: Sequence[st
     local = _local(ctx, "cover/frames.json")
     try:   # the same frames asked the same question already: that reading stands, nothing is asked again
         earlier = json.loads(local.read_text(encoding="utf-8"))
-        reuse = earlier.get("times") == times and earlier.get("question") == _box_question() and "chosen" in earlier
+        reuse = earlier.get("times") == times and earlier.get("question") == _reading_key() and "chosen" in earlier
     except (OSError, ValueError):
         earlier, reuse = None, False
     if reuse:   # the record was written by the media host's root script: replaced, never rewritten in place
@@ -195,8 +196,8 @@ def _pick_cover_frame(ctx: Ctx, cues: Sequence[SrtCue], cover_lines: Sequence[st
     return _frame_choice(doc, t0, times)
 
 
-def _box_question() -> str:
-    """pick_frame.py's box question, read from the tool itself (a reading made with another question is not reused)."""
+def _reading_key() -> str:
+    """pick_frame.py's questions, read from the tool itself (a reading made with other questions is not reused)."""
     import importlib.abc
     import importlib.machinery
     import importlib.util
@@ -205,12 +206,12 @@ def _box_question() -> str:
                 importlib.util.spec_from_file_location("manual_lane_pick_frame", REMOTE_TOOLS / "pick_frame.py"))
     module = importlib.util.module_from_spec(spec)
     cast(importlib.abc.Loader, spec.loader).exec_module(module)
-    return cast(str, module.BOX_QUESTION)
+    return cast(str, module.READING_KEY)
 
 
 def _frame_choice(doc: FrameDocument, t0: float, times: Sequence[float], *, reused: bool = False
                   ) -> tuple[float, str, dict[str, list[list[int]]] | None]:
-    tail = "（沿用上次同一批候选帧的判读，未再调用）" if reused else ""
+    tail = _action_note(doc) + ("（沿用上次同一批候选帧的判读，未再调用）" if reused else "")
     raw_boxes = doc.get("boxes") or {}
     boxes = ({k: _valid_boxes(raw_boxes.get(k)) for k in ("danmaku", "person", "guest")}
              if isinstance(raw_boxes, dict) else None)
@@ -219,6 +220,26 @@ def _frame_choice(doc: FrameDocument, t0: float, times: Sequence[float], *, reus
         return (float(cast(float, doc["chosen"])), note + ("，弹幕框与人物框由 CPA 给出" if boxes else "，框坐标未给出，用固定位置") + tail,
                 boxes)
     return t0, f"{len(times)} 个候选帧都有无关页面或未判出，保持 {t0:.2f}s（记录）" + tail, None
+
+
+def _action_note(doc: FrameDocument) -> str:
+    action = doc.get("action") or {}
+    if action.get("t") is None:
+        return f"；标志性动作：{action.get('why') or '未找'}"
+    taken = doc.get("chosen") is not None and abs(float(cast(float, doc["chosen"])) - float(action["t"])) < 0.01
+    return f"；标志性动作 {float(action['t']):.1f}s「{action.get('what')}」" + ("，截图就截在这里" if taken else "，这一帧不干净，没用")
+
+
+def chosen_action(ctx: Ctx) -> CoverAction | None:
+    """The host's signature move the cover frame was taken at (pick_frame.py's `action`, when the chosen frame is it)."""
+    try:
+        doc = cast(FrameDocument, json.loads((ctx.clip_dir / "cover/frames.json").read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return None
+    action, chosen = doc.get("action") or {}, doc.get("chosen")
+    if action.get("t") is None or chosen is None or abs(float(chosen) - float(action["t"])) >= 0.01:
+        return None
+    return {"t": float(action["t"]), "what": str(action.get("what") or "")}
 
 
 def cover_vision_calls(ctx: Ctx, round_no: int) -> tuple[list[CpaEvent], str]:
@@ -242,8 +263,8 @@ def cover_vision_calls(ctx: Ctx, round_no: int) -> tuple[list[CpaEvent], str]:
     records: list[CpaEvent] = [{"call_id": f"cover-vision-r{round_no}-{i}-{c.get('kind')}", "model": c.get("model", CPA_JUDGE_MODEL),
                 "rc": c.get("rc"), "elapsed_s": c.get("elapsed_s"), "kind": "vision", "usage": c.get("usage")}
                for i, c in enumerate(calls, 1)]
-    kinds = {k: sum(1 for c in calls if c.get("kind") == k) for k in ("clean", "boxes")}
-    return records, (f"封面看图调用 {len(calls)} 次（判帧 {kinds['clean']}，取框 {kinds['boxes']}；CPA 视觉，付费"
+    kinds = {k: sum(1 for c in calls if str(c.get("kind") or "").startswith(k)) for k in ("clean", "boxes", "action")}
+    return records, (f"封面看图调用 {len(calls)} 次（找动作 {kinds['action']}，判帧 {kinds['clean']}，取框 {kinds['boxes']}；CPA 视觉，付费"
                      + ("；按 frames.json 的判帧记录推算" if estimated else "") + "）")
 
 
@@ -413,6 +434,13 @@ def cover_composition_key(route: str, render: CoverRender | None, main_emote: st
     if route == "emote":
         return [route, str(main_emote or "")]
     return [route, str(render.get("layout") or ""), str(render.get("composition") or "")]
+
+
+def on_action(row: CoverCandidate, plan: CoverPlan, frame_t: float | None) -> bool:
+    """A screenshot taken at the host's signature move (owner 片中有经典动作优先截它)."""
+    action = plan.get("action_frame")
+    return (row["route"] == "screenshot" and action is not None and frame_t is not None
+            and abs(frame_t - action["t"]) < 0.01)
 
 
 def cover_repeats(row: CoverCandidate, plan: CoverPlan) -> bool:
@@ -587,7 +615,7 @@ def _render_cover(ctx: Ctx, cues: Sequence[SrtCue], cover_lines: Sequence[str],
             return CoverRenderResult(False, reason=f"COVER_RENDER_FAILED_RC{failed.rc}", note=failed.note, cpa=cv.calls, process=cv.process)
         if cv.failures:
             return CoverRenderResult(False, reason="COVER_TOOL_FAILED", note=str(cv.failures[0]["tail"]), cpa=cv.calls, process=cv.process)
-    cv.log.add_round(1, t, routes, cv.score(raw), raw, infeasible=infeasible)
+    cv.log.add_round(1, t, routes, cv.score(raw, t), raw, infeasible=infeasible)
     cv.redo()
     thumb_started = time.monotonic()
     picked = pick_cover(cv, cover_lines, title, identity)

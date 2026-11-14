@@ -23,20 +23,7 @@ MAX_TEXT_CALLS = 80
 MAX_LISTEN_CALLS = 160
 MAX_TOOL_CALLS = 500
 MAX_TOTAL_TOKENS = 4_000_000
-HINTS_NOTE = ('机械候选，可能有误，只是证据：readout_matches 是同期弹幕/SC 中可能被念出或回响的原记录'
-              '（relation=readout_candidate 为句前或句内已发出）；near_names 是句中与名字表拼音相近而写法不同的名字；'
-              'sender_of_message_read_next 是紧接着被念出正文的那条付费留言的发送者：她通常在念正文前或同一句里叫这个名字致谢，'
-              '这一带若有一段听不成词、又与该名字音节数相近或部分同音的称呼，多半就是它（平台后缀不念）；'
-              '若她清楚地叫的是另一个短称呼，照她叫的写；'
-              'mishearing 是频道已知误听对；begins_like_a_known_mishearing 是有的识别在这里写出了某个已知误听写法的开头（heard），'
-              '有的识别写了别的，那个误听写法（known_mishearing）代表 standard。各家在这一处互不相同，就没有哪一家的写法算'
-              '“现稿”可以原样保留：在 standard 和各家写法里，取最能同时解释各家音形、音节数和这句话在说谁的那个；'
-              'standard 讲得通而各家的写法放在句里讲不通时写 standard（可标低把握），不因“不足以证明”留下一家的错听；'
-              '带 chat_just_before 的，是句前一分半钟内有观众在弹幕里写了 standard：她多半正在回应这条弹幕，这时写 standard；'
-              'only_one_recogniser_wrote 是夹在这一句里、只有 BCUT 写了而其余识别器同一位置都没有对应文字的那几个字：'
-              '其余几家把这句话写出来了却都没有它，它多半是背景声或误触发，不是这句话的一部分——去掉这几个字，'
-              '不把它改写或扩写成别的词句（包括复听听出的外语台词）；只有它是主播清楚说出的实词时才保留。'
-              '由你核对后决定，系统不会替你改字。')
+HINTS_NOTE = pe.HINTS_NOTE
 UNSUBTITLED_NOTE = ('unsubtitled 里的时间段，识别器有成句的内容，而你的字幕在这段时间没有任何一行。这段话若已并入邻行，'
                     '接收行要用 parts 把它的时间带过去：有 source_words 的用 first_word/last_word；没有词时间的文字'
                     '（外语原声、被识别成怪音串的句子）用 {"text":"…","first_cue":a,"last_cue":b}，a、b 是 bcut 的 cue id，'
@@ -332,6 +319,7 @@ class _Agent:
         thanked = pe.senders_read_next(list(self.bcut), all_hits, heard)
         wrote = {cue['id']: {'bcut': cue['text'], **{name: lines.text(cue['id']) for name, lines in self.at_cue.items()}}
                  for cue in self.bcut}                  # what every recogniser wrote at each cue
+        alike = pe.nearby_near_sounds({k: [t for t in v.values() if t] for k, v in wrote.items()}, [c['id'] for c in self.bcut])
         begun = pe.begun_mishearings({k: [t for t in v.values() if t] for k, v in wrote.items()}, pe.misheard_heads(pairs))
         for cue in cues:
             readings = heard[cue['id']]
@@ -352,6 +340,8 @@ class _Agent:
             if cue['id'] in begun:
                 item['begins_like_a_known_mishearing'] = [
                     dict(row, **pe.said_in_chat_before(row['standard'], cue, rows)) for row in begun[cue['id']]]
+            if cue['id'] in alike:
+                item['nearby_word_sounds_alike'] = alike[cue['id']]
             alone = pe.written_by_one(cue['text'], [t for name, t in wrote[cue['id']].items() if name != 'bcut'])
             if alone:
                 item['only_one_recogniser_wrote'] = alone

@@ -398,7 +398,7 @@ def _card(index: int, it: QueueItem) -> str:
         f"<article class=\"q\" data-cid=\"{esc(it['cid'])}\" data-doubt=\"{esc(it['doubt_id'])}\" "
         f"data-cue=\"{it['cue_id']}\" data-abs-start=\"{it['abs_start_ms']}\" data-abs-end=\"{it['abs_end_ms']}\" "
         f"data-current=\"{esc(it['current'])}\">\n"
-        f"<h2>{index}. {esc(it['cid'])} · {esc(it['doubt_id'])} · 第 {it['cue_id']} 句 "
+        f"<h2>{index}. {esc(it['cid'])} · {esc(it['doubt_id'])} · 识别稿第 {it['cue_id']} 句 "
         f"<span class=\"muted\">{fmt_ts(it['start_s'])}–{fmt_ts(it['end_s'])} · {esc(it['reason_key'])} · "
         f"CPA：{esc(it['cpa_state'])}</span></h2>\n"
         f"{cur_html}"

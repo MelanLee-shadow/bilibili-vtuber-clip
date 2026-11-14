@@ -25,3 +25,11 @@ def test_the_subtitle_agent_reads_the_same_file_as_the_title():
     assert block.startswith(channel_facts.SUBTITLE_NOTE) and "不是语音证据" in block
     for line in channel_facts.spoken().splitlines():
         assert line in block and line.split(" <!--")[0] in title_understanding.persona_basics()
+
+
+def test_the_core_attractions_are_the_metric_tier_section_up_to_the_next_heading():
+    text = "# m\n\n> 说明\n\n## 优先级分层（硬序）\n\n- 第一层：撒娇\n- 第二层：普通\n\n## 七维量化表\n- 分\n"
+    assert channel_facts.core_attractions(text) == "## 优先级分层（硬序）\n\n- 第一层：撒娇\n- 第二层：普通"
+    assert channel_facts.core_attractions("## 优先级分层\n- 只有这层\n") == "## 优先级分层\n- 只有这层"
+    real = channel_facts.core_attractions()
+    assert "第一层" in real and "撒娇" in real and "百合" in real and "标题落点" in real and "## 七维量化表" not in real

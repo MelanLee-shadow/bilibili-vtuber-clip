@@ -222,7 +222,13 @@ def a3_speaker(ctx: Context) -> dict[str, Any]:
 
 # --------------------------------------------------------------------- A4 / A4b
 def _intro_offset_ms(ctx: Context) -> int:
+    """The intro's length in the finished video: 0 for a channel with its intro off (the roster check A6 holds a
+    no-intro receipt against the channel's manifest), otherwise a positive integer."""
+    from src.autoslice.intro_receipt import declared_no_intro
+
     receipt = load_json(ctx.files["intro_receipt"])
+    if declared_no_intro(receipt):
+        return 0
     value = receipt.get("intro_offset_ms")
     if type(value) is not int or value <= 0:
         raise FmrError("FMR_INTRO_OFFSET_INVALID")

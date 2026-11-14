@@ -144,7 +144,7 @@ from .step6_cover import (
     cover_lines_overflow as cover_lines_overflow,
     FRAME_OFFSETS_S as FRAME_OFFSETS_S,
     PEER_FACE_RATIO_MAX as PEER_FACE_RATIO_MAX,
-    _box_question as _box_question,
+    _reading_key as _reading_key,
     _cover_brief as _cover_brief,
     _cover_frame_time as _cover_frame_time,
     _frame_choice as _frame_choice,
