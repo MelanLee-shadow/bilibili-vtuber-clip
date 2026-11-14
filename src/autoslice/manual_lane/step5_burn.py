@@ -99,7 +99,9 @@ def step5_burn(ctx: Ctx) -> StepOutcome:
     if not verdict.ok:
         return _fail(verdict.reason_code, verdict.detail)
     process = [f"片头前置：{verdict.evidence.get('intro_id')}，偏移 {verdict.evidence.get('intro_offset_ms')} ms"]
-    if manuscript != clip["cid"]:
+    if verdict.evidence.get("intro_id") is None:
+        process = [f"不加片头：本频道的片头清单写明不用片头（{intro.get('reason')}）"]
+    elif manuscript != clip["cid"]:
         if pinned is None:
             process.append(f"后继片的片头：无法确认「{manuscript}」线上那版用的片头（它的 burn/intro_result.json 读不到），按稿件 id 取片头")
         elif pinned != verdict.evidence.get("intro_id"):

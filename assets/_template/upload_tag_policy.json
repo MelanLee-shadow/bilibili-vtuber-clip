@@ -9,6 +9,7 @@
   "max_tags_default": 10,
   "max_dynamic_tags": 6,
   "max_tag_chars": 20,
+  "max_dynamic_tag_chars": 10,
   "term_rules": [],
   "important_content_ips": [],
   "known_proper_surfaces_extra": [],

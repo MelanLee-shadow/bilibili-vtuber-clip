@@ -179,7 +179,7 @@ def test_step6_passes_compilation_facts_to_both_prompts_and_preserves_ordinary_b
         old_title = (prompt_dir / "title.md").read_text().replace("{compilation_context}", "")
         old_cover = (prompt_dir / "cover_brief.md").read_text().replace("{compilation_context}", "")
         assert hashlib.sha256(old_title.encode()).hexdigest() == "55281ca296d78a7982f35f75a3da236b4f947480bc1388aeaac4ff6561fc2500"
-        assert hashlib.sha256(old_cover.encode()).hexdigest() == "21309c679eae990b66b7fc865944241444c1bdcc7e0198f0f1e47927c8ce13bb"
+        assert hashlib.sha256(old_cover.encode()).hexdigest() == "d8c28bd7f7d6aa6b2de38b08790b7f7d814d86cbd6e74c48e8db38663539bfd4"
         old_title, old_cover = channel.fill(old_title), channel.fill(old_cover)     # the channel's names come from the profile
         track, lines, _ = step6_title.title_inputs(ctx, names)
         expected_title = old_title

@@ -14,7 +14,7 @@
 只输出一个 JSON 对象：
 {"quotes": ["封面字对应的那一两句原话，逐字抄自字幕"],
   "expression": "英文：封面那一刻{host}的表情，写具体（不写 cute）{cover_expression_rule}",
-  "action": "英文：她说那句话时的动作",
+  "action": "英文：她说那句话时身体做的动作；她只是比划、模仿或提到某样东西而手里没有实物时，写成空手比划，不写成拿着那样东西",
   "scene_needed": true 或 false,
   "scene_reason": "只有故事必须交代一个具体场景（动作、物件、状态关系）才写 true，并写出理由；聊天、反应写 false",
   "setting": "英文：scene_needed 为 true 时的场景；否则空字符串",
