@@ -7,7 +7,7 @@
   "work_root": "/home/user/manual-work",
   "danmaku_host": "N100",
   "danmaku_root": "/vol1/1000/vtuber-slice-recording/data/Videos",
-  "cover_skill_scripts": "../skills/lidousha-title-cover/scripts",
+  "cover_skill_scripts": "skills/title-cover/scripts",
   "search_mcp_url": "http://search-router.example:3310/mcp",
   "recordings_direct_root": "/home/user/manual-work/recordings-direct",
   "recordings_direct_host": "n100-recordings",

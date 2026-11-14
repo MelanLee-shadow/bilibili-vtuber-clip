@@ -54,3 +54,28 @@ def _hermetic_call_command(prompt, config):
 
 
 _llm_client._call_command = _hermetic_call_command
+
+
+# ---- tests that cannot hold in the public tree (tests/public_expected_failures.txt) ----------------------------
+def _public_expected_failures():
+    from pathlib import Path as _Path
+
+    path = _Path(__file__).resolve().parent / "tests" / "public_expected_failures.txt"
+    rows = []
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip() and not line.startswith("#") and "|" in line:
+                prefix, reason = (part.strip() for part in line.split("|", 1))
+                rows.append((prefix, reason))
+    return rows
+
+
+def pytest_collection_modifyitems(config, items):
+    import pytest as _pytest
+
+    rows = _public_expected_failures()
+    for item in items:
+        for prefix, reason in rows:
+            if item.nodeid.startswith(prefix):
+                item.add_marker(_pytest.mark.xfail(reason=reason, strict=False))
+                break

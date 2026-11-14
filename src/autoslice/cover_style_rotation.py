@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 SCHEMA = "lidousha-cover-style-rotation.v1"
@@ -116,3 +117,113 @@ def load_table(path: Path | str) -> dict:
     return {**table, "table_sha256": hashlib.sha256(raw).hexdigest()}
 
 
+def default_content_sha256(spec: Mapping) -> str:
+    """Fallback content key when the caller has no finished-content hash: lines text plus frame name."""
+
+    payload = {
+        "lines": [line.get("text") for line in spec.get("lines", []) if isinstance(line, Mapping)],
+        "frame": spec.get("frame") or spec.get("bg"),
+    }
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+
+
+
+
+RECENT_COLOR_WINDOW = 1
+
+
+def recent_exclusions(table: Mapping, recent_style_ids: Sequence[str] = ()) -> dict[str, str]:
+    """The styles the next cover skips, ``{style_id: reason}``.
+
+    ``recent_used``: a recent cover used the style.  ``recent_colors``: the style has the
+    colour pair of the last ``RECENT_COLOR_WINDOW`` covers.  ``recent_style_ids`` are the
+    recent covers' styles, oldest first (``title_cover_history.recent_cover_style_ids``); an id
+    not in the table only counts as used.  Callers including the skill script's ``--recent``
+    pass the real history, not the expanded exclusion keys.
+    """
+
+    ids = [str(s) for s in recent_style_ids]
+    by_id = {str(s["style_id"]): s for s in table["styles"]}
+    out = {sid: "recent_used" for sid in ids}
+    last = [by_id[sid] for sid in ids[-RECENT_COLOR_WINDOW:] if sid in by_id] if ids else []
+    pairs = {frozenset(style["colors"]) for style in last}
+    for style in table["styles"]:
+        sid = str(style["style_id"])
+        if sid not in out and frozenset(style["colors"]) in pairs:
+            out[sid] = "recent_colors"
+    return out
+
+
+def select_style(
+    table: Mapping,
+    content_sha256: str,
+    *,
+    attempt: Callable[[Mapping], Mapping],
+    recent_style_ids: Sequence[str] = (),
+) -> tuple[dict, dict]:
+    """Return ``(attempt_result, selection)``.
+
+    ``attempt(style)`` lays the cover out with that style and returns a mapping that
+    contains ``low_contrast`` (bool). It may raise ``SystemExit`` or ``ValueError``
+    when that style does not fit; such a style is skipped with reason ``layout_failed``.
+    """
+
+    styles = list(table["styles"])
+    n = len(styles)
+    if not isinstance(content_sha256, str) or len(content_sha256) < 16:
+        raise CoverStyleTableError("COVER_STYLE_CONTENT_HASH_INVALID")
+    base = int(content_sha256[:16], 16) % n
+    excluded = recent_exclusions(table, recent_style_ids)
+    recent = set(excluded)
+    order = [(base + k) % n for k in range(n)]
+    skipped: list[dict] = []
+
+    def run(index: int):
+        style = styles[index]
+        try:
+            result = attempt(style)
+        except (SystemExit, ValueError) as exc:
+            return None, "layout_failed:" + str(exc)[:120]
+        if result.get("low_contrast"):
+            return result, "low_contrast"
+        return result, None
+
+    def finish(index: int, result: Mapping, reason: str | None) -> tuple[dict, dict]:
+        style = styles[index]
+        selection = {
+            "style_id": style["style_id"],
+            "table_sha256": table.get("table_sha256"),
+            "content_sha256": content_sha256,
+            "base_index": base,
+            "chosen_index": index,
+            "selection": "hash" if index == base and not skipped else "rotated",
+            "skipped": list(skipped),
+            "recent_style_ids": sorted({str(x) for x in recent_style_ids}),
+            "fallback": reason,
+        }
+        return {**dict(result), "style": style, "selection_detail": selection}, selection
+
+    for index in order:
+        style_id = styles[index]["style_id"]
+        if style_id in recent:
+            skipped.append({"style_id": style_id, "reason": excluded[style_id]})
+            continue
+        result, reason = run(index)
+        if reason is None:
+            return finish(index, result, None)
+        skipped.append({"style_id": style_id, "reason": reason})
+    # Every non-recent style failed or was recent. Recent styles are the last resort, so a
+    # short table can still repeat rather than fail.
+    for index in order:
+        style_id = styles[index]["style_id"]
+        if style_id not in recent:
+            continue
+        result, reason = run(index)
+        if reason is None:
+            return finish(index, result, "recent_repeat_forced")
+        skipped.append({"style_id": style_id, "reason": reason})
+    # Everything was rejected. Use the hashed base style and keep its warning visible.
+    result = attempt(styles[base])
+    return finish(base, result, "all_styles_rejected")
