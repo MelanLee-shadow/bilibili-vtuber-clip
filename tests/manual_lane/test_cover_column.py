@@ -91,7 +91,7 @@ def test_a_column_that_does_not_fit_or_is_not_hers_alone_keeps_the_two_lines_on_
     assert plan["need_top"] == 555 and "text_layout" not in plan
     assert wide.text("cutout", lines, "auto") == {"layout": "auto", "lines": lines} and "cutout" in wide.record()["refused"]
     for job, guest, centre in (({"text_layout": "left", "column_rows": rows}, {"src": "g"}, None),     # another person
-                               ({"text_layout": "left", "column_rows": rows}, None, 0.5),              # a fixed centre (kmx)
+                               ({"text_layout": "left", "column_rows": rows}, None, 0.5),              # a fixed centre (the audience's sticker)
                                ({"text_layout": "top", "column_rows": rows}, None, None),              # not this cover's turn
                                ({"text_layout": "left", "column_rows": []}, None, None)):              # no rows
         column = _column(monkeypatch, layout, job)

@@ -20,7 +20,7 @@ Agent 配置流程与李豆沙示例，供使用者按自己的频道选择、�
    .venv/bin/python -m pytest -q
    ```
 
-3. 按 [profiles/README.md](profiles/README.md) 建立自己的频道；词表、人设、标题风格和
+3. 按 [profiles/SETUP.md](profiles/SETUP.md) 从零搭起来，按 [profiles/README.md](profiles/README.md) 建立自己的频道；词表、人设、标题风格和
    封面身份描述来自频道提供者，不能代为编造。模板资产和真实运营状态必须区分。
 4. 按 [凭据说明](docs/credentials.md) 配置服务。文字/看图模型、复听模型和整片识别服务要分别验证。
 5. 真实制作前确认源素材、目录、额度和所需外部工具。这不是离线测试：会联网、写入工作目录并调用计费服务。

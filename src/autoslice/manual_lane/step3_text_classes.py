@@ -6,6 +6,7 @@ from collections.abc import Collection, Sequence
 from difflib import SequenceMatcher
 from typing import TypedDict, cast
 
+from . import text_overlap
 from . import doubt_policy, name_match
 from .srt_text import SrtCue, TimedText
 
@@ -75,10 +76,10 @@ def merged_timing(bcut: Sequence[SrtCue], final: Sequence[doubt_policy.FinalDoub
     by_cue = {d['cue_id']: d for d in final}
     texts = [str(by_cue[c['id']].get('final_text') or c['text']) for c in cues]
     kept = [i for i, c in enumerate(cues) if not doubt_policy.is_dropped(by_cue[c['id']])]
-    source = [ch for c in cues for ch in doubt_policy.norm_text(c['text'])]
-    source_cue = [i for i, c in enumerate(cues) for _ in doubt_policy.norm_text(c['text'])]
-    target = [ch for i in kept for ch in doubt_policy.norm_text(texts[i])]
-    target_line = [i for i in kept for _ in doubt_policy.norm_text(texts[i])]
+    source = [ch for c in cues for ch in text_overlap.key(c['text'])]
+    source_cue = [i for i, c in enumerate(cues) for _ in text_overlap.key(c['text'])]
+    target = [ch for i in kept for ch in text_overlap.key(texts[i])]
+    target_line = [i for i in kept for _ in text_overlap.key(texts[i])]
     target_start: dict[int, int] = {}
     for j, line in enumerate(target_line):
         target_start.setdefault(line, j)
@@ -94,7 +95,7 @@ def merged_timing(bcut: Sequence[SrtCue], final: Sequence[doubt_policy.FinalDoub
     for i, cue in enumerate(cues):
         if i in kept_set or i not in held:
             continue
-        need = len(doubt_policy.sim_key(cue['text'])) or len(doubt_policy.norm_text(cue['text']))
+        need = len(doubt_policy.sim_key(cue['text'])) or len(text_overlap.key(cue['text']))
         line, count = max(held[i].items(), key=lambda lc: (lc[1], -lc[0]))
         if 2 * count >= need:
             owner[i] = line
@@ -119,7 +120,7 @@ def merged_timing(bcut: Sequence[SrtCue], final: Sequence[doubt_policy.FinalDoub
         labels: list[int] = []
         at, last = target_start[line], lo
         for ch in texts[line]:
-            width = len(doubt_policy.norm_text(ch))
+            width = len(text_overlap.key(ch))
             found = heard[at] if width else None
             at += width
             if found is not None and last <= found <= hi:

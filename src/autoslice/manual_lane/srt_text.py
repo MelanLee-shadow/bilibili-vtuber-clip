@@ -88,10 +88,6 @@ def _context_lines(cues: Sequence[SrtCue]) -> str:
     return "\n".join(f"{c['id']} {fmt_ts(c['start_s'])} {c['text']}" for c in cues)
 
 
-def _norm_text(text: str) -> str:
-    return re.sub(r"[\W_]+", "", text).lower()
-
-
 class JSONTextError(ValueError):
     """A CPA answer that does not start with one readable JSON value.  A ValueError, so every caller that already
     treats an unreadable answer as a failed read keeps doing so."""

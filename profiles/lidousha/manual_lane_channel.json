@@ -1,0 +1,18 @@
+{
+ "schema": "manual-lane.channel-text.v1",
+ "_doc": "What the lane's prompts say about this channel (read by src/autoslice/manual_lane/channel.py). The prompts themselves name no channel: they say {host}, {fans_name}, {channel_entities}, {listen_name_examples}, {cover_expression_rule}. The host's names, speaker label, title prefix and cover identity are in profile.json.",
+ "fans_name": "kmx",
+ "channel_entities": "  频道通用实体补充（来自共享规则，不是本片答案）：主播李豆沙，自称豆沙、小李、lds，说哪个写哪个；\n  流沙、刘彩、留下、刘禅、里豆沙只在确属主播自称且无其他人物来源时作为误听候选。\n  常客观众 kmx，口播近 kimo熊；停放熊、提莫熊、QQ熊、请问熊是可能的误听面，须结合音节和近窗语境核对。",
+ "listen_name_examples": "豆沙 / 李豆沙、礼墨 / Sumi、阿晚 / 安晚 / 阿娃娃 / aWaWa",
+ "cover_expression_rule": "，不吐舌头",
+ "title_name_forms": "李豆沙|小李|熊猫头|李姐|(?<![李礼室悠璃恬晚])豆沙(?!歌)|(?i:\\blds\\b)|白色奶龙",
+ "title_name_note": "小李、李豆沙、熊猫头都是已有称呼，应在适合的场景来回换；不要因不默认小李而一直避用它。",
+ "fans_emote_id": "25",
+ "picture_body_hint": "（白发，造型以当场画面为准），依据名牌和画面辨认；她可能戴帽子或眼罩，不能以熊猫耳不可见就认作别人",
+ "picture_face_hint": "她白发，也可能戴帽子或眼罩，不要假定熊猫耳一定可见；",
+ "editor_nicknames": [
+  "熊猫头",
+  "李姐",
+  "小李"
+ ]
+}

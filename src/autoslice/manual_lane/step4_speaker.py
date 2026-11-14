@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, cast
 
+from . import channel
 from . import (
     channel_facts,
     gates,
@@ -30,7 +31,6 @@ from .step3_adjudicate import PROPER_NOUNS, lone_char_line, record_lone
 from .step_import import ImportRecord, imported
 from .step_io import (
     HOST_LABEL,
-    PKG_ROOT,
     REMOTE_TOOLS,
     _ask_cpa,
     _cpa_ok,
@@ -51,7 +51,7 @@ if TYPE_CHECKING:
 
 def _label_host_lines(final_srt: Path) -> str:
     """uniform_host: every cue is the host.  The speaker SRT carries the canonical label on the first line of each
-    cue, as the pilot clips do (`[李豆沙] text`).  The burn renderer drops the label from the picture.  Timing and
+    cue, as the pilot clips do (`[host] text`).  The burn renderer drops the label from the picture.  Timing and
     the text are untouched; this works on the text blocks directly so multi-line cues keep their lines."""
     out_blocks = []
     for block in re.split(r"\n[ \t]*\n", final_srt.read_text(encoding="utf-8").strip()):
@@ -240,7 +240,7 @@ def _speaker_from_preds(ctx: Ctx, units: Sequence[speaker_v8.SpeakerChunk],
     if video is not None:
         mode = OTHER_VOICES_MODE
     decision.write_text(json.dumps({"mode": mode,
-                                    "rule": OTHER_VOICES_RULE if video is not None else f"v8: host iff top=李豆沙 and p>={host_min} ({n_people} people, lane_rules speaker); uncertain or no unit = guest; mid band -> CPA review; "
+                                    "rule": OTHER_VOICES_RULE if video is not None else f"v8: host iff top={channel.HOST} and p>={host_min} ({n_people} people, lane_rules speaker); uncertain or no unit = guest; mid band -> CPA review; "
                                             "8c1: MOSS clusters named by the host voiceprint give the label (v8 without them); MAI only flags; flagged cues read by CPA, which changes a label only on an acoustic tie or with explicit content evidence (speaker_v8.adopt_review); a cut only at the label engine switch, parts labelled by it",
                                     "cues": decided, "lone_chars": lone,
                                     "video_subtitled": any(d.get("video_subtitled") for d in decided)},
@@ -249,13 +249,13 @@ def _speaker_from_preds(ctx: Ctx, units: Sequence[speaker_v8.SpeakerChunk],
     lead = "有他人声音（看视频）v8 二分" if video is not None else "联动 v8 二分"
     return StepOutcome(True, products={"speaker_srt": str(speaker), "decision": str(decision)},
                        note=f"{kind} host={host_n} guest={len(decided) - host_n} no_unit={no_unit}", cpa=cluster_cpa,
-                       process=[f"{lead}：李豆沙 {host_n} 句，嘉宾 {len(decided) - host_n} 句（其中无可用证人 {no_unit} 句，"
-                                f"按嘉宾色）；分类器 v8 冻结，李豆沙阈值 {host_min}（{n_people} 人，lane_rules speaker，e05 §10）；"
+                       process=[f"{lead}：{channel.HOST} {host_n} 句，嘉宾 {len(decided) - host_n} 句（其中无可用证人 {no_unit} 句，"
+                                f"按嘉宾色）；分类器 v8 冻结，{channel.HOST}阈值 {host_min}（{n_people} 人，lane_rules speaker，e05 §10）；"
                                 f"声纹单元：{unit_kind}",
                                 *cluster_process, lone_char_line(lone)])
 
 
-PERSONA = PKG_ROOT / "assets" / "lidousha" / "persona.md"
+PERSONA = channel.asset("persona.md")
 
 
 def plain_text_of(text: str) -> str:
@@ -351,7 +351,7 @@ def _cluster_line(cl: _Clusters, fused: Sequence[speaker_v8.SpeakerDecision], lo
     return ("说话人分簇：" + "；".join(
         f"{e.upper()} " + "，".join(f"{c}→{v['speaker']}" + (f"（与主播登记声纹余弦 {v['cos']}）" if "cos" in v else "")
                                     for c, v in cl.named[e].items()) for e in cl.engines)
-            + ("；标签用 MOSS 簇（8c1：余弦最高的一簇是李豆沙，其余是嘉宾）" if "moss" in cl.engines else "；MOSS 无可用簇，标签用 v8")
+            + (f"；标签用 MOSS 簇（8c1：余弦最高的一簇是{channel.HOST}，其余是嘉宾）" if "moss" in cl.engines else "；MOSS 无可用簇，标签用 v8")
             + "，MAI 簇（按 v8 重叠定名）只作辅助信号"
             + f"；与 v8、MAI 都一致 {len(fused) - len(low)} 句，不一致或句内两人、待 CPA 复核 {len(low)} 句")
 
@@ -486,8 +486,8 @@ def _v8_mid_rows(decided: Sequence[speaker_v8.SpeakerDecision]) -> list[speaker_
     out: list[speaker_v8.SpeakerDecision] = []
     for d in decided:
         mid = "" if d.get("source") == "维护者" else str(d.get("v8_mid") or "")
-        why = (f"v8 李豆沙概率 {d.get('host_prob')}，在两人场中间带" if mid == "tie"
-               else f"v8 李豆沙概率 {d.get('host_prob')}，三人以上场未到李豆沙阈值" if mid else "")
+        why = (f"v8 {channel.HOST}概率 {d.get('host_prob')}，在两人场中间带" if mid == "tie"
+               else f"v8 {channel.HOST}概率 {d.get('host_prob')}，三人以上场未到{channel.HOST}阈值" if mid else "")
         out.append(cast(speaker_v8.SpeakerDecision,
                         dict(d, v8_speaker=d["speaker"], clusters={}, label_from="v8", review_route=speaker_v8.MID_REVIEW,
                              speaker_confidence="低" if mid else "高", speaker_why=why)))
@@ -498,7 +498,7 @@ def _v8_mid_rows(decided: Sequence[speaker_v8.SpeakerDecision]) -> list[speaker_
 OTHER_VOICES_PEOPLE = 2          # the host and "everyone else": the two-person thresholds and mid band of lane_rules speaker
 OTHER_VOICES_MODE = "other_voices_video"
 OTHER_VOICES_ROUTE = "other_voices"
-OTHER_VOICES_RULE = ("v8: host iff top=李豆沙 and p>=two_person_host_min (host and everyone else = two people, lane_rules speaker); "
+OTHER_VOICES_RULE = (f"v8: host iff top={channel.HOST} and p>=two_person_host_min (host and everyone else = two people, lane_rules speaker); "
                      "picture: frames inside each cue are read by CPA vision for the watched video's own subtitle, the system only "
                      "computes how much of the cue's text it contains; one CPA review (effort.purposes.speaker-video) decides every "
                      "cue from the voiceprint and the picture; it may overturn v8 only on a voiceprint tie, with a screen subtitle "
@@ -520,7 +520,7 @@ def _video_rows(decided: Sequence[speaker_v8.SpeakerDecision]) -> list[speaker_v
     out: list[speaker_v8.SpeakerDecision] = []
     for d in decided:
         维护者 = d.get("source") == "维护者"
-        why = "维护者 标注" if 维护者 else f"v8 李豆沙概率 {d.get('host_prob')}"
+        why = "维护者 标注" if 维护者 else f"v8 {channel.HOST}概率 {d.get('host_prob')}"
         out.append(cast(speaker_v8.SpeakerDecision,
                         dict(d, v8_speaker=d["speaker"], clusters={}, label_from="v8", review_route=OTHER_VOICES_ROUTE,
                              speaker_confidence="高" if 维护者 else "低", speaker_why=why)))
@@ -717,7 +717,7 @@ def _speaker_import(ctx: Ctx, rec: ImportRecord) -> StepOutcome | None:
     host_n = sum(1 for x in labels if x == speaker_v8.HOST)
     return StepOutcome(True, products={"speaker_srt": str(speaker), "decision": str(decision)},
                        note=f"import {rec.get('source')} host={host_n} guest={len(labels) - host_n}",
-                       process=[f"说话人导入自 {rec.get('source')}：李豆沙 {host_n} 句，{speaker_v8.GUEST_LABEL} "
+                       process=[f"说话人导入自 {rec.get('source')}：{channel.HOST} {host_n} 句，{speaker_v8.GUEST_LABEL} "
                                 f"{len(labels) - host_n} 句（未跑 v8）"])
 
 

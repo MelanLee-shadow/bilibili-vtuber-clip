@@ -25,9 +25,10 @@ import re
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Sequence
-from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, Protocol, TypedDict, cast
 
+from . import channel
+from . import text_overlap
 from .layout import layout
 
 if TYPE_CHECKING:
@@ -43,7 +44,7 @@ BAIKE_CARD_URL = "https://baike.baidu.com/api/openapi/BaikeLemmaCardApi"
 SEARCH_MCP_ENV = "MANUAL_LANE_SEARCH_MCP_URL"
 USER_AGENT = "vtuber-slice-manual-lane/1.0 (subtitle doubt lookup)"
 TIMEOUT_S = 15.0
-GRAPH_PATH = Path(__file__).resolve().parents[3] / "assets" / "lidousha" / "topic_entity_graph.json"
+GRAPH_PATH = channel.asset("topic_entity_graph.json")
 
 
 class TopicEntity(TypedDict, total=False):
@@ -133,13 +134,9 @@ class LookupProvider(Protocol):
     def web(self, query: str) -> list[LookupRow]: ...
 
 
-def _key(text: str) -> str:
-    return "".join(ch for ch in text.lower() if ch.isalnum())
-
-
 def topic_hits(query: str, graph: TopicGraph) -> list[LookupRow]:
     """Entities whose Chinese name, native names, aliases or readings match the query (either contains the other)."""
-    q = _key(query)
+    q = text_overlap.key(query)
     if len(q) < 2:
         return []
     hits: list[LookupRow] = []
@@ -147,7 +144,7 @@ def topic_hits(query: str, graph: TopicGraph) -> list[LookupRow]:
         surfaces = [entity.get("canonical_zh", ""), *entity.get("native_names", []), *entity.get("aliases", []),
                     *entity.get("readings", [])]
         for surface in surfaces:
-            s = _key(str(surface))
+            s = text_overlap.key(str(surface))
             if len(s) >= 2 and (s == q or s in q or q in s):
                 hits.append({"name": entity.get("canonical_zh"), "entity_id": entity.get("entity_id"),
                              "kind": entity.get("kind"), "matched": str(surface)})
@@ -238,7 +235,7 @@ class WebLookup:
         _h, text = self._open(urllib.request.Request(f"{BAIKE_CARD_URL}?{params}"))
         data = json.loads(text) if text.strip() else {}
         title = str(data.get("title") or data.get("key") or "")
-        if not title or _key(title) != _key(query):
+        if not title or text_overlap.key(title) != text_overlap.key(query):
             return []
         return [{"title": title, "abstract": str(data.get("abstract") or "")[:300], "url": data.get("url")}]
 
@@ -353,8 +350,8 @@ def lookup(query: str, graph: TopicGraph, *, web: LookupProvider) -> LookupResul
 def _mentions(query: str, row: LookupRow) -> bool:
     """A result names the query itself (in any text field).  Fuzzy search engines return something for almost any
     keyword; only a result that carries the query's own words counts as found for the web fallback decision."""
-    q = _key(query)
-    return bool(q) and any(q in _key(str(v)) for v in row.values() if isinstance(v, str))
+    q = text_overlap.key(query)
+    return bool(q) and any(q in text_overlap.key(str(v)) for v in row.values() if isinstance(v, str))
 
 
 def _try(name: str, query: str, call: Callable[[], list[LookupRow]]) -> LookupLayer:

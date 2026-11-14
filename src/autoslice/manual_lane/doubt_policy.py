@@ -21,9 +21,9 @@ still carry the ordinary hold.  UNRESOLVED without usable text remains unresolve
 from __future__ import annotations
 
 import os
-import re
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, NotRequired, TypeVar, TypedDict, cast
+from . import text_overlap
 
 if TYPE_CHECKING:
     from src.autoslice.cpa_gemini_client import JsonValue
@@ -165,13 +165,9 @@ GEMINI_FAMILY = "gemini"
 GEMINI_SLUGS = frozenset({"38m", "argon", "36h", "37m"})
 
 
-def norm_text(text: str) -> str:
-    return re.sub(r"[\W_]+", "", text).lower()
-
-
 def sim_key(text: str) -> str:
     """Normalised comparison key, with filler words removed for the existing comparison consumers."""
-    return "".join(ch for ch in norm_text(text) if ch not in FILLERS)
+    return "".join(ch for ch in text_overlap.key(text) if ch not in FILLERS)
 
 
 def witness_family(source: str) -> str | None:
@@ -444,7 +440,7 @@ def holds(doubts: Sequence[_DecisionRow]) -> list[_DecisionRow]:
 def repeated_runs(text: str, *, min_len: int = 3) -> list[str]:
     """Runs of `min_len` normalised characters that occur twice in `text`, not overlapping (e.g. 是真的 in
     他开始推谁是真的是真的杀呀)."""
-    t = norm_text(text)
+    t = text_overlap.key(text)
     runs: set[str] = set()
     for k in range(len(t) - min_len + 1):
         s = t[k:k + min_len]
@@ -460,5 +456,5 @@ def is_concatenation(final_text: str, candidate_texts: Sequence[str]) -> bool:
     runs = repeated_runs(final_text)
     if not runs:
         return False
-    cand_norms = [norm_text(c) for c in candidate_texts]
+    cand_norms = [text_overlap.key(c) for c in candidate_texts]
     return any(not any(cn.count(s) >= 2 for cn in cand_norms) for s in runs)

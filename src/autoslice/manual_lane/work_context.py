@@ -24,13 +24,14 @@ import json
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 
+from . import channel
+from . import text_overlap
 from . import work_lookup
 from .adapters import remote_python, root_script
-from .doubt_policy import norm_text
 from .lane_rules import rules
 from .runner import Ctx
 from .srt_text import _json_from_text
-from .step_io import PROMPTS, REMOTE_TOOLS, _local, _run_remote, _write_atomic
+from .step_io import REMOTE_TOOLS, _local, _run_remote, _write_atomic
 from .work_lookup import LookupProvider, LookupResult, LookupRow
 
 if TYPE_CHECKING:
@@ -104,7 +105,7 @@ BANNER_TIMEOUT_S = 600
 
 def _matches(work_key: str, row: LookupRow) -> bool:
     for field in ("name_cn", "name"):
-        key = norm_text(str(row.get(field) or ""))
+        key = text_overlap.key(str(row.get(field) or ""))
         if not key:
             continue
         if key == work_key:
@@ -118,7 +119,7 @@ def _matches(work_key: str, row: LookupRow) -> bool:
 def pick_subject(work: str, rows: Sequence[LookupRow]) -> LookupRow | None:
     """The Bangumi row that is this work: its Chinese or original name equals the work name once normalised, or one
     contains the other and the shorter has at least four characters.  Several matches: an anime first, else the first."""
-    work_key = norm_text(work)
+    work_key = text_overlap.key(work)
     if not work_key:
         return None
     found = [row for row in rows if row.get("layer") == "bangumi" and _matches(work_key, row)]
@@ -162,7 +163,7 @@ def _read_banner(ctx: Ctx, cut_len: float, out: WorkContext) -> bool:
     rd, t = ctx.remote_dir, cut_len / 2
     remote = ctx.adapters.remote
     for source, name in ((REMOTE_TOOLS / "read_banner.py", "read_banner.py"), (REMOTE_TOOLS / "pick_frame.py", "pick_frame.py"),
-                         (PROMPTS / "screen_banner.md", "screen_banner.md")):
+                         (channel.prompt_file("screen_banner.md"), "screen_banner.md")):
         remote.put(source, f"{rd}/work/{name}")
     body = (f"mkdir -p {rd}/work/banner\n"
             + root_script(remote_python(f"{rd}/work/read_banner.py {rd}/cut/cut.mp4 {rd}/work/banner {t:.3f}"),

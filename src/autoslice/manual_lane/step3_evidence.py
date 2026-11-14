@@ -15,6 +15,8 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 
+from . import channel
+from . import text_overlap
 from . import (
     evidence_attach,
     normalize,
@@ -26,8 +28,7 @@ from .lane_rules import rules
 from .layout import layout
 from .runner import Ctx
 from . import session_events
-from .srt_text import _norm_text
-from .step_io import PROMPTS, REMOTE_TOOLS, _clip, _local, _run_remote
+from .step_io import REMOTE_TOOLS, _clip, _local, _run_remote
 
 if TYPE_CHECKING:
     from src.autoslice.cpa_gemini_client import JsonValue
@@ -208,7 +209,7 @@ def upload_listen_tools(ctx: Ctx, prompt: str = "listen_blind.md") -> None:
     so a step that starts several passes at once uploads them once, before the passes start (TASK-31)."""
     rd = ctx.remote_dir
     for name, src in (("listen_windows.py", REMOTE_TOOLS / "listen_windows.py"),
-                      (prompt, PROMPTS / prompt)):
+                      (prompt, channel.prompt_file(prompt))):
         ctx.adapters.remote.put(src, f"{rd}/listen/{name}")
 
 
@@ -512,7 +513,7 @@ def _reviewer_final(cue: SrtCue, label: IvanLabel, *, sha: str, readings: Mappin
                 differing: Sequence[str], danmaku_near: Sequence[str]) -> doubt_policy.FinalDoubt:
     """维护者 listened to this cue: his reading is final (level 1 bypass), no CPA adjudication."""
     text = str(label["text"])
-    state = "KEEP" if _norm_text(text) == _norm_text(cue["text"]) else "ADOPT"
+    state = "KEEP" if text_overlap.key(text) == text_overlap.key(cue["text"]) else "ADOPT"
     return {"id": f"d{cue['id']:03d}" if differing else f"维护者{cue['id']:03d}", "cue_id": cue["id"],
             "source": REVIEWER_SOURCE, "current": cue["text"], "readings": dict(readings),
             "differing": list(differing), "danmaku": list(danmaku_near[:12]), "state": state,

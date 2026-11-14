@@ -162,10 +162,10 @@ class CoverRules(_RuleMetadata, total=False):
     face_top_default_px: int
     layer_top_min_px: int
     sticker_face_center_x_frac: float
-    kmx_main_center_x_frac: float
-    kmx_x_px: int
-    kmx_h_px: int
-    kmx_bottom_bleed_px: int
+    fans_main_center_x_frac: float
+    fans_x_px: int
+    fans_h_px: int
+    fans_bottom_bleed_px: int
     backgrounds: list[dict[str, JsonValue]]
     background_layer_near_distance: int
     background_layer_max_fused_frac: float

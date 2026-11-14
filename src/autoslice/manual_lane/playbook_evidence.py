@@ -6,9 +6,9 @@ from difflib import SequenceMatcher
 import math
 import re
 
+from . import text_overlap
 from . import name_match
 from .recorder_events import evidence_texts
-from .srt_text import _norm_text
 
 
 def danmaku_evidence(ctx, duration: float) -> tuple[list[dict], list[dict]]:
@@ -24,7 +24,7 @@ def danmaku_rows(ctx, duration: float) -> list[dict]:
 
 
 def slots(left: str, right: str) -> list[dict]:
-    a, b = _norm_text(left), _norm_text(right)
+    a, b = text_overlap.key(left), text_overlap.key(right)
     return [{'kind': tag, 'bcut': a[i:j], 'jianying': b[k:l],
              'bcut_range': [i, j], 'jianying_range': [k, l]}
             for tag, i, j, k, l in SequenceMatcher(None, a, b, autojunk=False).get_opcodes()]
@@ -32,7 +32,7 @@ def slots(left: str, right: str) -> list[dict]:
 
 def read_run(written: str, heard: str) -> int:
     """Longest stretch of consecutive syllables that a written text and a heard sentence share (near-sounds count)."""
-    a, b = name_match.sound_key(_norm_text(written)), name_match.sound_key(_norm_text(heard))
+    a, b = name_match.sound_key(text_overlap.key(written)), name_match.sound_key(text_overlap.key(heard))
     if not a or not b:
         return 0
     m = SequenceMatcher(None, a, b, autojunk=False).find_longest_match()
@@ -50,11 +50,11 @@ def readout_matches(cue: dict, readings: list[str], rows: list[dict]) -> list[di
             continue
         old = sent < cue['start_s'] - 90   # only a paid record reaches here: every earlier one of the session is a
         for text in evidence_texts(row):   # candidate, so a few shared characters no longer say it is being read
-            norm = _norm_text(text)
+            norm = text_overlap.key(text)
             if len(norm) < 2:
                 continue
             for reading in readings:
-                spoken = _norm_text(reading)
+                spoken = text_overlap.key(reading)
                 common = len(set(norm) & set(spoken))
                 sounds = name_match.sound_key(norm)
                 width = len(sounds) if sounds else 0   # syllables, so a Latin suffix in a name does not widen it
@@ -116,7 +116,7 @@ def begun_mishearings(readings_by_cue: dict[int, list[str]], heads: dict[str, li
     stand somewhere in the clip where every recognition writes them (then they are an ordinary word all of them hear)."""
     ordinary, contested = set(), {}
     for cue, readings in readings_by_cue.items():
-        texts = [_norm_text(r) for r in readings if r]
+        texts = [text_overlap.key(r) for r in readings if r]
         if len(texts) < 2:
             continue
         for head in heads:
@@ -132,9 +132,9 @@ def begun_mishearings(readings_by_cue: dict[int, list[str]], heads: dict[str, li
 def said_in_chat_before(word: str, cue: dict, rows: list[dict], *, within_s: float = 90.0) -> dict:
     """{'chat_just_before': [...]} when viewers wrote `word` in the chat within `within_s` before the cue ends (she is
     probably answering them), else {}.  At most the two latest."""
-    key = _norm_text(word).casefold()
+    key = text_overlap.key(word).casefold()
     found = [{'sent_s': float(r['t_s']), 'text': r['text']} for r in rows
-             if cue['end_s'] - within_s <= float(r['t_s']) <= cue['end_s'] and key and key in _norm_text(r['text']).casefold()]
+             if cue['end_s'] - within_s <= float(r['t_s']) <= cue['end_s'] and key and key in text_overlap.key(r['text']).casefold()]
     return {'chat_just_before': found[-2:]} if found else {}
 
 
@@ -145,8 +145,8 @@ def written_by_one(text: str, others: list[str]) -> list[str]:
     one recogniser wrote inside a sentence the others also wrote, more than half are absent, and the ones the owner
     kept are bare interjections.  A whole cue only one recogniser wrote is not reported: those are coughs and laughs
     the agent already tells from words, and on a clip of her watching a video the owner kept two such short lines."""
-    mine = _norm_text(text)
-    wrote = [o for o in (_norm_text(other) for other in others) if o]
+    mine = text_overlap.key(text)
+    wrote = [o for o in (text_overlap.key(other) for other in others) if o]
     if len(wrote) < 2 or not mine:
         return []
     alone = [True] * len(mine)
@@ -161,7 +161,7 @@ def written_by_one(text: str, others: list[str]) -> list[str]:
 def spam_matches(cue: dict, readings: list[str], rows: list[dict]) -> list[dict]:
     nearby = [r for r in rows if not r.get('type')
               and cue['start_s'] - 15 <= r['t_s'] <= cue['end_s'] + 15]
-    counts = Counter(_norm_text(r['text']) for r in nearby)
+    counts = Counter(text_overlap.key(r['text']) for r in nearby)
     hits = []
     for text, count in counts.items():
         if count < 3 or len(text) < 2:
@@ -176,13 +176,13 @@ def spam_matches(cue: dict, readings: list[str], rows: list[dict]) -> list[dict]
             if not key:
                 continue
             for source, reading in enumerate(readings):
-                norm = _norm_text(reading)
+                norm = text_overlap.key(reading)
                 for i in range(len(norm) - len(term) + 1):
                     span = norm[i:i + len(term)]
                     if _spam_sound_key(span) == key:
                         hits.append({'text': term, 'spam_line': text, 'count': count, 'asr_index': source,
                                      'asr_span': span, 'pinyin': list(key),
-                                     'sent_s': [r['t_s'] for r in nearby if _norm_text(r['text']) == text]})
+                                     'sent_s': [r['t_s'] for r in nearby if text_overlap.key(r['text']) == text]})
     return hits
 
 
@@ -201,17 +201,17 @@ def word_times(document: dict | list) -> list[dict]:
 
 def cue_words(cue: dict, words: list[dict]) -> dict:
     own = [w for w in words if cue['start_s'] <= (w['start_s'] + w['end_s']) / 2 < cue['end_s']]
-    counts = Counter(_norm_text(w['text']) for w in own if _norm_text(w['text']))
+    counts = Counter(text_overlap.key(w['text']) for w in own if text_overlap.key(w['text']))
     return {'words': own, 'repeats': [{'text': text, 'count': count,
                                      'times': [[w['start_s'], w['end_s']] for w in own
-                                               if _norm_text(w['text']) == text]}
+                                               if text_overlap.key(w['text']) == text]}
                                     for text, count in counts.items() if count > 1],
             'available': bool(words)}
 
 
 def classify(left: str, right: str, names: list) -> dict:
     """Only a real acoustic difference triggers audio. Rule-only items still go to CPA."""
-    a, b = _norm_text(left), _norm_text(right)
+    a, b = text_overlap.key(left), text_overlap.key(right)
     clean = lambda s: re.sub(r'[哈呵嘻嘿咳]+|[额呃]', '', s)
     if a == b:
         return {'kind': 'rule_only', 'reasons': ['R12-R15: inspect meaning, names and text conventions']}

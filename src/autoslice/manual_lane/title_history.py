@@ -25,6 +25,7 @@ if __name__ == "__main__":
 from src.autoslice.manual_lane.publication_id import publication_cid
 from src.autoslice.publication_registry import load_publication_registry
 from src.autoslice.channel_envelope import parse_talk_title
+from src.autoslice.manual_lane import channel
 
 if TYPE_CHECKING:
     from typing import NotRequired      # this file also runs as a script on the media host: no runtime need
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
     from .runner import Ctx
 
 # Existing forms in skill section 四; this is recognition, not a scene-to-name mapping or quota.
-_NAME_FORMS = re.compile(r"李豆沙|小李|熊猫头|李姐|(?<![李礼室悠璃恬晚])豆沙(?!歌)|(?i:\blds\b)|白色奶龙")
+_NAME_FORMS = re.compile(str(channel.text()["title_name_forms"]) or r"(?!)")
 
 
 def title_names(title: str) -> tuple[str, ...]:
@@ -70,7 +71,7 @@ class TitleHistory:
         return "\n".join([
             "## 最近标题的称呼（仅用于轮换，不是本片事实；从旧到新）",
             "按 skill 第四节结合场景选已有称呼；也看最近和本批的用法，避免相邻连续使用同一个称呼。",
-            "小李、李豆沙、熊猫头都是已有称呼，应在适合的场景来回换；不要因不默认小李而一直避用它。",
+            *([str(channel.text()["title_name_note"])] if channel.text()["title_name_note"] else []),
             "一条仍只用一种，主语清楚可不写名字；不为了轮换编造内容，不改引语中的称呼。",
             "已发：\n" + ("\n".join(f"- {t}" for t in self.published) or "无可读标题"),
             "本批已起：\n" + ("\n".join(f"- {t}" for t in self.batch) or "暂无"),

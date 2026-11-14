@@ -19,8 +19,7 @@ import json
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, cast
 
-from . import channel_facts, parallel
-from .layout import REPO_ROOT
+from . import channel, channel_facts, parallel
 from .runner import Ctx, StepOutcome
 from .srt_text import _json_from_text
 from .step_io import _ask_cpa, _cpa_ok, _fail, _log, _render
@@ -28,7 +27,7 @@ from .step_io import _ask_cpa, _cpa_ok, _fail, _log, _render
 if TYPE_CHECKING:
     from .state import CpaEvent
 
-PERSONA = REPO_ROOT / "assets" / "lidousha" / "persona.md"
+PERSONA = channel.asset("persona.md")
 COVER_SECTION = channel_facts.COVER_SECTION
 READ_RUNS = (1, 2)
 READ_PURPOSE = "title-read"

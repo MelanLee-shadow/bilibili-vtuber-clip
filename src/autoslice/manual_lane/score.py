@@ -19,6 +19,7 @@ import unicodedata
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
+from . import channel
 
 if TYPE_CHECKING:
     from .normalize import LoneChar
@@ -26,7 +27,7 @@ if TYPE_CHECKING:
     from .srt_text import TimedText
     from .subtitle_track import TrackCue
 
-HOST = "李豆沙"
+HOST = channel.HOST_LABEL
 _LAUGH_RE = re.compile(r"[（(]\s*(笑|\?|？)\s*[)）]")
 _SRT_TIME = re.compile(r"(\d+):(\d+):(\d+)[,.](\d+)")
 _SPEAKER_PREFIX = re.compile(r"^\[([^\]]+)\]\s*")

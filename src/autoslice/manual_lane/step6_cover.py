@@ -10,10 +10,11 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from . import text_overlap
 from .. import cover_style_rotation
 from ..cover_style_rotation import REPO_TABLE as COVER_STYLE_TABLE
 from .adapters import CPA_JUDGE_MODEL, REMOTE_REPO, remote_python, root_script
-from . import cover_column
+from . import channel, cover_column
 from .cover_pick import ROW_FACTS, face_view
 from .cover_redo import RetryBudget
 from .cover_run import TEXT_TOO_LONG_RC
@@ -21,7 +22,7 @@ from .cover_thumb import ThumbVerdict, check_thumb
 from .lane_rules import rules
 from .layout import layout
 from .runner import Ctx
-from .srt_text import SrtCue, _context_lines, _json_from_text, _norm_text
+from .srt_text import SrtCue, _context_lines, _json_from_text
 from .step6_cover_types import (
     CoverBrief as CoverBrief,
     CoverCandidate as CoverCandidate,
@@ -98,9 +99,9 @@ COVER_TEXT_TOO_LONG = "COVER_RENDER_FAILED_RC23"   # the renderer's text-does-no
 
 
 def _cover_frame_time(cues: Sequence[SrtCue], cover_lines: Sequence[str], cut_len: float) -> float:
-    needle = _norm_text(cover_lines[-1]) if cover_lines else ""
+    needle = text_overlap.key(cover_lines[-1]) if cover_lines else ""
     for cue in cues:
-        if needle and needle in _norm_text(cue["text"]):
+        if needle and needle in text_overlap.key(cue["text"]):
             return (cue["start_s"] + cue["end_s"]) / 2
     return cut_len / 2
 
@@ -280,13 +281,13 @@ def _cover_brief(ctx: Ctx, cues: Sequence[SrtCue], title: str, cover_lines: Sequ
         return {"_cpa": _log(record), "_failed": "CPA_RESPONSE_UNPARSEABLE", "_detail": record["file"]}
     if not isinstance(brief, dict):
         return {"_cpa": _log(record), "_failed": "CPA_RESPONSE_UNPARSEABLE", "_detail": record["file"]}
-    out = {k: brief.get(k) for k in ("quotes", "expression", "action", "scene_needed", "scene_reason", "setting", "kmx",
+    out = {k: brief.get(k) for k in ("quotes", "expression", "action", "scene_needed", "scene_reason", "setting", "on_fans",
                                      "column_rows")}
     out["quotes"] = [str(q) for q in out.get("quotes") or [] if str(q).strip()]
     out["expression"] = str(out.get("expression") or "").strip() or "the emotion of the cover line"
     out["action"] = str(out.get("action") or "").strip() or "talking to the camera"
     out["scene_needed"] = out.get("scene_needed") is True and bool(str(out.get("scene_reason") or "").strip())
-    out["kmx"] = out.get("kmx") is True
+    out["on_fans"] = out.get("on_fans") is True
     out["_cpa"] = _log(record)
     return cast(CoverBrief, out)
 
@@ -372,8 +373,9 @@ def cover_plan(ctx: Ctx, cover_lines: Sequence[str], brief: CoverBrief, names: S
     entry = library.get(emote_id) if emote_id else None
     emote: CoverEmote | None = ({"id": entry.id, "label": entry.label, "hd": f"{root}/{entry.hd_file}",
               "mask": f"{root}/{entry.file}"} if entry else None)
-    kmx = library.get("25") if brief.get("kmx") else None
-    kmx_emote: CoverEmote | None = {"id": "25", "hd": f"{root}/{kmx.hd_file}", "mask": f"{root}/{kmx.file}"} if kmx else None
+    fans_id = str(channel.text()["fans_emote_id"])        # the sticker that stands for the audience (the channel's own)
+    fans = library.get(fans_id) if brief.get("on_fans") and fans_id else None
+    fans_emote: CoverEmote | None = {"id": fans_id, "hd": f"{root}/{fans.hd_file}", "mask": f"{root}/{fans.file}"} if fans else None
     ai = "ai_scene（" + str(brief.get("scene_reason")) + "）" if brief.get("scene_needed") else "ai_sticker"
     rotation: CoverRotation = {"recent_style_ids": [cast(str, c["style_id"]) for c in covers if c.get("style_id")][-COVER_RECENT_STYLES:],
                 "recent_background_ids": [cast(str, c["background_id"]) for c in covers if c.get("background_id")][-COVER_RECENT_BACKGROUNDS:],
@@ -391,7 +393,7 @@ def cover_plan(ctx: Ctx, cover_lines: Sequence[str], brief: CoverBrief, names: S
             + f"字的风格跳过 {rotation['recent_style_ids'] or '无'}）"
             + (f"；{'、'.join(peers['names'])} 地位同等（{peers['source']}），同框人物同样大小" if peers["peers"] else "")
             + f"；文字版式：{layout_why}")
-    return {"recent": recent, "emote": emote, "kmx_emote": kmx_emote, "line": line, "participants": list(names),
+    return {"recent": recent, "emote": emote, "fans_emote": fans_emote, "line": line, "participants": list(names),
             "brief": cast(CoverBrief, dict(brief)), "rotation": rotation, "peers": peers, "text_layout": text_layout}
 
 
@@ -513,7 +515,7 @@ def _cover_job(ctx: Ctx, cover_lines: Sequence[str], plan: CoverPlan, boxes: Map
     cover_rules = {k: v for k, v in rules("cover").items() if not (k.startswith("_") or k.endswith("_source") or k == "source")}
     # a column of text beside her: only when it is this cover's turn, she stands alone, and the brief's rows are these lines
     rows = (cover_column.rows_of(cover_lines, (plan.get("brief") or {}).get("column_rows"), rules("cover"))
-            if plan.get("text_layout") in cover_column.COLUMNS and len(names) <= 1 and not plan.get("kmx_emote") else None)
+            if plan.get("text_layout") in cover_column.COLUMNS and len(names) <= 1 and not plan.get("fans_emote") else None)
     return {"text_layout": plan.get("text_layout") if rows else cover_column.TOP, "column_rows": cast("JsonValue", rows or []),
             "frame": f"{rd}/cover/frame.png", "screenshot_spec": f"{rd}/cover/spec.json", "out": f"{rd}/cover/cand",
             "lines": list(cover_lines), "font": f"{rd}/cover/fonts/{Path(COVER_FONT_REMOTE).name}",
@@ -523,7 +525,7 @@ def _cover_job(ctx: Ctx, cover_lines: Sequence[str], plan: CoverPlan, boxes: Map
             "guest_box": max(guests, key=lambda b: (b[2] - b[0]) * (b[3] - b[1])) if guests and len(names) > 1 else None,
             "guest_boxes": guests if len(names) > 1 else [], "routes": list(routes),
             "brief": {k: v for k, v in (plan.get("brief") or {}).items()}, "emote": plan.get("emote"),
-            "kmx_emote": plan.get("kmx_emote"), "judge_model": CPA_JUDGE_MODEL,
+            "fans_emote": plan.get("fans_emote"), "judge_model": CPA_JUDGE_MODEL,
             "content_sha256": hashlib.sha256((ctx.clip_dir / "subs/final.srt").read_bytes()).hexdigest(),
             "recent_style_ids": list((plan.get("rotation") or {}).get("recent_style_ids") or []),
             "recent_background_ids": list((plan.get("rotation") or {}).get("recent_background_ids") or []),
@@ -567,7 +569,7 @@ def _render_cover(ctx: Ctx, cues: Sequence[SrtCue], cover_lines: Sequence[str],
     for local, remote in ((local_spec, "cover/spec.json"), (local_job, "cover/job.json"), (COVER_RENDERER, "cover/render_cover.py"),
                           (COVER_REDRAW, "cover/redraw_background.py"), (COVER_STYLES, "cover/styles.json"),
                           (COVER_ROTATION, "cover/cover_style_rotation.py"), (COVER_CANDIDATES_TOOL, "cover/cover_candidates.py"),
-                          *((REMOTE_TOOLS / m, f"cover/{m}") for m in ("cover_face_crop.py", "cover_text_fit.py", "cover_layout.py", "cover_clock.py", "cover_fast_text.py", "cover_background.py"))):
+                          *((REMOTE_TOOLS / m, f"cover/{m}") for m in ("pick_frame.py", "cover_face_crop.py", "cover_text_fit.py", "cover_layout.py", "cover_clock.py", "cover_fast_text.py", "cover_background.py"))):
         ctx.adapters.remote.put(local, f"{rd}/{remote}")
     prep = _run_remote(ctx, "s6-cover-frame",
                        f"mkdir -p {rd}/cover/fonts {rd}/cover/cand\ncp {COVER_FONT_REMOTE} {rd}/cover/fonts/{Path(COVER_FONT_REMOTE).name}\n"

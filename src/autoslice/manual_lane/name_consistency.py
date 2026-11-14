@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, cast
 
+from . import text_overlap
 from . import name_match
 from .lane_rules import rules
 from .srt_text import _json_from_text
@@ -186,12 +187,12 @@ def _initials(syllables: Sequence[str]) -> tuple[str, ...]:
 
 
 def _latin_sound(word: str) -> tuple[str, ...]:
-    return tuple(ch for ch in word.lower() if ch.isalnum())
+    return tuple(text_overlap.key(word))
 
 
 def _latin_table_groups(texts: Mapping[CueId, str]) -> list[Group]:
     """One group per proper-noun row spelled in another script in this clip: `Shadow Lee` where the clip also writes a
-    Chinese name of that row, `lds` where it writes 李豆沙.
+    Chinese name of that row, the host's short code where it writes her full name.
 
     Sound grouping cannot join them (the letters are not that name's initials), and e05 §5.1 says it plainly: an alias
     in another script, spoken in a Chinese sentence, is written the table's (or its note's) Chinese way — with §5.6 the
@@ -200,7 +201,7 @@ def _latin_table_groups(texts: Mapping[CueId, str]) -> list[Group]:
     alias.  Two neighbouring rules bound this:
     - the row's name must be Chinese.  A name that already mixes scripts (雾深Girimi) is not this case: §5.1 says a
       speaker who says only the letters of such a name is written as said (Girimi), not completed to 雾深.
-    - a Chinese *alias* (小李, 豆沙) is never a target here: §5.1 says a short form the speaker said is written as said,
+    - a Chinese *alias* (the host's short names) is never a target here: §5.1 says a short form the speaker said is written as said,
       so those stay their own sound groups.
 
     Returns one group per owning row: the places of its Latin spelling plus the places of its Chinese name, `fixed` =

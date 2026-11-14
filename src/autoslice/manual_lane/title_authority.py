@@ -39,13 +39,14 @@ from src.autoslice.title_editorial_method import (
     load_title_editorial_method,
 )
 
-from .layout import REPO_ROOT
+from . import channel
+from .layout import layout
 
 if TYPE_CHECKING:
     from .subtitle_track import TrackCue
 
-TITLE_STYLE = REPO_ROOT / "assets" / "lidousha" / "title_style.md"
-TITLE_CORPUS = REPO_ROOT / "assets" / "lidousha" / "manual_title_overrides.v1.json"
+TITLE_STYLE = channel.asset("title_style.md")
+TITLE_CORPUS = channel.asset("manual_title_overrides.v1.json")
 STYLE_SECTIONS = ("## 标题", "## 封面文案")
 
 
@@ -122,7 +123,7 @@ def title_method(exclude_candidate: str | None = None) -> TitleMethod:
     """The editorial method the step-6 title prompt carries: skill 四、五 and 八.3 and examples.md, title_style.md's
     标题 / 封面文案 sections, authorship-labelled corpus, and gates, with source hashes."""
     editorial = load_title_editorial_method()
-    style, s_style = _read("assets/lidousha/title_style.md", TITLE_STYLE)
+    style, s_style = _read(f"{channel.ASSETS_REL}/title_style.md", TITLE_STYLE)
     corpus, s_corpus = corpus_titles(exclude_candidate)
     rows, _ = _corpus_rows()
     own = set()
@@ -156,7 +157,7 @@ def review_rules() -> tuple[str, tuple[Source, ...]]:
     """The title rules step 9 reviews by (U74): skill 四、五 and 八.3, with their source line."""
     editorial = load_title_editorial_method()
     source = editorial.sources[0]
-    return (f"（lidousha-title-cover skill 原文，sha256={source.sha256}）\n"
+    return (f"（{layout().cover_skill_scripts.parent.name} skill 原文，sha256={source.sha256}）\n"
             + editorial.sections + "\n\n" + editorial.judge_rules), (source,)
 
 

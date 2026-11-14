@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, TypedDict, cast
 
 from src.autoslice.channel_envelope import EnvelopeError, HOST_NAME, parse_talk_title, render_talk_title
 
+from . import channel
 from . import (
     circle_context,
     cover_import,
@@ -164,7 +165,7 @@ def title_checks(cand: TitleCandidate, names: Sequence[str], subtitles: str, *,
         failed["banned"] = "禁词：" + ",".join(banned)
     envelope = parse_talk_title(title)
     if envelope is None:
-        failed["prefix"] = "前缀不是【李豆沙】或【李豆沙×出场者】"
+        failed["prefix"] = f"前缀不是【{channel.HOST}】或【{channel.HOST}×出场者】"
     on_stage = [str(x).strip() for x in (cand.get("on_stage") or []) if str(x).strip()]
     unknown = [n for n in on_stage if n not in names]
     if not on_stage:
@@ -177,14 +178,14 @@ def title_checks(cand: TitleCandidate, names: Sequence[str], subtitles: str, *,
     partners = tuple(dict.fromkeys(n for n in on_stage if n != HOST_NAME))
     if (envelope_error or (envelope is None and partners)
             or (envelope is not None and set(envelope.partners) != set(partners))):
-        failed["prefix_names"] = "前缀未写出场者或与出场名单不一致（应为【李豆沙×…】）"
+        failed["prefix_names"] = f"前缀未写出场者或与出场名单不一致（应为【{channel.HOST}×…】）"
         if envelope_error:
             failed["prefix_names"] += "：" + envelope_error
     swap = cand.get("swap_check") or {}
     if swap.get("holds_with_other_host") is not False:
         failed["swap"] = "换主播自检未通过（或缺失）：换成别的主播仍成立，要重写"
     if not str(cand.get("punchline_person") or "").strip():
-        failed["punchline"] = "笑点未落在李豆沙本人身上（punchline_person 为空）"
+        failed["punchline"] = f"笑点未落在{channel.HOST}本人身上（punchline_person 为空）"
     quotes = check_title_quotes(title, subtitles)
     if quotes["status"] != "PASS":
         failed["quotes"] = "引号核对未过：" + ",".join(quotes["reason_codes"])
@@ -279,7 +280,7 @@ def _speaker_note(track: Sequence[TrackCue], names: Sequence[str], *, anonymous:
         return "每句前的 [说话人] 来自 speaker.srt（已核对）；[未具名嘉宾] 是身份未知的说话角色。"
     guest = title_authority.speaker_names(names, host=HOST, guest_label=GUEST_LABEL).get(GUEST_LABEL)
     return ("每句前的 [说话人] 来自 speaker.srt（已核对），引语归属以它为准"
-            + (f"；本场连线只有一位，标作 [{guest}]。" if guest else f"；[{GUEST_LABEL}] 是李豆沙以外的连线方。"))
+            + (f"；本场连线只有一位，标作 [{guest}]。" if guest else f"；[{GUEST_LABEL}] 是{channel.HOST}以外的连线方。"))
 
 
 def _raw_title_candidates(answer: TitleAnswer) -> list[TitleCandidate]:

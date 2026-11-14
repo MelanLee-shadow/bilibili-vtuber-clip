@@ -26,6 +26,7 @@ from src.autoslice.surface_canon import (
     canonicalize_hard_meme_surfaces,
 )
 
+from . import text_overlap
 from .subtitle_shape import RELAXED, legal_breaks
 
 if TYPE_CHECKING:
@@ -437,10 +438,6 @@ def _merge_fragments(pieces: list[str]) -> list[str]:
     return merged
 
 
-def _norm(text: str) -> str:
-    return re.sub(r"[\W_]+", "", text).lower()
-
-
 # A reading's words that belong to a neighbouring sentence are trimmed by overlap_join.trim_reading (U159: decided by
 # the whole-clip readings, so a real repeat is kept); the old longest-overlap trim that lived here is gone.
 
@@ -476,7 +473,7 @@ def join_repeat(prev: TimedText | None, cue: TimedText) -> str:
     Returns the reason text, or "" when there is no such repeat."""
     if prev is None or float(cue["start_s"]) - float(prev["end_s"]) > ADJACENT_JOIN_S:
         return ""
-    kind, k = _adjacent_overlap(_norm(str(prev["text"])), _norm(str(cue["text"])))
+    kind, k = _adjacent_overlap(text_overlap.key(str(prev["text"])), text_overlap.key(str(cue["text"])))
     if not kind:
         return ""
     where = "结尾" if kind == "tail" else "开头"
@@ -614,7 +611,7 @@ def _sequence(cues: Sequence[TrackCue]) -> list[TrackCue]:
         a, b = out[index - 1], out[index]
         a0, a1, b0, b1 = float(a["start_s"]), float(a["end_s"]), float(b["start_s"]), float(b["end_s"])
         if b0 < a1 - 1e-9:
-            la, lb = max(1, len(_norm(str(a["text"])))), max(1, len(_norm(str(b["text"]))))
+            la, lb = max(1, len(text_overlap.key(str(a["text"])))), max(1, len(text_overlap.key(str(b["text"]))))
             share = a0 + (min(a1, b1) - a0) * la / (la + lb)
             boundary = min(max(b0, share, a0 + min_s), cap - min_s)
             a["end_s"], b["start_s"] = boundary, boundary
@@ -677,12 +674,12 @@ def normalize_cues(cues: Sequence[TimedText], *, one_speaker: bool = False, rele
         number_hits.extend(cast(NumberEvent, dict(h, cue_id=cue.get("id"))) for h in nums)
         replaced.extend(cast(CanonEvent, dict(h, cue_id=cue.get("id"))) for h in hits)
         plain = " ".join(text.split())
-        if not _norm(plain):
+        if not text_overlap.key(plain):
             continue
         here: TimedText = {"start_s": float(cue["start_s"]), "end_s": float(cue["end_s"]), "text": plain}
         if join_repeat(prev, here):
             dups.append({"cue_id": cast("int | None", cue.get("id")),
-                         "kind": _adjacent_overlap(_norm(cast("TimedText", prev)["text"]), _norm(plain))[0]})
+                         "kind": _adjacent_overlap(text_overlap.key(cast("TimedText", prev)["text"]), text_overlap.key(plain))[0]})
         prev = here
         extra = {k: v for k, v in cue.items() if k not in {"id", "start_s", "end_s", "text"}}
         pieces = split_cue(plain, here["start_s"], here["end_s"], audit)

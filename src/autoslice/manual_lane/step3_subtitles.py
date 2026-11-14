@@ -12,6 +12,7 @@ from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, TypedDict, cast
 
+from . import text_overlap
 from . import (
     doubt_policy,
     evidence_attach,
@@ -26,7 +27,7 @@ from . import (
 from .adapters import remote_python
 from .layout import layout
 from .runner import Ctx, StepOutcome
-from .srt_text import SrtCue, _context_lines, _norm_text, parse_srt
+from .srt_text import SrtCue, _context_lines, parse_srt
 from .step3_adjudicate import (
     STRICT_RULES,
     _adjudicate_all,
@@ -285,7 +286,7 @@ def _sort_cues(bcut: Sequence[SrtCue], clip: ClipInfo, labels: Mapping[int, Ivan
         if ev.get("read_aloud"):
             out["read_aloud"].append(int(cue["id"]))
         differing = sorted(src for src, txt in readings.items()
-                           if src != "bcut" and _norm_text(txt) != _norm_text(cue["text"]))
+                           if src != "bcut" and text_overlap.key(txt) != text_overlap.key(cue["text"]))
         if cue["id"] in labels:
             out["维护者"].append(_reviewer_final(cue, labels[cue["id"]], sha=str(reviewer_section.get("export_sha256", "")),
                                            readings=readings, differing=differing, danmaku_near=ev["danmaku"]))

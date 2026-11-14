@@ -151,7 +151,7 @@ class FakeRemote:
 
 COVER_EMOTE = json.dumps({"choices": [], "reason": "测试：说明里没有一张对得上"}, ensure_ascii=False)   # the cover-emote call: none fits
 COVER_BRIEF = json.dumps({"quotes": [], "expression": "surprised", "action": "talking", "scene_needed": False,
-                          "scene_reason": "", "setting": "", "kmx": False}, ensure_ascii=False)
+                          "scene_reason": "", "setting": "", "on_fans": False}, ensure_ascii=False)
 # The skill judge's answer (references/judge-prompt.md output shape), PASS unless a test scripts its own.
 JUDGE_PASS = json.dumps({"fact_core": "x", "claims": [], "quotes": [], "rhetoric": [], "fabrication": {},
                          "cover": [], "combined_reading": "不会", "overall": "PASS", "fail_reasons": []},

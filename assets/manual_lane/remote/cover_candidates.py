@@ -7,7 +7,7 @@ with the repo's title_cover_candidates rules and keeps the best.
 
 - screenshot: the picked live frame (danmaku blurred), as before.
 - emote: an official emote of the host (the repo's keyword pick, chosen by the caller) on a pastel background, the
-  guest as a crop of the same frame (skill: stream_frame, cutout none), the kmx panda (25) when the story is about kmx.
+  guest as a crop of the same frame (skill: stream_frame, cutout none), the audience's sticker when the story is about the audience.
 - cutout: the frame with its background removed by CPA images/edits (skill redraw_background "cutout" prompt); the
   two figures found in it (alpha columns) as two layers on a pastel background, the host's head and shoulders large;
   two equal participants of a collaboration (job "peers", U158) stand the same size instead (peer_layers).
@@ -197,9 +197,9 @@ def judge(job, cid, question, image, frame, out_dir):
     return vision(job, f"{cid}.judge", question, [(image, 1920), (frame, 1280)], out_dir)
 
 
-LOCATE = ("这张图（{w}x{h} 像素）里有虚拟主播李豆沙（Q 版、表情包、抠图也算她）；以画面实际造型和名牌辨认，"
-          "她白发，也可能戴帽子或眼罩，不要假定熊猫耳一定可见；身份提示：{identity}；"
-          "图里可能还有别人。请给出李豆沙本人主脸（眉毛到下巴、左脸颊到右脸颊）在这张图里的像素框。只输出一个 JSON 对象："
+LOCATE = ("这张图（{w}x{h} 像素）里有虚拟主播" + crop_mod.HOST + "（Q 版、表情包、抠图也算她）；以画面实际造型和名牌辨认，"
+          + crop_mod.FACE_HINT + "身份提示：{identity}；"
+          "图里可能还有别人。请给出" + crop_mod.HOST + "本人主脸（眉毛到下巴、左脸颊到右脸颊）在这张图里的像素框。只输出一个 JSON 对象："
           '{{"host_face": [x0, y0, x1, y1]}}，整数；看不出就写 null。')
 
 
@@ -264,7 +264,7 @@ def measured_face(job, route, spec, host_src, out_dir, renderer):
     kind, src, crop = host_src["kind"], host_src["src"], host_src.get("crop")
     face = host_src.get("face") or host_face(job, src, out_dir, name=f"locate-{route}")
     if face is None:
-        return None, "看图没有在源图里找到李豆沙的脸"
+        return None, f"看图没有在源图里找到{crop_mod.HOST}的脸"
     if kind == "picture":                      # screenshot / scene: the picture fills the canvas
         return frame_face(face, spec["crop"]), "源图定位 × 整幅换算"
     layer = next(s for s in reversed(spec["stickers"]) if s["src"] == src and s.get("crop") == crop)
@@ -760,21 +760,21 @@ class Run:
         else:
             try:
                 stickers, face, keep, host = self.solo_host("emote", {"src": emote["hd"], "cutout": cutout}, hf, guest,
-                                                            self.rules["kmx_main_center_x_frac"] if job.get("kmx_emote") else None)
+                                                            self.rules["fans_main_center_x_frac"] if job.get("fans_emote") else None)
             except ValueError as exc:
                 return self.fail("emote", str(exc))
             host_ref = {"kind": "layer", "src": emote["hd"], "crop": host["crop"], "face": hf}
-        if job.get("kmx_emote"):         # the fans' panda stands on the other side of the main emote (approved collage)
-            kmx = {"src": job["kmx_emote"]["hd"], "cutout": "mask:" + job["kmx_emote"]["mask"], "x": self.rules["kmx_x_px"],
-                   "h": self.rules["kmx_h_px"], "y": 1080 - self.rules["kmx_h_px"] + self.rules["kmx_bottom_bleed_px"]}
-            stickers.append(kmx)
-            keep = [*keep, [kmx["x"], kmx["y"], min(1920, kmx["x"] + layer_size(kmx["src"], kmx["cutout"], None, kmx["h"], renderer)),
-                            kmx["y"] + round(kmx["h"] * 0.65)]]
+        if job.get("fans_emote"):        # the fans' sticker stands on the other side of the main emote (approved collage)
+            fans = {"src": job["fans_emote"]["hd"], "cutout": "mask:" + job["fans_emote"]["mask"], "x": self.rules["fans_x_px"],
+                    "h": self.rules["fans_h_px"], "y": 1080 - self.rules["fans_h_px"] + self.rules["fans_bottom_bleed_px"]}
+            stickers.append(fans)
+            keep = [*keep, [fans["x"], fans["y"], min(1920, fans["x"] + layer_size(fans["src"], fans["cutout"], None, fans["h"], renderer)),
+                            fans["y"] + round(fans["h"] * 0.65)]]
         self.specs.append(("emote", {"id": "emote", "stickers": stickers,
                                      **self.column.text("emote", self.lines), "face": face, "keep": keep},
-                           f"官方表情包 {emote['id']}（{emote['label']}）当李豆沙"
+                           f"官方表情包 {emote['id']}（{emote['label']}）当{crop_mod.HOST}"
                            + ("，嘉宾为同一帧的截图层（未抠图）" if guest else "") + ("，两人同样大小" if guest_measured else "")
-                           + ("，kmx 用 25 号" if job.get("kmx_emote") else ""),
+                           + (f"，粉丝贴纸用 {job['fans_emote']['id']} 号" if job.get("fans_emote") else ""),
                            emote["id"], host_ref, guest_measured))
 
     def cutout(self):
@@ -844,7 +844,7 @@ class Run:
             self.group_failure = str(exc)
             return None
         return (stickers, protect([face]), keep,
-                "CPA 生图只去掉截图背景（人物不改），李豆沙按量出的脸定大小" + ("，嘉宾在左" if two else "，整张贴在浅色底上"),
+                f"CPA 生图只去掉截图背景（人物不改），{crop_mod.HOST}按量出的脸定大小" + ("，嘉宾在左" if two else "，整张贴在浅色底上"),
                 {"kind": "layer", "src": cut_png, "crop": host["crop"], "face": located}, None)
 
     def group_cutout_layers(self, figures_found):
@@ -937,7 +937,7 @@ class Run:
         guest_layer = self.guest_layer
         self.specs.append(("ai_sticker", {"id": "ai_sticker", "stickers": stickers,
                                           **self.column.text("ai_sticker", self.lines), "face": face, "keep": keep},
-                           "CPA 生图画的这一刻 Q 版贴纸当李豆沙" + ("，嘉宾为抠图层" if guest_layer and guest_layer["src"] == self.cut_png
+                           f"CPA 生图画的这一刻 Q 版贴纸当{crop_mod.HOST}" + ("，嘉宾为抠图层" if guest_layer and guest_layer["src"] == self.cut_png
                                                       else "，嘉宾为同一帧的截图层（未抠图）" if guest_layer else "")
                            + ("，两人同样大小" if guest_measured else ""), None, host_ref, guest_measured))
 
@@ -990,7 +990,7 @@ class Run:
                "generation": {k: GENERATIONS[k] for k in uses
                               if k in GENERATIONS and (k == route or f"gen-{k}.png" in json.dumps(spec))}}
         if route == "ai_sticker" and self.guest_layers:
-            row["note"] = f"CPA 生图画的 Q 版贴纸当李豆沙，嘉宾为抠图层，{self.expected_people} 人同样大小"
+            row["note"] = f"CPA 生图画的 Q 版贴纸当{crop_mod.HOST}，嘉宾为抠图层，{self.expected_people} 人同样大小"
         if self.expected_people > 2:
             row["expected_guest_count"] = self.expected_people - 1
         started = time.monotonic()

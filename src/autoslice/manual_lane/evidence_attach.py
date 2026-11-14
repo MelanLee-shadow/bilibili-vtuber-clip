@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 
+from . import text_overlap
 from ..chat_read_aloud_match import READ_ALOUD_MIN_DELAY_MS, _match_metrics, normalize_chat_text
 from . import doubt_policy
 from .recorder_events import event_lookback_s, evidence_texts, evidence_view
@@ -128,11 +129,7 @@ def _gap(a0: float, a1: float, b0: float, b1: float) -> float:
 
 def covered_fraction(part: str, whole: str) -> float:
     """How much of `part` (filler words removed) occurs in `whole`, in order.  1.0 when part has no content."""
-    p, w = doubt_policy.sim_key(part), doubt_policy.sim_key(whole)
-    if not p:
-        return 1.0
-    common = sum(b.size for b in SequenceMatcher(None, p, w, autojunk=False).get_matching_blocks())
-    return common / len(p)
+    return text_overlap.share(doubt_policy.sim_key(part), doubt_policy.sim_key(whole))
 
 
 @dataclass
@@ -218,10 +215,6 @@ def _counts(ch: str) -> bool:
     return unicodedata.category(ch)[0] not in "PZSC"
 
 
-def _matched(a: str, b: str) -> int:
-    return sum(blk.size for blk in SequenceMatcher(None, a, b, autojunk=False).get_matching_blocks())
-
-
 def _cut_points(raw: str, cut_texts: Sequence[str], times: Sequence[tuple[float, float]], start: float, end: float
                 ) -> list[int]:
     """Where to cut `raw` (one engine segment over several consecutive sentences) so that piece j is sentence j's.
@@ -264,12 +257,12 @@ def _cut_points(raw: str, cut_texts: Sequence[str], times: Sequence[tuple[float,
                 + (0.0 if p in breaks else SPLIT_NO_BREAK))
 
     # best[j][p]: the best score of pieces 0..j with piece j ending at p (the last piece always ends at n)
-    best: list[dict[int, tuple[float, int]]] = [{p: (_matched(key[:p], keys[0]), -1) for p in order}]
+    best: list[dict[int, tuple[float, int]]] = [{p: (text_overlap.shared(key[:p], keys[0]), -1) for p in order}]
     for j in range(1, k):
         row: dict[int, tuple[float, int]] = {}
         ends = [n] if j == k - 1 else order
         for q in ends:
-            row[q] = max(((best[j - 1][p][0] - cost_t(p, j - 1) + _matched(key[p:q], keys[j]), p)
+            row[q] = max(((best[j - 1][p][0] - cost_t(p, j - 1) + text_overlap.shared(key[p:q], keys[j]), p)
                           for p in order if p <= q), key=lambda x: (x[0], -x[1]))
         best.append(row)
     cuts_key, q = [], n
@@ -328,10 +321,10 @@ def is_interjection(cues: Sequence[SrtCue], segment: AsrSegment,
         return False
     cue = next(c for c in cues if int(c["id"]) == owners[0])
     key = doubt_policy.sim_key(str(cue.get("text", "")))
-    own = _matched(key, doubt_policy.sim_key(str(segment["text"])))
+    own = text_overlap.shared(key, doubt_policy.sim_key(str(segment["text"])))
     return any(s.get("speaker") and s["speaker"] != segment["speaker"]
                and _overlap(start, end, float(s["start_s"]), float(s["end_s"])) > 0
-               and _matched(key, doubt_policy.sim_key(str(s["text"]))) > own for s in segments)
+               and text_overlap.shared(key, doubt_policy.sim_key(str(s["text"]))) > own for s in segments)
 
 
 def attach_asr(cues: Sequence[SrtCue], segments: Sequence[AsrSegment], *, source: str) -> AsrAttachment:

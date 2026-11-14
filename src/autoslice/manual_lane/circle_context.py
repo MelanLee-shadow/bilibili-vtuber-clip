@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from typing import NotRequired, TYPE_CHECKING, Protocol, TypedDict, cast
 from urllib.parse import urlparse
 
@@ -29,8 +29,7 @@ from src.autoslice.channel_envelope import HOST_NAME
 from .graph_context import GraphContext, GraphRecord, process_line
 from .runner import Ctx
 from . import references
-from .srt_text import _json_from_text
-from .step_io import _ask_cpa, _cpa_ok, _local, _log, _render
+from .step_io import _local, _render, ask_json
 
 if TYPE_CHECKING:
     from .state import CpaEvent
@@ -169,17 +168,6 @@ def _answer_problem(value: object, terms: Sequence[str]) -> str:
     return ""
 
 
-def _contract(terms: Sequence[str]) -> Callable[[object], str]:
-    def accepts(value: object) -> str:
-        problem = _answer_problem(value, terms)
-        return f"{SHAPE_REASON} ({problem})" if problem else ""
-    return accepts
-
-
-def _failure(record: CpaEvent) -> str:
-    return str(record.get("reason") or record.get("stderr_tail") or "no answer").strip().splitlines()[0][:200]
-
-
 def _settle(item: TermContext, row: ModelRow) -> None:
     """Take the model's row for one term: FOUND only with a note and a source that is really among the results."""
     allowed = {hit["url"] for hit in _results(item) if hit["url"]}
@@ -201,24 +189,12 @@ def _explain(ctx: Ctx, pending: list[TermContext], numbered: dict[int, str], cpa
               "subtitles": _neighbourhood(numbered, t["cues"]), "results": _results(t)} for t in pending]
     prompt = _render("title_context.md", items=json.dumps(items, ensure_ascii=False, indent=1))
     terms = [t["term"] for t in pending]
-    reason = ""
     answer: object = None
-    record: CpaEvent | None = None
     try:
-        record = _ask_cpa(ctx, call_id, prompt, purpose=PURPOSE, accepts=_contract(terms))
+        answer, reason = ask_json(ctx, call_id, prompt, purpose=PURPOSE, shape=SHAPE_REASON, cpa_calls=cpa_calls,
+                                  problem=lambda value: _answer_problem(value, terms))
     except Exception as exc:  # noqa: BLE001 - recorded as the reason; the step is never blocked by this call
         reason = f"{type(exc).__name__}: {str(exc)[:200]}"
-    if record is not None:
-        cpa_calls.append(_log(record))
-        if not _cpa_ok(record):
-            reason = _failure(record)
-        else:
-            try:
-                answer = _json_from_text(record["response_text"])
-            except ValueError as exc:
-                reason = f"CPA_RESPONSE_UNPARSEABLE ({str(exc)[:160]})"
-            else:
-                reason = _answer_problem(answer, terms)
     if reason or not isinstance(answer, list):
         for item in pending:
             _mark(item, FAILED, reason or "no answer")

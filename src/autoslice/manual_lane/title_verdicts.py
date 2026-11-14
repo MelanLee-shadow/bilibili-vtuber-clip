@@ -22,11 +22,11 @@ from typing import NotRequired, TypedDict
 
 from src.autoslice.title_editorial_method import AuthorityError, Source, _read
 
-from .layout import REPO_ROOT
+from . import channel
 from .publication_id import lineage, publication_cid
 from .step_io import _render
 
-VERDICTS = REPO_ROOT / "assets" / "lidousha" / "title_owner_verdicts.v1.json"
+VERDICTS = channel.asset("title_owner_verdicts.v1.json")
 SCHEMA = "title-owner-verdicts.v1"
 LIKED_MIN = 1              # grade of 还可以 and above: accepted
 DISLIKED_MAX = -1          # grade of 差 and below: rejected
@@ -162,7 +162,7 @@ class OwnerVerdicts:
 
 
 def load_verdicts() -> OwnerVerdicts:
-    text, source = _read("assets/lidousha/title_owner_verdicts.v1.json", VERDICTS)
+    text, source = _read(f"{channel.ASSETS_REL}/title_owner_verdicts.v1.json", VERDICTS)
     try:
         data = json.loads(text)
     except ValueError as exc:
