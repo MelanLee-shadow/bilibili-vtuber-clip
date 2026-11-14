@@ -38,6 +38,7 @@ from .step6_cover import (
     cover_composition_key,
     cover_host_side,
     cover_repeats,
+    on_action,
     utc_now_iso,
 )
 from .step6_cover_types import CoverCandidate, CoverPlan, CoverRenderResult, CoverRoute, FrameCall
@@ -106,10 +107,14 @@ class Cover:
                 f"{f['job']}（{f['reason']}，stdout {f['stdout']}，stderr {f['stderr']}）" for f in failures))
         return runs, [row for run in runs for row in run.rows], infeasible
 
-    def score(self, raw: Sequence[CoverCandidate]) -> list[CoverCandidate]:
+    def score(self, raw: Sequence[CoverCandidate], frame_t: float | None) -> list[CoverCandidate]:
         rows, _ = _scored_rows(raw, self.plan)
         for row in rows:
-            row["repeat"] = row["status"] == "RENDERED" and cover_repeats(row, self.plan)
+            row["on_action"] = on_action(row, self.plan, frame_t)
+            row["repeat"] = row["status"] == "RENDERED" and not row["on_action"] and cover_repeats(row, self.plan)
+        if acted := [r["id"] for r in rows if r.get("on_action") and r["score"]["status"] == "ELIGIBLE"]:
+            action = self.plan.get("action_frame") or {}
+            self.process.append(f"{'、'.join(acted)} 截在她的标志性动作上（{action.get('what')}）：合格就排在所有候选前面")
         if repeated := [r["id"] for r in rows if r.get("repeat")]:
             self.process.append(f"{'、'.join(repeated)} 与本场此前封面同路线、同构图（70-cover 同场创新）：排在不重复的候选之后")
         return rows
@@ -139,7 +144,7 @@ class Cover:
                 + (f"；换帧 {frame_t}s" if moved else "；没有换帧")
                 + "；生成类路线用新的工作目录重新生成，贴纸与场景有判官原话的，原话带进提示")
             _runs, raw, infeasible = self.make(job, routes, hooks, tag=f"-r{number}")
-            log.add_round(number, frame_t or log.frames[-1], routes, self.score(raw), raw,
+            log.add_round(number, frame_t or log.frames[-1], routes, self.score(raw, frame_t or log.frames[-1]), raw,
                           infeasible=infeasible, frame_changed=bool(moved),
                           redone={route: {"vetoes": cover_redo.material_vetoes(row), "rejection": texts[route],
                                           "regenerated": route in COVER_AI_ROUTES, "reasons_in_prompt": route in hooks}

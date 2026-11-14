@@ -11,6 +11,25 @@ from . import name_match
 from .recorder_events import evidence_texts
 
 
+# what the agent is told about the hints below (playbook_step3's `hints` tool)
+HINTS_NOTE = ('机械候选，可能有误，只是证据：readout_matches 是同期弹幕/SC 中可能被念出或回响的原记录'
+              '（relation=readout_candidate 为句前或句内已发出）；near_names 是句中与名字表拼音相近而写法不同的名字；'
+              'sender_of_message_read_next 是紧接着被念出正文的那条付费留言的发送者：她通常在念正文前或同一句里叫这个名字致谢，'
+              '这一带若有一段听不成词、又与该名字音节数相近或部分同音的称呼，多半就是它（平台后缀不念）；'
+              '若她清楚地叫的是另一个短称呼，照她叫的写；'
+              'mishearing 是频道已知误听对；begins_like_a_known_mishearing 是有的识别在这里写出了某个已知误听写法的开头（heard），'
+              '有的识别写了别的，那个误听写法（known_mishearing）代表 standard。各家在这一处互不相同，就没有哪一家的写法算'
+              '“现稿”可以原样保留：在 standard 和各家写法里，取最能同时解释各家音形、音节数和这句话在说谁的那个；'
+              'standard 讲得通而各家的写法放在句里讲不通时写 standard（可标低把握），不因“不足以证明”留下一家的错听；'
+              '带 chat_just_before 的，是句前一分半钟内有观众在弹幕里写了 standard：她多半正在回应这条弹幕，这时写 standard；'
+              'only_one_recogniser_wrote 是夹在这一句里、只有 BCUT 写了而其余识别器同一位置都没有对应文字的那几个字：'
+              '其余几家把这句话写出来了却都没有它，它多半是背景声或误触发，不是这句话的一部分——去掉这几个字，'
+              '不把它改写或扩写成别的词句（包括复听听出的外语台词）；只有它是主播清楚说出的实词时才保留。'
+              'nearby_word_sounds_alike 是句里某个字（written）和前后几句反复写到的另一个字（nearby_word，nearby_cues 是写到它的句子）'
+              '只差一点读音（同声母、同声调、韵母差一个音）：这一带正在说那件事时，她多半说的是那个字'
+              '；换成它放进句子讲不通、或复听明确听到原字时照原样写。'
+              '由你核对后决定，系统不会替你改字。')
+
 def danmaku_evidence(ctx, duration: float) -> tuple[list[dict], list[dict]]:
     """(rows, unknown segments): the chat of the whole live session on the cut clock (step3_evidence.danmaku_timeline).
     A segment that cannot be read is reported, not guessed."""
@@ -156,6 +175,68 @@ def written_by_one(text: str, others: list[str]) -> list[str]:
                 alone[i1:i2] = [False] * (i2 - i1)
     found = [mine[m.start():m.end()] for m in re.finditer('1+', ''.join('1' if x else '0' for x in alone))]
     return [] if found == [mine] else found
+
+
+TOPIC_WINDOW_CUES = 8      # cues on each side of the sentence
+TOPIC_MIN_CUES = 4         # a character written in at least this many of them is what this stretch is talking about
+COMMON_CHARS = frozenset("的地得了着过是不在有我你他她它们这那就都也还很吗呢吧啊呀哦嗯么什个一说要会能可到去来上下里看想没对好把被"
+                         "给让和跟与而又再才只人家大小多少")
+_INITIALS = ("zh", "ch", "sh", "b", "p", "m", "f", "d", "t", "n", "l", "g", "k", "h", "j", "q", "x", "r", "z", "c", "s",
+             "y", "w")
+
+
+def _syllable(ch: str) -> tuple[str, str, str] | None:
+    """(initial, final, tone) of one character as pypinyin reads it alone; tone 5 is the neutral tone."""
+    from pypinyin import Style, pinyin
+
+    read = pinyin(ch, style=Style.TONE3, heteronym=False)
+    if not read or not read[0] or not read[0][0].isascii() or not read[0][0][:1].isalpha():
+        return None
+    syl = read[0][0]
+    tone = syl[-1] if syl[-1].isdigit() else "5"
+    syl = syl.rstrip("012345")
+    initial = next((i for i in _INITIALS if syl.startswith(i)), "")
+    return initial, syl[len(initial):], tone
+
+
+def _one_sound_apart(a: str, b: str) -> bool:
+    """Same initial (not a bare vowel), same tone, finals one letter apart: 敢 gan3 / 改 gai3."""
+    sa, sb = _syllable(a), _syllable(b)
+    if sa is None or sb is None or not sa[0] or sa[0] != sb[0] or sa[2] != sb[2] or sa[1] == sb[1]:
+        return False
+    fa, fb = sa[1], sb[1]
+    if len(fa) == len(fb):
+        return sum(x != y for x, y in zip(fa, fb)) == 1
+    short, long_ = sorted((fa, fb), key=len)
+    return len(long_) - len(short) == 1 and any(long_[:i] + long_[i + 1:] == short for i in range(len(long_)))
+
+
+def nearby_near_sounds(readings_by_cue: dict[int, list[str]], order: list[int]) -> dict[int, list[dict]]:
+    """Per cue: a character every recogniser's reading of it may hold that sounds one sound apart from a character the
+    cues around it keep writing (TOPIC_MIN_CUES of the TOPIC_WINDOW_CUES on each side), while the sentence itself does
+    not write that character.  Owner 「你敢吗你敢吗」 was 「你改嘛你改嘛」 in a stretch about changing an ID
+    (改 in six cues around it) — the context should have corrected it.  On the final subtitles of 20 recent clips this
+    reports 23 places, about one a clip, that one among them."""
+    han = {cid: [set(re.findall(r"[\u4e00-\u9fff]", t)) for t in readings_by_cue.get(cid, [])] for cid in order}
+    found: dict[int, list[dict]] = {}
+    for i, cid in enumerate(order):
+        around = order[max(0, i - TOPIC_WINDOW_CUES):i] + order[i + 1:i + 1 + TOPIC_WINDOW_CUES]
+        where: dict[str, list[int]] = {}
+        for other in around:
+            for ch in set().union(*han[other]) if han[other] else ():
+                where.setdefault(ch, []).append(other)
+        mine = set().union(*han[cid]) if han[cid] else set()
+        rows = []
+        for written in sorted(mine - COMMON_CHARS):
+            if len(where.get(written, ())) > 1:
+                continue
+            for word, cues in sorted(where.items()):
+                if (len(cues) >= TOPIC_MIN_CUES and word not in COMMON_CHARS and word not in mine
+                        and _one_sound_apart(written, word)):
+                    rows.append({"written": written, "nearby_word": word, "nearby_cues": cues})
+        if rows:
+            found[cid] = rows
+    return found
 
 
 def spam_matches(cue: dict, readings: list[str], rows: list[dict]) -> list[dict]:

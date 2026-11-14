@@ -136,8 +136,13 @@ def understand(ctx: Ctx, lines: str, cpa_calls: list[CpaEvent]) -> Understanding
         persona = persona_basics()
     except OSError as exc:
         return _fail("TITLE_AUTHORITY_MISSING", f"persona.md unreadable: {PERSONA}: {exc}", cpa=cpa_calls)
+    try:
+        tiers = channel_facts.core_attractions()
+    except (OSError, KeyError) as exc:
+        return _fail("TITLE_AUTHORITY_MISSING", f"selection tiers unreadable: {channel_facts.METRIC}: {exc!r}",
+                     cpa=cpa_calls)
     hook = str(ctx.state.data["clip"].get("hook") or "")
-    read_prompt = _render("title_understand.md", persona=persona, context=lines)
+    read_prompt = _render("title_understand.md", persona=persona, tiers=tiers, context=lines)
     records = parallel.run(
         READ_RUNS, lambda run: _ask_cpa(ctx, f"title-read-{run}", read_prompt, run=run, purpose=READ_PURPOSE,
                                         accepts=_contract(reading_problem)),
@@ -148,7 +153,7 @@ def understand(ctx: Ctx, lines: str, cpa_calls: list[CpaEvent]) -> Understanding
         if isinstance(reading, StepOutcome):
             return reading
         readings.append(cast(ReadingBrief, reading))
-    merge_prompt = _render("title_understand_merge.md", persona=persona, hook=hook.strip() or NO_HOOK,
+    merge_prompt = _render("title_understand_merge.md", persona=persona, tiers=tiers, hook=hook.strip() or NO_HOOK,
                            reading_a=json.dumps(readings[0], ensure_ascii=False, indent=1),
                            reading_b=json.dumps(readings[1], ensure_ascii=False, indent=1), context=lines)
     merged = _answer(_ask_cpa(ctx, "title-merge", merge_prompt, purpose=MERGE_PURPOSE,

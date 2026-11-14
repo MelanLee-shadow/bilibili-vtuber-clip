@@ -439,6 +439,14 @@ def holds(doubts: Sequence[_DecisionRow]) -> list[_DecisionRow]:
     return [d for d in doubts if is_hold(d)]
 
 
+def held_summary(held: Sequence[Mapping[str, object]], numbers: Mapping[str, Sequence[int]]) -> str:
+    """How REVIEW.md names the held lines: the doubt id (what listen-queue --doubt takes) with the final subtitle
+    numbers it owns, and the words: d050（成片第 34 句）「…」."""
+    def where(d: Mapping[str, object]) -> str:
+        return "、".join(map(str, numbers.get(str(d["id"]), []))) or "?"
+    return "；".join(f"{d['id']}（成片第 {where(d)} 句）「{d.get('final_text')}」" for d in held)
+
+
 def repeated_runs(text: str, *, min_len: int = 3) -> list[str]:
     """Runs of `min_len` normalised characters that occur twice in `text`, not overlapping (e.g. 是真的 in
     他开始推谁是真的是真的杀呀)."""

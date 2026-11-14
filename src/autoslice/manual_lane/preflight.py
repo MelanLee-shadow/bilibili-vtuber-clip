@@ -61,6 +61,7 @@ def local_checks(report: Report) -> bool:
         report.ok(f"{LAYOUT_FILE}（主机、目录、录像位置）")
     report.tried("manual_lane_channel.json（提示词里关于频道的话）", "各步提示词", channel.text)
     report.tried("投稿标签规则 upload_tag_policy.json", "选片和第 7 步", load_selected_upload_tag_policy)
+    _host_name_in_base_tags(report, load_selected_upload_tag_policy)
     report.tried("标题方法 title_editorial_method.json", "第 6 步", load_title_editorial_method)
     report.tried("title_style.md 的「## 标题」「## 封面文案」两节", "第 6 步",
                  lambda: title_authority._style_sections(title_authority.TITLE_STYLE.read_text(encoding="utf-8")))
@@ -74,8 +75,23 @@ def local_checks(report: Report) -> bool:
     if enabled:
         report.tried("片头清单（启用）", "第 5 步", lambda: branding_intro.load_branding_intro_policy(manifest))
     else:
-        report.note("片头清单写明不用片头（enabled: false）：第 5 步不加片头")
+        report.note("片头清单写明不用片头（enabled: false）：第 5 步不加片头，第 8 步按没有片头检查成片")
     return enabled
+
+
+def _host_name_in_base_tags(report: Report, load: Callable[[], object]) -> None:
+    """`init --display-name` puts the host's name first in base_tags of a channel it creates; a channel made before
+    that, or edited by hand, may lack it, and then no clip carries the host's name as a tag."""
+    from src.autoslice.channel_profile import load_channel_profile
+
+    try:
+        base = tuple(getattr(load(), "base_tags"))
+        name = load_channel_profile(REPO_ROOT).display_name
+    except Exception:                       # the lines above already reported an unreadable policy or profile
+        return
+    if name not in base:
+        report.note(f"投稿标签的基础位（upload_tag_policy.json 的 base_tags）里没有主播名「{name}」："
+                    "第 7 步出的标签不会带主播名；要带就把它写进 base_tags 第一位")
 
 
 def host_checks(report: Report, remote: Remote, *, intro: bool) -> None:

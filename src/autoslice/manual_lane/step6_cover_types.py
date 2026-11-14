@@ -22,7 +22,14 @@ class FrameCall(TypedDict, total=False):
     usage: JsonValue
 
 
+class FrameAction(TypedDict, total=False):
+    t: float | None
+    what: str
+    why: str
+
+
 class FrameDocument(TypedDict, total=False):
+    action: FrameAction
     times: list[float]
     question: str
     chosen: float | None
@@ -137,6 +144,7 @@ class CoverCandidate(TypedDict, total=False):
     phases_s: dict[str, float]      # where this route's seconds went inside the tool (cover_clock.py)
     thumb: ThumbVerdict | None
     repeat: bool
+    on_action: bool             # a screenshot at the host's signature move (step6_cover.on_action)
 
 
 class CoverCandidateCall(TypedDict, total=False):
@@ -224,6 +232,11 @@ class RecentCover(TypedDict):
     background_id: str | None
 
 
+class CoverAction(TypedDict):
+    t: float                    # the cover frame, seconds into the cut
+    what: str                   # the move, as the vision reading put it
+
+
 class CoverPlan(TypedDict, total=False):
     recent: RecentCovers
     emote: CoverEmote | None
@@ -234,6 +247,7 @@ class CoverPlan(TypedDict, total=False):
     rotation: CoverRotation
     peers: CoverPeers
     text_layout: str            # the text layout this cover takes its turn at (cover_column.next_layout)
+    action_frame: CoverAction | None   # the cover frame is the host's signature move (step6_cover.chosen_action)
 
 
 @dataclass

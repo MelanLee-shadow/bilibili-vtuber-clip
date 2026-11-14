@@ -33,6 +33,24 @@ def basics(text: str | None = None) -> str:
     return "\n".join(kept).strip()
 
 
+METRIC = channel.asset("slice_selection_metric.md")
+TIERS_SECTION = "## 优先级分层"
+
+
+def core_attractions(text: str | None = None) -> str:
+    """What viewers come to the channel for, by tier: the `## 优先级分层` section of the selection metric, the same
+    definition selection ranks by, so the title is built on the moment selection would rank highest (owner
+    the title should stay on the channel's core attraction).  Raises KeyError when the section is
+    missing."""
+    if text is None:
+        text = METRIC.read_text(encoding="utf-8")
+    start = text.find(TIERS_SECTION)
+    if start < 0:
+        raise KeyError(TIERS_SECTION)
+    end = text.find("\n## ", start + len(TIERS_SECTION))
+    return text[start:end if end >= 0 else len(text)].strip()
+
+
 def spoken(text: str | None = None) -> str:
     """The facts a reader of her speech needs: `basics` without the lines whose label is about the cover picture, and
     without the ledger's markers."""

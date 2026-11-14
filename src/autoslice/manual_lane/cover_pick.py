@@ -57,10 +57,14 @@ def rank(rows: Sequence[CoverCandidate], *, repeats: Callable[[CoverCandidate], 
         return (not repeats(row), row.get("face_status") == "MEASURED", score["total"], score["C"],
                 min(cast("int", row.get("face_px") or 0), target_px))
     eligible = [r for r in rows if r["score"]["status"] == "ELIGIBLE"]
+    # a screenshot of the host's signature move goes first when it passed (owner 片中有经典动作优先截它);
+    # her hands may cover the face there, so it is not held to a measured face
+    first = [r for r in eligible if r.get("on_action")]
     # a candidate whose host face could not be measured (no face in the picture to lay out or to judge) is not chosen
     # while any candidate with a measured face is eligible
-    pool = [r for r in eligible if r.get("face_status") == "MEASURED"] or eligible
-    return sorted(pool, key=key, reverse=True)
+    rest = [r for r in eligible if not r.get("on_action")]
+    pool = [r for r in rest if r.get("face_status") == "MEASURED"] or rest
+    return first + sorted(pool, key=key, reverse=True)
 
 
 def choose_checked(ranked: Sequence[CoverCandidate], check: Callable[[str], ThumbVerdict]

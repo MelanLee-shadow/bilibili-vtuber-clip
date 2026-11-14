@@ -10,7 +10,7 @@ import pytest
 from fakes import MERGE, UNDERSTANDING_CALLS, FakeCpa, FakeRemote, make_ctx, srt
 
 from src.autoslice.manual_lane import stage_impl as si
-from src.autoslice.manual_lane import title_names, title_understanding
+from src.autoslice.manual_lane import channel_facts, title_names, title_understanding
 from src.autoslice.manual_lane.runner import StepOutcome
 
 SESSION = {"recording_date": "2026-10-24", "speaker_mode": "uniform_host", "enablement_evidence": None,
@@ -131,6 +131,28 @@ def test_a_missing_persona_stops_the_step_naming_it(tmp_path, monkeypatch):
     assert isinstance(picked, StepOutcome) and picked.reason == "TITLE_AUTHORITY_MISSING"
     assert "persona.md" in picked.note and not cpa.calls
 
+
+
+def test_both_readings_and_the_merge_carry_the_selection_tiers_and_pick_the_highest_one(tmp_path):
+    """Owner the title should stay on the channel's core attraction (a clear 撒娇, her stance on 百合,
+    a relationship pull), even a short one late in the clip; the tiers are the selection metric's own section."""
+    ctx, cpa, picked = _pick(tmp_path, [_answer(_cand("她半分钟后真的破防了"))], hook="她嘴硬那一段")
+    assert not isinstance(picked, StepOutcome), picked
+    tiers = channel_facts.core_attractions()
+    merge = cpa.prompts[cpa.calls.index("title-merge")]
+    for prompt in (cpa.prompts[0], merge):
+        assert tiers in prompt and "标题落点" in prompt and "哪怕它只占一小段" in prompt
+    assert "它必须属于主线" not in cpa.prompts[0]
+    assert "以笑点为准" in cpa.prompts[cpa.calls.index("title")]
+
+
+def test_a_metric_without_the_tier_section_stops_the_step_naming_it(tmp_path, monkeypatch):
+    bare = tmp_path / "metric.md"
+    bare.write_text("# metric\n\n## 七维量化表\n- 只有打分\n", encoding="utf-8")
+    monkeypatch.setattr(channel_facts, "METRIC", bare)
+    _, cpa, picked = _pick(tmp_path, [])
+    assert isinstance(picked, StepOutcome) and picked.reason == "TITLE_AUTHORITY_MISSING"
+    assert "metric.md" in picked.note and not cpa.calls
 
 # ----- the channel's basic facts ----------------------------------------------------------------------------------
 def test_basic_facts_are_the_persona_without_its_cover_section_and_keep_sections_after_it():

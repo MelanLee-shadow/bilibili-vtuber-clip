@@ -183,7 +183,9 @@ def speaker_mode_gate(session: SpeakerSession) -> Verdict:
 def intro_gate(result: IntroResult) -> Verdict:
     """维护者's rule: a finished talk clip must have the branding intro prepended (fail-closed).  A channel whose intro
     manifest says `enabled: false` has none (prepend_intro.py reports NO_INTRO, offset 0): that is the channel's choice."""
-    if result.get("status") == "NO_INTRO" and not result.get("intro_id") and result.get("intro_offset_ms") == 0:
+    from src.autoslice.intro_receipt import declared_no_intro
+
+    if declared_no_intro(result):
         return Verdict.passed(intro_id=None, intro_offset_ms=0)
     if result.get("status") != "PREPENDED":
         return Verdict.failed("INTRO_NOT_PREPENDED", f"status={result.get('status')!r}")
