@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from .adapters import REMOTE_PY, REMOTE_REPO, root_script
+from .adapters import PROFILE_ENV, REMOTE_PY, REMOTE_REPO, root_script
 from .layout import layout
 from .step10_route import COVER, FIRST, VIDEO
 
@@ -79,7 +79,7 @@ def _q(value: object) -> str:
 
 
 def _tool(job: Job, script: str, args: Sequence[object], redirect: str) -> str:
-    cmd = (f"cd {_q(REMOTE_REPO)} && env AUTOSLICE_BASE={_q(layout().autoslice_base)} "
+    cmd = (f"cd {_q(REMOTE_REPO)} && env {PROFILE_ENV} AUTOSLICE_BASE={_q(layout().autoslice_base)} "
            f"{shlex.join([REMOTE_PY, '-B', f'scripts/{script}', *map(str, args)])} {redirect}")
     return root_script(cmd.replace("'", "'\\''"), env=(), owned=str(job.out), recursive=True)
 

@@ -107,7 +107,7 @@ def published_titles(candidate_id: str, *, limit: int = 12) -> tuple[list[str], 
 
 def _remote_read(ctx: Ctx, request_data: HistoryRequest, call: str) -> object:
     """Run this file on the media host with the lane's root boundary, on `request_data`; returns the JSON it printed."""
-    from .adapters import REMOTE_PY, REMOTE_REPO
+    from .adapters import PROFILE_ENV, REMOTE_PY, REMOTE_REPO
     from .step_io import _run_remote
 
     script = f"{ctx.remote_dir}/title/history_reader.py"
@@ -117,7 +117,7 @@ def _remote_read(ctx: Ctx, request_data: HistoryRequest, call: str) -> object:
         local.write_text(json.dumps(request_data), encoding="utf-8")
         ctx.adapters.remote.put(Path(__file__), script)
         ctx.adapters.remote.put(local, request)
-    command = " ".join(shlex.quote(part) for part in ("sudo", "-n", REMOTE_PY, "-B", script, request, REMOTE_REPO))
+    command = " ".join(shlex.quote(part) for part in ("sudo", "-n", "env", PROFILE_ENV, REMOTE_PY, "-B", script, request, REMOTE_REPO))
     result = _run_remote(ctx, call, command + "\n", timeout=120)
     if result.rc:
         raise RuntimeError(f"registry projection failed: rc={result.rc}: {result.stderr[-300:]}")

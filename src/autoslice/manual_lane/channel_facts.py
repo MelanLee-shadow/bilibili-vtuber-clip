@@ -60,10 +60,11 @@ OBSERVED_HEAD = "## 切片里多次观察到（尚未经频道主审定，只作
 
 
 def observed(task: Path | None) -> str:
-    """What the task's clips have shown of her in several sessions (persona_observe.lines), as a block; "" when none."""
-    from . import persona_observe
+    """What the task's clips have shown of her and of the names they use in several sessions (persona_observe.lines,
+    knowledge_observe.lines), as a block; "" when none."""
+    from . import knowledge_observe, persona_observe
 
-    rows = persona_observe.lines(task) if task is not None else []
+    rows = [*persona_observe.lines(task), *knowledge_observe.lines(task)] if task is not None else []
     return "\n".join([OBSERVED_HEAD, *rows]) if rows else ""
 
 

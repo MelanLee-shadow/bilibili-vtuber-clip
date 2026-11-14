@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, NotRequired, Protocol, TypedDict, cast
 
+from . import channel
 from .layout import layout
 from .state import sha256_file
 
@@ -29,6 +30,7 @@ _LAYOUT = layout()                    # the one runtime layout (profiles/<id>/ma
 REMOTE_HOST = _LAYOUT.remote_host
 REMOTE_REPO = _LAYOUT.remote_repo     # read-only: existing tools only
 REMOTE_PY = _LAYOUT.remote_py
+PROFILE_ENV = "AUTOSLICE_PROFILE=" + shlex.quote(channel.PROFILE_ID)     # the active channel, for every tool run on the media host
 CPA_JUDGE_MODEL = "gpt-6.1-sol"
 CPA_JUDGE_EFFORT = "medium"
 # How many attempts one answer gets, read by both layers that make an answer: cpa_text.py gets this number as --tries
@@ -134,8 +136,10 @@ class Adapters:
 # ----- remote command builders ---------------------------------------------------------------
 def remote_python(args: str, *, python: str = REMOTE_PY) -> str:
     """The one way a lane body runs a Python tool on the media host: the deployed repo's location goes to the tool in
-    MANUAL_LANE_REMOTE_REPO (the tools name no host path); the interpreter runs without writing bytecode."""
-    return f"MANUAL_LANE_REMOTE_REPO={REMOTE_REPO} {python} -B {args}"
+    MANUAL_LANE_REMOTE_REPO (the tools name no host path); the interpreter runs without writing bytecode.  The tool
+    works for the channel this process works for (PROFILE_ENV): without it a tool on the media host reads the default
+    profile, and another channel's clip got the example channel's tags ."""
+    return f"{PROFILE_ENV} MANUAL_LANE_REMOTE_REPO={REMOTE_REPO} {python} -B {args}"
 
 
 def root_script(cmd: str, *, env: Sequence[str], optional: bool = False, owned: str | None = None,

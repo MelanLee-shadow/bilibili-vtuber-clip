@@ -47,7 +47,7 @@ from .adapters import Adapters, DanmakuSource, LocalRemote, Remote, SshCpaJudge,
 from .chat_archive import ArchiveChat
 from .clip_init import SelectionDocument, SelectionEntry, clip_from_entry, create_clip_state
 from .compilation import RecordingInput, compile_session
-from . import dissent_register, persona_observe
+from . import dissent_register, knowledge_observe, persona_observe
 from .config import load_session_config
 from .layout import layout
 from .listen import ListenError, clip_queue, import_labels, write_queue
@@ -153,8 +153,9 @@ def _finish_run(cid: str, ctx: Ctx, report: RunReport, **extra: object) -> int:
     edits (kept by default, dissent_register) are first printed, each in full."""
     if dissent_register.items(ctx.state):
         say("\n".join(dissent_register.process_lines(ctx.state)))
-    if observed := persona_observe.after_run(ctx):      # the sealed clip is read once for what it shows of the host
-        say(observed)
+    for observe in (persona_observe.after_run, knowledge_observe.after_run):    # the sealed clip, read once each for
+        if observed := observe(ctx):                    # what it shows of the host and the names it uses
+            say(observed)
     say(json.dumps({"cid": cid, "passed": report.passed, "reused": report.reused,
                     "stopped_at": report.stopped_at, "reason": report.reason,
                     "halted_before_upload": report.halted_before_upload,
@@ -682,6 +683,8 @@ RUN_ERRORS = (StateError, UploadNotAuthorized, ListenError, ValueError, OSError)
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if getattr(args, "task_dir", None):          # recorded paths are absolute, wherever the command was typed
+        args.task_dir = str(Path(args.task_dir).resolve())
     try:
         return cast(Callable[[argparse.Namespace], int], args.func)(args)
     except RUN_ERRORS as exc:

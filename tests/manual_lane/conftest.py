@@ -86,11 +86,11 @@ def _no_persona_observation_by_default(request, monkeypatch):
     """Every run of a clip ends by reading the sealed clip for what it shows of the host (persona_observe.after_run: a
     model call); a test that counts a run's calls or its printed lines has no such call, so the suite switches it off
     and test_persona_observe.py, which exercises it, keeps the real one."""
-    if request.module.__name__.endswith("test_persona_observe"):
-        return
-    from src.autoslice.manual_lane import persona_observe
+    from src.autoslice.manual_lane import knowledge_observe, persona_observe
 
-    monkeypatch.setattr(persona_observe, "after_run", lambda _ctx: "")
+    for module in (persona_observe, knowledge_observe):     # knowledge_observe: the names, read the same way
+        if not request.module.__name__.endswith("test_" + module.__name__.rsplit(".", 1)[-1]):
+            monkeypatch.setattr(module, "after_run", lambda _ctx: "")
 
 
 @pytest.fixture(autouse=True)

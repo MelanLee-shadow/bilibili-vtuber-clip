@@ -298,8 +298,10 @@ def _listen_once(ctx: Ctx, label: str, windows: Sequence[ListeningWindow],
     local_all = _local(ctx, "listen/readings.json")
     ctx.adapters.remote.get(f"{rd}/listen/out/all.json", local_all)
     everything = cast(list[ListeningRecord], json.loads(local_all.read_text(encoding="utf-8")))
-    requested = {(w["win"], name) for w in windows for m in models for name in (m["name"], *m.get("then", ()))}
-    return [r for r in everything if (r.get("win"), r.get("model")) in requested]
+    # a record is this pass's when its window, its level (slug) and its model were asked: the level too, because a
+    # level's stand-in model may be another level's own model
+    requested = {(w["win"], m["slug"], name) for w in windows for m in models for name in (m["name"], *m.get("then", ()))}
+    return [r for r in everything if (r.get("win"), r.get("slug"), r.get("model")) in requested]
 
 
 def _pass_tag(win_name: str) -> str:
