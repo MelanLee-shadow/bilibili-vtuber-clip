@@ -206,6 +206,10 @@ def test_failure_and_rewind_give_the_same_record_as_the_serial_run(tmp_path, mon
     assert (p_report.passed, p_report.reused) == (s_report.passed, s_report.reused)
     assert p_state == s_state and p_process == s_process
     assert p_process.count("## 步骤 5 ") == 2 and p_process.count("## 步骤 6 ") == 1
+    # #57: the sections written after the rewind say why the earlier step comes again; the first run's do not
+    sections = [line for line in p_process.splitlines() if line.startswith("## 步骤")]
+    rerun = [s.split()[2] for s in sections if "要求回退后重跑" in s]
+    assert rerun == ["5", "7", "8", "9"] and "第 9 步" in next(s for s in sections if "要求回退后重跑" in s)
 
 
 # ----- state ----------------------------------------------------------------------------------------------------

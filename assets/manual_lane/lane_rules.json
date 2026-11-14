@@ -142,7 +142,7 @@
       "speaker-video": {
         "effort": "high",
         "reason": "有他人声音的单人场（看视频、看动画）的说话人复核：整片逐句过一遍声纹和被看视频画面字幕的读数，定每句是主播还是视频里的人，要权衡两路证据冲突的句子。这是 U168 的「复核」一类，与 speaker-review 同档。",
-        "source": "U168（复核 -> high）；公开规则：看动画的切片里有李豆沙之外的声音，应尽最大努力分辨说话人"
+        "source": "U168（复核 -> high）；公开规则：看动画的切片里有主播之外的声音，应尽最大努力分辨说话人"
       },
       "title": {
         "effort": "medium",
@@ -316,8 +316,8 @@
     "crawler_source": "频道主 2026-11-13：“认梗查出处理论上应该跟新闻crawler是联动的”。两头：查之前先读知识图（仓库图＋新闻爬虫每天更新的候选图），图里有的不上网、背景直接给字幕代理；切片里查过的圈内指称（crawler_kinds：人物、圈内事件、以及标题步骤点名的指称；crawler_kinds_when_found：归不了类的“其他”只有查到了才交——没查到的多半是听写错字，11-14 第一次联动就交过去一个残句和一个单字；名字不足两个字的不交；作品和现成说法由检索自己回答，不交给爬虫）留给新闻爬虫当第二天的种子（<work_root>/assets/reference_seeds.json，保留最新 crawler_seeds_keep 个），爬虫把它们查成带出处的候选节点进图，下一条片就不用再搜。"
   },
   "other_voices": {
-    "_doc": "第 4 步：单人场次（只有主播一位参与者）里有没有他人的声音（主播在看视频、看动画）。判断先看画面：在 screen_frames 个均匀取的帧上让 CPA 视觉读「是否正在播放别人做的视频」，任一帧读到就进入有他人声音的路径（screen_min_hits）。进入后每句在其时间内取 1 到 cue_frames_max 帧（每 cue_frame_every_s 秒多取一帧），让 CPA 视觉读被看视频画面自带的字幕，系统只算该字幕与本句识别文字的吻合度，再与 v8 声纹一起交 CPA 逐句定李豆沙或非李豆沙。看图用封面步的同一个视觉客户端（pick_frame.py），思考档 low；CPA 文本复核的档位见 effort.purposes.speaker-video。screen_frames 为 0 时不看图，单人场一律 uniform host。",
-    "source": "公开规则18:50Z：看动画的切片里有李豆沙之外的声音，应尽最大努力分辨说话人；被看视频的字幕就是别人在说话",
+    "_doc": "第 4 步：单人场次（只有主播一位参与者）里有没有他人的声音（主播在看视频、看动画）。判断先看画面：在 screen_frames 个均匀取的帧上让 CPA 视觉读「是否正在播放别人做的视频」，任一帧读到就进入有他人声音的路径（screen_min_hits）。进入后每句在其时间内取 1 到 cue_frames_max 帧（每 cue_frame_every_s 秒多取一帧），让 CPA 视觉读被看视频画面自带的字幕，系统只算该字幕与本句识别文字的吻合度，再与 v8 声纹一起交 CPA 逐句定主播或非主播。看图用封面步的同一个视觉客户端（pick_frame.py），思考档 low；CPA 文本复核的档位见 effort.purposes.speaker-video。screen_frames 为 0 时不看图，单人场一律 uniform host。",
+    "source": "公开规则18:50Z：看动画的切片里有主播之外的声音，应尽最大努力分辨说话人；被看视频的字幕就是别人在说话",
     "whole_witness_only_with_others": true,
     "voice_min_share": 0.05,
     "voice_min_run": 3,

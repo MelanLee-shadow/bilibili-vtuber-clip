@@ -48,6 +48,7 @@ STALLED_S = 600               # ... and that model is not asked again for this l
 WAIT_DOWN_S = 600             # a model the probe found down (PROBE) is not asked again for this long
 PROBE_TIMEOUT_S = 90
 PROBE_PROMPT = "Reply with the single word OK."
+PROBE_LOG = ".probe.log"       # the probes' answers (JSON); not a *.json name: all.json holds listening records only
 
 
 def _cpa_generate(prompt, model_name, mp3):
@@ -84,10 +85,30 @@ def probe_model_name():
         return None
 
 
+def _within(seconds, ask, name):
+    """ask(name) with a deadline on the whole call: the client's timeout bounds each read, and a gateway that trickles
+    kept a one-word probe open 128-363 s (2026-11-14 18:4xZ) while the failed window waited for it."""
+    box = {}
+
+    def go():
+        try:
+            box["ok"] = ask(name)
+        except Exception as exc:  # noqa: BLE001 - handed to the caller
+            box["exc"] = exc
+
+    worker = threading.Thread(target=go, daemon=True)     # a call past the deadline is left behind, not waited for
+    worker.start()
+    worker.join(seconds)
+    if worker.is_alive():
+        raise TimeoutError(f"no answer within {seconds} s")
+    if "exc" in box:
+        raise box["exc"]
+
+
 def _probe_one(name, ask, clock):
     started = clock()
     try:
-        ask(name)
+        _within(PROBE_TIMEOUT_S + 10, ask, name)
         return {"model": name, "answered": True, "said": "", "seconds": round(clock() - started, 1)}
     except Exception as exc:  # noqa: BLE001 - what the gateway said is the evidence
         said = getattr(exc, "said", "") or f"{type(exc).__name__}: {str(exc)[:160]}"
@@ -107,7 +128,7 @@ def probe(state, name, *, outdir, cheapest=None, ask=_probe_generate, clock=time
  {"down": False} the model answers a one-line request (or is only slow): retried as before;
  {"down": True, "said": …} the gateway refuses it: not asked again until the wait (WAIT_DOWN_S) is over;
  {"gateway_down": True} it refuses the cheapest model too: no model of the gateway is asked until then.
- Both answers are written to OUTDIR/.probe.json (what the gateway said, masked by the client)."""
+ Both answers are written to OUTDIR/PROBE_LOG (what the gateway said, masked by the client)."""
     with state["lock"]:
         probes = state.setdefault("probes", {})
         entry = probes.get(name)
@@ -130,8 +151,8 @@ def probe(state, name, *, outdir, cheapest=None, ask=_probe_generate, clock=time
                 verdict["said"] = f"{target['said']}; {cheapest}: {gateway['said']}"
         verdict["at"] = clock()
         with state["lock"]:
-            seen = _read(outdir / ".probe.json") or []
-            (outdir / ".probe.json").write_text(json.dumps([*seen, verdict], ensure_ascii=False, indent=1),
+            seen = _read(outdir / PROBE_LOG) or []
+            (outdir / PROBE_LOG).write_text(json.dumps([*seen, verdict], ensure_ascii=False, indent=1),
                                                encoding="utf-8")
             if verdict["down"]:
                 until = clock() + WAIT_DOWN_S
@@ -386,8 +407,12 @@ def run(windows, models, cut, outdir, prompt_tpl, *, excerpt_fn=excerpt, generat
                                                 cheapest=cheapest), jobs))
     for name, status in results:
         print(name, status, flush=True)
-    collected = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(outdir.glob("*.json"))
-                 if p.name != "all.json"]
+    # every <win>.<slug>.json the clip's passes wrote (all.json holds the clip's records; the caller picks its own)
+    paths = [p for p in sorted(outdir.glob("*.json")) if p.name != "all.json" and not p.name.startswith(".")]
+    collected = [json.loads(p.read_text(encoding="utf-8")) for p in paths]
+    strays = [p.name for p, r in zip(paths, collected) if not isinstance(r, dict)]
+    if strays:      # not a listening record: the caller would read it as one
+        raise SystemExit(f"LISTEN_STRAY_FILES: {', '.join(strays)} in {outdir} are not listening records")
     (outdir / "all.json").write_text(json.dumps(collected, ensure_ascii=False, indent=1), encoding="utf-8")
     counts: dict[str, int] = {}
     for _, status in results:

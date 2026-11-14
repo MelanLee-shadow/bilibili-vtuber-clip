@@ -293,7 +293,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     for step in STEPS:
         rec = state.step(step.key)
         print(f"{step.number:>2} {step.key:<12} {rec.get('status', 'PENDING'):<8} {rec.get('reason', '') or ''} "
-              f"cpa={len(rec.get('cpa') or [])} {str(rec.get('note', ''))[:90]}")
+              f"cpa={len(rec.get('cpa') or [])} {str(rec.get('note', ''))[:400 if step.key == 'review' else 90]}")
     print(f"cpa_calls_total={state.cpa_call_count()}")
     return 0
 
