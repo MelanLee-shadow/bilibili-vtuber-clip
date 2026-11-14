@@ -64,7 +64,7 @@ Python **3.11+**；CI 当前覆盖 **3.11、3.12**。媒体流程还需要 `ffmp
 参考部署面向 Linux；在其他系统上先通过配置检查和测试，再验证媒体及外部工具。
 
 ```bash
-git clone https://github.com/MelanLee-shadow/bilibili-vtuber-clip.git
+git clone --depth 1 https://github.com/MelanLee-shadow/bilibili-vtuber-clip.git
 cd bilibili-vtuber-clip
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
@@ -87,7 +87,8 @@ CI 先安装 CPU 版 PyTorch，以免下载 CUDA 依赖。
 输入是 `profiles/lidousha/profile.json` 及其公开模板资产；输出是配置检查结果。
 这是配置检查的预期结果：**配置可读不等于已具备声纹或全部生产前提**。
 测试套件使用合成数据和模型替身；运行测试前不要设置 `AUTOSLICE_PROFILE`。
-测试成功不证明外部服务、真实音频质量或账号发布权限正常。
+测试成功不证明外部服务、真实音频质量或账号发布权限正常。CI 在 Linux 上跑 Python 3.11 和 3.12；
+在 macOS 上有一条与系统文件读取有关的用例（`test_no_dead_imports`）会失败，与本项目的功能无关。
 
 ### 3. 配置自己的频道和服务
 

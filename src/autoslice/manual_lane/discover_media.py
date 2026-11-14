@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any, TypedDict
 
 from .adapters import Remote, root_script
 from .lane_rules import rules
-from .layout import REPO_ROOT, layout
+from .layout import layout
 from .parallel import slot
 from .source_read import HOST_ENCODE, source_audio_script
 from .state import StateError, sha256_file
@@ -34,7 +34,6 @@ from .state import StateError, sha256_file
 if TYPE_CHECKING:
     from .adapters import RemoteResult
 
-TOPOLOGY_FILE = REPO_ROOT / "ops" / "recording" / "oci3-recording-topology.json"
 PREPARED_SCHEMA = "manual-lane.discover-prepared.v1"
 AUDIO_TIMEOUT_S = 2400            # a 30-minute segment takes minutes; the manual run's own bound
 NO_SPEECH = "NO_SPEECH"            # a recording nobody speaks in (the few seconds before or after a stream): done, not failed
@@ -132,8 +131,8 @@ def _fingerprint(*parts: object) -> str:
 
 
 def archive_room() -> str:
-    """The room's directory in the recorder's archive on the media host (the topology file names the root)."""
-    return f"{json.loads(TOPOLOGY_FILE.read_text(encoding='utf-8'))['n100_archive_root']}/{layout().room_id}"
+    """The room's recordings on the media host (layout.archive_room_dir: manual_lane.json `archive_root`, else the topology)."""
+    return layout().archive_room_dir
 
 
 def archive_dir(date: str) -> str:
@@ -198,7 +197,9 @@ def _now(stdout: str) -> float:
 
 def list_dates(remote: Remote) -> tuple[list[str], float]:
     """The date directories of the room in the archive (oldest first) and the host's clock."""
-    find = shlex.join(['find', archive_room(), '-mindepth', '1', '-maxdepth', '1', '-type', 'd']) + r" -printf 'D\t%f\n'"
+    room = archive_room()               # a room with no directory yet has no recordings: that is an answer, not a failure
+    find = f"if [ -d {shlex.quote(room)} ]; then " + shlex.join(
+        ['find', room, '-mindepth', '1', '-maxdepth', '1', '-type', 'd']) + r" -printf 'D\t%f\n'; else echo NO_ROOM_DIR; fi"
     direct = direct_room()
     if direct:           # the days copied straight from the recorder count too (the archive may not have the day yet)
         find += f"; if [ -d {shlex.quote(direct)} ]; then " + shlex.join(

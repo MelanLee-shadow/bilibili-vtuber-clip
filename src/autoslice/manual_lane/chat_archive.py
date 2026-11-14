@@ -9,20 +9,18 @@ so the same question is answered from the archive.  Same protocol as adapters.Da
 
 from __future__ import annotations
 
-import json
 import subprocess
 from collections.abc import Sequence
 from pathlib import PurePosixPath
 
-from .layout import REPO_ROOT, layout
+from .layout import layout
 
-TOPOLOGY_FILE = REPO_ROOT / "ops" / "recording" / "oci3-recording-topology.json"
 READ_TIMEOUT_S = 600
 
 
 def archive_room_dir() -> str:
-    """The room's directory in the recorder's archive on the media host (the topology file is the one place that names the root)."""
-    return f"{json.loads(TOPOLOGY_FILE.read_text(encoding='utf-8'))['n100_archive_root']}/{layout().room_id}"
+    """The room's recordings on the media host (layout.archive_room_dir)."""
+    return layout().archive_room_dir
 
 
 class ArchiveChat:
