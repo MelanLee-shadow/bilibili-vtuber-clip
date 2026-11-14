@@ -12,3 +12,7 @@ from typing import Any
 
 def load_publication_registry() -> dict[str, Any]:
     return {"entries": []}
+
+
+def _candidate_ids(*args: Any, **kwargs: Any) -> Any:
+    raise RuntimeError("_candidate_ids: the channel's publication authority is not part of this snapshot")
