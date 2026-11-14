@@ -38,6 +38,7 @@ import argparse
 import json
 import os
 import re
+import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -52,7 +53,7 @@ from .layout import layout
 from .listen import ListenError, clip_queue, import_labels, write_queue
 from .reselect import SUPERSEDED, load_cues, reselect_from_counter, supersede_candidate
 from .multi_run import Progress, clip_ids, run_many, say
-from .runner import Ctx, RunReport, UploadNotAuthorized, check_upload_request, run_clip
+from .runner import Ctx, RunReport, Step, StepOutcome, UploadNotAuthorized, check_upload_request, run_clip
 from .score import (
     SCORER_VERSIONS,
     TSV_COLUMNS,
@@ -223,8 +224,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     check_upload_request(args.upload, args.quote)
     task = Path(args.task_dir)
     cids = clip_ids(args.cid, args.cids_file)
-    if len(cids) == 1:            # one clip: the same output as before (no log file, no progress lines)
-        return _run_clip_cid(args, task, cids[0], None)
+    if len(cids) == 1:            # one clip: the same standard output as before; a line per step on standard error,
+        def progress(step: Step, event: str, outcome: StepOutcome | None) -> None:    # so a long run is seen to be alive
+            what = "开始" if event == "start" else "完成" if outcome is None or outcome.ok else f"停止（{outcome.reason}）"
+            print(f"[{cids[0]}] 步骤 {step.number} {step.title} {what}", file=sys.stderr, flush=True)
+
+        return _run_clip_cid(args, task, cids[0], progress)
     return run_many(cids, lambda cid, progress: _run_clip_cid(args, task, cid, progress),
                     log_dir=task / "run-logs", errors=RUN_ERRORS)
 
@@ -273,6 +278,15 @@ def cmd_status(args: argparse.Namespace) -> int:
         from .discover import ledger_lines
 
         print("\n".join(ledger_lines(Path(args.task_dir))))
+        for path in sorted((Path(args.task_dir) / "state").glob("*.json")):      # the clips of the task, by id
+            state = ClipState.load(path)
+            if state.data["clip"].get("status") == "SUPERSEDED":
+                continue
+            done = [s for s in STEPS if state.step(s.key).get("status") == "DONE"]
+            stopped = [s for s in STEPS if state.step(s.key).get("status") not in (None, "DONE", "PENDING")]
+            where = f"停在第 {stopped[0].number} 步 {stopped[0].title}：{state.step(stopped[0].key).get('reason') or ''}" if stopped \
+                else f"做到第 {done[-1].number} 步 {done[-1].title}" if done else "还没开始"
+            print(f"片 {path.stem}  {where}")
         return 0
     state = ClipState.load(Path(args.task_dir) / "state" / f"{args.cid}.json")
     for step in STEPS:
@@ -281,6 +295,17 @@ def cmd_status(args: argparse.Namespace) -> int:
               f"cpa={len(rec.get('cpa') or [])} {str(rec.get('note', ''))[:90]}")
     print(f"cpa_calls_total={state.cpa_call_count()}")
     return 0
+
+
+def cmd_preflight(args: argparse.Namespace) -> int:
+    """Everything the steps will read, checked once before the first clip (preflight.py)."""
+    from .preflight import preflight
+
+    remote = None if args.local_only else _adapters(f"{layout().work_root}/preflight", args.on_media_host).remote
+    report = preflight(remote)
+    print("\n".join(report.lines))
+    print(f"问题 {report.problems} 处" + ("" if report.problems else "：可以开始 discover"))
+    return 2 if report.problems else 0
 
 
 def cmd_listen_queue(args: argparse.Namespace) -> int:
@@ -526,7 +551,13 @@ def build_parser() -> argparse.ArgumentParser:
                         "directory>/sources); the directory it is found in is recorded in the clip")
     p.set_defaults(func=cmd_run)
 
-    p = sub.add_parser("status", help="the step table of one clip; without --cid, the discovery ledger of the task")
+    p = sub.add_parser("preflight", help="before the first clip: every file and host tool the steps need, checked once "
+                       "(changes nothing, calls no model)")
+    p.add_argument("--local-only", action="store_true", help="only the channel's files; do not contact the media host")
+    p.add_argument("--on-media-host", action="store_true", help="run controller and media work on the media host")
+    p.set_defaults(func=cmd_preflight)
+
+    p = sub.add_parser("status", help="the step table of one clip; without --cid, the discovery ledger and the clips of the task")
     p.add_argument("--task-dir", required=True)
     p.add_argument("--cid", default=None)
     p.set_defaults(func=cmd_status)

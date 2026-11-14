@@ -1,0 +1,6 @@
+{
+  "schema_version": "title-owner-verdicts.v1",
+  "recorded_at": "1970-01-01T00:00:00Z",
+  "_doc": "频道主对候选标题的逐条评语：owner_comment 是他的原话，grade/label 是按原话整理的数字化；只追加，不改旧条目。新频道从空列表起步；格式见 assets/lidousha/title_owner_verdicts.v1.json。",
+  "clips": []
+}

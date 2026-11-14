@@ -19,7 +19,7 @@
 | `<autoslice_base>/venv-main` | 装好 `requirements.txt` 的虚拟环境，主机端工具用它的 `bin/python` |
 | `<autoslice_base>/cpa.env` | 模型网关的地址和密钥：`CPA_BASE_URL`、`CPA_API_KEY`。文字、看图、复听用的音频模型都走这个网关（用哪些模型见 `assets/manual_lane/lane_rules.json`）；流水线只读 `<autoslice_base>/` 下的这几个 `*.env`，不读别处的 `.env`。整片识别用的 `mai.env`、`moss.env` 可选。[凭据说明](../docs/credentials.md) 写于早先版本，其中的 `preflight.py`、发布工具、别的 `.env` 路径和模型名以本文为准 |
 | `<work_root>` | 工作根：每个录像日一个目录，共用资产在 `<work_root>/assets` |
-| `<work_root>/assets/fonts`、`<work_root>/assets/intro` | 封面字体和片头。默认字体文件名 `RuiZiZhenYan.ttf` 不随仓库分发：放一个同名字体，或在 `manual_lane.json` 的 `cover_font` 写另一个字体文件在**媒体主机上的完整路径**（`assets/<id>/fonts/` 里有开源字体，同步后在 `<autoslice_base>/current/repo/assets/<id>/fonts/` 下）。没有片头就在片头资产里关掉 |
+| `<work_root>/assets/fonts`、`<work_root>/assets/intro` | 封面字体和片头。默认字体文件名 `RuiZiZhenYan.ttf` 不随仓库分发：放一个同名字体，或在 `manual_lane.json` 的 `cover_font` 写另一个字体文件在**媒体主机上的完整路径**（`assets/<id>/fonts/` 里有开源字体，同步后在 `<autoslice_base>/current/repo/assets/<id>/fonts/` 下）。没有片头就让 `assets/<id>/intro/branding_intro.v1.json` 保持 `enabled: false`（模板默认），第 5 步不加片头 |
 
 最小布置（`venv-main` 和各 `*.env` 可以是指向已有环境和凭据文件的软链）：
 
@@ -97,10 +97,14 @@ AUTOSLICE_PROFILE=<id> python3 -m pytest -q tests/manual_lane/test_channel_neutr
 
 ```bash
 export AUTOSLICE_PROFILE=<id>
+python3 scripts/manual_lane.py preflight                                 # 开工前自检：频道文件和主机上缺什么，一次查完
 python3 scripts/manual_lane.py discover --task-dir <任务目录>            # 一天的录像 → 候选 → 建任务
-python3 scripts/manual_lane.py status --task-dir <任务目录>              # 看选出了哪些
+python3 scripts/manual_lane.py status --task-dir <任务目录>              # 每天的账本和各条片的片号、做到哪一步
 python3 scripts/manual_lane.py run --task-dir <任务目录> --cid <片号> --until 9
 ```
+
+`preflight` 不改任何东西、不调用模型；有“缺”的先补上再开始，免得做到后面几步才停。录像根可以是只读目录。
+一条两分钟的片，字幕一步通常要二十分钟到一个多小时（疑点要逐个复听），`run` 期间每一步开始和结束会在终端打一行。
 
 每条片的目录里有 `PROCESS.md`：每一步做了什么、模型怎么判、采用了什么；某一步停下时，原因写在那里和状态文件里。
 停下就读原因，不要重复运行去碰运气。第 10 步（上传）不在公开版里。

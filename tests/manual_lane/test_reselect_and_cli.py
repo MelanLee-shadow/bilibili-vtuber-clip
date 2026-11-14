@@ -83,7 +83,8 @@ def test_cli_exposes_only_the_kept_subcommands():
     parser = cli.build_parser()
     names = set(parser._subparsers._group_actions[0].choices)
     assert names == {"init", "auto", "discover", "compile", "run", "status", "listen-queue", "listen-import", "import-subtitles", "reselect",
-                     "supersede", "trim", "score", "revise", "import-cover", "resolve-dissent", "redo", "record-title-receipt"}
+                     "supersede", "trim", "score", "revise", "import-cover", "resolve-dissent", "redo", "record-title-receipt",
+                     "preflight"}
 
 
 def test_cli_init_creates_the_state_from_a_selection_entry(tmp_path):

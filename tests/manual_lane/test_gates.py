@@ -82,6 +82,9 @@ def test_intro_must_be_prepended_fail_closed():
     assert gates.intro_gate({"status": "PREPENDED", "intro_id": "Z1", "intro_offset_ms": 0}).ok
     assert gates.intro_gate({"status": "SKIPPED"}).reason_code == "INTRO_NOT_PREPENDED"
     assert gates.intro_gate({"status": "PREPENDED"}).reason_code == "INTRO_ID_MISSING"
+    # a channel whose intro manifest is switched off: no intro, offset 0 (prepend_intro.py NO_INTRO)
+    assert gates.intro_gate({"status": "NO_INTRO", "intro_id": None, "intro_offset_ms": 0}).ok
+    assert not gates.intro_gate({"status": "NO_INTRO", "intro_id": None, "intro_offset_ms": 900}).ok
 
 
 def test_title_banned_words_follow_reviewer_and_nothing_else():
