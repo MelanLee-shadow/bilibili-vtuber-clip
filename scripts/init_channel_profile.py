@@ -81,6 +81,12 @@ def init_profile(
         if path.is_file() and path.suffix in {".json", ".md", ".txt"}:
             replaced_files += _fill_template(path, profile_id)
 
+    tags = assets_dst / "upload_tag_policy.json"     # the host's name is the first base tag (the example channel's too)
+    if display_name and tags.is_file():
+        policy = json.loads(tags.read_text(encoding="utf-8"))
+        policy["base_tags"] = [display_name, *(t for t in policy.get("base_tags", []) if t != display_name)][:4]
+        tags.write_text(json.dumps(policy, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
     method_dir = assets_dst / "title_method"          # the title method's editable text; the pipeline reads its projection
     if method_dir.is_dir():
         from src.autoslice.title_editorial_method import extract_title_editorial_method, projection_data

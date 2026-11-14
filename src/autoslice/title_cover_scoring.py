@@ -33,8 +33,10 @@ def strict_file(root: Path, relative: object) -> Path:
     return resolved
 
 
-def score_candidate(row: Mapping[Any, Any], *, participants: list[str], recent: Mapping[Any, Any]) -> dict[Any, Any]:
-    """Skill choose_cover formula: T saturates at 200; C breaks score ties."""
+def score_candidate(row: Mapping[Any, Any], *, participants: list[str], recent: Mapping[Any, Any],
+                    host: str) -> dict[Any, Any]:
+    """Skill choose_cover formula: T saturates at 200; C breaks score ties.  `host` is the channel's host as the
+    judge names people (the channel profile's display name): a cover without her is vetoed (HOST_MISSING)."""
     vetoes = []
     route = row.get("route")
     if route not in ROUTES:
@@ -65,7 +67,7 @@ def score_candidate(row: Mapping[Any, Any], *, participants: list[str], recent: 
         present = []
     if set(present) - set(participants):
         vetoes.append("UNSOURCED_PARTICIPANT")
-    if "李豆沙" not in present:
+    if host not in present:
         vetoes.append("HOST_MISSING")
     face = verdict.get("face")
     if not isinstance(face, list) or len(face) != 4 or any(type(v) is not int for v in face):
@@ -106,7 +108,7 @@ def score_candidate(row: Mapping[Any, Any], *, participants: list[str], recent: 
     last_five = recent.get("last_five_main_emotes", [])
     if emote and (emote in last_five or emote in recent.get("source_session_main_emotes", [])):
         vetoes.append("MAIN_EMOTE_REPEATED")
-    people = 2 if set(participants) <= set(present) else 1 if "李豆沙" in present else 0
+    people = 2 if set(participants) <= set(present) else 1 if host in present else 0
     typography = 2 if size >= 200 else 1 if size >= 150 else 0
     fresh = int(route != recent.get("previous_route") and (not emote or emote not in last_five))
     realism = REALISM[route]

@@ -37,6 +37,7 @@ from .common import (
     write_json,
 )
 from .member import package_files, member_copy_path
+from src.autoslice.subtitle_display_limits import DEFAULT_MAX_VISUAL_LINE_CHARS, DEFAULT_MAX_VISUAL_LINES, LONG_STATIC_CUE_SECONDS
 
 PASS, FAIL, FLAG = "PASS", "FAIL", "FLAG"
 SKIPPED = ("SKIPPED_DISABLED", "SKIPPED_UNAVAILABLE")
@@ -165,11 +166,11 @@ def srt_shape_problems(path: Path) -> list[str]:
         ) or problems.append("SRT_RELEASE_VALIDATION_FAILED")
     for cue in audit._parse_srt(path):
         lines = [line.strip() for line in cue["lines"] if line.strip()]
-        if len(lines) > audit.DEFAULT_MAX_VISUAL_LINES:
+        if len(lines) > DEFAULT_MAX_VISUAL_LINES:
             problems.append("SUBTITLE_CUE_TOO_MANY_LINES")
-        if any(audit._text_len(line) > audit.DEFAULT_MAX_VISUAL_LINE_CHARS for line in lines):
+        if any(audit._text_len(line) > DEFAULT_MAX_VISUAL_LINE_CHARS for line in lines):
             problems.append("SUBTITLE_LINE_TOO_LONG")
-        if cue["end"] - cue["start"] >= audit.LONG_STATIC_CUE_SECONDS and lines:
+        if cue["end"] - cue["start"] >= LONG_STATIC_CUE_SECONDS and lines:
             problems.append("SUBTITLE_LONG_STATIC_CUE")
     return sorted(set(problems))
 
@@ -187,13 +188,12 @@ def speaker_problems(root: Path, cid: str) -> tuple[list[str], list[dict[str, An
     from src.autoslice.review_package_ass_audit import audit_review_package_ass
 
     files = package_files(root, cid)
-    audit = _visual_constants()
     result = audit_review_package_ass(
         root=root,
         item={"ass_path": files["ass"].name, "speaker_srt": files["speaker_srt"].name},
         portable_required=False,
-        max_visual_lines=audit.DEFAULT_MAX_VISUAL_LINES,
-        max_visual_line_chars=audit.DEFAULT_MAX_VISUAL_LINE_CHARS,
+        max_visual_lines=DEFAULT_MAX_VISUAL_LINES,
+        max_visual_line_chars=DEFAULT_MAX_VISUAL_LINE_CHARS,
     )
     problems = [issue.code for issue in result.issues]
     plain = srt_cues(files["srt"].read_text(encoding="utf-8"))
@@ -525,14 +525,14 @@ def title_problems(title: str, speaker_srt: str) -> tuple[list[str], dict[str, A
 
 
 def a9_title_quotes(ctx: Context) -> dict[str, Any]:
-    from scripts import authorized_upload as au
+    from src.autoslice.upload_description import description_for_title
     from src.autoslice.title_cover_quotes import check_cover_quotes
 
     title = ctx.text("title").strip()
     speaker = ctx.text("speaker_srt")
     problems, quotes = title_problems(title, speaker)
     try:
-        description = au.description_for_title(title, extra=ctx.member.get("description_extra"))
+        description = description_for_title(title, extra=ctx.member.get("description_extra"))
     except Exception as exc:  # EnvelopeError: partner envelope cannot render
         problems.append("FMR_A9_DESCRIPTION_ENVELOPE_INVALID")
         description = ""

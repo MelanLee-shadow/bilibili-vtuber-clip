@@ -201,7 +201,7 @@ def test_first_failure_asks_the_model_and_the_cheapest_model_a_one_line_question
     assert asked == ['m'] and probed == ['m', 'lite']          # one try, not three; both one-line questions failed
     record = json.loads((tmp_path / 'AG0001.argon.json').read_text())
     assert said in record['error'] and record['retry_at'] == now[0] + listen_windows.WAIT_DOWN_S
-    assert json.loads((tmp_path / '.probe.json').read_text())[0]['gateway_down'] is True
+    assert json.loads((tmp_path / listen_windows.PROBE_LOG).read_text())[0]['gateway_down'] is True
     # the whole gateway is down: another model of another level is not asked either, and nothing is probed again
     other = dict(window, win='AG0002')
     assert listen_windows.one((other, {'name': 'n', 'slug': '38m'}), state=state, **how)[1] == 'quota_wait'
@@ -249,3 +249,41 @@ def test_a_one_line_question_that_only_times_out_does_not_stop_the_model(tmp_pat
     assert listen_windows.one((window, {'name': 'm', 'slug': '38m'}), outdir=tmp_path, prompt_tpl='test', state=state,
                               generate=generate, max_attempts=3, probe_ask=probe_ask, cheapest='lite')[1] == 'OK'
     assert state['exhausted'] == {}
+
+
+def test_a_pass_that_probed_writes_only_listening_records_to_all_json(tmp_path, monkeypatch):
+    """18:33Z: the probe's answers were collected into all.json as a record and step 3 crashed reading it."""
+    from assets.manual_lane.remote import listen_windows
+
+    monkeypatch.setattr(listen_windows.time, 'sleep', lambda _s: None)
+    answers = [RuntimeError('CPA_GEMINI_EMPTY_RESPONSE'), '{"lines": []}']
+
+    def generate(*_a):
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    windows = [{'win': 'AG0001', 'audio': [0., 2.], 'core': [0., 2.], 'tempo': 1.}]
+    listen_windows.run(windows, [{'name': 'm', 'slug': '38m'}], 'unused.mp4', tmp_path, 'test',
+                       excerpt_fn=lambda *_a: tmp_path / 'a.mp3', generate=generate, workers=1,
+                       probe_ask=lambda _name: None, cheapest='lite')
+    assert (tmp_path / listen_windows.PROBE_LOG).is_file()             # the probe ran and left its answers
+    records = json.loads((tmp_path / 'all.json').read_text())
+    assert [(r['win'], r['status']) for r in records] == [('AG0001', 'OK')]
+    (tmp_path / 'stray.json').write_text('[1]')
+    with pytest.raises(SystemExit, match='LISTEN_STRAY_FILES: stray.json'):
+        listen_windows.run(windows, [{'name': 'm', 'slug': '38m'}], 'unused.mp4', tmp_path, 'test',
+                           excerpt_fn=lambda *_a: tmp_path / 'a.mp3', generate=generate, reuse_only=True, workers=1)
+
+
+def test_a_probe_that_trickles_past_its_deadline_is_slow_not_down_and_is_not_waited_for(monkeypatch):
+    """18:4xZ: one-word probes stayed open 128-363 s (the client's timeout bounds each read)."""
+    import time as real_time
+    from assets.manual_lane.remote import listen_windows
+
+    monkeypatch.setattr(listen_windows, "PROBE_TIMEOUT_S", -9.8)       # deadline 0.2 s
+    started = real_time.monotonic()
+    seen = listen_windows._probe_one("m", lambda _name: real_time.sleep(5), real_time.monotonic)
+    assert real_time.monotonic() - started < 2
+    assert seen["answered"] is True and "no answer within" in seen["said"]

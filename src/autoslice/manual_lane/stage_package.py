@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, NotRequired, TypedDict, cast
 
 from src.autoslice.channel_envelope import EnvelopeError
+from src.autoslice.finished_media_review.common import AUTO_CHECKS_NAME, EVIDENCE_DIR
 from src.autoslice.upload_description import description_for_title
 
 from . import (channel, compilation, cover_import, dissent_register, doubt_policy, focused_retry, gates, normalize, package_guards,
@@ -35,16 +36,7 @@ from .review_owner import cue_number as _cue_number
 from .review_owner import subtitle_edits as _subtitle_edits
 from .state import bcut_source_zero_ms
 from .step_io import _cache_cpa_answer, _cpa_cache_path, _effort_of, _record_cpa_files, _write_atomic
-from .stage_impl import (
-    _ask_cpa,
-    _cpa_ok,
-    _fail,
-    _json_from_text,
-    _log,
-    _render,
-    linked_session,
-    parse_srt,
-)
+from .stage_impl import _ask_cpa, _cpa_ok, _fail, _json_from_text, _log, _render, linked_session, parse_srt
 
 if TYPE_CHECKING:
     from src.autoslice.cpa_gemini_client import JsonValue
@@ -283,9 +275,8 @@ def package_dir(ctx: Ctx) -> Path:
 
 def _fmr(*args: str) -> subprocess.CompletedProcess[str]:
     """One call to the lane's CLI from the repo root; the lane itself decides what its output means."""
-    return subprocess.run([sys.executable, str(FMR_SCRIPT), *args], cwd=str(REPO_ROOT),
-                          capture_output=True, text=True, timeout=3600,
-                          check=False)   # the callers read the rc and the lane's own FAIL lines
+    return subprocess.run([sys.executable, str(FMR_SCRIPT), *args], cwd=str(REPO_ROOT), capture_output=True,
+                          text=True, timeout=3600, check=False)   # the callers read the rc and the lane's own FAIL lines
 
 
 def _fmr_flags(text: str) -> list[str]:
@@ -450,8 +441,10 @@ def step8_package(ctx: Ctx) -> StepOutcome:
     check = _fmr("check", "--package", str(package), "--tags-from", str(ctx.clip_dir / "tags/tags.json"), *revision_authority.fmr_args(ctx))
     check_log = pkg / "fmr_check.log"
     check_log.write_text(check.stdout + check.stderr, encoding="utf-8")
-    if check.returncode not in (0, 1):   # 1 = the lane's findings (recorded below); anything else = refused
-        return _fail("FMR_CHECK_REFUSED", (check.stdout + check.stderr)[-400:])
+    # 1 = the lane's findings (recorded below), other codes = refused; a crashed check exits 1 too, without results
+    if check.returncode not in (0, 1) or not (package / EVIDENCE_DIR / AUTO_CHECKS_NAME).is_file():
+        return _fail("FMR_CHECK_REFUSED" if check.returncode not in (0, 1) else "FMR_CHECK_DID_NOT_FINISH",
+                     (check.stdout + check.stderr)[-400:])
     flags = _fmr_flags(check.stdout)
     products = {"package": str(pkg / "final.mp4"), "member": str(member_path), "fmr_check": str(check_log),
                 "fmr_package": str(package), **revision_authority.record(ctx, pkg, guard_notes)}
@@ -1343,16 +1336,17 @@ def _finish(ctx: Ctx, *, cpa: list[CpaEvent], process: list[str]) -> StepOutcome
     dissent_register.write_section(ctx.state, review_md)
     process = process + dissent_register.process_lines(ctx.state)
     held = doubt_policy.holds(current_doubts(ctx)[0])
-    if held:
-        process = process + [f"定不下且影响意思 {len(held)} 句：成片包已完成，不 attest、不封存，保留待处理："
-                             + "，".join(f"{d['id']}「{d.get('final_text')}」" for d in held)]
+    if held:     # #55: the note (what `status` shows) names the held lines, not only PROCESS.md
+        lines = "，".join(f"{d['id']}「{d.get('final_text')}」" for d in held)
+        process = process + [f"定不下且影响意思 {len(held)} 句：成片包已完成，不 attest、不封存，保留待处理：{lines}"]
         return StepOutcome(True, products=products, cpa=cpa, process=process,
-                           note=f"复审完成；定不下且影响意思 {len(held)} 句，未封存")
+                           note=f"复审扣留：定不下且影响意思 {len(held)} 句，未封存：{lines}")
     attest = _fmr("attest", "--package", str(package), "--review", str(review_md),
                   "--reviewer-id", reviewer_id(), "--verdict", "PASS", "--reviewer-kind", "AGENT")
     process = process + [f"FMR attest（reviewer {reviewer_id()}，制作人 {maker_id(ctx)}）rc={attest.returncode}"]
     if attest.returncode == 2:
-        return _fail("FMR_ATTEST_REFUSED", (attest.stdout + attest.stderr)[-400:], cpa=cpa, process=process)
+        return _fail("FMR_ATTEST_REFUSED", "复审放行（无扣留句），FMR attest 拒绝：" + (attest.stdout + attest.stderr)[-400:],
+                     cpa=cpa, process=process)
     if attest.returncode != 0:
         return StepOutcome(True, products=products, cpa=cpa,
                            note="FMR attest 回执未通过（记录，未封存）", process=process + [attest.stdout[-300:]])

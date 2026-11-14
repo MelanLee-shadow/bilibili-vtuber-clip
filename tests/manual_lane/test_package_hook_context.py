@@ -6,6 +6,7 @@ import json
 import subprocess
 
 import pytest
+from fakes import fmr_check_wrote
 from test_fmr_calls import _prepared
 
 from src.autoslice.manual_lane import stage_package as sp
@@ -30,6 +31,7 @@ def _case(tmp_path, monkeypatch, hook, candidates):
         if args[0] == "init":
             return actual_fmr(*args)
         # Init is real; the synthetic media are not used for a media check or sealing.
+        fmr_check_wrote(args)
         return subprocess.CompletedProcess(args, 1 if args[0] == "attest" else 0, "", "")
 
     monkeypatch.setattr(sp, "_fmr", fmr)

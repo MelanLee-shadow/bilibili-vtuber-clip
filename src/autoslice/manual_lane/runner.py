@@ -91,11 +91,14 @@ def _stamp() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def process_text(step: Step, outcome: StepOutcome) -> str:
-    """One step's section of PROCESS.md: what was done, what CPA said, what was adopted."""
+def process_text(step: Step, outcome: StepOutcome, rerun_for: Step | None = None) -> str:
+    """One step's section of PROCESS.md: what was done, what CPA said, what was adopted.  PROCESS.md only grows, so a
+    step run again because a later step asked for it says so (#57: otherwise step 5 seems to follow step 9)."""
     status = "完成" if outcome.ok else f"停止（{outcome.reason}）"
     if outcome.ok and outcome.rewind:
         status += f"，回退重跑 {','.join(outcome.rewind)}"
+    if rerun_for is not None:
+        status += f"（第 {rerun_for.number} 步{rerun_for.title}要求回退后重跑）"
     lines = [f"\n## 步骤 {step.number} · {step.title} · {status} · {_stamp()}", ""]
     if outcome.note:
         lines.append(f"做了什么：{outcome.note}")
@@ -216,7 +219,10 @@ class _Schedule:
             step, outcome = self.order[i], future.result()
             if self.progress:
                 self.progress(step, "end", outcome)
-            self.held[i] = process_text(step, outcome)
+            pending = state.data.get("rewind") or {}
+            asked = step.key in pending.get("steps", ())
+            self.held[i] = process_text(step, outcome, next((s for s in self.order if s.key == pending.get("by")),
+                                                            None) if asked else None)
             self.ended.add(i)
             if not outcome.ok:
                 self.failures.append((step.number, outcome.reason))

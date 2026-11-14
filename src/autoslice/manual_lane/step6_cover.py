@@ -453,7 +453,8 @@ def _scored_rows(result_rows: Sequence[CoverCandidate], plan: CoverPlan
             current["guest_faces_measured"] = row["guest_faces_measured"]
         if "expected_guest_count" in row:
             current["expected_guest_count"] = row["expected_guest_count"]
-        current["score"] = (cast(CoverScore, score_candidate(current, participants=list(plan["participants"]), recent=plan["recent"]))
+        current["score"] = (cast(CoverScore, score_candidate(current, participants=list(plan["participants"]), recent=plan["recent"],
+                                                                   host=channel.HOST))
                             if current["status"] == "RENDERED"
                             else {"status": "VETO", "vetoes": [str(current["failure"] or "RENDER_FAILED")]})
         extra = peer_face_vetoes(current, plan) if current["status"] == "RENDERED" else []

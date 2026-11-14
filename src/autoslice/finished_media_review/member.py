@@ -103,12 +103,10 @@ def member_problems(member: dict[str, Any]) -> list[str]:
         and type(context.get("source_zero_srt_ms")) is int
     ):
         problems.append("FMR_MEMBER_CONTEXT_SRT_MISSING")
-    if any(
-        isinstance(p, dict) and isinstance(p.get("path"), str) and not Path(p["path"]).is_absolute()
-        for p in (pieces or [])
-    ) or (isinstance(context, dict) and isinstance(context.get("path"), str)
-          and not Path(context["path"]).is_absolute()):
-        problems.append("FMR_MEMBER_SOURCE_PATH_NOT_ABSOLUTE")
+    relative = [p["path"] for p in [*(pieces or []), context] if isinstance(p, dict) and isinstance(p.get("path"), str)
+                and p["path"] and not Path(p["path"]).is_absolute()]
+    if relative:    # "CODE: detail" - the audit keeps the code and shows which path (a relative --task-dir, typically)
+        problems.append("FMR_MEMBER_SOURCE_PATH_NOT_ABSOLUTE: " + ", ".join(dict.fromkeys(relative)))
     if "description_extra" in member:
         from src.autoslice.channel_envelope import description_extra_problems
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import subprocess
 
+from fakes import fmr_check_wrote
 from fakes import FakeCpa, FakeRemote, make_ctx
 
 from src.autoslice.manual_lane import stage_package as sp
@@ -62,6 +63,8 @@ class Recorder:
             pkg = sp.Path(root) / "out" / "2026-10-24" / f"fm-20261024-{self.out_cid}"
             pkg.mkdir(parents=True, exist_ok=True)
             (pkg / "findings.md").write_text("F", encoding="utf-8")
+        if rc in (0, 1):
+            fmr_check_wrote(args)
         return subprocess.CompletedProcess(args, rc, "A1 FLAG 示例\n" if cmd == "check" else "", "")
 
 
@@ -83,6 +86,22 @@ def test_step8_calls_init_then_check_and_check_findings_do_not_block(tmp_path, m
     assert [c[0] for c in rec.calls] == ["init", "check"]
     assert "FMR check rc=1" in out.note and "FLAG" in "\n".join(out.process)
     assert (ctx.clip_dir / "pkg" / "fmr_check.log").read_text(encoding="utf-8").startswith("A1 FLAG")
+
+
+def test_step8_stops_when_the_check_crashed_with_the_findings_exit_code(tmp_path, monkeypatch):
+    """Goldfish report 7 (#53): check died of an AttributeError (exit 1, no results) and step 8 recorded 不拦."""
+    ctx, _ = _prepared(tmp_path)
+    rec = Recorder(codes={"check": 1})
+
+    def crashed(*args):
+        if args[0] != "check":
+            return rec(*args)
+        rec.calls.append(args)
+        return subprocess.CompletedProcess(args, 1, "", "Traceback ...\nAttributeError: module has no attribute '_parse_srt'\n")
+
+    _patch(monkeypatch, crashed)
+    out = sp.step8_package(ctx)
+    assert not out.ok and out.reason == "FMR_CHECK_DID_NOT_FINISH" and "_parse_srt" in out.note
 
 
 def test_step8_stops_only_when_the_lane_refuses_init_or_check(tmp_path, monkeypatch):
@@ -141,6 +160,7 @@ def test_step9_a_hold_is_never_attested_or_sealed(tmp_path, monkeypatch):
     assert "D" in {d["grade"] for d in member["doubts"]}
     out = sp.step9_review(ctx)
     assert out.ok and "未封存" in out.note
+    assert out.note.startswith("复审扣留") and "「句」" in out.note    # #55: `status` names the held line itself
     assert ctx.adapters.cpa.calls.count("review") == 1         # finishing does not ask the reviewer again
     assert [c[0] for c in rec.calls] == ["init", "check", "init", "check"]
 
@@ -157,4 +177,5 @@ def test_attest_refusal_stops_step9(tmp_path, monkeypatch):
     ctx, _ = _prepared(tmp_path, cpa_review=REVIEW_PASS)
     _patch(monkeypatch, Recorder(codes={"attest": 2}))
     assert sp.step8_package(ctx).ok
-    assert sp.step9_review(ctx).reason == "FMR_ATTEST_REFUSED"
+    out = sp.step9_review(ctx)
+    assert out.reason == "FMR_ATTEST_REFUSED" and out.note.startswith("复审放行")   # #55: not a review hold

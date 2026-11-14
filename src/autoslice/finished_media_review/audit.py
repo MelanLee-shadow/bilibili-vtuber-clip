@@ -73,8 +73,9 @@ def package_problems(root: Path) -> list[dict[str, str]]:
     except FmrError as exc:
         return [_issue("FMR_PACKAGE_INPUT_MISSING", str(exc))]
 
-    for code in member_problems(member):
-        issues.append(_issue(code))
+    for problem in member_problems(member):
+        code, _, detail = problem.partition(": ")
+        issues.append(_issue(code, detail))
     try:
         derived = candidate_id_for(str(member.get("recording_date")), str(member.get("member_slug")))
     except FmrError:

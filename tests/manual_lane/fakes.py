@@ -29,6 +29,14 @@ SESSION = {"recording_date": "2026-10-24", "speaker_mode": "uniform_host", "enab
            "participants": [["李豆沙"], ["雾深Girimi"]], "own_uploader_mids": [1]}
 
 
+def fmr_check_wrote(args) -> None:
+    """What the real `check` leaves in the package (step 8 reads it: a crashed check exits 1 too)."""
+    if args[0] == "check":
+        evidence = Path(args[args.index("--package") + 1]) / "evidence"
+        evidence.mkdir(parents=True, exist_ok=True)
+        (evidence / "auto-checks.json").write_text("{}", encoding="utf-8")
+
+
 def srt(n: int = 40, step: float = 2.0) -> str:
     blocks = []
     for i in range(1, n + 1):

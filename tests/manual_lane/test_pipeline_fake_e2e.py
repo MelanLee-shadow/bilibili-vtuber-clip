@@ -9,6 +9,7 @@ import subprocess
 import threading
 from pathlib import Path
 
+from fakes import fmr_check_wrote
 from fakes import (COVER_BRIEF, COVER_EMOTE, JUDGE_PASS, UNDERSTANDING_CALLS, FakeRemote, IdCpa, fake_cover, is_judge, make_ctx,
                    serial_order, srt, understanding_answer)
 
@@ -105,6 +106,7 @@ def _fake_fmr(*args):
     if cmd == "init":
         root = Path(args[args.index("--out-root") + 1])
         (root / "out" / "2026-10-24" / "fm-20261024-clip").mkdir(parents=True, exist_ok=True)
+    fmr_check_wrote(args)
     return subprocess.CompletedProcess(args, 0, "", "")
 
 
