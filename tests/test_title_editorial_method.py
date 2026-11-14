@@ -64,16 +64,23 @@ def test_new_source_reaches_builder_and_offline_transport(tmp_path, monkeypatch)
     payload = json.loads(outputs[0].read_text(encoding="utf-8"))
     assert new_rule in payload["sections"] and new_example in payload["examples"]
     assert payload["sources"] == [
-        {"name": "lidousha-title-cover/SKILL.md", "path": "SKILL.md",
+        {"name": "new-skill/SKILL.md", "path": "SKILL.md",
          "sha256": hashlib.sha256((skill / "SKILL.md").read_bytes()).hexdigest()},
-        {"name": "lidousha-title-cover/references/examples.md", "path": "references/examples.md",
+        {"name": "new-skill/references/examples.md", "path": "references/examples.md",
          "sha256": hashlib.sha256((skill / "references/examples.md").read_bytes()).hexdigest()},
     ]
     assert payload["judge_source"] == {
-        "name": "lidousha-title-cover/references/judge-prompt.md", "path": "references/judge-prompt.md",
+        "name": "new-skill/references/judge-prompt.md", "path": "references/judge-prompt.md",
         "sha256": hashlib.sha256((skill / "references/judge-prompt.md").read_bytes()).hexdigest()}
     assert payload["judge_template"] == "@@RULES@@\n@@SUBTITLE@@"
     assert str(tmp_path) not in outputs[0].read_text(encoding="utf-8")
+    monkeypatch.setattr(title_editorial_method, "TITLE_EDITORIAL_METHOD", outputs[0])
+    assert title_editorial_method.load_title_editorial_method().sources[0].name == "new-skill/SKILL.md"
+    mixed = dict(payload, judge_source=dict(payload["judge_source"], name="other/references/judge-prompt.md"))
+    outputs[1].write_text(json.dumps(mixed, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(title_editorial_method, "TITLE_EDITORIAL_METHOD", outputs[1])
+    with pytest.raises(title_editorial_method.AuthorityError, match="invalid source record"):   # one method, one directory
+        title_editorial_method.load_title_editorial_method()
     monkeypatch.setattr(title_editorial_method, "TITLE_EDITORIAL_METHOD", outputs[0])
     sent = []
     sent.append(_prompt())  # Offline fake transport: capture exactly the prompt a caller sends.

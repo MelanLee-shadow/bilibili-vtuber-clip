@@ -87,8 +87,8 @@ CI 先安装 CPU 版 PyTorch，以免下载 CUDA 依赖。
 输入是 `profiles/lidousha/profile.json` 及其公开模板资产；输出是配置检查结果。
 这是配置检查的预期结果：**配置可读不等于已具备声纹或全部生产前提**。
 测试套件使用合成数据和模型替身；运行测试前不要设置 `AUTOSLICE_PROFILE`。
-测试成功不证明外部服务、真实音频质量或账号发布权限正常。CI 在 Linux 上跑 Python 3.11 和 3.12；
-在 macOS 上有一条与系统文件读取有关的用例（`test_no_dead_imports`）会失败，与本项目的功能无关。
+测试成功不证明外部服务、真实音频质量或账号发布权限正常。CI 在 Linux 上跑 Python 3.11 和 3.12，更新的版本没有在 CI 里测；
+在 macOS 上有一条与系统文件读取有关的用例会失败，与本项目的功能无关，加 `--deselect "tests/test_no_dead_imports.py::test_no_dead_imports[src.autoslice.external_duplicate_check]"` 跳过。
 
 ### 3. 配置自己的频道和服务
 
@@ -177,3 +177,11 @@ CPA 是本项目使用的 [CLIProxyAPI](https://github.com/luispater/CLIProxyAPI
 ## 友情链接
 
 - [沙按钮](https://lu-91015.github.io/shadowlee.github.io/)
+
+## 本版配置与 GC 接口
+
+本项目提供可复现的配置与验证流程。先从离线配置和快速自检开始，再由部署者验证真实输入与外部服务。
+运行时 GC 的完整配置说明继续保留。当前统一入口是
+`scripts/runtime_gc.py`，Linux service/timer 示例见 `config/runtime-gc/`；
+旧 `terminal_out_gc.py` 已由生命周期收集替代。执行前读
+[当前生命周期接口](docs/pipeline/10-source-recording.md#当前生命周期-gc-接口)。

@@ -195,18 +195,23 @@ def _now(stdout: str) -> float:
     raise DiscoverError("HOST_CLOCK_MISSING", f"the listing did not say what time it is: {stdout[-200:]}")
 
 
-def list_dates(remote: Remote) -> tuple[list[str], float]:
-    """The date directories of the room in the archive (oldest first) and the host's clock."""
-    room = archive_room()               # a room with no directory yet has no recordings: that is an answer, not a failure
-    find = f"if [ -d {shlex.quote(room)} ]; then " + shlex.join(
-        ['find', room, '-mindepth', '1', '-maxdepth', '1', '-type', 'd']) + r" -printf 'D\t%f\n'; else echo NO_ROOM_DIR; fi"
+def list_dates(remote: Remote) -> tuple[list[str], float, bool]:
+    """The date directories of the room in the archive (oldest first), the host's clock, and whether the room has a
+    directory at all.  A recordings root that is not there is a wrong setting and stops; a room with no directory yet
+    under an existing root has simply not been recorded."""
+    room = archive_room()
+    root = os.path.dirname(room)
+    find = (f"if [ ! -d {shlex.quote(root)} ]; then echo NO_ARCHIVE_ROOT; elif [ -d {shlex.quote(room)} ]; then " + shlex.join(
+        ['find', room, '-mindepth', '1', '-maxdepth', '1', '-type', 'd']) + r" -printf 'D\t%f\n'; else echo NO_ROOM_DIR; fi")
     direct = direct_room()
     if direct:           # the days copied straight from the recorder count too (the archive may not have the day yet)
         find += f"; if [ -d {shlex.quote(direct)} ]; then " + shlex.join(
             ['find', direct, '-mindepth', '1', '-maxdepth', '1', '-type', 'd']) + r" -printf 'D\t%f\n'; fi"
     out = _need_ok(_as_root(remote, "disc-dates", f"echo NOW $(date +%s); {find}", timeout=300), "ARCHIVE_LISTING_FAILED").stdout
+    if "NO_ARCHIVE_ROOT" in out.splitlines():
+        raise DiscoverError("ARCHIVE_ROOT_MISSING", f"{root} does not exist on the media host (manual_lane.json archive_root)")
     dates = sorted({line.split("\t", 1)[1] for line in out.splitlines() if line.startswith("D\t")})
-    return [d for d in dates if is_date(d)], _now(out)
+    return [d for d in dates if is_date(d)], _now(out), "NO_ROOM_DIR" not in out.splitlines()
 
 
 def inventory(remote: Remote, date: str) -> DayInventory:
