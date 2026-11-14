@@ -28,6 +28,11 @@ def encode(value: object) -> bytes:
     return (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode()
 
 
+def encode_ledger(ledger: pf.PersonaFactLedger) -> bytes:
+    """Ledger file spelling: dataclass field order, as committed (``encode`` sorts keys)."""
+    return (json.dumps(asdict(ledger), ensure_ascii=False, indent=2) + "\n").encode()
+
+
 def document(path: Path) -> pf.JSONValue:
     def pairs(items: list[tuple[str, pf.JSONValue]]) -> dict[str, pf.JSONValue]:
         result: dict[str, pf.JSONValue] = {}
@@ -117,6 +122,13 @@ def verify_message(authority: pf.HumanAuthorityEvidence, raw_message: bytes) -> 
     if sha256(raw_message) != authority.raw_user_message_sha256 or message != authority.raw_excerpt:
         raise ValueError("Original message bytes/hash/excerpt mismatch")
     return message
+
+
+def verify_message_excerpt(authority: pf.HumanAuthorityEvidence, raw_message: bytes) -> None:
+    """Like ``verify_message`` but the excerpt may be a part of a longer original."""
+    pf._validate_authority(authority)
+    if sha256(raw_message) != authority.raw_user_message_sha256 or authority.raw_excerpt not in raw_message.decode("utf-8"):
+        raise ValueError("Original message bytes/hash/excerpt mismatch")
 
 
 def parse_reply(batch: ReviewBatch, message: str, *, authority: pf.HumanAuthorityEvidence

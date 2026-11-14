@@ -1,6 +1,6 @@
 """Reject development disclosures at actual audience-text consumers."""
 
-from .review_errors import ContractRejection
+from .contract_rejection import ContractRejection
 import re
 
 from src.autoslice.subtitle_acceptability_policy import load_policy
@@ -20,6 +20,3 @@ def assert_audience_text(text: str, *, surface: str):
     return text
 
 
-def assert_audience_surfaces(*, subtitle='', title='', cover='', description=''):
-    for surface, text in locals().copy().items():
-        assert_audience_text(text, surface=surface)

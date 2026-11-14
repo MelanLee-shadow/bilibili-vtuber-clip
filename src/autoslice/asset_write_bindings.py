@@ -8,10 +8,9 @@ from __future__ import annotations
 
 import ast
 import json
-from collections.abc import Sequence
 from pathlib import Path
 
-from .persona_facts import AssetBindingSurface, BindingSurfaceKind, InflightBinding, WriteDecision, WriteDecisionKind
+from .persona_facts import AssetBindingSurface, BindingSurfaceKind
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -215,11 +214,3 @@ def asset_binding_surfaces(
     return tuple(surfaces)
 
 
-def plan_knowledge_write(asset_key: str, *, inflight: Sequence[InflightBinding]) -> WriteDecision:
-    surfaces = asset_binding_surfaces(asset_key)
-    kinds = {surface.kind for surface in surfaces}
-    # Callers supply bindings for K's current bytes. A pinned deployment is a
-    # blocker until the owner confirms isolation on the old deploy or terminality.
-    blocking = tuple(item for item in inflight if item.surface in kinds and item.pinned_deploy_sha is not None)
-    decision: WriteDecisionKind = "DEFER_UNTIL_TERMINAL" if blocking else "DEPLOY_CLASS_CHANGE" if surfaces else "WRITE_ANYTIME"
-    return WriteDecision(asset_key, decision, surfaces, blocking)

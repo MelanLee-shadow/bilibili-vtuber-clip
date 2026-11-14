@@ -806,6 +806,276 @@
       "decided_by": null,
       "rejection_scope": null,
       "recorded_at": "2026-10-25T00:00:00Z"
+    },
+    {
+      "fact_id": "pf-d4d3f098da9b8c698096461b1883d1583209b639ec84c82cc89a5420262f327f",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "APPEARANCE",
+        "predicate": "IS",
+        "object_text": "形态：李豆沙有人形态和毛绒形态两种形态。",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "d4d3f098da9b8c698096461b1883d1583209b639ec84c82cc89a5420262f327f",
+      "statement_zh": "形态：李豆沙有人形态和毛绒形态两种形态。",
+      "render": {
+        "section_zh": "切片中积累的已审定特质",
+        "order": 23
+      },
+      "evidence": [
+        {
+          "reviewer": "维护者",
+          "source_thread_id": "5ac1230e-59fc-48ea-b995-60342a310909",
+          "source_user_message_id": "0e6d023c-4dab-4feb-b056-ba9f5717ddcb",
+          "source_user_message_timestamp": "2026-11-10T00:59:04.859Z",
+          "raw_user_message_sha256": "85c0e9545e3818771a7490d9215820d815086c0bef1f03bd3f8b7e68396542c7",
+          "raw_excerpt": "李豆沙的毛绒形态可以亲亲，李豆沙在人形态不能亲"
+        }
+      ],
+      "evidence_class": "ATOMIC_HUMAN_PERSONA_TRUTH",
+      "supersedes": null,
+      "decided_by": {
+        "reviewer": "维护者",
+        "source_thread_id": "5ac1230e-59fc-48ea-b995-60342a310909",
+        "source_user_message_id": "0e6d023c-4dab-4feb-b056-ba9f5717ddcb",
+        "source_user_message_timestamp": "2026-11-10T00:59:04.859Z",
+        "raw_user_message_sha256": "85c0e9545e3818771a7490d9215820d815086c0bef1f03bd3f8b7e68396542c7",
+        "raw_excerpt": "李豆沙的毛绒形态可以亲亲，李豆沙在人形态不能亲"
+      },
+      "rejection_scope": null,
+      "recorded_at": "2026-11-10T07:10:08Z"
+    },
+    {
+      "fact_id": "pf-c63ec4eb7210da7bea6baa3fbdcd7448e3ccaeec6c88dcfeaad1a2379645646b",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "IDENTITY_BACKGROUND",
+        "predicate": "IS",
+        "object_text": "圈内背景：VR 和 PSP 有一个“矮人联盟”。",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "c63ec4eb7210da7bea6baa3fbdcd7448e3ccaeec6c88dcfeaad1a2379645646b",
+      "statement_zh": "圈内背景：VR 和 PSP 有一个“矮人联盟”。",
+      "render": {
+        "section_zh": "切片中积累的已审定特质",
+        "order": 24
+      },
+      "evidence": [
+        {
+          "reviewer": "维护者",
+          "source_thread_id": "5ac1230e-59fc-48ea-b995-60342a310909",
+          "source_user_message_id": "4c8a5a64-66b9-44e7-beaf-c14cb2dc8bf9",
+          "source_user_message_timestamp": "2026-11-10T16:11:41.674Z",
+          "raw_user_message_sha256": "42e5a67a93c69657ce332b517bc79bc1501cf16d1a3e3d4971b14645fe229f1b",
+          "raw_excerpt": "VR和PSP有一个矮人联盟"
+        }
+      ],
+      "evidence_class": "ATOMIC_HUMAN_PERSONA_TRUTH",
+      "supersedes": null,
+      "decided_by": {
+        "reviewer": "维护者",
+        "source_thread_id": "5ac1230e-59fc-48ea-b995-60342a310909",
+        "source_user_message_id": "4c8a5a64-66b9-44e7-beaf-c14cb2dc8bf9",
+        "source_user_message_timestamp": "2026-11-10T16:11:41.674Z",
+        "raw_user_message_sha256": "42e5a67a93c69657ce332b517bc79bc1501cf16d1a3e3d4971b14645fe229f1b",
+        "raw_excerpt": "VR和PSP有一个矮人联盟"
+      },
+      "rejection_scope": null,
+      "recorded_at": "2026-11-10T16:26:20Z"
+    },
+    {
+      "fact_id": "pf-ed2674bc79fdd6fc2b842366815bb4fc94e7e174c29694cb030c7fae985ea59b",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "IDENTITY_BACKGROUND",
+        "predicate": "IS",
+        "object_text": "圈内背景：李豆沙她们办了“女大夜谈”。",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "ed2674bc79fdd6fc2b842366815bb4fc94e7e174c29694cb030c7fae985ea59b",
+      "statement_zh": "圈内背景：李豆沙她们办了“女大夜谈”。",
+      "render": {
+        "section_zh": "切片中积累的已审定特质",
+        "order": 25
+      },
+      "evidence": [
+        {
+          "reviewer": "维护者",
+          "source_thread_id": "5ac1230e-59fc-48ea-b995-60342a310909",
+          "source_user_message_id": "4c8a5a64-66b9-44e7-beaf-c14cb2dc8bf9",
+          "source_user_message_timestamp": "2026-11-10T16:11:41.674Z",
+          "raw_user_message_sha256": "42e5a67a93c69657ce332b517bc79bc1501cf16d1a3e3d4971b14645fe229f1b",
+          "raw_excerpt": "李豆沙她们搞了个女大夜谈"
+        }
+      ],
+      "evidence_class": "ATOMIC_HUMAN_PERSONA_TRUTH",
+      "supersedes": null,
+      "decided_by": {
+        "reviewer": "维护者",
+        "source_thread_id": "5ac1230e-59fc-48ea-b995-60342a310909",
+        "source_user_message_id": "4c8a5a64-66b9-44e7-beaf-c14cb2dc8bf9",
+        "source_user_message_timestamp": "2026-11-10T16:11:41.674Z",
+        "raw_user_message_sha256": "42e5a67a93c69657ce332b517bc79bc1501cf16d1a3e3d4971b14645fe229f1b",
+        "raw_excerpt": "李豆沙她们搞了个女大夜谈"
+      },
+      "rejection_scope": null,
+      "recorded_at": "2026-11-10T16:26:20Z"
+    },
+    {
+      "fact_id": "pf-ad13ae1859d05cf1cc7211ad2fbe9e13168dd661cac05f7d86ced01cb1d65e4d",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "IDENTITY_BACKGROUND",
+        "predicate": "IS",
+        "object_text": "圈内背景（查证后经 公开规则认可）：“矮人联盟”由 VR 的花礼Harei 发起，身高一米六以下入盟，最初成员是花礼、莉蔻（VR）和南町（PSP）。",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "ad13ae1859d05cf1cc7211ad2fbe9e13168dd661cac05f7d86ced01cb1d65e4d",
+      "statement_zh": "圈内背景（查证后经 公开规则认可）：“矮人联盟”由 VR 的花礼Harei 发起，身高一米六以下入盟，最初成员是花礼、莉蔻（VR）和南町（PSP）。",
+      "render": {
+        "section_zh": "切片中积累的已审定特质",
+        "order": 26
+      },
+      "evidence": [
+        {
+          "reviewer": "维护者",
+          "source_thread_id": "5ac1230e-59fc-48ea-b995-60342a310909",
+          "source_user_message_id": "0af119dc-a059-4f96-bdf0-b5cc7018796b",
+          "source_user_message_timestamp": "2026-11-10T16:27:28.802Z",
+          "raw_user_message_sha256": "0a046aeead2787e6cde8a001cc2584a4beb706b1f91932dbcfb1a4d9b4b80a85",
+          "raw_excerpt": "你查的内容我认可"
+        }
+      ],
+      "evidence_class": "ATOMIC_HUMAN_PERSONA_TRUTH",
+      "supersedes": null,
+      "decided_by": {
+        "reviewer": "维护者",
+        "source_thread_id": "5ac1230e-59fc-48ea-b995-60342a310909",
+        "source_user_message_id": "0af119dc-a059-4f96-bdf0-b5cc7018796b",
+        "source_user_message_timestamp": "2026-11-10T16:27:28.802Z",
+        "raw_user_message_sha256": "0a046aeead2787e6cde8a001cc2584a4beb706b1f91932dbcfb1a4d9b4b80a85",
+        "raw_excerpt": "你查的内容我认可"
+      },
+      "rejection_scope": null,
+      "recorded_at": "2026-11-10T16:28:45Z"
+    },
+    {
+      "fact_id": "pf-b49e90540e1825bf37e006085db3654e6a43ccaa2fe8e79a45f223b8425d2081",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "IDENTITY_BACKGROUND",
+        "predicate": "IS",
+        "object_text": "圈内背景（查证后经 公开规则认可）：“女大夜谈”是 PSP“女大”三人李豆沙、安晚、礼墨的夜谈企划，办过不止一次。",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "b49e90540e1825bf37e006085db3654e6a43ccaa2fe8e79a45f223b8425d2081",
+      "statement_zh": "圈内背景（查证后经 公开规则认可）：“女大夜谈”是 PSP“女大”三人李豆沙、安晚、礼墨的夜谈企划，办过不止一次。",
+      "render": {
+        "section_zh": "切片中积累的已审定特质",
+        "order": 27
+      },
+      "evidence": [
+        {
+          "reviewer": "维护者",
+          "source_thread_id": "5ac1230e-59fc-48ea-b995-60342a310909",
+          "source_user_message_id": "0af119dc-a059-4f96-bdf0-b5cc7018796b",
+          "source_user_message_timestamp": "2026-11-10T16:27:28.802Z",
+          "raw_user_message_sha256": "0a046aeead2787e6cde8a001cc2584a4beb706b1f91932dbcfb1a4d9b4b80a85",
+          "raw_excerpt": "你查的内容我认可"
+        }
+      ],
+      "evidence_class": "ATOMIC_HUMAN_PERSONA_TRUTH",
+      "supersedes": null,
+      "decided_by": {
+        "reviewer": "维护者",
+        "source_thread_id": "5ac1230e-59fc-48ea-b995-60342a310909",
+        "source_user_message_id": "0af119dc-a059-4f96-bdf0-b5cc7018796b",
+        "source_user_message_timestamp": "2026-11-10T16:27:28.802Z",
+        "raw_user_message_sha256": "0a046aeead2787e6cde8a001cc2584a4beb706b1f91932dbcfb1a4d9b4b80a85",
+        "raw_excerpt": "你查的内容我认可"
+      },
+      "rejection_scope": null,
+      "recorded_at": "2026-11-10T16:28:45Z"
+    },
+    {
+      "fact_id": "pf-da652ed11f358d4a1140517e8518ddf5f11cae43df348b5d579912c6ea5cf58d",
+      "revision": "r1",
+      "status": "ACCEPTED",
+      "claim": {
+        "kind": "IDENTITY_BACKGROUND",
+        "predicate": "IS",
+        "object_text": "自称：“熊猫”是李豆沙对自己的称呼。",
+        "object_entity": null,
+        "polarity": "AFFIRM",
+        "temporal": {
+          "timeless": true,
+          "as_of_start": null,
+          "as_of_end": null
+        }
+      },
+      "claim_fingerprint": "da652ed11f358d4a1140517e8518ddf5f11cae43df348b5d579912c6ea5cf58d",
+      "statement_zh": "自称：“熊猫”是李豆沙对自己的称呼。",
+      "render": {
+        "section_zh": "切片中积累的已审定特质",
+        "order": 28
+      },
+      "evidence": [
+        {
+          "reviewer": "维护者",
+          "source_thread_id": "5ac1230e-59fc-48ea-b995-60342a310909",
+          "source_user_message_id": "69e7776c-34bf-42fc-a451-cb119cd23b4b",
+          "source_user_message_timestamp": "2026-11-13T18:39:49.974Z",
+          "raw_user_message_sha256": "63cbe618de96a3adfe0be21e4eef2bda269b48fb5a6136838eeced99722d2600",
+          "raw_excerpt": "熊猫是李豆沙的自称啊"
+        }
+      ],
+      "evidence_class": "ATOMIC_HUMAN_PERSONA_TRUTH",
+      "supersedes": null,
+      "decided_by": {
+        "reviewer": "维护者",
+        "source_thread_id": "5ac1230e-59fc-48ea-b995-60342a310909",
+        "source_user_message_id": "69e7776c-34bf-42fc-a451-cb119cd23b4b",
+        "source_user_message_timestamp": "2026-11-13T18:39:49.974Z",
+        "raw_user_message_sha256": "63cbe618de96a3adfe0be21e4eef2bda269b48fb5a6136838eeced99722d2600",
+        "raw_excerpt": "熊猫是李豆沙的自称啊"
+      },
+      "rejection_scope": null,
+      "recorded_at": "2026-11-13T22:20:24Z"
     }
   ],
   "suppressions": []

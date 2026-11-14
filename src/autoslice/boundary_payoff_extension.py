@@ -65,15 +65,9 @@ LLM 给的 `end_cue`**：它直接构造一个 `BoundaryResolution(reason_codes=
 from __future__ import annotations
 
 from dataclasses import replace
-from pathlib import Path
 from typing import Mapping, Sequence
 
-from src.autoslice.danmaku_evidence import (
-    DanmakuBurst,
-    DanmakuItem,
-    find_danmaku_bursts,
-    load_danmaku_xml,
-)
+from src.autoslice.danmaku_evidence import DanmakuBurst, DanmakuItem, find_danmaku_bursts
 from src.autoslice.full_session_candidate_selector import (
     FullSessionCandidate,
     _join_text,
@@ -98,17 +92,6 @@ PAYOFF_MAX_EXTENSION_STEPS = 4
 # （bucket/min_count/baseline_factor）一字不动。本常量是**确定性扫描**预算（不进 prompt，
 # 所以可以给 64）；进 prompt 的名额是另一回事，见 `DANMAKU_HINT_MAX_BURSTS`。
 PAYOFF_BURST_SCAN_MAX = 64
-
-
-def load_payoff_danmaku_items(xml_path: Path | str | None) -> tuple[DanmakuItem, ...]:
-    """Best-effort danmaku load; any failure degrades to "no signal" (no-op)."""
-
-    if not xml_path:
-        return ()
-    try:
-        return tuple(load_danmaku_xml(Path(xml_path)))
-    except Exception:  # noqa: BLE001 — 弹幕是可选增量信号，缺了就退回今天的行为
-        return ()
 
 
 def _payoff_bursts(items: Sequence[DanmakuItem]) -> tuple[DanmakuBurst, ...]:

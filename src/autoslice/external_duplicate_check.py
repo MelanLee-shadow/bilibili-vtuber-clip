@@ -74,8 +74,8 @@ class PublicAudioASR:
         try:
             url = api.audio_url(bvid, cid)
             receipt['url'] = url
-            # The transport validates Referer against the same host allowlist.
-            # audio_url has already constrained the media endpoint to the CDN.
+            # The transport checks the Referer header for safety only (not against
+            # the host allowlist). audio_url has already constrained the media endpoint to the CDN.
             client = BoundedHttpClient(allowed_hosts=frozenset({'bilivideo.com', 'bilivideo.cn', 'bilibili.com'}),
                                        max_requests=1, max_response_bytes=32 * 1024 * 1024,
                                        timeout_seconds=60, now=api.now)
@@ -207,6 +207,7 @@ class Package:
     subtitle_sha256: str
     subtitle_stage: Literal['final', 'source_preview']
     own_uploader_mids: tuple[int, ...]
+    search_terms: tuple[str, ...] = ()
 
 
 def load_package(path: Path) -> Package:
@@ -243,9 +244,13 @@ def load_package(path: Path) -> Package:
     mids = data.get('own_uploader_mids', [])
     if not isinstance(mids, list) or any(type(mid) is not int or mid <= 0 for mid in mids):
         raise ValueError('own_uploader_mids must be positive integers')
+    terms = data.get('search_terms', [])
+    if not isinstance(terms, list):
+        raise ValueError('search_terms must be a list')
     return Package(string(data.get('candidate_id')), dt.date.fromisoformat(string(data.get('recording_date'))),
                    tuple(participants), tuple(sources), duration, tuple(cues), hashlib.sha256(raw).hexdigest(),
-                   cast(Literal['final', 'source_preview'], stage), tuple(cast(int, mid) for mid in mids))
+                   cast(Literal['final', 'source_preview'], stage), tuple(cast(int, mid) for mid in mids),
+                   tuple(string(term) for term in terms))
 
 
 @dataclass(frozen=True)
@@ -466,6 +471,7 @@ def queries(package: Package) -> list[str]:
     for group in guests:
         result.extend(f'{host[0]} {alias}' for alias in group)
     result.extend((f'{host[0]} {day}', f'{host[0]} {package.recording_date:%m.%d}'))
+    result.extend(f'{host[0]} {term}' for term in package.search_terms)
     return list(dict.fromkeys(result))[:8]
 
 
@@ -475,6 +481,7 @@ class PublicBilibili:
         self.now = now
         self.evidence_dir = evidence_dir
         self.mixin = ''
+        self.search_attempts: list[Json] = []
 
     def get(self, url: str) -> JsonMap:
         response = self.client.fetch(url, headers={'User-Agent': BILIBILI_USER_AGENT, 'Referer': 'https://www.bilibili.com/'})
@@ -500,19 +507,36 @@ class PublicBilibili:
         return self.get(API + endpoint + '?' + urllib.parse.urlencode(signed_params(params, mixin_key=self.mixin, signed_at=self.now)))
 
     def search(self, query: str) -> list[JsonMap]:
-        # Same request fields, signer and bounded HTTP transport as the existing
-        # community-name search; there is no cookie jar or credential path.
-        payload = self.signed_get('/x/web-interface/wbi/search/type', {
+        params: JsonMap = {
             'search_type': 'video', 'keyword': query, 'page': 1, 'page_size': 20,
             'order': 'pubdate', 'platform': 'pc', 'web_location': 1430654,
-        })
-        data = obj(payload.get('data'), 'search data')
-        rows = data.get('result')
-        if rows is None and data.get('numResults') == 0:
-            return []
-        if not isinstance(rows, list):
-            raise ValueError('invalid search results')
-        return [obj(row, 'search row') for row in rows]
+        }
+        self.search_attempts = []
+        # The WBI endpoint can return code=0 with only data.v_voucher.
+        # Use the other public search endpoint, never solve a challenge or login.
+        for route in ('public_wbi_api', 'public_search_api'):
+            attempt: JsonMap = {'route': route}
+            self.search_attempts.append(attempt)
+            try:
+                payload = (self.signed_get('/x/web-interface/wbi/search/type', params)
+                           if route == 'public_wbi_api' else self.get(
+                               API + '/x/web-interface/search/type?' + urllib.parse.urlencode(params)))
+                data = obj(payload.get('data'), 'search data')
+                attempt.update({'code': payload.get('code'), 'data_fields': sorted(data)})
+                if data.get('v_voucher'):
+                    raise CrawlError('BILIBILI_SEARCH_VERIFICATION_REQUIRED: data.v_voucher')
+                rows = data.get('result')
+                if rows is None and data.get('numResults') == 0:
+                    rows = []
+                if not isinstance(rows, list):
+                    raise ValueError('invalid search results')
+                result = [obj(row, 'search row') for row in rows]
+                attempt['count'] = len(result)
+                return result
+            except (OSError, ValueError, CrawlError) as exc:
+                attempt['error'] = str(exc)
+        raise CrawlError('PUBLIC_SEARCH_UNAVAILABLE: ' + '; '.join(
+            str(obj(attempt, 'search attempt')['error']) for attempt in self.search_attempts))
 
     def view(self, bvid: str) -> JsonMap:
         return obj(self.get(API + '/x/web-interface/view?' + urllib.parse.urlencode({'bvid': bvid})).get('data'), 'video')
@@ -610,13 +634,13 @@ def check(package: Package, api: PublicBilibili, *, max_videos: int = 20,
     for query in queries(package):
         try:
             rows = api.search(query)
-            searches.append({'query': query, 'count': len(rows)})
+            searches.append({'query': query, 'count': len(rows), 'attempts': api.search_attempts})
             for row in rows:
                 bvid = str(row.get('bvid', ''))
                 if _BVID.fullmatch(bvid) and number(row.get('pubdate')) >= earliest:
                     discovered.setdefault(bvid, row)
         except (OSError, ValueError, CrawlError) as exc:
-            searches.append({'query': query, 'error': str(exc)})
+            searches.append({'query': query, 'error': str(exc), 'attempts': api.search_attempts})
     videos: list[Json] = []
     decisions: list[str] = []
     for bvid, row in list(discovered.items())[:max_videos]:
@@ -727,6 +751,7 @@ def check(package: Package, api: PublicBilibili, *, max_videos: int = 20,
         'source_intervals': list(package.source_intervals), 'duration_seconds': package.duration_seconds,
         'decision': decision, 'block_upload': decision == 'FULL_DUPLICATE' and package.subtitle_stage == 'final',
         'reason': 'SINGLE_EXTERNAL_CLIP_PROVES_FULL_COVERAGE' if decision == 'FULL_DUPLICATE' else ('EXTRA_PROVEN_AGAINST_EACH_INSPECTED_CLIP' if decision == 'HAS_EXTRA' else 'SEARCH_OR_PUBLIC_SUBTITLE_OR_ALIGNMENT_INCOMPLETE'),
+        'search_status': 'UNKNOWN' if any('error' in obj(s, 'search') for s in searches) else 'SUCCESS',
         'searches': searches, 'videos': videos, 'discovered_videos': len(discovered),
         'videos_truncated': len(discovered) > max_videos,
         'scope': 'bounded public search; not an exhaustive inventory or upload authorization',

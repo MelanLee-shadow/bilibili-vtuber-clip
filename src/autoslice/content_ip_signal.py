@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Sequence
 
-from src.autoslice.jingting_chunker import parse_srt_cues
 from src.autoslice.upload_tag_policy import TermRule, load_selected_upload_tag_policy
 
 
@@ -97,20 +95,3 @@ def detect_important_content_ips(
     return ImportantContentIpSignal(tuple(matches))
 
 
-def important_content_ip_signal_from_srt(
-    *,
-    subtitle_path: object,
-    fallback_body: str,
-    title: str,
-    rules: Sequence[TermRule] | None = None,
-) -> ImportantContentIpSignal:
-    """Read the full final SRT when available so a late/high-frequency IP is not lost."""
-
-    body = str(fallback_body or "")
-    if isinstance(subtitle_path, str) and Path(subtitle_path).is_file():
-        try:
-            srt_text = Path(subtitle_path).read_text(encoding="utf-8")
-            body = "\n".join(cue.text for cue in parse_srt_cues(srt_text) if cue.text.strip())
-        except OSError:
-            pass
-    return detect_important_content_ips(title=title, body=body, rules=rules)

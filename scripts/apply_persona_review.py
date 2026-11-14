@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Prepare an immutable batch or apply 维护者's hash-bound reply; offline only.
 
+human-fact appends one ACCEPTED fact 维护者 (the reviewer) states in his own words; the subject is the
+channel host, the evidence is his message (never writes persona.md).
+
 prepare does not write the ledger. review defaults to dry-run; --apply appends
 review revisions after checking the exact original ledger prefix/preimage.
 """
@@ -8,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict
+import difflib
 from pathlib import Path
 import sys
 from typing import cast
@@ -32,7 +36,14 @@ def main(argv: list[str] | None = None) -> int:
     apply.add_argument("--authority", required=True, type=Path, help="Exact HumanAuthorityEvidence JSON")
     apply.add_argument("--raw-message", required=True, type=Path, help="Original UTF-8 bytes, including newline")
     apply.add_argument("--apply", action="store_true")
-    for command in (prepare, apply):
+    human = commands.add_parser("human-fact", help="Append one fact 维护者 (the reviewer) states himself; default dry-run")
+    human.add_argument("--authority", required=True, type=Path, help="Exact HumanAuthorityEvidence JSON")
+    human.add_argument("--raw-message", required=True, type=Path, help="Original UTF-8 bytes of 维护者's message")
+    human.add_argument("--kind", required=True, choices=sorted(pf.HUMAN_TRUTH_KINDS))
+    human.add_argument("--statement", required=True)
+    human.add_argument("--recorded-at", required=True)
+    human.add_argument("--apply", action="store_true")
+    for command in (prepare, apply, human):
         command.add_argument("--ledger", required=True, type=Path)
         command.add_argument("--profile-id", required=True)
     args = parser.parse_args(argv)
@@ -53,22 +64,38 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         authority = cast(pf.HumanAuthorityEvidence, pf._decode(review.document(args.authority), pf.HumanAuthorityEvidence))
         original = pf.load_persona_fact_ledger(args.ledger, profile_id=args.profile_id)
-        candidate = review.review_candidate(args.ledger, args.batch_dir,
-            authority=authority, raw_message=args.raw_message.read_bytes())
+        if args.command == "human-fact":
+            review.verify_message_excerpt(authority, args.raw_message.read_bytes())
+            if review.encode_ledger(original) != before:
+                raise ValueError("Ledger bytes are not canonical; appending would rewrite existing rows")
+            candidate = pf.append_human_truth(original, kind=args.kind, predicate="IS", statement_zh=args.statement,
+                render=pf.RenderSlot(pf.PROJECTION_GENERATED_SECTION_ZH, len(pf.current_revisions(original))),
+                authority=authority, recorded_at=args.recorded_at)
+        else:
+            candidate = review.review_candidate(args.ledger, args.batch_dir,
+                authority=authority, raw_message=args.raw_message.read_bytes())
         if candidate.profile_id != args.profile_id or args.ledger.read_bytes() != before:
             raise ValueError("Ledger profile/preimage drift")
         pf.verify_append_only(original, candidate)
+        after = review.encode_ledger(candidate)   # the committed spelling (field order): an append never reorders old rows
         if args.apply:
             if asset_binding_surfaces("persona_facts", repo_root=ROOT, profile_id=args.profile_id):
                 raise ValueError("Ledger now has binding surfaces; deployment-class change required")
-            protected_inputs = [args.authority, args.raw_message, *args.batch_dir.iterdir()]
+            protected_inputs = [args.authority, args.raw_message,
+                                *(args.batch_dir.iterdir() if args.command == "review" else ())]
             if any(path.resolve() == args.ledger.resolve() for path in protected_inputs):
                 raise ValueError("Ledger overlaps review inputs")
-            review.atomic_compare_write(args.ledger, before=before, after=review.encode(asdict(candidate)))
-        print(review.encode({"mode": "APPLIED" if args.apply else "DRY_RUN", "append_only": True,
+            review.atomic_compare_write(args.ledger, before=before, after=after)
+        report = {"mode": "APPLIED" if args.apply else "DRY_RUN", "append_only": True,
             "before_sha256": review.sha256(before),
-            "after_sha256": review.sha256(review.encode(asdict(candidate))),
-            "appended_revisions": [asdict(row) for row in candidate.revisions[len(original.revisions):]]}).decode(), end="")
+            "after_sha256": review.sha256(after),
+            "appended_revisions": [asdict(row) for row in candidate.revisions[len(original.revisions):]]}
+        if args.command == "human-fact":
+            def lines(ledger: pf.PersonaFactLedger) -> list[str]:
+                return pf.render_persona_projection(ledger, consumer="TITLE_COVER").decode().splitlines()
+            report["projection_diff"] = "\n".join(difflib.unified_diff(
+                lines(original), lines(candidate), "projection-before", "projection-after", lineterm=""))
+        print(review.encode(report).decode(), end="")
         return 0
     except (ValueError, OSError, TypeError) as exc:
         print(f"PERSONA_REVIEW_INPUT_INVALID: {exc}", file=sys.stderr)

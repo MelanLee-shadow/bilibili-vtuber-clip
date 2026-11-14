@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 import re
 from typing import Mapping
@@ -72,11 +73,16 @@ def respell_pairs() -> frozenset[tuple[str, str]]:
 
 
 def spelling_equivalence_rules() -> tuple[CanonicalSurfaceRule, ...]:
-    """Explicit glossary spelling equivalences, separate from ASR confusables.
+    """Explicit spelling equivalences, separate from ASR confusables.
 
     The prose marker declares equality, unlike the nearby list of uncertain
     sound-alikes. Only its slash-delimited literal spellings are consumed.
     """
+    if CHANNEL_PROFILE.spelling_table_path is not None:
+        rows = json.loads(CHANNEL_PROFILE.spelling_table_path.read_text(encoding="utf-8"))
+        return tuple(CanonicalSurfaceRule(surface=surface, canonical=row["canonical"],
+                                          authority="lidousha-glossary-spelling-equivalence.v1")
+                     for row in rows for surface in row.get("legacy_equivalences", ()))
     try:
         text = CHANNEL_PROFILE.asset_file("glossary").read_text(encoding="utf-8")
     except (OSError, UnicodeError, KeyError, ValueError):
@@ -111,23 +117,24 @@ def expected_value_surface_rules() -> tuple[CanonicalSurfaceRule, ...]:
         and rule.canonical
         and rule.surface != rule.canonical
     ]
-    try:
-        from scripts.profile_glossary_terms import (
-            load_glossary_expected_value_pairs,
+    if CHANNEL_PROFILE.spelling_table_path is not None:
+        rows = json.loads(CHANNEL_PROFILE.spelling_table_path.read_text(encoding="utf-8"))
+        entries = sorted(
+            (entry['order'], entry['surface'], row['canonical'])
+            for row in rows for entry in row.get('glossary_expected_surfaces', ())
         )
-
-        rules.extend(
-            CanonicalSurfaceRule(
-                surface=surface,
-                canonical=canonical,
-                authority=(f"{CHANNEL_PROFILE.profile_id}-glossary-expected-value-canon.v1"),
-            )
-            for surface, canonical in load_glossary_expected_value_pairs(
-                CHANNEL_PROFILE.asset_file("glossary")
-            )
-        )
-    except Exception:
-        pass
+        rules.extend(CanonicalSurfaceRule(surface=surface, canonical=canonical,
+                     authority=f"{CHANNEL_PROFILE.profile_id}-glossary-expected-value-canon.v1")
+                     for _, surface, canonical in entries)
+    else:
+        try:
+            from scripts.profile_glossary_terms import load_glossary_expected_value_pairs
+            rules.extend(CanonicalSurfaceRule(surface=surface, canonical=canonical,
+                         authority=f"{CHANNEL_PROFILE.profile_id}-glossary-expected-value-canon.v1")
+                         for surface, canonical in load_glossary_expected_value_pairs(
+                             CHANNEL_PROFILE.asset_file("glossary")))
+        except Exception:
+            pass
     unique: dict[tuple[str, str], CanonicalSurfaceRule] = {}
     for rule in rules:
         unique.setdefault((rule.surface, rule.canonical), rule)

@@ -24,57 +24,6 @@ JsonMap = dict[str, Json]
 Extractor = Callable[[pf.SealedFinalSubtitle], Sequence[pf.ProposedFact]]
 
 
-@dataclass(frozen=True)
-class CpaPersonaFactExtractor:
-    """Inject the project's CPA text callable; tests inject a fake callable.
-
-    Provider configuration and credentials stay with the existing CPA adapter.
-    The prompt reads only the final SRT. No ledger/persona/title feeds back into
-    extraction; source identity fields are filled locally, never by the model.
-    """
-
-    llm_call: Callable[[str], str]
-    extractor_id: str = "cpa-persona-facts"
-    extractor_version: str = "v1"
-
-    def __call__(self, sealed: pf.SealedFinalSubtitle) -> tuple[pf.ProposedFact, ...]:
-        raw = sealed.final_srt_path.read_bytes()
-        prompt = (
-            "从最终字幕提取本频道主播明确自述的偏好、性格、经历、价值观、传记性关系。"
-            "不要把他人的话、念弹幕、扮演、假设、作品或播放内容变成主播事实。没有事实就返回空数组。"
-            "只提案，绝不接受事实。逐字引用必须来自指定 cue；不补造人物关系。"
-            "kind/predicate 闭集：PREFERENCE=LIKES|DISLIKES；TRAIT=IS|HAS_HABIT；"
-            "EXPERIENCE=DID；VALUE=HOLDS_VIEW；RELATIONSHIP=FRIEND|FAMILY|ROOMMATE|COLLEAGUE|OTHER_RELATION。"
-            "context_kind=LIVE_ASSERTION|QUOTED|READ_ALOUD|ROLE_PLAY|MEDIA_PLAYBACK|HYPOTHETICAL|GAME_OR_FICTION|UNKNOWN。"
-            "只返回 JSON 对象，格式：{\"facts\":[{\"claim\":{\"kind\":\"PREFERENCE\","
-            "\"predicate\":\"LIKES\",\"object_text\":\"唱歌\",\"object_entity\":null,"
-            "\"polarity\":\"AFFIRM\",\"temporal\":{\"timeless\":true,\"as_of_start\":null,\"as_of_end\":null}},"
-            "\"statement_zh\":\"喜欢唱歌\",\"cue_index_start\":1,\"cue_index_end\":1,"
-            "\"verbatim_quote\":\"字幕逐字原话\",\"context_kind\":\"LIVE_ASSERTION\"}]}\n\n最终字幕：\n"
-            + raw.decode("utf-8-sig")
-        )
-        payload: Json = json.loads(self.llm_call(prompt))
-        doc = _mapping(payload)
-        if set(doc) != {"facts"}:
-            raise ValueError("Extractor response contains non-proposal fields")
-        proposals: list[pf.ProposedFact] = []
-        for row in rows(doc["facts"]):
-            if set(row) != {"claim", "statement_zh", "cue_index_start", "cue_index_end", "verbatim_quote", "context_kind"}:
-                raise ValueError("Invalid extractor fact fields")
-            claim = cast(pf.FactClaim, pf._decode(row["claim"], pf.FactClaim))
-            context = cast(pf.ContextKind, pf._decode(row["context_kind"], pf.ContextKind))
-            evidence = pf.SubtitleQuoteEvidence(sealed.candidate_id, sealed.recording_basename,
-                sealed.recording_date, digest(raw), bare_sha(sealed.final_review_audit_sha256),
-                integer(row["cue_index_start"]), integer(row["cue_index_end"]), 0, 0,
-                text(row["verbatim_quote"]), (), "UNKNOWN", context, None,
-                self.extractor_id, self.extractor_version, digest(prompt.encode()))
-            proposals.append(pf.ProposedFact(claim, text(row["statement_zh"]), (evidence,)))
-        return tuple(proposals)
-
-    def propose(self, sealed: pf.SealedFinalSubtitle) -> Sequence[pf.ProposedFact]:
-        return self(sealed)
-
-
 def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 

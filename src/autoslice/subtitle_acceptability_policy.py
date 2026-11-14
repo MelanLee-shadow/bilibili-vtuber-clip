@@ -175,35 +175,3 @@ def load_policy(path: str | Path = DEFAULT_POLICY_PATH) -> dict:
     )
 
 
-def classify_grade(
-    *,
-    clear_audio: bool | None,
-    independent_wide_witnesses: int = 0,
-    context_and_refrain_agree: bool = False,
-    evidence_decisive: bool | None,
-    meaning_carrying: bool,
-    policy: dict,
-    unsourced_name_only: bool = False,
-) -> str:
-    """Evaluate explicitly supplied facts, never infer audio clarity from text.
-
-    C/D require the caller to establish both unclear audio and no decisive
-    evidence (including whole-session context). UNKNOWN is missing evidence,
-    not a release decision. An unsourced name alone never blocks.
-    """
-    if clear_audio is True:
-        a = policy["grades"]["A"]
-        if independent_wide_witnesses >= a["min_independent_wide_witnesses"] and (
-            context_and_refrain_agree or not a["require_context_and_refrain_agreement"]
-        ):
-            return "A"
-        return "UNKNOWN"
-    if clear_audio is not False:
-        return "UNKNOWN"
-    if evidence_decisive is True:
-        return "B"
-    if evidence_decisive is not False:
-        return "UNKNOWN"
-    if unsourced_name_only and not policy["unsourced_name"]["block"]:
-        return "C"
-    return "D" if meaning_carrying else "C"

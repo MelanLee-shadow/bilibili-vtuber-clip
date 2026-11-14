@@ -8,5 +8,6 @@
   "rooms": ["10000000"],
   "consumer_mounts": {"bilive": "/app/Videos", "bililive-adapter": "/adapter/Videos", "bililive-recorder": "/rec/Videos"},
   "state_dir": "/opt/bilive/recording/oci3-local-first",
-  "legacy_state_dirs": ["/opt/bilive/recording", "/opt/bilive/recording/oci3-115open"]
+  "legacy_state_dirs": ["/opt/bilive/recording", "/opt/bilive/recording/oci3-115open"],
+  "recorders": {"primary": {"ssh_host": "recorder-host", "probe": "normalized_status", "state": "active"}}
 }

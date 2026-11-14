@@ -28,7 +28,6 @@ import hashlib
 import json
 import re
 import unicodedata
-import os
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
@@ -43,9 +42,7 @@ from src.autoslice.surface_canon import (
 )
 
 SCHEMA_VERSION = "subtitle-witness-disagreement.v1"
-PROVENANCE_KIND = "subtitle_audio_witness_disagreement"
 EVIDENCE_SOURCE = "witness"
-WHY_PREFIX = "独立听写见证与当前字幕用词不同"
 
 # Same bounds as final_review_auditor (MAX_EDIT_SPAN_CODEPOINTS / DELTA); a
 # larger span is nominated without a closed-set proposal.
@@ -99,17 +96,6 @@ def _phonetic_normalize(norm: _Normalized, symbols: dict[str, str]) -> _Normaliz
         else:
             chars.append(char)
     return _Normalized("".join(chars), norm.origin)
-
-
-def agreement_key(text: str) -> str:
-    """R2 compares normalized words, not two different homophonic guesses."""
-    return _normalize(text).text
-
-
-def reading_key(text: str) -> str:
-    """The comparison's own normalized reading, used by the R2 registry gate."""
-    normalized = _normalize(text).text
-    return " ".join(_pinyin(normalized) or list(normalized))
 
 
 def native_script_mismatch(
@@ -412,99 +398,9 @@ def _strip(text: str) -> str:
     return "".join(c for c in text if unicodedata.category(c)[0] not in "PSZC")
 
 
-def _row_suspect(nom: Mapping[str, Any], final_srt_text: str) -> str:
-    """A bounded verbatim suspect; a bare insertion uses the adjacent char."""
-
-    if nom["final_span"] or nom["proposed_full_cue"] is not None:
-        return nom["final_span"]
-    cues = [c for c in parse_srt_cues(final_srt_text) if c.text.strip()]
-    text = cues[nom["cue_index"] - 1].text
-    pos = nom["final_span_start_codepoint"]
-    lo = max(pos - 1, 0)
-    return text[lo:lo + 1] or text[:1]
-
-
 def nomination_digest(nominations: Sequence[Mapping[str, Any]]) -> str:
     return "sha256:" + _sha(json.dumps(
         sorted(n["nomination_id"] for n in nominations), ensure_ascii=False))
-
-
-def to_priority_findings(
-    nominations: Sequence[Mapping[str, Any]], *,
-    final_srt_text: str, witness_srt_sha256: str,
-) -> list[dict[str, Any]]:
-    """Legacy row projection for the discovery registry; never mutation authority.
-
-    The row names both candidates; the exact-final reviewer must hear the audio
-    and choose.  ``mutation_authorized`` stays False: the witness is evidence.
-    """
-
-    current_sha = "sha256:" + _sha(final_srt_text)
-    rows = []
-    for nom in nominations:
-        rows.append({
-            "cue": nom["cue_index"],
-            "kind": "context",
-            "suspect": _row_suspect(nom, final_srt_text),
-            "proposed_full_cue": nom["proposed_full_cue"],
-            "repair_class": nom["repair_class"],
-            "evidence_cue_ids": [nom["cue_index"]],
-            "base_text_sha256": nom["base_text_sha256"],
-            "why": (f"{WHY_PREFIX}：当前「{nom['final_span']}」，见证「{nom['witness_span']}」"
-                    "；须听音在两者间裁定"),
-            "candidate_provenance": {
-                "kind": PROVENANCE_KIND,
-                "nomination_id": nom["nomination_id"],
-                "mutation_authorized": False,
-                **({"decision_authority": "NONE_DISCOVERY_ONLY"}
-                   if os.environ.get("AUTOSLICE_FINAL_REVIEW_MODE") == "per_finding" else {}),
-                "evidence_source": EVIDENCE_SOURCE,
-                "current_srt_sha256": current_sha,
-                "witness_srt_sha256": witness_srt_sha256,
-                "current_span": nom["final_span"],
-                "witness_span": nom["witness_span"],
-                "final_pinyin": nom["final_pinyin"],
-                "witness_pinyin": nom["witness_pinyin"],
-                "intro_offset_ms": nom["intro_offset_ms"],
-            },
-        })
-    return rows
-
-
-def decided_nomination_ids(
-    nominations: Sequence[Mapping[str, Any]], resolved_findings: Sequence[Any],
-) -> set[str]:
-    """Nominations the exact review already decided for the same current bytes.
-
-    ``resolved_findings`` is the exact-final review's decided set (audio-backed
-    resolutions and keep-current disclosures) for this very SRT.  A row settles
-    a nomination only when it is about the same cue text *and* the same witness
-    question (provenance id, same closed-set proposal, or same suspect span);
-    an unrelated finding on that cue never settles it.
-    """
-
-    decided: set[str] = set()
-    for nom in nominations:
-        for row in resolved_findings or ():
-            if not isinstance(row, Mapping):
-                continue
-            if row.get("cue_index") != nom["cue_index"]:
-                continue
-            if row.get("base_text_sha256") != nom["base_text_sha256"]:
-                continue
-            provenance = row.get("candidate_provenance")
-            if (
-                (isinstance(provenance, Mapping)
-                 and provenance.get("kind") == PROVENANCE_KIND
-                 and provenance.get("nomination_id") == nom["nomination_id"])
-                or (nom["proposed_full_cue"] is not None
-                    and row.get("proposed_full_cue") == nom["proposed_full_cue"])
-                or (nom["final_span"] and row.get("suspect") == nom["final_span"]
-                    and row.get("why", "").startswith(WHY_PREFIX))
-            ):
-                decided.add(nom["nomination_id"])
-                break
-    return decided
 
 
 def assess_correspondence_text(

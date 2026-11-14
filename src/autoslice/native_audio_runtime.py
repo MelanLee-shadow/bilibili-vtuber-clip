@@ -11,7 +11,6 @@ another provider.
 from __future__ import annotations
 
 import os
-import json
 from pathlib import Path
 import re
 import shlex
@@ -216,88 +215,6 @@ def resolve_native_audio_environment(
     env_path = bound_root / _PROVIDER_ENV_FILE[provider]
     raw = _parse_env(_read_private_env(env_path))
     return _provider_values(provider, raw, bound_root)
-
-
-def validated_native_audio_values(provider: str, *, environ: Mapping[str, str]) -> dict[str, str]:
-    """Resolve and validate one provider without dispatching HTTP.
-
-    Values stay in memory. Key-file references are materialized only for the
-    protected controller-to-worker configuration transport.
-    """
-    values = resolve_native_audio_environment(provider, environ=environ)
-    values = dict(environ) if values is None else values
-    if provider == "mai":
-        from src.autoslice.mai_transcription import _endpoint_url, _read_api_key
-        _endpoint_url(values)
-        return {"AZURE_ENDPOINT": values["AZURE_ENDPOINT"], "AZURE_API_KEY": _read_api_key(values)}
-    from src.autoslice.moss_transcription import _read_api_key
-    return {"AUTOSLICE_MOSS_API_KEY": _read_api_key(values)}
-
-
-def native_audio_readiness(runtime_root: Path) -> list[dict]:
-    """Return sanitized actual-adapter readiness; never keys or fingerprints."""
-    root = _assert_runtime_root(Path(runtime_root))
-    result = []
-    for provider, name in _PROVIDER_ENV_FILE.items():
-        path = root / name
-        row = {"provider": provider, "source": str(path), "ready": False}
-        try:
-            values = validated_native_audio_values(provider, environ={"AUTOSLICE_BASE": str(root)})
-            row.update(ready=True, variables=sorted(values), mode=oct(stat.S_IMODE(path.stat().st_mode)),
-                       owner_uid=path.stat().st_uid)
-        except Exception as exc:
-            row["reason_code"] = getattr(exc, "reason_code", "NATIVE_AUDIO_RUNTIME_CONFIG_INVALID")
-        result.append(row)
-    return result
-
-
-def install_native_audio_configuration(runtime_root: Path, payload: Mapping) -> dict:
-    """Create missing provider-only files; preserve existing node credentials.
-
-    This operation is independent of immutable code versions and job stores.
-    Input arrives only on SSH stdin; neither values nor digests enter receipts.
-    """
-    root = _assert_runtime_root(Path(runtime_root))
-    if not isinstance(payload, dict) or set(payload) != set(_PROVIDER_ENV_FILE):
-        raise NativeAudioRuntimeError("NATIVE_AUDIO_RUNTIME_CONFIG_INVALID")
-    expected = {"mai": {"AZURE_ENDPOINT", "AZURE_API_KEY"}, "moss": {"AUTOSLICE_MOSS_API_KEY"}}
-    for provider, values in payload.items():
-        if (not isinstance(values, dict) or set(values) != expected[provider]
-                or any(not isinstance(v, str) or not v.strip() or any(c in v for c in "\r\n\x00")
-                       for v in values.values())):
-            raise NativeAudioRuntimeError("NATIVE_AUDIO_RUNTIME_CONFIG_INVALID")
-        validated_native_audio_values(provider, environ=values)
-    created = []
-    for provider, name in _PROVIDER_ENV_FILE.items():
-        path = root / name
-        # Existing node-specific keys are never replaced by controller copies.
-        if path.exists() or path.is_symlink():
-            _provider_values(provider, _parse_env(_read_private_env(path)), root)
-            continue
-        data = "".join(f"{k}={shlex.quote(v)}\n" for k, v in payload[provider].items()).encode()
-        temporary = path.with_name('.' + name + '.' + os.urandom(12).hex())
-        try:
-            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(data)
-                handle.flush()
-                os.fsync(handle.fileno())
-            # Publish complete bytes atomically without replacing a node key.
-            os.link(temporary, path, follow_symlinks=False)
-        finally:
-            if temporary.exists():
-                temporary.unlink()
-        directory = os.open(root, os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
-        created.append(provider)
-    readiness = native_audio_readiness(root)
-    if not all(row["ready"] for row in readiness):
-        raise NativeAudioRuntimeError("NATIVE_AUDIO_RUNTIME_CONFIG_NOT_READY")
-    return {"status": "READY", "runtime_root": str(root), "created_providers": created,
-            "providers": readiness, "provider_calls": 0}
 
 
 __all__ = ["NativeAudioRuntimeError", "resolve_native_audio_environment", "native_audio_readiness"]

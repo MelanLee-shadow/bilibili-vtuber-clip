@@ -16,17 +16,15 @@ these platform bounds. Keep existing MAX_* exports as compatibility aliases.
 """
 
 from __future__ import annotations
+from typing import TYPE_CHECKING
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.autoslice.upload_tag_policy import UploadTagPolicy
 
 PLATFORM_MAX_TAGS = 12
 PLATFORM_MAX_TAG_CHARS = 20
-MAX_TAGS = PLATFORM_MAX_TAGS
-MAX_TAG_CHARS = PLATFORM_MAX_TAG_CHARS
 
 
 def validate_tag_policy_limits(policy: UploadTagPolicy) -> list[str]:
@@ -87,16 +85,6 @@ def validate_tag_generation(upload_tags: object) -> list[str]:
     if isinstance(final, list) and any(isinstance(tag, str) and tag not in base for tag in final):
         return []
     return ["CONTENT_TAG_GENERATION_INCOMPLETE: topic generation failed or was skipped; review tags before publishing"]
-
-
-def normalise_tags(value: object) -> list[str]:
-    """Normalize accepted tag input shapes without asserting validity."""
-
-    if isinstance(value, str):
-        return [part.strip() for part in value.split(",") if part.strip()]
-    if isinstance(value, list):
-        return [str(part).strip() for part in value if str(part).strip()]
-    return []
 
 
 __all__ = [

@@ -5,6 +5,7 @@ lease inode, not that mutex; flock also makes crashed owners reclaimable.
 """
 
 from __future__ import annotations
+from typing import TYPE_CHECKING
 
 import fcntl
 import errno
@@ -20,10 +21,10 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable, Iterator, TypeVar, TYPE_CHECKING
+from typing import Any, Callable, Iterator, TypeVar
 
 if TYPE_CHECKING:
-    from src.autoslice.provider_admission import RateFeedback
+    pass
 
 from src.autoslice.deployed_code_root import deployed_code_root
 

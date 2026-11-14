@@ -6,14 +6,16 @@ from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
 import hashlib
 import json
 import os
+import re
 import shlex
 import stat
 import uuid
+from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, is_dataclass
-from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
+from threading import RLock
 from urllib.parse import urlsplit
 
 from src.autoslice.qixi_transaction_core import (
@@ -29,29 +31,64 @@ RULING_POLICY = "original-answer-reuse.v1"
 _active_response = ContextVar("completed_review_response", default=False)
 _owner_context = ContextVar('ruling_owner_context', default=None)
 
+# Discovery hints, never observations or authorization. Keep only small hashes,
+# not old prompts/material graphs. Every use follows a fresh safe byte snapshot;
+# matching candidates still take the ordinary decode and strict load path.
+_legacy_hints = OrderedDict()
+_legacy_hints_lock = RLock()
+_legacy_hint_locks = tuple(RLock() for _ in range(32))
+_LEGACY_HINT_LIMIT = 4096
 
-@contextmanager
-def ruling_material_scope(material: Mapping | None, *, cache_allowed=True, retain=None):
-    """Carry an enclosing cache's material and retention admission downstream.
 
-    Implementation snapshots are telemetry, while the actual answering model
-    is bound separately. No nested raw cache may weaken the owner's key or
-    turn a declined retention decision into permission to persist.
+def _legacy_stage_may_match(payload: bytes, stage: object) -> bool:
+    """Cheap necessary condition, never evidence that an observation matches.
+
+    Escaped Unicode can spell either the key or its value in another way, so
+    those records take the full reader. For plain ASCII stage names, JSON's
+    other escapes cannot encode their letters. A nested matching key is only
+    a false positive and still receives the full semantic comparison.
     """
-    previous = _owner_context.get()
-    semantic = {key: value for key, value in (material or {}).items()
-                if key not in {'implementation', 'transport_implementation', 'model_identity'}}
-    state = {'materials': [*(previous['materials'] if previous else []), semantic],
-             'allowed': bool(cache_allowed and (previous['allowed'] if previous else True)),
-             'guards': [*(previous['guards'] if previous else []), *([retain] if retain else [])],
-             'volatile': previous['volatile'] if previous else {}}
-    token = _owner_context.set(state)
+    if (b'review-evidence-reference.v1' in payload
+            or not isinstance(stage, str) or re.fullmatch(r'[A-Za-z0-9_-]+', stage) is None
+            or b'\\u' in payload):
+        return True
+    pattern = rb'"stage"[ \t\r\n]*:[ \t\r\n]*"' + stage.encode('ascii') + b'"'
+    return re.search(pattern, payload) is not None
+
+
+def _semantic_hint(value, _memo=None):
+    """A necessary condition for Python's semantic equality, not a cache key.
+
+    JSON spelling is not that relation: 1, 1.0 and True compare equal in old
+    bindings. Python scalar hashes preserve it; unordered object keys and
+    ordered arrays follow the same equality. Collisions only cause more work.
+    """
+    if _memo is None:
+        _memo = {}
+    if isinstance(value, (Mapping, list, tuple)):
+        identity = id(value)
+        if identity in _memo:
+            return _memo[identity]
+        if isinstance(value, Mapping):
+            result = hash(frozenset((key, _semantic_hint(item, _memo)) for key, item in value.items()))
+        else:
+            result = hash(tuple(_semantic_hint(item, _memo) for item in value))
+        _memo[identity] = result
+        return result
+    return hash(value)
+
+
+def _remember_legacy_hint(key, semantic):
     try:
-        yield
-    finally:
-        _owner_context.reset(token)
-        if previous is None:
-            state['volatile'].clear()
+        hint = _semantic_hint(semantic)
+    except (TypeError, ValueError, RecursionError):
+        # An optional hint must not add a new restriction on an old binding.
+        return
+    with _legacy_hints_lock:
+        _legacy_hints[key] = hint
+        _legacy_hints.move_to_end(key)
+        while len(_legacy_hints) > _LEGACY_HINT_LIMIT:
+            _legacy_hints.popitem(last=False)
 
 
 def ruling_cache_allowed() -> bool:
@@ -67,17 +104,6 @@ def ruling_owner_materials() -> list:
 def response_in_progress() -> bool:
     """Nested structured adapters must use the enclosing question's identity."""
     return _active_response.get()
-
-
-def inherit_ruling_context(wrapper: Callable, source: Callable) -> Callable:
-    """Keep a recording/routing wrapper on the source's ordinary raw lane."""
-    for name in ('cpa_cache_identity', 'provider_runtime_binding', 'provider_diagnostics',
-                 'completed_review_root', 'completed_review_binding', 'semantic_policy_version',
-                 'cpa_resource_pressure', '_semantic_attempt_recorder', 'terminal_retry_capable',
-                 'timeout_seconds', 'terminal_retry_wallclock_seconds'):
-        if hasattr(source, name):
-            setattr(wrapper, name, getattr(source, name))
-    return wrapper
 
 
 def _semantic_binding(binding: Mapping[str, object]) -> dict:
@@ -105,7 +131,7 @@ def _semantic_binding(binding: Mapping[str, object]) -> dict:
         # with a few fields deleted. Raw request/response bytes stay in binding.
         from .finding_context import materials_for_model
         provider = result.get('provider') or {}
-        materials = materials_for_model(materials, provider.get('routing') or {})
+        materials = materials_for_model(materials, provider.get('routing') or {}, _read_only=True)
         return {'schema_version': result.get('schema_version'), 'stage': result.get('stage'),
                 'semantic_policy': result.get('semantic_policy'), 'provider': provider,
                 'finding_materials': materials,
@@ -118,15 +144,19 @@ def _request_material_binding(binding, prompt):
     from .prompt_materials import canonical_materials, prompt_material_sha256
     result = _semantic_binding(binding)
     if 'owner_materials' in result:
-        result['owner_materials'] = canonical_materials(result['owner_materials'])
+        result['owner_materials'] = canonical_materials(result['owner_materials'], _read_only=True)
     if 'finding_materials' not in result:
         for key in ('inputs',):
             if key in result:
-                result[key] = canonical_materials(result[key])
+                result[key] = canonical_materials(result[key], _read_only=True)
         result['request_sha256'] = prompt_material_sha256(prompt)
     return result
 
 
+from .cpa_request_lifecycle import bind_request_meaning
+
+
+@bind_request_meaning
 def ruling_response(*, stage: str, prompt: str, llm_call: Callable,
                     inputs: Mapping[str, object], parser_path: Path,
                     response_schema=None, name="ruling", consumed_ruling_sink=None) -> tuple[str, bool]:
@@ -219,6 +249,64 @@ def _sha(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _canonical_hash(value: object) -> str:
+    from .canonical_json_hash import canonical_sha256
+    def encode(item):
+        if is_dataclass(item) and not isinstance(item, type):
+            return asdict(item)
+        if isinstance(item, Path):
+            return str(item)
+        raise TypeError('unsupported completed review binding')
+    return canonical_sha256(value, allow_nan=True, default=encode)
+
+
+def _semantic_equal(left, right):
+    """Python JSON equality with repeated container pairs visited once."""
+    pending = [(left, right)]
+    seen = set()
+    while pending:
+        a, b = pending.pop()
+        if isinstance(a, dict) and isinstance(b, dict):
+            if a.keys() != b.keys():
+                return False
+            pair = (id(a), id(b))
+            if pair not in seen:
+                seen.add(pair)
+                pending.extend((a[k], b[k]) for k in a)
+        elif isinstance(a, list) and isinstance(b, list):
+            if len(a) != len(b):
+                return False
+            pair = (id(a), id(b))
+            if pair not in seen:
+                seen.add(pair)
+                pending.extend(zip(a, b))
+        elif a is not b and a != b:
+            return False
+    return True
+
+
+def _large_graph(value, limit=1_000_000):
+    """Saturating upper bound; retain ordinary plain records when small."""
+    memo = {}
+    def size(node):
+        if isinstance(node, str):
+            return min(limit, 6 * len(node) + 2)
+        if not isinstance(node, (dict, list, tuple)):
+            return 32
+        identity = id(node)
+        if identity in memo:
+            return memo[identity]
+        total = 2
+        for key, child in (node.items() if isinstance(node, dict) else enumerate(node)):
+            total += size(child) + (6 * len(key) + 4 if isinstance(key, str) else 2)
+            if total >= limit:
+                total = limit
+                break
+        memo[identity] = total
+        return total
+    return size(value) >= limit
+
+
 def _directory(path: Path, *, create: bool) -> bool:
     if not path.is_absolute() or ".." in path.parts:
         raise CompletedReviewCheckpointError("COMPLETED_REVIEW_UNSAFE_PATH")
@@ -249,16 +337,40 @@ class CompletedReviewCheckpoint:
     """
 
     def __init__(self, root: Path, binding: Mapping[str, object], prompt: str):
-        self.binding = json.loads(_canonical(binding))
-        self.binding.setdefault('request_sha256', _sha(prompt.encode()))
+        from .finding_closure_ports import RetainedObject
+        try:
+            self._binding_owner = RetainedObject.from_value(binding)
+            self._public_binding = None
+        except (TypeError, ValueError):
+            self._binding_owner = None
+            self._public_binding = json.loads(_canonical(binding))
+        if 'request_sha256' not in self._binding_view():
+            initial = dict(self._binding_view())
+            initial['request_sha256'] = _sha(prompt.encode())
+            if self._binding_owner is not None:
+                self._binding_owner = RetainedObject.from_value(initial)
+            else:
+                self._public_binding = initial
         self.prompt = prompt
         self.root = root
-        self.semantic_binding = _semantic_binding(self.binding)
-        self.legacy_directory = root / _sha(_canonical(self.semantic_binding))
-        self.semantic_binding = _request_material_binding(self.binding, prompt)
-        self.directory = root / _sha(_canonical(self.semantic_binding))
+        self.semantic_binding = _semantic_binding(self._binding_view())
+        self.legacy_directory = root / _canonical_hash(self.semantic_binding)
+        self.semantic_binding = _request_material_binding(self._binding_view(), prompt)
+        self.directory = root / _canonical_hash(self.semantic_binding)
         self.raw: str | None = None
         self.hit = False
+        self.original_prompt: str | None = None
+
+    def _binding_view(self):
+        if self._public_binding is not None:
+            return self._public_binding
+        return self._binding_owner.read_view()
+
+    @property
+    def binding(self):
+        if self._public_binding is None:
+            self._public_binding = self._binding_owner.value()
+        return self._public_binding
 
     @classmethod
     def for_ruling(cls, *, stage: str, prompt: str, llm_call: Callable,
@@ -369,20 +481,29 @@ class CompletedReviewCheckpoint:
         }
         return cls(Path(raw_root), binding, prompt)
 
-    def load(self) -> str | None:
+    def load(self, *, bound_only: bool = False) -> str | None:
         owner = _owner_context.get()
         if owner and str(self.directory) in owner['volatile']:
             self.raw = cached_completion(owner['volatile'][str(self.directory)],
-                                         self.binding.get('provider', {}).get('routing', {}))
+                                         self._binding_view().get('provider', {}).get('routing', {}))
             self.hit = True
             return self.raw
+        redirected = self._requested_response()
+        if redirected is not None:
+            checkpoint, expected = redirected
+            raw = checkpoint.load(bound_only=bound_only)
+            if raw is None or _sha(raw.encode()) != expected:
+                raise CompletedReviewCheckpointError('COMPLETED_REVIEW_REQUEST_RESPONSE_DRIFT')
+            self.original_prompt = checkpoint.original_prompt
+            self.raw, self.hit = raw, True
+            return raw
         try:
             directories = []
             for candidate in dict.fromkeys((self.directory, self.legacy_directory)):
                 if (_directory(candidate, create=False)
                         and [*candidate.glob('*.json'), *candidate.glob('.*.tmp')]):
                     directories.append(candidate)
-            migrated = self._legacy_material_directory(exclude=directories)
+            migrated = None if bound_only else self._legacy_material_directory(exclude=directories)
             if migrated is not None:
                 directories.append(migrated)
             if not directories:
@@ -405,13 +526,15 @@ class CompletedReviewCheckpoint:
                 observations[named_sha] = snapshot.payload
             if len(observations) != 1:
                 raise CompletedReviewCheckpointError("COMPLETED_REVIEW_AMBIGUOUS")
-            value = json.loads(next(iter(observations.values())))
+            from .review_evidence_store import expand, evidence_store_root
+            value = expand(json.loads(next(iter(observations.values()))),
+                           store_root=evidence_store_root(directory), _shared=True)
             if not isinstance(value, dict):
                 raise CompletedReviewCheckpointError("COMPLETED_REVIEW_BINDING_DRIFT")
             raw = value.get("response")
             original_prompt = value.get('request')
             saved_binding = value.get('binding')
-            from .prompt_materials import prompt_material_sha256, same_prompt_materials, canonical_materials
+            from .prompt_materials import same_prompt_materials
             if (not isinstance(original_prompt, str) or not isinstance(saved_binding, Mapping)
                     or saved_binding.get('request_sha256') != _sha(original_prompt.encode())):
                 raise CompletedReviewCheckpointError("COMPLETED_REVIEW_BINDING_DRIFT")
@@ -422,17 +545,134 @@ class CompletedReviewCheckpoint:
                 raise CompletedReviewCheckpointError('COMPLETED_REVIEW_RETENTION_REJECTED')
             if (value.get("schema_version") != SCHEMA
                     or not isinstance(value.get("binding"), Mapping)
-                    or saved_semantic != self.semantic_binding
+                    or not _semantic_equal(saved_semantic, self.semantic_binding)
                     or not same_materials or not isinstance(raw, str)
                     or not raw.strip() or value.get("response_sha256") != _sha(raw.encode("utf-8"))):
                 raise CompletedReviewCheckpointError("COMPLETED_REVIEW_BINDING_DRIFT")
-            self.raw = cached_completion(raw, self.binding.get('provider', {}).get('routing', {}))
+            self.raw = cached_completion(raw, self._binding_view().get('provider', {}).get('routing', {}))
+            proof = value.get('completed_text_request')
+            if proof is not None:
+                from .cpa_request_lifecycle import completed_response_scope
+                if not hasattr(self.raw, '__dict__'):
+                    raise CompletedReviewCheckpointError('COMPLETED_REVIEW_BINDING_DRIFT')
+                setattr(self.raw, 'completed_text_request', proof)
+                if completed_response_scope(self.raw, self.prompt) is None:
+                    raise CompletedReviewCheckpointError('COMPLETED_REVIEW_BINDING_DRIFT')
+            self.original_prompt = original_prompt
             self.hit = True
             from .cpa_runtime import record_cpa_event
-            record_cpa_event('cache_hit',{'kind':'completed_review','stage':self.binding.get('stage')})
+            record_cpa_event('cache_hit',{'kind':'completed_review','stage':self._binding_view().get('stage')})
             return self.raw
         except (OSError, QixiTransactionCoreError, TypeError, json.JSONDecodeError) as exc:
             raise CompletedReviewCheckpointError("COMPLETED_REVIEW_UNREADABLE") from exc
+
+    def _answer_binding(self, answered):
+        provider = {**self._binding_view()['provider'], 'routing': answered}
+        if 'provider_model' in provider.get('runtime', {}):
+            provider['runtime'] = {**provider['runtime'], 'provider_model': answered['models']}
+        return {**self._binding_view(), 'provider': provider}
+
+    def _requested_response(self):
+        """Resolve an observed model redirect, never select a shared verdict.
+
+        The request's own immutable receipt distinguishes a returned response
+        from other observations of the same question by the answering model.
+        Unowned shared-cache ambiguity remains an error.
+        """
+        # Only a physical dispatch owns a redirected return. A model-keyed
+        # shared question must not turn a fallback answer into a top-model hit.
+        if self._binding_view().get('stage') != 'cpa-text-physical':
+            return None
+        root = self.root / 'requested-model-responses' / self.directory.name
+        if not _directory(root, create=False):
+            return None
+        snapshot = stable_regular_snapshot(root / 'response.json', label='requested model response')
+        if snapshot is None:
+            return None
+        try:
+            from .review_evidence_store import expand, evidence_store_root
+            record = expand(json.loads(snapshot.payload), store_root=evidence_store_root(root), _shared=True)
+            requested = record['requested_binding']
+            answered = record['answering_identity']
+            digest = record['response_sha256']
+            if (record.get('schema_version') != 'requested-model-response.v1'
+                    or not _semantic_equal(_request_material_binding(requested, record['request']), self.semantic_binding)
+                    or requested.get('request_sha256') != _sha(record['request'].encode())
+                    or not isinstance(answered, dict)
+                    or set(answered) != set(self._binding_view()['provider']['routing'])
+                    or any(answered[k] != v for k, v in self._binding_view()['provider']['routing'].items() if k != 'models')
+                    or not isinstance(answered.get('models'), list) or len(answered['models']) != 1
+                    or not isinstance(answered['models'][0], str) or not answered['models'][0]
+                    or not isinstance(digest, str) or len(digest) != 64):
+                raise ValueError('invalid requested response')
+            return type(self)(root, self._answer_binding(answered), self.prompt), digest
+        except (KeyError, TypeError, ValueError) as exc:
+            raise CompletedReviewCheckpointError('COMPLETED_REVIEW_REQUEST_RESPONSE_DRIFT') from exc
+
+    def response_checkpoint(self, raw):
+        """Return the exact persisted observation for a downstream consumer."""
+        redirected = self._requested_response()
+        if redirected is not None:
+            actual, digest = redirected
+            if _sha(raw.encode()) != digest:
+                raise CompletedReviewCheckpointError('COMPLETED_REVIEW_REQUEST_RESPONSE_DRIFT')
+            return actual
+        answered = completion_identity(self._binding_view().get('provider', {}).get('routing', {}), raw)
+        from .cpa_request_lifecycle import completed_response_scope
+        scope = (completed_response_scope(raw, self.prompt)
+                 if answered != self._binding_view().get('provider', {}).get('routing', {}) else None)
+        root = self.root / 'dispatch-observations' / scope if scope is not None else self.root
+        return type(self)(root, self._answer_binding(answered), self.prompt)
+
+    def recover_request_response(self, completion_sha256: str) -> str | None:
+        """Recover legacy physical redirects using the bound dispatch ledger.
+
+        Only H104's validated COMPLETED event supplies the response digest.
+        A matching hash alone is insufficient: the original physical input,
+        logical owner, contract, prompt, and answering identity must all bind.
+        This scan is needed only for old responses stored before redirects had
+        their own receipt; successful recovery writes that ordinary receipt.
+        """
+        if self._binding_view().get('stage') != 'cpa-text-physical':
+            raise CompletedReviewCheckpointError('COMPLETED_REVIEW_PHYSICAL_OWNER_REQUIRED')
+        matches = {}
+        if not _directory(self.root, create=False):
+            return None
+        for directory in self.root.iterdir():
+            if len(directory.name) != 64 or any(c not in '0123456789abcdef' for c in directory.name):
+                continue
+            if not _directory(directory, create=False):
+                continue
+            for path in [*directory.glob('*.json'), *directory.glob('.*.tmp')]:
+                snapshot = stable_regular_snapshot(path, label='physical response recovery')
+                if snapshot is None:
+                    continue
+                try:
+                    from .review_evidence_store import expand, evidence_store_root
+                    value = expand(json.loads(snapshot.payload),
+                                   store_root=evidence_store_root(directory), _shared=True)
+                except (ValueError, UnicodeError):
+                    continue
+                if not isinstance(value, dict) or value.get('response_sha256') != completion_sha256:
+                    continue
+                binding = value.get('binding')
+                if not isinstance(binding, dict) or value.get('request') != self.prompt:
+                    continue
+                answered = binding.get('provider', {}).get('routing', {})
+                expected = self._answer_binding(answered)
+                if binding != expected:
+                    continue
+                original = type(self)(self.root, binding, self.prompt)
+                raw = original.load()
+                if raw is not None and _sha(raw.encode()) == completion_sha256:
+                    matches[_sha(_canonical(binding))] = raw
+        if not matches:
+            return None
+        if len(matches) != 1:
+            raise CompletedReviewCheckpointError('COMPLETED_REVIEW_AMBIGUOUS')
+        self.raw = next(iter(matches.values()))
+        self.save()
+        return self.load()
 
     def _legacy_material_directory(self, *, exclude=()):
         """Read old byte-keyed entries when an evidence bag merely reordered.
@@ -453,6 +693,11 @@ class CompletedReviewCheckpoint:
                 or not _directory(self.root, create=False)):
             return None
         from .prompt_materials import canonical_materials, prompt_material_sha256
+        from .finding_context import materials_for_model
+        try:
+            requested_hint = _semantic_hint(self.semantic_binding)
+        except (TypeError, ValueError, RecursionError):
+            requested_hint = None
         matches = []
         for directory in sorted(self.root.iterdir()):
             if directory in exclude:
@@ -470,7 +715,6 @@ class CompletedReviewCheckpoint:
             for path in [*directory.glob('*.json'), *directory.glob('.*.tmp')]:
                 try:
                     snapshot = stable_regular_snapshot(path, label='legacy completed review')
-                    value = json.loads(snapshot.payload) if snapshot is not None else None
                 except (OSError, QixiTransactionCoreError, ValueError, UnicodeError):
                     # A partial record has no established question binding.
                     # If another complete record nominates this directory,
@@ -478,12 +722,34 @@ class CompletedReviewCheckpoint:
                     continue
                 if snapshot is None:
                     continue
-                binding = value.get('binding') if isinstance(value, Mapping) else None
-                prompt = value.get('request') if isinstance(value, Mapping) else None
-                if not isinstance(binding, Mapping) or not isinstance(prompt, str):
+                if not _legacy_stage_may_match(snapshot.payload, self.semantic_binding.get('stage')):
                     continue
-                semantic = _request_material_binding(binding, prompt)
-                if semantic == self.semantic_binding:
+                key = (snapshot.sha256, _request_material_binding, _semantic_binding,
+                       canonical_materials, prompt_material_sha256, materials_for_model)
+                # Stripe the expensive cold work as well: simultaneous readers
+                # of the same verified bytes need only build one exclusion hint.
+                with _legacy_hint_locks[hash(key) % len(_legacy_hint_locks)]:
+                    with _legacy_hints_lock:
+                        hint = _legacy_hints.get(key)
+                        if hint is not None:
+                            _legacy_hints.move_to_end(key)
+                    if requested_hint is not None and hint is not None and hint != requested_hint:
+                        continue
+                    try:
+                        from .review_evidence_store import expand, evidence_store_root
+                        value = expand(json.loads(snapshot.payload),
+                                       store_root=evidence_store_root(directory), _shared=True)
+                    except (ValueError, UnicodeError):
+                        continue
+                    binding = value.get('binding') if isinstance(value, Mapping) else None
+                    prompt = value.get('request') if isinstance(value, Mapping) else None
+                    if not isinstance(binding, Mapping) or not isinstance(prompt, str):
+                        continue
+                    # Keep the original normalizer exception boundary. Failed
+                    # or incomplete records do not acquire reusable hints.
+                    semantic = _request_material_binding(binding, prompt)
+                    _remember_legacy_hint(key, semantic)
+                if _semantic_equal(semantic, self.semantic_binding):
                     matches.append(directory)
                     break
         if len(matches) > 1:
@@ -525,16 +791,34 @@ class CompletedReviewCheckpoint:
         """Install a complete raw response; acceptance belongs to the consumer."""
         if not isinstance(self.raw, str) or not self.raw.strip():
             raise CompletedReviewCheckpointError("COMPLETED_REVIEW_RESPONSE_MISSING")
-        routing = self.binding.get('provider', {}).get('routing', {})
+        routing = self._binding_view().get('provider', {}).get('routing', {})
         answered = completion_identity(routing, self.raw)
         if answered != routing:
-            provider = {**self.binding['provider'], 'routing': answered}
-            if 'provider_model' in provider.get('runtime', {}):
-                provider['runtime'] = {**provider['runtime'], 'provider_model': answered['models']}
-            binding = {**self.binding, 'provider': provider}
-            actual = type(self)(self.root, binding, self.prompt)
+            from .cpa_request_lifecycle import completed_response_scope
+            scope = completed_response_scope(self.raw, self.prompt)
+            physical = self._binding_view().get('stage') == 'cpa-text-physical'
+            root = (self.root / 'requested-model-responses' / self.directory.name if physical
+                    else self.root / 'dispatch-observations' / scope if scope is not None
+                    else self.root)
+            actual = type(self)(root, self._answer_binding(answered), self.prompt)
             actual.raw = self.raw
             actual.save()
+            if not physical:
+                return
+            owner = _owner_context.get()
+            if owner and not all(guard(self.raw) for guard in owner['guards']):
+                owner['volatile'][str(self.directory)] = self.raw
+                return
+            from .argon_escalation_storage import immutable
+            record = {
+                'schema_version': 'requested-model-response.v1',
+                'requested_binding': self._binding_view(), 'request': self.prompt,
+                'answering_identity': answered,
+                'response_sha256': _sha(self.raw.encode()),
+            }
+            from .review_evidence_store import project_document
+            immutable(root / 'response.json', _canonical(project_document(record, root)
+                                                        if _large_graph(record) else record))
             return
         owner = _owner_context.get()
         if owner and not all(guard(self.raw) for guard in owner['guards']):
@@ -549,13 +833,21 @@ class CompletedReviewCheckpoint:
         self.raw = proposed_raw
         if existing_raw is not None and existing_raw == proposed_raw:
             return
-        payload = _canonical({
-            "schema_version": SCHEMA, "binding": self.binding,
-            "request": self.prompt, "response": self.raw,
-            "response_sha256": _sha(self.raw.encode("utf-8")),
-        })
         try:
             _directory(self.directory, create=True)
+            from .review_evidence_store import project_document
+            record = {
+                "schema_version": SCHEMA, "binding": self._binding_view(),
+                "request": self.prompt, "response": self.raw,
+                "response_sha256": _sha(self.raw.encode("utf-8")),
+            }
+            proof = getattr(self.raw, 'completed_text_request', None)
+            if isinstance(proof, dict) and 'original_prompt' in proof:
+                from .cpa_request_lifecycle import completed_response_scope
+                completed_response_scope(self.raw, self.prompt)
+                record['completed_text_request'] = proof
+            payload = _canonical(project_document(record, self.directory)
+                                 if _large_graph(record) else record)
             target = self.directory / (_sha(payload) + ".json")
             existing = stable_regular_snapshot(target, label="completed review")
             if existing is not None:

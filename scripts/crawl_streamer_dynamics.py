@@ -18,6 +18,7 @@ if str(ROOT) not in sys.path:
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.streamer_dynamics import (
     ALLOWED_HOSTS,
+    REQUEST_BUDGET,
     StreamerDynamicsError,
     build_snapshot,
     snapshot_json,
@@ -79,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
         cache = HttpCache(args.cache_dir, max_body_bytes=2 * 1024 * 1024)
         client = BoundedHttpClient(
             allowed_hosts=ALLOWED_HOSTS,
-            max_requests=3,
+            max_requests=REQUEST_BUDGET,
             max_response_bytes=2 * 1024 * 1024,
             timeout_seconds=15,
             cache=cache,

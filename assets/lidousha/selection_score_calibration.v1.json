@@ -1,6 +1,6 @@
 {
   "schema_version": "lidousha-selection-score-calibration.v1",
-  "authority": "Channel editorial preference under selection-scorecard-admission.v3: Tier remains hard admission, Tier 1 requires the common quality/content gate, and reviewed within-tier anchors remain unchanged after uncertainty and same-session fatigue penalties. Relationship topics are conditionally preferred and compete with strong personal/event candidates; these weights and anchors are editorial calibration, not an estimated causal or predictive model of views; each strong dimension requires its own content reason.",
+  "authority": "Channel editorial preference under selection-scorecard-admission.v4: Tier remains hard admission, Tier 1 requires the common quality/content gate; a clear self-contained cute moment can qualify by itself without a relationship, escalation or reversal chain. Reviewed anchors, weights and penalties remain unchanged. Relationship topics compete with strong personal/event and cute candidates; this is editorial calibration, not an estimated causal or predictive model of views; each strong dimension requires its own content reason.",
   "anchors": [
     {
       "candidate_id": "auto_193450_3573_3665",

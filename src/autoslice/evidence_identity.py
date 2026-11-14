@@ -14,10 +14,8 @@ from __future__ import annotations
 
 import hashlib
 import os
-import re
 import stat
 import threading
-from collections.abc import Mapping
 from pathlib import Path
 from time import time_ns
 from typing import NamedTuple
@@ -36,35 +34,6 @@ _RACY_WINDOW_NS = 10_000_000
 _MEMO: dict[tuple, _HashMemoEntry] = {}
 _MEMO_LOCK = threading.Lock()
 _PLACEMENT_LOCKS: dict[tuple, threading.Lock] = {}
-_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
-
-
-def sha256_hex(value: object) -> str:
-    """Return a validated bare digest from either historical SHA-256 spelling.
-
-    Historical receipts contain bare lowercase hex and ``sha256:`` references;
-    those receipts must not be rewritten. Writers choose ``sha256_hex`` or
-    ``sha256_ref`` for their schema, and comparisons always use ``same_sha256``.
-    No coercion, whitespace, uppercase hex or other prefix is accepted.
-    """
-    if isinstance(value, str):
-        digest = value.removeprefix("sha256:")
-        if _SHA256_HEX.fullmatch(digest):
-            return digest
-    raise ValueError("invalid SHA-256 digest spelling")
-
-
-def sha256_ref(value: object) -> str:
-    """Return the canonical ``sha256:<lowercase hex>`` reference or raise."""
-    return "sha256:" + sha256_hex(value)
-
-
-def same_sha256(left: object, right: object) -> bool:
-    """Compare the two valid historical spellings; any invalid input is False."""
-    try:
-        return sha256_hex(left) == sha256_hex(right)
-    except ValueError:
-        return False
 
 
 def _placement(info: os.stat_result) -> tuple[int, ...]:
@@ -142,54 +111,3 @@ def file_sha256(path: Path, *, fresh: bool = False) -> str:
     return value
 
 
-def same_evidence_file(path: Path, expected_sha256: object, *,
-                       recorded_size: object = None, recorded_mtime_ns: object = None) -> bool:
-    """The file at ``path`` is byte-identical to the recorded evidence.
-
-    ``recorded_size``/``recorded_mtime_ns`` (when the record has them) must
-    also match; device, inode, ctime, nlink and owner are never compared.
-    """
-    expected = str(expected_sha256 or "").removeprefix("sha256:").lower()
-    if len(expected) != 64:
-        return False
-    try:
-        info = os.lstat(path)
-    except OSError:
-        return False
-    if recorded_size is not None and info.st_size != recorded_size:
-        return False
-    if recorded_mtime_ns is not None and info.st_mtime_ns != recorded_mtime_ns:
-        return False
-    return regular_file_sha256(path) == expected
-
-
-def content_view(row: Mapping) -> dict:
-    """Identity of a recorded file row: path, sha256, size, mtime; no placement."""
-    stat_row = row.get("stat") if isinstance(row.get("stat"), Mapping) else {}
-    return {"path": row.get("path"), "sha256": row.get("sha256"),
-            "size": stat_row.get("st_size", row.get("size")),
-            "mtime_ns": stat_row.get("st_mtime_ns", row.get("mtime_ns"))}
-
-
-PLACEMENT_KEYS = frozenset({"dev", "device", "ino", "inode", "ctime_ns", "nlink", "links",
-                            "uid", "gid", "st_dev", "st_ino", "st_ctime_ns", "st_nlink",
-                            "st_uid", "st_gid"})
-
-
-def placement_free(row: Mapping) -> dict:
-    """A recorded stat/fingerprint mapping without its placement fields."""
-    return {key: value for key, value in row.items() if key not in PLACEMENT_KEYS}
-
-
-def recorded_source_stat_matches(recorded: object, current: object) -> bool:
-    """Compare two ``entity_audio_verifier._source_stat_binding`` 7-tuples.
-
-    Layout: (dev, ino, mode, uid, size, mtime_ns, ctime_ns). Only the
-    restorable attributes (size, mtime) are identity; dev/ino/uid/ctime are
-    placement. Content is compared separately by sha256.
-    """
-    try:
-        old, new = list(recorded), list(current)
-    except TypeError:
-        return False
-    return len(old) == len(new) == 7 and old[4:6] == new[4:6]

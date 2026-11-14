@@ -61,13 +61,7 @@ from src.autoslice.isolated_source_read import (
 )
 from src.autoslice.llm_client import LlmCall, LlmCallError, extract_json_object
 from src.autoslice.review_evidence import SourceCue
-from src.autoslice.selection_scorecard import (
-    SelectionCalibrationPolicyError,
-    apply_reviewed_selection_calibration,
-    normalize_selection_scorecard,
-    selection_rank_key,
-    selection_scorecard_is_valid,
-)
+from src.autoslice.selection_scorecard import normalize_selection_scorecard, selection_rank_key
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
@@ -516,7 +510,7 @@ def _census_recall_diagnostics(provenance: RecallClueProvenance) -> dict[str, st
 # 共用评分卡量化规则段：既是整场召回 prompt 的一部分，也是狍哥案有界重
 # 评分车道（``rescore_candidate_scorecard``）单候选提卡 prompt 的核心——
 # 两处必须逐字同一份规则，不许各自维护一份漂移的拷贝（design §3.5「复用」）。
-_SCORECARD_RUBRIC_BLOCK = """选片量化表（talk 必填，song 可省略；新卡使用 selection-scorecard-admission.v3）：
+_SCORECARD_RUBRIC_BLOCK = """选片量化表（talk 必填，song 可省略；新卡使用 selection-scorecard-admission.v4）：
 - tier 是硬层级 1/2/3。当前 Tier 1 先过共同实质内容门：candidate_quality 必须是
   watchability=STRONG、differentiation=DISTINCTIVE、production_disposition=PRODUCTION，
   reason 非空且 evidence_cues 全在候选窗内；同时 audience_salience>=2、self_contained>=3、
@@ -529,15 +523,15 @@ _SCORECARD_RUBRIC_BLOCK = """选片量化表（talk 必填，song 可省略；�
 - personal_stance / generic_event 也可以进入 Tier 1：共同实质内容门通过后，
   lidousha_centrality>=3 或 stance_intensity>=3，且至少一个 tier_evidence_cues 能定位真实观点、
   选择、拒绝或结果。单次鲜明观点/拒绝可以兑现题目，不要求两次事件或人为升级；泛泛事件、
-  弱 CP 或普通可爱互动仍不能晋级。
-- audience_driven_performance 的最高级继续要求 relationship_interaction/persona_reversal 各至少3、
-  audience_salience至少2、self_contained至少3、comedic_payoff=4，并由至少两条 cue 组成
-  “观众起哄→她照做→人设反差”的完整互动链。可爱、普通抱抱或普通反差可以是第二层看点，
-  不因有请求和回应就给落点4；4须有不可替代、完整的渐进表演或强收束证据。
+  弱 CP 不能仅凭关键词或高分格式晋级。
+- 纯撒娇、卖萌或可爱回应本身也是重要看点；清楚具体、片内能看懂且满足共同内容门时，
+  audience_driven_performance 或自主的 cute_performance 至少一条窗内 cue 可进 Tier 1，
+  无须关系链、观众起哄、反差、渐进升级或 comedic_payoff=4。distinctive 可由具体可复述的
+  可爱时刻支持，不要求罕见反转；只写「可爱」而说不清看点仍不够。不要为了晋级虚增各维度分数。
   仅字幕中的“抱抱”“咬一下”等口头说法不能证明发生了实际动作，理由不得补写未证实的表演。
 - tier_basis 只能按事实选择 relationship_chain / explicit_gl_stance / cp_positioning /
-  audience_driven_performance / personal_stance / generic_event。
-- dimensions 七项都打 0..4 整数：lidousha_centrality（主播不可替代性）、stance_intensity、
+  audience_driven_performance / cute_performance / personal_stance / generic_event。
+- dimensions 七项都打 0..4 整数：lidousha_centrality（{CHANNEL_PROFILE.display_name}不可替代性）、stance_intensity、
   audience_salience（频道受众/人物题材显著度）、relationship_interaction、persona_reversal、
   comedic_payoff、self_contained。不要把 ASR/证据可靠性混进内容质量分。
   comedic_payoff 同时评价喜剧与情绪/观点兑现：2是明确但普通的收口，3是强且构成这个主事件主要看点的
@@ -550,10 +544,10 @@ _SCORECARD_RUBRIC_BLOCK = """选片量化表（talk 必填，song 可省略；�
   立场；依实际声源、主语、时间和模态区分被引用内容与她的真实评价/回应。
 - uncertainty_penalty 0..15，证据/指代/身份不确定才扣；fatigue_penalty 0..10，同场高度同质才扣。
 - 系统按固定 25/20/15/15/10/10/5 权重计算 effective_score，confidence 不再代替内容价值。
-- 历史无 policy 字段的卡和 selection-scorecard-admission.v2 卡按原准入规则验证并保留原字节；
-  不要把历史 Tier 或分数静默重算成 v3。只有本次新召回或明确 rescore 才生成 v3 卡。
+- 历史无 policy 字段及 v2/v3 卡按原准入规则验证并保留原字节；
+  不要把历史 Tier 或分数静默重算成 v4。只有本次新召回或明确 rescore 才生成 v4 卡。
 - 另为每个 talk 候选填写 candidate_quality。这是候选级的制作资格判断，不是第八个维度，不参与
-  七维算术或另加分；但在 v3 中它属于 Tier 1 共同准入，准入结果可以改变 Tier，并因此改变最终排序：
+  七维算术或另加分；在 v4 中它属于 Tier 1 共同准入，准入结果可以改变 Tier，并因此改变最终排序：
   watchability 只能是 STRONG/ORDINARY/THIN，
   differentiation 只能是 DISTINCTIVE/ORDINARY/THIN，production_disposition 只能是
   PRODUCTION/RESERVE/HOLD，reason 说明路人实际能看见的看点，evidence_cues 只能引用候选窗内 cue。
@@ -636,7 +630,8 @@ event_key（简短中文，如“妈感姐妹分类”）；不同事件的 even
 1. 讲故事/完整叙事:主播在讲一件事,有起因和结局。
 2. 弹幕互动打闹:某条弹幕起了头,主播读出/复述弹幕后接梗、吐槽、破防。读弹幕/复述问题的那句就是上下文起点,必须包含在片段里。
 3. 玩梗/绕口令/翻车/爆笑反应:包括对屏幕上正在看的图、玩的游戏的连续反应。
-4. {CHANNEL_PROFILE.display_name}本人现场唱歌:kind 填 "song",范围大致覆盖整首歌即可(后续有专门的歌词边界+本人声纹硬门)。只播放原唱、片尾曲、待机/下播画面的音乐、游戏或视频背景音乐都不是歌切，禁止选为 song。
+4. 现场突发/第三方介入:有人闯入或串线、被当场点名或追问、被抓包、事故式的连锁反应。选它的前提是李豆沙是事件当事方且窗内有她本人的反应。候选必须同时包含三部分:触发(什么打破了原有进程)、她的反应、收束(包括事件结束后的议论,或之后又回到她身上的反应);收束依赖前面的铺垫时一并框入,不要只截最响的一句。
+5. {CHANNEL_PROFILE.display_name}本人现场唱歌:kind 填 "song",范围大致覆盖整首歌即可(后续有专门的歌词边界+本人声纹硬门)。只播放原唱、片尾曲、待机/下播画面的音乐、游戏或视频背景音乐都不是歌切，禁止选为 song。
 
 对每个候选片段必须做上下文检查(观众视角):
 - 如果片段开头是悬空的(接续语、回应某个看不到的东西),往前找触发点(弹幕、话题开始、开始看某个东西的时刻),把 start_cue 前移到触发点,或填 context_trigger_cue。
@@ -1281,142 +1276,6 @@ def select_semantic_session_candidates_covered(
         ],
     }
     return selected, result_diagnostics
-
-
-RESCORE_SCORECARD_SCHEMA = "source-fact-rescore-scorecard.v1"
-
-
-def _rescore_prompt(
-    *,
-    cues: Sequence[SourceCue],
-    repaired_hook: str,
-    clip_context_prompt: str,
-) -> str:
-    lines = []
-    for position, cue in enumerate(cues, start=1):
-        text = " ".join(cue.text.split())
-        lines.append(f"#{position} [{_mmss(cue.source_start_ms)}-{_mmss(cue.source_end_ms)}] {text}")
-    transcript = "\n".join(lines)
-    return f"""你是{CHANNEL_PROFILE.display_name}(B站虚拟主播)切片频道的选题编辑。source-fact 事实修正已经把这条候选的
-selection_hook 改写为下面的修正稿,旧评分卡因此被判 INCOMPATIBLE 作废。只针对这条**修正后的
-hook**重新打一张评分卡,不要重新判断候选边界或选题范围,也不要评价修正是否合理(那是上一步已经
-做完的事)。如果修正后的 hook 在这段字幕窗口里找不到任何证据支持,status 填 "UNSUPPORTED",
-selection_scorecard 可留空对象。
-
-修正后的 hook:
-{repaired_hook}
-
-字幕窗口(cue 编号连续,#编号 [开始-结束] 文本):
-{transcript}
-
-同片 hash-bound 上下文(含按时间排列的结构化弹幕/SC):
-{clip_context_prompt}
-
-{_SCORECARD_RUBRIC_BLOCK}
-只输出一个 JSON 对象,不要任何其他文字:
-{{"status": "SUPPORTED"或"UNSUPPORTED", "selection_scorecard": {{"tier": 1或2或3, "tier_basis": "上述枚举", "tier_reason": "准入理由", "tier_evidence_cues": [整数], "dimensions": {{"lidousha_centrality": 0到4整数, "stance_intensity": 0到4整数, "audience_salience": 0到4整数, "relationship_interaction": 0到4整数, "persona_reversal": 0到4整数, "comedic_payoff": 0到4整数, "self_contained": 0到4整数}}, "uncertainty_penalty": 0到15, "fatigue_penalty": 0到10, "candidate_quality": {{"watchability": "STRONG"或"ORDINARY"或"THIN", "differentiation": "DISTINCTIVE"或"ORDINARY"或"THIN", "production_disposition": "PRODUCTION"或"RESERVE"或"HOLD", "reason": "片内具体看点和不足", "evidence_cues": [整数]}}}}}}
-"""
-
-
-def rescore_candidate_scorecard(
-    *,
-    candidate_id: str,
-    cues: Sequence[SourceCue],
-    repaired_hook: str,
-    clip_context_prompt: str,
-    llm_call: LlmCall | None,
-    stale_scorecard: object = None,
-    start_cue: int | None = None,
-    end_cue: int | None = None,
-) -> dict[str, object]:
-    """Regenerate one candidate's scorecard against its repaired hook.
-
-    Bounded, single-candidate counterpart to ``select_semantic_session_
-    candidates``: reuses the same deterministic scorecard arithmetic
-    (``normalize_selection_scorecard``, ``apply_reviewed_selection_
-    calibration``, ``selection_scorecard_is_valid``) instead of re-deriving
-    it, so a rescored candidate is ranked by the exact same rules as every
-    other candidate (design §4, 狍哥案修复).
-
-    Provider failures return ``PROVIDER_UNAVAILABLE`` — the caller must not
-    treat that as a content rejection or consume any bounded retry budget.
-    """
-
-    ordered = sorted(cues, key=lambda cue: (cue.source_start_ms, cue.source_end_ms, cue.cue_id))
-    cue_count = len(ordered)
-    base: dict[str, object] = {
-        "schema_version": RESCORE_SCORECARD_SCHEMA,
-        "candidate_id": candidate_id,
-    }
-    if cue_count == 0:
-        return {**base, "outcome": "UNSUPPORTED", "reason_code": "RESCORE_NO_CUES"}
-    resolved_start = start_cue if isinstance(start_cue, int) and 1 <= start_cue <= cue_count else None
-    resolved_end = end_cue if isinstance(end_cue, int) and 1 <= end_cue <= cue_count else None
-    if resolved_start is None or resolved_end is None or resolved_start > resolved_end:
-        # 兜底：从旧卡的 tier_evidence_cues 取 min/max（与
-        # apply_reviewed_selection_calibration 同款兜底策略），仍取不到就
-        # 退化为整窗——不能因为窗口未知就直接判死这条候选。
-        evidence = (
-            [
-                value
-                for value in (stale_scorecard.get("tier_evidence_cues") or [])
-                if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= cue_count
-            ]
-            if isinstance(stale_scorecard, Mapping)
-            else []
-        )
-        resolved_start, resolved_end = (min(evidence), max(evidence)) if evidence else (1, cue_count)
-    if llm_call is None:
-        return {
-            **base,
-            "outcome": "PROVIDER_UNAVAILABLE",
-            "reason_code": "RESCORE_PROVIDER_UNAVAILABLE",
-        }
-    prompt = _rescore_prompt(cues=ordered, repaired_hook=repaired_hook, clip_context_prompt=clip_context_prompt)
-    try:
-        raw = call_json(llm_call, prompt)
-        payload = extract_json_object(raw)
-    except (LlmCallError, Exception):  # noqa: BLE001
-        return {
-            **base,
-            "outcome": "PROVIDER_UNAVAILABLE",
-            "reason_code": "RESCORE_PROVIDER_CALL_FAILED",
-        }
-    if payload.get("status") == "UNSUPPORTED":
-        return {**base, "outcome": "UNSUPPORTED", "reason_code": "RESCORE_HOOK_UNSUPPORTED"}
-    normalized = normalize_selection_scorecard(
-        payload.get("selection_scorecard"),
-        start_cue=resolved_start,
-        end_cue=resolved_end,
-    )
-    if normalized is None:
-        return {
-            **base,
-            "outcome": "INVALID_CARD",
-            "reason_code": "RESCORE_SCORECARD_SHAPE_INVALID",
-        }
-    try:
-        calibrated = apply_reviewed_selection_calibration(candidate_id, normalized)
-    except SelectionCalibrationPolicyError:
-        return {
-            **base,
-            "outcome": "INVALID_CARD",
-            "reason_code": "RESCORE_CALIBRATION_REJECTED",
-        }
-    if not selection_scorecard_is_valid(calibrated):
-        return {
-            **base,
-            "outcome": "INVALID_CARD",
-            "reason_code": "RESCORE_SCORECARD_INVALID_AFTER_CALIBRATION",
-        }
-    assert isinstance(calibrated, dict)
-    return {
-        **base,
-        "outcome": "RESCORED",
-        "selection_scorecard": calibrated,
-        "start_cue": resolved_start,
-        "end_cue": resolved_end,
-    }
 
 
 def _cue_position(value: object, cue_count: int) -> int | None:

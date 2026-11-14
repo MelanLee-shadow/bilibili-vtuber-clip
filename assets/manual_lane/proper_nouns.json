@@ -1,0 +1,2360 @@
+[
+  {
+    "name": "李豆沙",
+    "aliases": [
+      "豆沙",
+      "小李",
+      "Shadow Lee",
+      "lds"
+    ],
+    "role": "主播",
+    "origin": "reviewer_proper_noun_U117",
+    "canonical": "李豆沙",
+    "variants": [
+      "李豆沙",
+      "李豆莎"
+    ],
+    "condition": "说的是这个完整称呼；aliases 是同人称呼，不是拼写等价关系",
+    "source": "reviewer_proper_noun_U117",
+    "profile_surface_rules": [
+      {
+        "order": 20,
+        "surface": "李豆莎",
+        "authority": "维护者-confirmed-self-name.v1"
+      }
+    ]
+  },
+  {
+    "name": "豆沙",
+    "aliases": [],
+    "role": "主播自称",
+    "canonical": "豆沙",
+    "variants": [
+      "豆沙"
+    ],
+    "condition": "说的是主播这个称呼",
+    "source": "reviewer_proper_noun_U117"
+  },
+  {
+    "name": "小李",
+    "aliases": [],
+    "role": "主播自称",
+    "canonical": "小李",
+    "variants": [
+      "小李",
+      "里豆沙"
+    ],
+    "condition": "说的是主播这个称呼",
+    "source": "reviewer_proper_noun_U117",
+    "glossary_expected_surfaces": [
+      {
+        "order": 27,
+        "surface": "里豆沙"
+      }
+    ]
+  },
+  {
+    "name": "lds",
+    "aliases": [],
+    "role": "主播自称",
+    "canonical": "lds",
+    "variants": [
+      "lds"
+    ],
+    "condition": "说的是主播缩写",
+    "source": "reviewer_proper_noun_U117"
+  },
+  {
+    "name": "Shadow Lee",
+    "aliases": [],
+    "role": "主播自称",
+    "canonical": "Shadow Lee",
+    "variants": [
+      "Shadow Lee"
+    ],
+    "condition": "说的是英文称呼，不是倒读梗称",
+    "source": "reviewer_proper_noun_U117"
+  },
+  {
+    "name": "雾深Girimi",
+    "aliases": [
+      "雾深",
+      "Girimi"
+    ],
+    "role": "联动嘉宾",
+    "origin": "reviewer_proper_noun_U117",
+    "canonical": "雾深Girimi",
+    "variants": [
+      "雾深Girimi"
+    ],
+    "condition": "完整称呼；实际说简称则保留简称",
+    "source": "reviewer_proper_noun_U117"
+  },
+  {
+    "name": "契约do爱",
+    "aliases": [],
+    "role": "本场梗词",
+    "origin": "reviewer_keyword_U113_U155",
+    "note": "是契约恋爱的谐音改口，只在讨论契约恋爱的语境里成立；听成『契约独爱』之类时按语境判断，不能把所有『独爱』都换成它",
+    "canonical": "契约do爱",
+    "variants": [
+      "契约do爱",
+      "契约独爱"
+    ],
+    "condition": "讨论契约恋爱且确指这个谐音梗，不能改所有独爱",
+    "source": "reviewer_keyword_U113_U155"
+  },
+  {
+    "name": "沙豆李",
+    "aliases": [],
+    "role": "李豆沙名字倒读的玩梗称呼（07-27 那场是粉丝队名）",
+    "origin": "reviewer_ruling_20260727",
+    "authority": "公开规则音频裁定原话：「里面有一个下斗里，一听，根据语境也知道说的是沙豆李」（subtitle_truth_ledger BV1zzgd6JEHe cue13）",
+    "note": "中文语境里念 shā dòu lǐ 时写「沙豆李」，不写成英文 Shadow Lee，也不写成「下斗里」之类的近音词",
+    "canonical": "沙豆李",
+    "variants": [
+      "沙豆李",
+      "下斗里",
+      "沙特琳",
+      "杀豆林",
+      "沙豆林",
+      "沙都林"
+    ],
+    "condition": "中文倒读梗，不是英文称呼",
+    "source": "reviewer_ruling_20260727",
+    "glossary_expected_surfaces": [
+      {
+        "order": 20,
+        "surface": "沙特琳"
+      },
+      {
+        "order": 21,
+        "surface": "杀豆林"
+      },
+      {
+        "order": 22,
+        "surface": "沙豆林"
+      },
+      {
+        "order": 23,
+        "surface": "沙都林"
+      },
+      {
+        "order": 24,
+        "surface": "下斗里"
+      }
+    ]
+  },
+  {
+    "name": "mujica",
+    "aliases": [],
+    "role": "作品或乐队名称",
+    "canonical": "mujica",
+    "variants": [
+      "母鸡卡",
+      "木子卡",
+      "Mujica",
+      "mujica"
+    ],
+    "condition": "确指该作品或乐队，不把同音的其他词替换",
+    "source": "维护者 U232-U234; assets/lidousha/entity_confusables.json"
+  },
+  {
+    "name": "xxsk",
+    "aliases": [],
+    "role": "联动主播称呼",
+    "canonical": "xxsk",
+    "variants": [
+      "香香烧烤",
+      "星汐",
+      "星汐seki",
+      "星汐Seki",
+      "seki",
+      "Seki",
+      "xxsk"
+    ],
+    "condition": "确指星汐且使用这些写法或念法；其他独立昵称不合并",
+    "source": "维护者 U232-U234"
+  },
+  {
+    "name": "七宝",
+    "aliases": [],
+    "role": "联动主播独立昵称",
+    "canonical": "七宝",
+    "variants": [
+      "七宝"
+    ],
+    "condition": "说的是七宝这个昵称，即使与另一称呼同指一人也保留",
+    "source": "维护者 U234"
+  },
+  {
+    "name": "kmx",
+    "aliases": [],
+    "role": "观众称呼",
+    "canonical": "kmx",
+    "rejected_variants": [
+      "天不熊"
+    ],
+    "legacy_equivalences": [
+      "kimo熊",
+      "kimo 熊",
+      "Kimo熊",
+      "kimoxiong",
+      "基默熊"
+    ],
+    "variants": [
+      "kimo熊",
+      "kimo 熊",
+      "Kimo熊",
+      "kimoxiong",
+      "基默熊",
+      "KMX",
+      "Kmx",
+      "kmx",
+      "康姆叉",
+      "停放熊",
+      "卡姆西",
+      "开姆克斯",
+      "提莫熊",
+      "提莫的熊",
+      "提莫怂",
+      "请问熊",
+      "KY小红"
+    ],
+    "condition": "确指该观众，近音误听不能无语境机械替换",
+    "source": "维护者 U233-U234; assets/lidousha/glossary.txt",
+    "profile_surface_rules": [
+      {
+        "order": 15,
+        "surface": "kimo熊",
+        "authority": "维护者-confirmed-kmx-pronunciation.v1"
+      },
+      {
+        "order": 16,
+        "surface": "kimo 熊",
+        "authority": "维护者-confirmed-kmx-pronunciation.v1"
+      },
+      {
+        "order": 17,
+        "surface": "Kimo熊",
+        "authority": "维护者-confirmed-kmx-pronunciation.v1"
+      },
+      {
+        "order": 18,
+        "surface": "kimoxiong",
+        "authority": "维护者-confirmed-kmx-pronunciation.v1"
+      },
+      {
+        "order": 19,
+        "surface": "基默熊",
+        "authority": "维护者-confirmed-kmx-pronunciation.v1"
+      }
+    ],
+    "glossary_expected_surfaces": [
+      {
+        "order": 2,
+        "surface": "KMX"
+      },
+      {
+        "order": 3,
+        "surface": "Kmx"
+      },
+      {
+        "order": 4,
+        "surface": "康姆叉"
+      },
+      {
+        "order": 5,
+        "surface": "停放熊"
+      },
+      {
+        "order": 6,
+        "surface": "卡姆西"
+      },
+      {
+        "order": 7,
+        "surface": "开姆克斯"
+      },
+      {
+        "order": 8,
+        "surface": "提莫熊"
+      },
+      {
+        "order": 9,
+        "surface": "提莫的熊"
+      },
+      {
+        "order": 10,
+        "surface": "提莫怂"
+      },
+      {
+        "order": 11,
+        "surface": "请问熊"
+      },
+      {
+        "order": 12,
+        "surface": "KY小红"
+      }
+    ]
+  },
+  {
+    "name": "大走",
+    "aliases": [],
+    "role": "游戏中文称呼",
+    "canonical": "大走",
+    "variants": [
+      "大走"
+    ],
+    "condition": "说的是 Big Walk 的中文直译；独立读音和语境须支持",
+    "source": "维护者 U239"
+  },
+  {
+    "name": "由菜Yuna",
+    "aliases": [],
+    "role": "主播完整称呼",
+    "canonical": "由菜Yuna",
+    "variants": [
+      "由菜Yuna",
+      "油菜优娜"
+    ],
+    "condition": "确实说该主播完整称呼；不将简称展开",
+    "source": "TASK-104 candidate rows, 维护者 note"
+  },
+  {
+    "name": "由菜",
+    "aliases": [],
+    "role": "主播简称",
+    "canonical": "由菜",
+    "variants": [
+      "由菜",
+      "油菜"
+    ],
+    "condition": "确指该主播并说简称；真正的蔬菜油菜不改",
+    "source": "TASK-104 candidate rows, 维护者 note"
+  },
+  {
+    "name": "茶百道",
+    "aliases": [],
+    "role": "主播昵称",
+    "canonical": "茶百道",
+    "variants": [
+      "茶百道"
+    ],
+    "condition": "说的是这个昵称；不与主播其他称呼互相展开",
+    "source": "TASK-104 candidate rows, 维护者 note"
+  },
+  {
+    "name": "马有利",
+    "aliases": [],
+    "role": "联动主播昵称",
+    "canonical": "马有利",
+    "variants": [
+      "马有利"
+    ],
+    "condition": "说的是这个口播昵称；Mayori、尾幼、小马等不同称呼分别保留",
+    "source": "TASK-104 candidate rows; assets/lidousha/glossary.txt"
+  },
+  {
+    "name": "安晚awa",
+    "aliases": [],
+    "role": "主播完整称呼",
+    "canonical": "安晚awa",
+    "variants": [
+      "安晚awa"
+    ],
+    "condition": "确实说完整称呼；单独的 awa 不自动展开",
+    "source": "TASK-104 candidate rows, 维护者 note"
+  },
+  {
+    "name": "硬",
+    "aliases": [],
+    "role": "普通词",
+    "detection_name": false,
+    "canonical": "硬",
+    "variants": [
+      "硬",
+      "摁"
+    ],
+    "condition": "语义明确为硬做、硬炒等该词义；其他同音词保留",
+    "source": "TASK-104 candidate rows, 维护者 note"
+  },
+  {
+    "name": "嗑",
+    "aliases": [],
+    "role": "普通词",
+    "detection_name": false,
+    "canonical": "嗑",
+    "variants": [
+      "嗑",
+      "磕"
+    ],
+    "condition": "指喜欢、沉迷某对配对或恋爱内容（嗑CP、嗑糖、嗑恋爱）；碰撞、磕头义的磕不改",
+    "source": "维护者 U245"
+  },
+  {
+    "name": "明日方舟",
+    "aliases": [],
+    "role": "作品名称",
+    "canonical": "明日方舟",
+    "variants": [
+      "明日方舟",
+      "明方"
+    ],
+    "condition": "本次声学证据确认说完整作品名；真正简称不展开",
+    "source": "TASK-104 candidate rows, 维护者 note"
+  },
+  {
+    "name": "少女歌剧",
+    "aliases": [],
+    "role": "作品名称",
+    "canonical": "少女歌剧",
+    "variants": [
+      "少女歌剧",
+      "少女歌"
+    ],
+    "condition": "本次声学证据确认说完整作品名；真正简称不展开",
+    "source": "TASK-104 candidate rows, 维护者 note"
+  },
+  {
+    "name": "侄女",
+    "aliases": [],
+    "role": "频道梗词",
+    "canonical": "侄女",
+    "variants": [
+      "侄女",
+      "直女"
+    ],
+    "condition": "频道固定梗规范：字幕、标题、封面及引用/泛指语境均适用",
+    "source": "assets/lidousha/glossary.txt",
+    "profile_surface_rules": [
+      {
+        "order": 6,
+        "surface": "直女",
+        "authority": "lidousha-hard-meme-canon.v1"
+      }
+    ]
+  },
+  {
+    "name": "SC",
+    "aliases": [],
+    "role": "平台术语",
+    "detection_name": false,
+    "canonical": "SC",
+    "variants": [
+      "SC",
+      "superchat",
+      "super恰",
+      "苏恰",
+      "斯擦",
+      "苏帕恰"
+    ],
+    "condition": "确指平台付费留言",
+    "source": "assets/lidousha/glossary.txt",
+    "profile_surface_rules": [
+      {
+        "order": 23,
+        "surface": "superchat",
+        "authority": "lidousha-caption-display-canon.v1"
+      }
+    ]
+  },
+  {
+    "name": "侄女卖姬",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "侄女卖姬",
+    "variants": [
+      "侄女卖姬"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:5"
+  },
+  {
+    "name": "掏兜",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "掏兜",
+    "variants": [
+      "掏兜"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:6"
+  },
+  {
+    "name": "和成天下",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "和成天下",
+    "variants": [
+      "和成天下",
+      "合成天下",
+      "何成天下"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:7",
+    "glossary_expected_surfaces": [
+      {
+        "order": 0,
+        "surface": "合成天下"
+      },
+      {
+        "order": 1,
+        "surface": "何成天下"
+      }
+    ]
+  },
+  {
+    "name": "妹感妈",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "妹感妈",
+    "variants": [
+      "妹感妈"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:9"
+  },
+  {
+    "name": "倒反天罡",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "倒反天罡",
+    "variants": [
+      "倒反天罡",
+      "大爽天高",
+      "大爽天罡",
+      "倒反天高"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:10",
+    "glossary_expected_surfaces": [
+      {
+        "order": 13,
+        "surface": "大爽天高"
+      },
+      {
+        "order": 14,
+        "surface": "大爽天罡"
+      },
+      {
+        "order": 15,
+        "surface": "倒反天高"
+      }
+    ]
+  },
+  {
+    "name": "142",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "142",
+    "variants": [
+      "142",
+      "伊索尔",
+      "一四二",
+      "幺四二"
+    ],
+    "condition": "确指该观众；普通数字按实际意义呈现",
+    "source": "assets/lidousha/glossary.txt:11",
+    "glossary_expected_surfaces": [
+      {
+        "order": 16,
+        "surface": "一四二"
+      },
+      {
+        "order": 17,
+        "surface": "伊索尔"
+      },
+      {
+        "order": 18,
+        "surface": "幺四二"
+      }
+    ]
+  },
+  {
+    "name": "小室",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "小室",
+    "variants": [
+      "小室",
+      "小诗",
+      "小四或其它近音候选"
+    ],
+    "condition": "确指该人物；普通两小时等不改",
+    "source": "assets/lidousha/glossary.txt:12",
+    "profile_surface_rules": [
+      {
+        "order": 8,
+        "surface": "小诗",
+        "authority": "lidousha-expected-value-canon.v1"
+      }
+    ],
+    "glossary_expected_surfaces": [
+      {
+        "order": 19,
+        "surface": "小四或其它近音候选"
+      }
+    ]
+  },
+  {
+    "name": "恋青",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "恋青",
+    "variants": [
+      "恋青"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:13"
+  },
+  {
+    "name": "恋死",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "恋死",
+    "variants": [
+      "恋死"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:13"
+  },
+  {
+    "name": "梦限大",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "梦限大",
+    "variants": [
+      "梦限大"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:14"
+  },
+  {
+    "name": "高松灯",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "高松灯",
+    "variants": [
+      "高松灯"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:15"
+  },
+  {
+    "name": "要乐奈",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "要乐奈",
+    "variants": [
+      "要乐奈"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:15"
+  },
+  {
+    "name": "椎名立希",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "椎名立希",
+    "variants": [
+      "椎名立希"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:15"
+  },
+  {
+    "name": "立希",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "立希",
+    "variants": [
+      "立希"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:15"
+  },
+  {
+    "name": "祥子",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "祥子",
+    "variants": [
+      "祥子"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:15"
+  },
+  {
+    "name": "十麻乃orient",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "十麻乃orient",
+    "variants": [
+      "十麻乃orient"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:16"
+  },
+  {
+    "name": "十麻乃",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "十麻乃",
+    "variants": [
+      "十麻乃",
+      "苏马奶"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:16",
+    "profile_surface_rules": [
+      {
+        "order": 21,
+        "surface": "苏马奶",
+        "authority": "维护者-confirmed-sc-sender.v1"
+      }
+    ]
+  },
+  {
+    "name": "Ado",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "Ado",
+    "variants": [
+      "Ado"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:17"
+  },
+  {
+    "name": "粉丝团灯牌",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "粉丝团灯牌",
+    "variants": [
+      "粉丝团灯牌",
+      "粉丝灯牌",
+      "粉团灯牌"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:19",
+    "profile_surface_rules": [
+      {
+        "order": 9,
+        "surface": "粉丝灯牌",
+        "authority": "lidousha-expected-value-canon.v1"
+      },
+      {
+        "order": 10,
+        "surface": "粉团灯牌",
+        "authority": "lidousha-expected-value-canon.v1"
+      }
+    ],
+    "glossary_expected_surfaces": [
+      {
+        "order": 25,
+        "surface": "粉丝灯牌"
+      },
+      {
+        "order": 26,
+        "surface": "粉团灯牌"
+      }
+    ]
+  },
+  {
+    "name": "shadow",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "shadow",
+    "variants": [
+      "shadow"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:20"
+  },
+  {
+    "name": "shadowlee",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "shadowlee",
+    "variants": [
+      "shadowlee"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:20"
+  },
+  {
+    "name": "22966160",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "22966160",
+    "variants": [
+      "22966160"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:21"
+  },
+  {
+    "name": "露蒂丝",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "露蒂丝",
+    "variants": [
+      "露蒂丝"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:23"
+  },
+  {
+    "name": "lycoris",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "lycoris",
+    "variants": [
+      "lycoris"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:23"
+  },
+  {
+    "name": "莉可丽丝",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "莉可丽丝",
+    "variants": [
+      "莉可丽丝"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:23"
+  },
+  {
+    "name": "露蒂斯",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "露蒂斯",
+    "variants": [
+      "露蒂斯"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:24"
+  },
+  {
+    "name": "露医生",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "露医生",
+    "variants": [
+      "露医生"
+    ],
+    "condition": "露蒂斯使用的医生形象昵称；说这个昵称时保留，不扩成全名。根据说话对象及上下文判断，不能与其他陆姓医生混同。",
+    "source": "assets/lidousha/glossary.txt:24"
+  },
+  {
+    "name": "陆医生",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "陆医生",
+    "variants": [
+      "陆医生"
+    ],
+    "condition": "确指现实或故事中的陆姓医生；不要把露蒂斯的昵称露医生误写为陆医生，也不要反向全局替换。",
+    "source": "assets/lidousha/glossary.txt:24"
+  },
+  {
+    "name": "熊猫头",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "熊猫头",
+    "variants": [
+      "熊猫头"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:25"
+  },
+  {
+    "name": "吵闹小李",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "吵闹小李",
+    "variants": [
+      "吵闹小李"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:25"
+  },
+  {
+    "name": "打call",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "打call",
+    "variants": [
+      "打call"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:26"
+  },
+  {
+    "name": "奶油苏打",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "奶油苏打",
+    "variants": [
+      "奶油苏打"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:27"
+  },
+  {
+    "name": "cream soda",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "cream soda",
+    "variants": [
+      "cream soda"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:27"
+  },
+  {
+    "name": "おめでとう",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "おめでとう",
+    "variants": [
+      "おめでとう"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:28"
+  },
+  {
+    "name": "かわいい",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "かわいい",
+    "variants": [
+      "かわいい"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:28"
+  },
+  {
+    "name": "すごい",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "すごい",
+    "variants": [
+      "すごい"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:28"
+  },
+  {
+    "name": "やばい",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "やばい",
+    "variants": [
+      "やばい"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:28"
+  },
+  {
+    "name": "ありがとう",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "ありがとう",
+    "variants": [
+      "ありがとう",
+      "日嘎多"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:28",
+    "profile_surface_rules": [
+      {
+        "order": 22,
+        "surface": "日嘎多",
+        "authority": "lidousha-code-switch-canon.v1"
+      }
+    ]
+  },
+  {
+    "name": "ワクワク",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "ワクワク",
+    "variants": [
+      "ワクワク",
+      "哇哭哇哭",
+      "哇库哇库",
+      "wakuwaku"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:29",
+    "profile_surface_rules": [
+      {
+        "order": 0,
+        "surface": "哇哭哇哭",
+        "authority": "lidousha-japanese-native-script-canon.v1"
+      },
+      {
+        "order": 1,
+        "surface": "哇库哇库",
+        "authority": "lidousha-japanese-native-script-canon.v1"
+      },
+      {
+        "order": 2,
+        "surface": "wakuwaku",
+        "authority": "lidousha-japanese-native-script-canon.v1"
+      }
+    ]
+  },
+  {
+    "name": "ぼく",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "ぼく",
+    "variants": [
+      "ぼく",
+      "boku"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:29",
+    "profile_surface_rules": [
+      {
+        "order": 3,
+        "surface": "boku",
+        "authority": "lidousha-japanese-native-script-canon.v1"
+      }
+    ]
+  },
+  {
+    "name": "おれ",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "おれ",
+    "variants": [
+      "おれ",
+      "ore"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:29",
+    "profile_surface_rules": [
+      {
+        "order": 4,
+        "surface": "ore",
+        "authority": "lidousha-japanese-native-script-canon.v1"
+      }
+    ]
+  },
+  {
+    "name": "あたし",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "あたし",
+    "variants": [
+      "あたし",
+      "atashi"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:29",
+    "profile_surface_rules": [
+      {
+        "order": 5,
+        "surface": "atashi",
+        "authority": "lidousha-japanese-native-script-canon.v1"
+      }
+    ]
+  },
+  {
+    "name": "何意味",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "何意味",
+    "variants": [
+      "何意味"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:30"
+  },
+  {
+    "name": "礼墨",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "礼墨",
+    "variants": [
+      "礼墨",
+      "林墨"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:31",
+    "profile_surface_rules": [
+      {
+        "order": 7,
+        "surface": "林墨",
+        "authority": "lidousha-expected-value-canon.v1"
+      }
+    ]
+  },
+  {
+    "name": "礼墨Sumi",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "礼墨Sumi",
+    "variants": [
+      "礼墨Sumi"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:31"
+  },
+  {
+    "name": "礼豆沙",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "礼豆沙",
+    "variants": [
+      "礼豆沙"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:32"
+  },
+  {
+    "name": "李墨",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "李墨",
+    "variants": [
+      "李墨"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:32"
+  },
+  {
+    "name": "久远澪",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "久远澪",
+    "variants": [
+      "久远澪"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:38"
+  },
+  {
+    "name": "熊猫柏拉图",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "熊猫柏拉图",
+    "variants": [
+      "熊猫柏拉图"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:39"
+  },
+  {
+    "name": "柏拉图",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "柏拉图",
+    "variants": [
+      "柏拉图"
+    ],
+    "condition": "确实说的是这个简称，不扩成完整称呼",
+    "source": "assets/lidousha/glossary.txt:39"
+  },
+  {
+    "name": "安晚",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "安晚",
+    "variants": [
+      "安晚"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:40"
+  },
+  {
+    "name": "awa",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "awa",
+    "variants": [
+      "awa"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:40"
+  },
+  {
+    "name": "awawa",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "awawa",
+    "variants": [
+      "awawa"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:40"
+  },
+  {
+    "name": "百破图",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "百破图",
+    "variants": [
+      "百破图",
+      "摆破图",
+      "白破图",
+      "百坡图"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:41",
+    "glossary_expected_surfaces": [
+      {
+        "order": 28,
+        "surface": "摆破图"
+      },
+      {
+        "order": 29,
+        "surface": "白破图"
+      },
+      {
+        "order": 30,
+        "surface": "百坡图"
+      }
+    ]
+  },
+  {
+    "name": "百乃工",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "百乃工",
+    "variants": [
+      "百乃工",
+      "白奶公",
+      "白奶工",
+      "白奶弓"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:42",
+    "glossary_expected_surfaces": [
+      {
+        "order": 31,
+        "surface": "白奶公"
+      },
+      {
+        "order": 32,
+        "surface": "白奶工"
+      },
+      {
+        "order": 33,
+        "surface": "白奶弓"
+      }
+    ]
+  },
+  {
+    "name": "VTS",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "VTS",
+    "variants": [
+      "VTS",
+      "VT S",
+      "V T S",
+      "vts",
+      "威提艾斯"
+    ],
+    "condition": "确指皮套软件；其他缩写保持原义",
+    "source": "assets/lidousha/glossary.txt:43",
+    "glossary_expected_surfaces": [
+      {
+        "order": 34,
+        "surface": "vts"
+      },
+      {
+        "order": 35,
+        "surface": "威提艾斯"
+      }
+    ]
+  },
+  {
+    "name": "上伊那牡丹",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "上伊那牡丹",
+    "variants": [
+      "上伊那牡丹",
+      "百牡丹",
+      "botan"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:44",
+    "glossary_expected_surfaces": [
+      {
+        "order": 36,
+        "surface": "百牡丹"
+      },
+      {
+        "order": 37,
+        "surface": "botan"
+      }
+    ]
+  },
+  {
+    "name": "牡丹",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "牡丹",
+    "variants": [
+      "牡丹"
+    ],
+    "condition": "确实说的是作品简称，不强制展开",
+    "source": "assets/lidousha/glossary.txt:44"
+  },
+  {
+    "name": "仙童数学",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "仙童数学",
+    "variants": [
+      "仙童数学",
+      "先童数学",
+      "神童数学",
+      "线童数学"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:45",
+    "glossary_expected_surfaces": [
+      {
+        "order": 38,
+        "surface": "先童数学"
+      },
+      {
+        "order": 39,
+        "surface": "神童数学"
+      },
+      {
+        "order": 40,
+        "surface": "线童数学"
+      }
+    ]
+  },
+  {
+    "name": "河粉",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "河粉",
+    "variants": [
+      "河粉"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:46"
+  },
+  {
+    "name": "塞纳河",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "塞纳河",
+    "variants": [
+      "塞纳河"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:46"
+  },
+  {
+    "name": "立语",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "立语",
+    "variants": [
+      "立语"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:49"
+  },
+  {
+    "name": "做0.4",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "做0.4",
+    "variants": [
+      "做0.4"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:51"
+  },
+  {
+    "name": "PSP",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "PSP",
+    "variants": [
+      "PSP"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:57"
+  },
+  {
+    "name": "PSPLive",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "PSPLive",
+    "variants": [
+      "PSPLive"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:57"
+  },
+  {
+    "name": "南町",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "南町",
+    "variants": [
+      "南町"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:58"
+  },
+  {
+    "name": "大N老师",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "大N老师",
+    "variants": [
+      "大N老师"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:58"
+  },
+  {
+    "name": "小N",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "小N",
+    "variants": [
+      "小N"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:58"
+  },
+  {
+    "name": "南町nightin",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "南町nightin",
+    "variants": [
+      "南町nightin"
+    ],
+    "condition": "只在说出连续的南町和 nightin 两段名称时保留完整词面；不能混成南町南町或难听难听，也不把单独南町扩写。",
+    "source": "assets/lidousha/glossary.txt:59"
+  },
+  {
+    "name": "小七",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "小七",
+    "variants": [
+      "小七"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:60"
+  },
+  {
+    "name": "邪哥",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "邪哥",
+    "variants": [
+      "邪哥"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:60"
+  },
+  {
+    "name": "我哥",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "我哥",
+    "variants": [
+      "我哥"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:60"
+  },
+  {
+    "name": "山猪王",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "山猪王",
+    "variants": [
+      "山猪王"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:60"
+  },
+  {
+    "name": "邪宝",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "邪宝",
+    "variants": [
+      "邪宝"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:60"
+  },
+  {
+    "name": "邪蛋领主",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "邪蛋领主",
+    "variants": [
+      "邪蛋领主"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:60"
+  },
+  {
+    "name": "栅栏",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "栅栏",
+    "variants": [
+      "栅栏"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:60"
+  },
+  {
+    "name": "小山猪",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "小山猪",
+    "variants": [
+      "小山猪"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:60"
+  },
+  {
+    "name": "萱萱卡娅",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "萱萱卡娅",
+    "variants": [
+      "萱萱卡娅"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:62"
+  },
+  {
+    "name": "Kaya",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "Kaya",
+    "variants": [
+      "Kaya"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:62"
+  },
+  {
+    "name": "白神遥",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "白神遥",
+    "variants": [
+      "白神遥"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:63"
+  },
+  {
+    "name": "小海豹",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "小海豹",
+    "variants": [
+      "小海豹"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:63"
+  },
+  {
+    "name": "豹豹",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "豹豹",
+    "variants": [
+      "豹豹"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:63"
+  },
+  {
+    "name": "豹总",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "豹总",
+    "variants": [
+      "豹总"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:63"
+  },
+  {
+    "name": "龟龟豹",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "龟龟豹",
+    "variants": [
+      "龟龟豹"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:63"
+  },
+  {
+    "name": "小遥遥",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "小遥遥",
+    "variants": [
+      "小遥遥"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:63"
+  },
+  {
+    "name": "弱智吧吧主",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "弱智吧吧主",
+    "variants": [
+      "弱智吧吧主"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:63"
+  },
+  {
+    "name": "东爱璃",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "东爱璃",
+    "variants": [
+      "东爱璃"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:64"
+  },
+  {
+    "name": "狍子",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "狍子",
+    "variants": [
+      "狍子"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:64"
+  },
+  {
+    "name": "大璃",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "大璃",
+    "variants": [
+      "大璃"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:64"
+  },
+  {
+    "name": "无前",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "无前",
+    "variants": [
+      "无前"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:64"
+  },
+  {
+    "name": "病院坂Rei",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "病院坂Rei",
+    "variants": [
+      "病院坂Rei"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:64"
+  },
+  {
+    "name": "狍哥",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "狍哥",
+    "variants": [
+      "狍哥"
+    ],
+    "condition": "确指主播昵称；袍哥会或方言普通词不改",
+    "source": "assets/lidousha/glossary.txt:65"
+  },
+  {
+    "name": "花礼",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "花礼",
+    "variants": [
+      "花礼"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:66"
+  },
+  {
+    "name": "病院坂灵",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "病院坂灵",
+    "variants": [
+      "病院坂灵"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:66"
+  },
+  {
+    "name": "公公又式式",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "公公又式式",
+    "variants": [
+      "公公又式式"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:67"
+  },
+  {
+    "name": "秋凛子",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "秋凛子",
+    "variants": [
+      "秋凛子"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:69"
+  },
+  {
+    "name": "绫奈奈奈",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "绫奈奈奈",
+    "variants": [
+      "绫奈奈奈"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:69"
+  },
+  {
+    "name": "星之谷米娅",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "星之谷米娅",
+    "variants": [
+      "星之谷米娅"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:69"
+  },
+  {
+    "name": "亦枝YY",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "亦枝YY",
+    "variants": [
+      "亦枝YY"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:69"
+  },
+  {
+    "name": "北柚香",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "北柚香",
+    "variants": [
+      "北柚香"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:69"
+  },
+  {
+    "name": "笙歌",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "笙歌",
+    "variants": [
+      "笙歌"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:69"
+  },
+  {
+    "name": "桃姆Q",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "桃姆Q",
+    "variants": [
+      "桃姆Q"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:69"
+  },
+  {
+    "name": "红晓音",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "红晓音",
+    "variants": [
+      "红晓音"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:69"
+  },
+  {
+    "name": "春野萌",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "春野萌",
+    "variants": [
+      "春野萌"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:69"
+  },
+  {
+    "name": "步玎",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "步玎",
+    "variants": [
+      "步玎"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:69"
+  },
+  {
+    "name": "海月薰",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "海月薰",
+    "variants": [
+      "海月薰"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:69"
+  },
+  {
+    "name": "海月",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "海月",
+    "variants": [
+      "海月"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:69"
+  },
+  {
+    "name": "月乃盈",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "月乃盈",
+    "variants": [
+      "月乃盈"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:69"
+  },
+  {
+    "name": "残Tony",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "残Tony",
+    "variants": [
+      "残Tony"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:69"
+  },
+  {
+    "name": "残托尼",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "残托尼",
+    "variants": [
+      "残托尼"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:69"
+  },
+  {
+    "name": "素惹",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "素惹",
+    "variants": [
+      "素惹"
+    ],
+    "condition": "确指男同刻板印象调侃梗；普通素人保留",
+    "source": "assets/lidousha/glossary.txt:71"
+  },
+  {
+    "name": "七星",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "七星",
+    "variants": [
+      "七星"
+    ],
+    "condition": "确指烟品牌；节日七夕不改",
+    "source": "assets/lidousha/glossary.txt:75"
+  },
+  {
+    "name": "奶P",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "奶P",
+    "variants": [
+      "奶P"
+    ],
+    "condition": "确指百合圈梗称；真实奶瓶及食物不改",
+    "source": "assets/lidousha/glossary.txt:76"
+  },
+  {
+    "name": "咋这样",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "咋这样",
+    "variants": [
+      "咋这样"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:77"
+  },
+  {
+    "name": "钢镚",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "钢镚",
+    "variants": [
+      "钢镚"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:78"
+  },
+  {
+    "name": "HimeHina",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "HimeHina",
+    "variants": [
+      "HimeHina"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:82"
+  },
+  {
+    "name": "田中姬",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "田中姬",
+    "variants": [
+      "田中姬"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:82"
+  },
+  {
+    "name": "铃木雏",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "铃木雏",
+    "variants": [
+      "铃木雏"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:82"
+  },
+  {
+    "name": "田中雏",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "田中雏",
+    "variants": [
+      "田中雏"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:82"
+  },
+  {
+    "name": "Hime",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "Hime",
+    "variants": [
+      "Hime"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:83"
+  },
+  {
+    "name": "Hina",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "Hina",
+    "variants": [
+      "Hina"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:83"
+  },
+  {
+    "name": "Hime1",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "Hime1",
+    "variants": [
+      "Hime1"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:83"
+  },
+  {
+    "name": "Hina1",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "Hina1",
+    "variants": [
+      "Hina1"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:83"
+  },
+  {
+    "name": "白色奶龙",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "白色奶龙",
+    "variants": [
+      "白色奶龙"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:87"
+  },
+  {
+    "name": "粉色奶龙",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "粉色奶龙",
+    "variants": [
+      "粉色奶龙"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:88"
+  },
+  {
+    "name": "黑色奶龙",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "黑色奶龙",
+    "variants": [
+      "黑色奶龙"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:89"
+  },
+  {
+    "name": "礼小虎",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "礼小虎",
+    "variants": [
+      "礼小虎"
+    ],
+    "condition": "仅在语音与语境确定使用这个词或称呼时适用；不同昵称不互换",
+    "source": "assets/lidousha/glossary.txt:90"
+  },
+  {
+    "name": "动捕房",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "动捕房",
+    "variants": [
+      "动捕房"
+    ],
+    "condition": "确指动捕录制房间；真实动物房不改",
+    "source": "assets/lidousha/glossary.txt:91"
+  },
+  {
+    "name": "做面部",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "做面部",
+    "variants": [
+      "做面部"
+    ],
+    "condition": "确指模型面部制作；真正做面粉不改",
+    "source": "assets/lidousha/glossary.txt:92"
+  },
+  {
+    "name": "恰",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "恰",
+    "variants": [
+      "恰"
+    ],
+    "condition": "确为长沙方言这个词；普通其他同音词不改",
+    "source": "assets/lidousha/glossary.txt:96"
+  },
+  {
+    "name": "难绷小视频",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "难绷小视频",
+    "variants": [
+      "难绷小视频",
+      "难崩小视频"
+    ],
+    "condition": "按已有来源和逐句证据确定指称与写法",
+    "source": "profiles/lidousha/profile.json or assets/lidousha/glossary.txt",
+    "profile_surface_rules": [
+      {
+        "order": 11,
+        "surface": "难崩小视频",
+        "authority": "lidousha-hard-slang-canon.v1"
+      }
+    ]
+  },
+  {
+    "name": "Galgame",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "Galgame",
+    "variants": [
+      "Galgame",
+      "gala game",
+      "嘎啦 game",
+      "嘎啦game"
+    ],
+    "condition": "按已有来源和逐句证据确定指称与写法",
+    "source": "profiles/lidousha/profile.json or assets/lidousha/glossary.txt",
+    "profile_surface_rules": [
+      {
+        "order": 12,
+        "surface": "gala game",
+        "authority": "lidousha-code-switch-canon.v1"
+      },
+      {
+        "order": 13,
+        "surface": "嘎啦 game",
+        "authority": "lidousha-code-switch-canon.v1"
+      },
+      {
+        "order": 14,
+        "surface": "嘎啦game",
+        "authority": "lidousha-code-switch-canon.v1"
+      }
+    ]
+  },
+  {
+    "name": "姐零",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "姐零",
+    "variants": [
+      "姐零",
+      "姐0"
+    ],
+    "condition": "按已有来源和逐句证据确定指称与写法",
+    "source": "profiles/lidousha/profile.json or assets/lidousha/glossary.txt",
+    "profile_surface_rules": [
+      {
+        "order": 24,
+        "surface": "姐0",
+        "authority": "lidousha-caption-display-canon.v1"
+      }
+    ]
+  },
+  {
+    "name": "年上零",
+    "aliases": [],
+    "role": "词形",
+    "detection_name": false,
+    "canonical": "年上零",
+    "variants": [
+      "年上零",
+      "年上0"
+    ],
+    "condition": "按已有来源和逐句证据确定指称与写法",
+    "source": "profiles/lidousha/profile.json or assets/lidousha/glossary.txt",
+    "profile_surface_rules": [
+      {
+        "order": 25,
+        "surface": "年上0",
+        "authority": "lidousha-caption-display-canon.v1"
+      }
+    ]
+  },
+  {
+    "name": "IT达人",
+    "aliases": [],
+    "role": "人物称呼",
+    "origin": "reviewer_proper_noun_20261114",
+    "authority": "公开规则：后会友期那个，有个专名我没提过，是IT达人，不是爱迪达人。你把这个专名记进去。（BV1fwWk65EPX 第 8 句「然后我和小室和IT达人」）",
+    "note": "口播 I-T 达人。识别器把 I-T 听成中文近音字（必剪「爱迪达人」，同一段 MAI「艾丽达人」）；不是东爱璃，不写成「爱璃大人」",
+    "canonical": "IT达人",
+    "variants": [
+      "IT达人",
+      "爱迪达人",
+      "艾迪达人",
+      "艾丽达人"
+    ],
+    "condition": "确指这个称呼；近音误听不能无语境机械替换",
+    "source": "公开规则"
+  }
+]

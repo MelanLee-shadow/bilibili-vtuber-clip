@@ -41,7 +41,6 @@ PAIR_SEPARATOR = "×"
 RELATED_STREAMER_LABEL = "相关主播："
 
 _TALK_PREFIX = CHANNEL_PROFILE.talk_title_prefix
-_SONG_PREFIX = CHANNEL_PROFILE.song_title_prefix
 _BRACKETED = (
     len(_TALK_PREFIX) >= len(ENVELOPE_OPENER) + len(ENVELOPE_CLOSER) + 1
     and _TALK_PREFIX.startswith(ENVELOPE_OPENER)
@@ -148,15 +147,6 @@ def talk_title_body(title: object) -> str:
     return envelope.body if envelope is not None else text
 
 
-def title_display_body(title: object) -> str:
-    """Body shown on the cover: strip the song catalog prefix or the talk prefix."""
-
-    text = str(title or "").strip()
-    if text.startswith(_SONG_PREFIX):
-        return text[len(_SONG_PREFIX) :]
-    return talk_title_body(text)
-
-
 def render_talk_title(body: str, partners: Sequence[str] = ()) -> str:
     return render_talk_title_prefix(partners) + str(body)
 
@@ -181,44 +171,6 @@ def ensure_talk_title(title: object, partners: Sequence[str] | None = None) -> s
         return render_talk_title(body, partners)
     except EnvelopeError:
         return _TALK_PREFIX + body
-
-
-def leading_envelope_preserved(before: object, after: object) -> bool:
-    """A reviewed repair keeps the leading 【…】 envelope of the title it repairs."""
-
-    original = str(before or "")
-    if not original.startswith(ENVELOPE_OPENER):
-        return True
-    head = original.split(ENVELOPE_CLOSER, 1)[0] + ENVELOPE_CLOSER
-    return isinstance(after, str) and after.startswith(head)
-
-
-def story_contract_partners(story_contract: object) -> tuple[str, ...]:
-    """Structured partners of an automatic clip: confirmed session participants.
-
-    Source: ``session_relation_ledger`` → ``session_relation_authority`` →
-    ``StoryContract.participants`` (``build_story_contract``).  Only a CONFIRMED
-    relation with ``relation_claim_allowed`` contributes; the host row is the
-    prefix itself and never a partner.  Ledger order is kept.
-    """
-
-    if not isinstance(story_contract, Mapping):
-        return ()
-    if (
-        story_contract.get("relation_state") != "CONFIRMED"
-        or story_contract.get("relation_claim_allowed") is not True
-    ):
-        return ()
-    partners: list[str] = []
-    for row in story_contract.get("participants") or []:
-        if not isinstance(row, Mapping):
-            continue
-        if str(row.get("canonical_id") or "") == CHANNEL_PROFILE.profile_id:
-            continue
-        name = str(row.get("display_name") or "").strip()
-        if name and name != HOST_NAME and name not in partners:
-            partners.append(name)
-    return tuple(partners)
 
 
 def load_related_streamers(path: Path | None = None) -> dict[str, RelatedStreamer]:
@@ -285,30 +237,6 @@ def publish_description_for_title(
     return render_publish_description(base, talk_title_partners(str(title or "").strip()), registry=registry)
 
 
-def parse_publish_description(
-    description: object, *, registry: Mapping[str, RelatedStreamer] | None = None
-) -> tuple[str, tuple[str, ...]] | None:
-    """Invert ``render_publish_description``: (base, partners) or None."""
-
-    text = str(description if description is not None else "")
-    lines = text.split("\n")
-    partners: list[str] = []
-    while len(lines) > 1 and lines[-1].startswith(RELATED_STREAMER_LABEL):
-        rest = lines.pop()[len(RELATED_STREAMER_LABEL) :]
-        name, separator, _homepage = rest.rpartition(" ")
-        if not separator:
-            return None
-        partners.insert(0, name)
-    if any(line.startswith(RELATED_STREAMER_LABEL) for line in lines):
-        return None
-    base = "\n".join(lines)
-    try:
-        rendered = render_publish_description(base, partners, registry=registry)
-    except EnvelopeError:
-        return None
-    return (base, tuple(partners)) if rendered == text else None
-
-
 def talk_envelope_violations(
     title: object,
     *,
@@ -335,3 +263,69 @@ def talk_envelope_violations(
     except EnvelopeError:
         violations.append("talk_partner_unresolved")
     return violations
+
+
+DESCRIPTION_EXTRA_MAX_CHARS = 300
+
+
+def description_extra_lines(extra: object) -> tuple[str, ...] | None:
+    """The lines ``extra`` declares, or None when it is not a string / list of strings.
+
+    The one definition of the shape, shared by render, validation and parse: a
+    string is one line, a list/tuple is one line per item.  Item validity is
+    not checked here.
+    """
+
+    if isinstance(extra, str):
+        return (extra,)
+    if isinstance(extra, (list, tuple)) and all(isinstance(item, str) for item in extra):
+        return tuple(extra)
+    return None
+
+
+def description_extra_problems(extra: object) -> list[str]:
+    """Problems with an extra description block; an empty list means valid.
+
+    Every line gets the same audience-text prohibitions as the fixed description
+    lines: non-empty, one line only, no control characters, no outer whitespace.
+    A list must be non-empty and hold only strings, and the joined block must
+    fit ``DESCRIPTION_EXTRA_MAX_CHARS``.
+    """
+
+    import unicodedata
+
+    lines = description_extra_lines(extra)
+    if lines is None:
+        return ["DESCRIPTION_EXTRA_NOT_TEXT"]
+    if not lines:
+        return ["DESCRIPTION_EXTRA_EMPTY"]
+    problems: list[str] = []
+    for line in lines:
+        if not line.strip():
+            problems.append("DESCRIPTION_EXTRA_EMPTY")
+        if line != line.strip():
+            problems.append("DESCRIPTION_EXTRA_OUTER_WHITESPACE")
+        if any(unicodedata.category(ch) in {"Cc", "Zl", "Zp"} for ch in line):
+            problems.append("DESCRIPTION_EXTRA_CONTROL_OR_LINE_BREAK")
+        try:
+            from src.autoslice.audience_text import assert_audience_text
+
+            assert_audience_text(line, surface="description")
+        except Exception as exc:  # ContractRejection: internal disclosure forbidden
+            problems.append(str(exc) or "DESCRIPTION_EXTRA_AUDIENCE_TEXT_REJECTED")
+    if len("\n".join(lines)) > DESCRIPTION_EXTRA_MAX_CHARS:
+        problems.append("DESCRIPTION_EXTRA_TOO_LONG")
+    return list(dict.fromkeys(problems))
+
+
+def append_description_extra(description: str, extra: object) -> str:
+    """``description`` unchanged when ``extra`` is None; otherwise validated and appended."""
+
+    if extra is None:
+        return description
+    problems = description_extra_problems(extra)
+    if problems:
+        raise EnvelopeError("DESCRIPTION_EXTRA_INVALID:" + ",".join(problems))
+    return description + "\n" + "\n".join(description_extra_lines(extra) or ())
+
+

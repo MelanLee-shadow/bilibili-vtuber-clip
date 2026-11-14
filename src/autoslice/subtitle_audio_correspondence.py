@@ -64,7 +64,6 @@ used as evidence.
 from __future__ import annotations
 
 from src.autoslice.evidence_identity import file_sha256 as _evidence_file_sha256
-import argparse
 import difflib
 import json
 import math
@@ -951,37 +950,6 @@ def _validate_intro_offset(intro_offset_ms: int) -> None:
         raise CorrespondenceInputError("INTRO_OFFSET_NOT_INTEGER_MS", "intro_offset_ms is not finite")
 
 
-def _input_error_receipt(
-    error: CorrespondenceInputError,
-    *,
-    final_srt: str | Path,
-    actual_media: str | Path,
-    witness_srt: str | Path,
-    provenance: str | Path,
-    intro_offset_ms: object,
-) -> dict[str, Any]:
-    return {
-        "schema_version": SCHEMA_VERSION,
-        "status": "BLOCK",
-        "timing_status": "BLOCK",
-        "text_correctness_status": "UNASSESSED",
-        "reason_codes": [error.reason_code],
-        "error": error.detail,
-        "validation_context": error.context,
-        "inputs": {
-            "final_srt": str(final_srt),
-            "actual_media": str(actual_media),
-            "witness_srt": str(witness_srt),
-            "provenance": str(provenance),
-        },
-        "timebase": {
-            "intro_offset_ms": intro_offset_ms,
-            "intro_offset_application_count": 0,
-            "mapping": "not_applied_due_to_input_error",
-        },
-    }
-
-
 def check_subtitle_audio_correspondence(
     final_srt: str | Path,
     actual_media: str | Path,
@@ -1207,44 +1175,3 @@ def check_subtitle_audio_correspondence(
     }
 
 
-def _write_receipt(path: Path, receipt: Mapping[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Check SRT timing against a hash-bound timed witness SRT")
-    parser.add_argument("--final-srt", type=Path, required=True)
-    parser.add_argument("--actual-media", type=Path, required=True)
-    parser.add_argument("--witness-srt", type=Path, required=True)
-    parser.add_argument("--provenance", type=Path, required=True)
-    parser.add_argument("--intro-offset-ms", type=int, default=0)
-    parser.add_argument("--output", type=Path, required=True)
-    args = parser.parse_args(argv)
-    try:
-        receipt = check_subtitle_audio_correspondence(
-            args.final_srt,
-            args.actual_media,
-            args.witness_srt,
-            args.provenance,
-            intro_offset_ms=args.intro_offset_ms,
-        )
-    except CorrespondenceInputError as exc:
-        receipt = _input_error_receipt(
-            exc,
-            final_srt=args.final_srt,
-            actual_media=args.actual_media,
-            witness_srt=args.witness_srt,
-            provenance=args.provenance,
-            intro_offset_ms=args.intro_offset_ms,
-        )
-        _write_receipt(args.output, receipt)
-        print(json.dumps({"status": receipt["status"], "output": str(args.output)}, ensure_ascii=False))
-        return 2
-    _write_receipt(args.output, receipt)
-    print(json.dumps({"status": receipt["status"], "timing_status": receipt["timing_status"], "output": str(args.output)}, ensure_ascii=False))
-    return 0 if receipt["status"] == "PASS" else 3
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

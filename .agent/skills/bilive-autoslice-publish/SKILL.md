@@ -1,6 +1,6 @@
 ---
 name: bilive-autoslice-publish
-description: "操作、修复、审查或发布 autoslice 成品，以及准备人设批量审核与投影计划；按当前 pipeline 的对应步骤执行。"
+description: "操作、修复、审查或发布主播 autoslice 成品，以及准备人设批量审核与投影计划；按当前 pipeline 的对应步骤执行。"
 ---
 
 # Bilive Autoslice Publish

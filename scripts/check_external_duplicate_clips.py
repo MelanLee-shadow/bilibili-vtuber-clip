@@ -16,7 +16,7 @@ from src.autoslice.timely_term_crawler import BoundedHttpClient
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--package', type=Path, required=True, help='JSON: candidate_id, recording_date, participants [[streamer aliases],[guest aliases]], source_intervals [{recording,start_seconds,end_seconds}], duration_seconds, srt (relative to JSON), own_uploader_mids, subtitle_stage (final/source_preview)')
+    parser.add_argument('--package', type=Path, required=True, help='JSON: candidate_id, recording_date, participants [[streamer aliases],[guest aliases]], source_intervals [{recording,start_seconds,end_seconds}], duration_seconds, srt (relative to JSON), own_uploader_mids, subtitle_stage (final/source_preview), optional search_terms [source-grounded topic terms for undated titles]; at most 8 queries total')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--evidence-dir', type=Path, help='Save public JSON responses for offline replay')
     parser.add_argument('--max-videos', type=int, default=20)
@@ -36,7 +36,7 @@ def main() -> int:
                    max_videos=args.max_videos, audio_asr=audio)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-    print(json.dumps({k: result[k] for k in ('candidate_id', 'decision', 'block_upload')}, ensure_ascii=False))
+    print(json.dumps({k: result[k] for k in ('candidate_id', 'search_status', 'decision', 'block_upload')}, ensure_ascii=False))
     return 3 if result['block_upload'] else 0
 
 

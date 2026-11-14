@@ -5,7 +5,7 @@ no evidence, edit, retry-plan, or release authority.
 """
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
@@ -91,43 +91,6 @@ def openai_format(contract=None, *, prompt=None):
                 'schema': strict_openai_schema(value['schema']), 'strict': True}
     result = {'type': 'json_object'} if value['json_mode'] else None
     return guard_json_object(result, prompt) if prompt is not None else result
-
-
-def gemini_format(response_schema=None, *, json_mode=True):
-    value = current_contract(response_schema, json_mode=json_mode)
-    if not value['json_mode']:
-        return {}
-    fields = {'responseMimeType': 'application/json'}
-    if value['schema'] is not None:
-        # JSON Schema, including nullable unions; not the smaller OpenAPI Schema.
-        fields['responseJsonSchema'] = deepcopy(value['schema'])
-    return fields
-
-
-def agy_structured_args(schema_path):
-    return ['--output-format', 'stream-json', '--json-schema', str(schema_path)]
-
-
-def parse_agy_stream(raw):
-    """Extract exactly one successful native result, never assistant prose."""
-    events = [json.loads(line) for line in raw.splitlines() if line.strip()]
-    results = []
-    for event in events:
-        if not isinstance(event, Mapping):
-            raise ValueError('AGY_STRUCTURED_EVENT_INVALID')
-        if event.get('error') or event.get('is_error') or event.get('type') in {'error', 'failed'}:
-            raise ValueError('AGY_STRUCTURED_ERROR')
-        result = event.get('result')
-        if isinstance(result, Mapping):
-            if result.get('status') != 'SUCCESS' or result.get('error') or result.get('is_error'):
-                raise ValueError('AGY_STRUCTURED_RESULT_FAILED')
-            payload = result.get('structured_output')
-            if not isinstance(payload, Mapping):
-                raise ValueError('AGY_STRUCTURED_RESULT_PAYLOAD_INVALID')
-            results.append(payload)
-    if len(results) != 1:
-        raise ValueError('AGY_STRUCTURED_RESULT_COUNT_INVALID')
-    return json.dumps(dict(results[0]), ensure_ascii=False)
 
 
 def format_retry_call(prompt: str, send: Callable[[str], str], *, validate=None, record=None,

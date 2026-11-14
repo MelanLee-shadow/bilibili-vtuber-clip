@@ -13,7 +13,7 @@ selection_scorecard 可留空对象。
 同片 hash-bound 上下文(含按时间排列的结构化弹幕/SC):
 同片上下文
 
-选片量化表（talk 必填，song 可省略；新卡使用 selection-scorecard-admission.v3）：
+选片量化表（talk 必填，song 可省略；新卡使用 selection-scorecard-admission.v4）：
 - tier 是硬层级 1/2/3。当前 Tier 1 先过共同实质内容门：candidate_quality 必须是
   watchability=STRONG、differentiation=DISTINCTIVE、production_disposition=PRODUCTION，
   reason 非空且 evidence_cues 全在候选窗内；同时 audience_salience>=2、self_contained>=3、
@@ -26,15 +26,15 @@ selection_scorecard 可留空对象。
 - personal_stance / generic_event 也可以进入 Tier 1：共同实质内容门通过后，
   lidousha_centrality>=3 或 stance_intensity>=3，且至少一个 tier_evidence_cues 能定位真实观点、
   选择、拒绝或结果。单次鲜明观点/拒绝可以兑现题目，不要求两次事件或人为升级；泛泛事件、
-  弱 CP 或普通可爱互动仍不能晋级。
-- audience_driven_performance 的最高级继续要求 relationship_interaction/persona_reversal 各至少3、
-  audience_salience至少2、self_contained至少3、comedic_payoff=4，并由至少两条 cue 组成
-  “观众起哄→她照做→人设反差”的完整互动链。可爱、普通抱抱或普通反差可以是第二层看点，
-  不因有请求和回应就给落点4；4须有不可替代、完整的渐进表演或强收束证据。
+  弱 CP 不能仅凭关键词或高分格式晋级。
+- 纯撒娇、卖萌或可爱回应本身也是重要看点；清楚具体、片内能看懂且满足共同内容门时，
+  audience_driven_performance 或自主的 cute_performance 至少一条窗内 cue 可进 Tier 1，
+  无须关系链、观众起哄、反差、渐进升级或 comedic_payoff=4。distinctive 可由具体可复述的
+  可爱时刻支持，不要求罕见反转；只写「可爱」而说不清看点仍不够。不要为了晋级虚增各维度分数。
   仅字幕中的“抱抱”“咬一下”等口头说法不能证明发生了实际动作，理由不得补写未证实的表演。
 - tier_basis 只能按事实选择 relationship_chain / explicit_gl_stance / cp_positioning /
-  audience_driven_performance / personal_stance / generic_event。
-- dimensions 七项都打 0..4 整数：lidousha_centrality（主播不可替代性）、stance_intensity、
+  audience_driven_performance / cute_performance / personal_stance / generic_event。
+- dimensions 七项都打 0..4 整数：lidousha_centrality（李豆沙不可替代性）、stance_intensity、
   audience_salience（频道受众/人物题材显著度）、relationship_interaction、persona_reversal、
   comedic_payoff、self_contained。不要把 ASR/证据可靠性混进内容质量分。
   comedic_payoff 同时评价喜剧与情绪/观点兑现：2是明确但普通的收口，3是强且构成这个主事件主要看点的
@@ -47,10 +47,10 @@ selection_scorecard 可留空对象。
   立场；依实际声源、主语、时间和模态区分被引用内容与她的真实评价/回应。
 - uncertainty_penalty 0..15，证据/指代/身份不确定才扣；fatigue_penalty 0..10，同场高度同质才扣。
 - 系统按固定 25/20/15/15/10/10/5 权重计算 effective_score，confidence 不再代替内容价值。
-- 历史无 policy 字段的卡和 selection-scorecard-admission.v2 卡按原准入规则验证并保留原字节；
-  不要把历史 Tier 或分数静默重算成 v3。只有本次新召回或明确 rescore 才生成 v3 卡。
+- 历史无 policy 字段及 v2/v3 卡按原准入规则验证并保留原字节；
+  不要把历史 Tier 或分数静默重算成 v4。只有本次新召回或明确 rescore 才生成 v4 卡。
 - 另为每个 talk 候选填写 candidate_quality。这是候选级的制作资格判断，不是第八个维度，不参与
-  七维算术或另加分；但在 v3 中它属于 Tier 1 共同准入，准入结果可以改变 Tier，并因此改变最终排序：
+  七维算术或另加分；在 v4 中它属于 Tier 1 共同准入，准入结果可以改变 Tier，并因此改变最终排序：
   watchability 只能是 STRONG/ORDINARY/THIN，
   differentiation 只能是 DISTINCTIVE/ORDINARY/THIN，production_disposition 只能是
   PRODUCTION/RESERVE/HOLD，reason 说明路人实际能看见的看点，evidence_cues 只能引用候选窗内 cue。

@@ -330,7 +330,3 @@ def load_glossary_terms(path: str | Path | None = None) -> GlossaryTerms:
         return GlossaryTerms(canon=FALLBACK_CANON, mishear_blacklist=())
 
 
-if __name__ == "__main__":
-    terms = load_glossary_terms()
-    print(f"canon ({len(terms.canon)}): {'、'.join(terms.canon)}")
-    print(f"blacklist ({len(terms.mishear_blacklist)}): {'、'.join(terms.mishear_blacklist)}")
