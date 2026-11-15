@@ -19,7 +19,8 @@ manifest); 4 the shared lock is held by another upload or repair (`LOCK_BUSY` in
 8 quota (the account's rolling 24-hour submission window is full).
 
 Where things are (`common.Config`): the runtime base is AUTOSLICE_BASE (step 10 sets it) or the profile layout's
-`autoslice_base`; under it `state/lane_publication_registry.json` (the registry), `state/lane_publish_ledger.jsonl` (every
+`autoslice_base`; under it `state/publication_registry.runtime.v1.json` (the channel's one registry overlay, see registry.py),
+`state/lane_publish_ledger.jsonl` (every
 dispatch, so nothing is posted twice), `state/lane_publish.lock`, and `lane_publish.json` (this host's biliup and cookie file).
 The waits and the publish policy are lane_rules.json `upload.publish`.  No account, collection or cookie is in the code: the
 collections are the channel profile's `season_routes` asset."""

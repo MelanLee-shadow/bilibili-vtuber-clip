@@ -1,9 +1,16 @@
 """The publication registry (which package is which published BV), the dispatch ledger, and the lock they are written under.
 
-A registry row: {candidate_id (the package name), recording_date, bvid, aid, title, status: "published",
-publication_reconciliation: {status, authority: {path, sha256, bytes}}}.  `authority` binds the receipt the lane's receipt
-chain starts from: the first-publication receipt, after a same-BV repair the completion receipt of the latest one
-(status VERIFIED_SAME_BV / VERIFIED_SAME_BV_COVER).  This is the shape manual_lane/title_history and receipt_chain read.
+There is one registry for the channel, the one every other reader uses (publication_registry.load_publication_registry: the
+channel's registry asset with the host's runtime overlay `state/publication_registry.runtime.v1.json` merged over it).  This
+module reads that view and writes its rows into that overlay, in its row shape (publication_state_projection
+.validate_runtime_registry_entry is run on every row before it is written, under the same reconciliation lock the older
+upload tool takes), so a BV published or repaired by either tool is one row both see.
+
+A row: {candidate_id (the package name), recording_date, bvid, status: "published", publication_reconciliation:
+{schema_version, status, candidate_id, recording_date, bvid, aid, cid, title, authority: {path, sha256, bytes}, reconciled_at}}.
+`authority` binds the receipt the lane's receipt chain starts from: the first-publication receipt, after a same-BV repair the
+completion receipt of the latest one (status VERIFIED_SAME_BV / VERIFIED_SAME_BV_COVER, cid the cid online after it).  This
+is the shape manual_lane/title_history and receipt_chain read.
 
 A registry that cannot be found is not an empty one: when this machine has no runtime base at all the read raises
 (FileNotFoundError), so a reader on the wrong machine cannot take "not readable here" for "nothing was published"."""
@@ -18,10 +25,18 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from src.autoslice.publication_registry import load_publication_registry
+from src.autoslice.publication_state_projection import (
+    RECONCILIATION_SCHEMA,
+    RUNTIME_REGISTRY_SCHEMA,
+    _reconciliation_lock,
+    validate_runtime_registry_entry,
+)
+
 from .common import GATE, LOCK, LOCK_BUSY, Refused, base, now, write_json
 
-SCHEMA = "lane-publication-registry.v1"
-REGISTRY = "state/lane_publication_registry.json"
+SCHEMA = RUNTIME_REGISTRY_SCHEMA
+REGISTRY = "state/publication_registry.runtime.v1.json"
 LEDGER = "state/lane_publish_ledger.jsonl"
 LOCK_FILE = "state/lane_publish.lock"
 
@@ -31,16 +46,11 @@ def path(root: Path | None = None) -> Path:
 
 
 def load(root: Path | None = None) -> dict[str, Any]:
-    """{"schema_version", "entries": [...]}; empty on a runtime base that holds no registry yet."""
+    """The channel's registry as every reader sees it: {"schema_version", "entries": [...]}."""
     file = path(root)
-    if not file.is_file():
-        if not file.parent.parent.is_dir():
-            raise FileNotFoundError(f"no runtime base here: {file.parent.parent}")
-        return {"schema_version": SCHEMA, "entries": []}
-    doc = json.loads(file.read_text(encoding="utf-8"))
-    if not isinstance(doc, dict) or doc.get("schema_version") != SCHEMA or not isinstance(doc.get("entries"), list):
-        raise ValueError(f"{file}: not a {SCHEMA} registry")
-    return doc
+    if not file.parent.parent.is_dir():
+        raise FileNotFoundError(f"no runtime base here: {file.parent.parent}")
+    return load_publication_registry(runtime_path=file)
 
 
 def rows_for(entries: list[Mapping[str, Any]], *, bvid: str | None = None, candidate_id: str | None = None) -> list[dict]:
@@ -48,23 +58,51 @@ def rows_for(entries: list[Mapping[str, Any]], *, bvid: str | None = None, candi
             and (bvid is None or r.get("bvid") == bvid) and (candidate_id is None or r.get("candidate_id") == candidate_id)]
 
 
-def add_published(row: dict[str, Any]) -> None:
+def _write_row(row: dict[str, Any]) -> None:
+    """Put `row` into the runtime overlay (replacing the row of its candidate and date), validated as every reader validates
+    it; under the reconciliation lock the older upload tool also takes."""
+    try:
+        validate_runtime_registry_entry(row)
+    except ValueError as exc:
+        raise Refused(GATE, f"出版登记行不合格，没有写入：{exc}") from exc
+    file = path()
+    with _reconciliation_lock(base()):
+        doc = json.loads(file.read_text(encoding="utf-8")) if file.is_file() else {"schema_version": SCHEMA, "entries": []}
+        if doc.get("schema_version") != SCHEMA or not isinstance(doc.get("entries"), list):
+            raise Refused(GATE, f"{file}: 不是 {SCHEMA} 登记，不写")
+        key = (row["candidate_id"], row["recording_date"])
+        doc["entries"] = [r for r in doc["entries"] if (r.get("candidate_id"), r.get("recording_date")) != key] + [row]
+        write_json(file, doc)
+
+
+def _projection(*, status: str, candidate_id: str, recording_date: str, bvid: str, aid: int, cid: int, title: str,
+                authority: dict[str, Any]) -> dict[str, Any]:
+    return {"candidate_id": candidate_id, "recording_date": recording_date, "bvid": bvid, "status": "published",
+            "publication_reconciliation": {"schema_version": RECONCILIATION_SCHEMA, "status": status,
+                                           "candidate_id": candidate_id, "recording_date": recording_date, "bvid": bvid,
+                                           "aid": int(aid), "cid": int(cid), "title": title, "authority": authority,
+                                           "reconciled_at": now()}}
+
+
+def add_published(*, candidate_id: str, recording_date: str, bvid: str, aid: int, cid: int, title: str,
+                  authority: dict[str, Any]) -> None:
     """A new published row; refused when the package or the BV already has one (under the lock)."""
-    doc = load()
-    if rows_for(doc["entries"], candidate_id=row["candidate_id"]) or rows_for(doc["entries"], bvid=row["bvid"]):
-        raise Refused(GATE, f"出版登记里已经有 {row['candidate_id']} 或 {row['bvid']} 的已发布行：不重复登记")
-    doc["entries"].append({**row, "registered_at": now()})
-    write_json(path(), doc)
+    entries = load()["entries"]
+    if rows_for(entries, candidate_id=candidate_id) or rows_for(entries, bvid=bvid):
+        raise Refused(GATE, f"出版登记里已经有 {candidate_id} 或 {bvid} 的已发布行：不重复登记")
+    _write_row(_projection(status="VERIFIED_PUBLIC", candidate_id=candidate_id, recording_date=recording_date, bvid=bvid,
+                           aid=aid, cid=cid, title=title, authority=authority))
 
 
-def rebind(bvid: str, *, status: str, receipt: dict[str, Any]) -> None:
-    """Move the published row of `bvid` onto the completion receipt of a repair (under the lock)."""
-    doc = load()
-    rows = [r for r in doc["entries"] if r.get("status") == "published" and r.get("bvid") == bvid]
+def rebind(bvid: str, *, status: str, receipt: dict[str, Any], aid: int, cid: int, title: str) -> None:
+    """Move the published row of `bvid` (whichever tool published it) onto the completion receipt of a repair (under the lock);
+    `cid` is the cid online after the repair."""
+    rows = rows_for(load()["entries"], bvid=bvid)
     if len(rows) != 1:
         raise Refused(GATE, f"出版登记里 {bvid} 的已发布行有 {len(rows)} 条，应为 1 条：不改登记")
-    rows[0]["publication_reconciliation"] = {"status": status, "authority": receipt, "reconciled_at": now()}
-    write_json(path(), doc)
+    _write_row(_projection(status=status, candidate_id=str(rows[0]["candidate_id"]),
+                           recording_date=str(rows[0]["recording_date"]), bvid=bvid, aid=aid, cid=cid, title=title,
+                           authority=receipt))
 
 
 def ledger_rows() -> list[dict[str, Any]]:

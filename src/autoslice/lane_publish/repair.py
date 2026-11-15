@@ -225,5 +225,6 @@ def verify_live(*, plan_path: Path, journal: Path, out: Path) -> dict[str, Any]:
         receipt.update(unchanged_cid=value["unchanged_cid"], new_cover=value["replacement_cover"])
     with registry.locked():
         write_json(out, receipt)
-        registry.rebind(value["bvid"], status=ROW_STATUS[kind], receipt=bind(out))
+        registry.rebind(value["bvid"], status=ROW_STATUS[kind], receipt=bind(out), aid=int(view["aid"]),
+                        cid=int(receipt["new_cid"] if kind == VIDEO else receipt["unchanged_cid"]), title=str(view.get("title")))
     return receipt
