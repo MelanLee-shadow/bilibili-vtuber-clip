@@ -14,6 +14,7 @@ import pytest
 
 from src.autoslice import bilibili_member_api
 from src.autoslice.lane_publish import audit, authority, bili, first, manifest, registry, repair
+from src.autoslice.publication_registry import load_publication_registry
 from src.autoslice.lane_publish.cli import main
 from src.autoslice.lane_publish.common import LOCK_BUSY
 from src.autoslice.manual_lane import receipt_chain, step10_check
@@ -172,8 +173,11 @@ def test_a_first_publication_is_one_bv_in_the_collection_with_a_receipt_the_lane
     assert len(host.runs) == 1 and host.runs[0][host.runs[0].index("--title") + 1] == TITLE
     assert Path(host.runs[0][4]).name == f"{TITLE}.mp4" and not Path(host.runs[0][4]).exists()   # the part link is gone
     assert host.seasons == [(22, receipt["aid"], receipt["cid"], TITLE)]
-    rows = registry.load()["entries"]
+    rows = registry.rows_for(registry.load()["entries"], candidate_id=pkg.name)
     assert [(r["candidate_id"], r["bvid"], r["status"]) for r in rows] == [(pkg.name, receipt["bvid"], "published")]
+    # one registry: the channel's reader (title_history, the upload gate) sees the row this tool wrote
+    seen = [r for r in load_publication_registry(runtime_path=registry.path())["entries"] if r.get("bvid") == receipt["bvid"]]
+    assert [(r["candidate_id"], r["publication_reconciliation"]["status"]) for r in seen] == [(pkg.name, "VERIFIED_PUBLIC")]
     chain = receipt_chain.resolve(rows[0]["publication_reconciliation"]["authority"])
     assert chain.first_receipt == first.receipt_path(tmp_path / "upload1/authorized-upload-manifest.json")
     assert receipt_chain.used_packages(chain)[0]["package_root"] == str(pkg)
@@ -352,3 +356,59 @@ def test_the_commands_step_10_sends_are_lane_publish_commands(host, tmp_path, ca
     assert step10_check.plan_problems(job2, tmp_path / "clip2") == []
     done = json.loads(job2.completed.read_text())
     assert done["status"] == "VERIFIED_FRESH_LIVE" and done["new_cid"] != receipt["cid"]
+
+
+def test_a_bv_the_older_upload_tool_registered_is_repaired_in_the_same_one_registry(host, tmp_path, capsys):
+    """B8: one registry.  A BV published and reconciled by the older tool (its manifest v3, its first receipt, its runtime row
+    written as that tool writes it) takes a cover repair from this tool; after it the channel's reader sees one row for the BV,
+    bound to this tool's completion receipt, and the receipt chain still starts at the older tool's first receipt."""
+    name, bvid, cid, aid = "fm-20261114-clip-old", "BV1oldtool001", 4242, 9090
+    old = tmp_path / "old"
+    old.mkdir()
+    media = {k: old / f"{name}.{ext}" for k, ext in (("video", "mp4"), ("cover", "cover.png"))}
+    media["video"].write_bytes(b"old-video")
+    media["cover"].write_bytes(PNG + b"old")
+    bind = {k: {"path": str(p), "sha256": _sha(p), "bytes": p.stat().st_size} for k, p in media.items()}
+    man = old / "authorized-upload-manifest.json"
+    man.write_text(json.dumps({"schema_version": "authorized-upload-manifest.v3", "title": TITLE, "description": "旧简介",
+                               "tags": ["虚拟主播", "切片"], **bind}, ensure_ascii=False))
+    receipt = old / "publication-reconciliation-authority.json"
+    receipt.write_text(json.dumps({"schema_version": receipt_chain.FIRST_SCHEMA, "status": "VERIFIED_PUBLIC", "aid": aid,
+                                   "bvid": bvid, "candidate_id": name, "cid": cid, "created_at": "2026-11-14T00:00:00Z",
+                                   "recording_date": "2026-11-14", "title": TITLE,
+                                   "evidence": {"manifest": {"path": str(man), "sha256": _sha(man), "bytes": man.stat().st_size}}},
+                                  ensure_ascii=False))
+    row_authority = {"path": str(receipt), "sha256": _sha(receipt), "bytes": receipt.stat().st_size}
+    registry.path().write_text(json.dumps({"schema_version": registry.SCHEMA, "entries": [{
+        "candidate_id": name, "recording_date": "2026-11-14", "bvid": bvid, "status": "published",
+        "publication_reconciliation": {"schema_version": "publication-reconciliation.v1", "status": "VERIFIED_PUBLIC",
+                                       "candidate_id": name, "recording_date": "2026-11-14", "bvid": bvid, "aid": aid,
+                                       "cid": cid, "title": TITLE, "authority": row_authority,
+                                       "reconciled_at": "2026-11-14T00:00:00Z"}}]}, ensure_ascii=False))
+    host.archives[bvid] = {"aid": aid, "bvid": bvid, "title": TITLE, "desc": "简介第一行\n第二行", "tag": "虚拟主播,切片",
+                           "cover": "https://upload/old.png", "copyright": 2, "tid": 27,
+                           "videos": [{"cid": cid, "filename": "n1", "title": TITLE}]}
+    host._publish(bvid)
+
+    auth = authority.build(receipt, candidate_id=name, title=TITLE)
+    pkg = package(tmp_path / "pkgN", video=b"old-video", cover=PNG + b"new", name=name, extra={"recovery_publication_authority": auth})
+    out = tmp_path / "uploadN"
+    out.mkdir()
+    capsys.readouterr()
+    assert main(["audit", str(pkg), "--json"]) == 0
+    (pkg / "package_audit.json").write_text(capsys.readouterr().out)
+    repl = out / "replace-manifest.json"
+    assert main(["make-manifest", "--video", str(pkg / f"{name}.mp4"), "--cover", str(pkg / f"{name}.cover.png"),
+                 "--package-audit", str(pkg / "package_audit.json"), "--title", TITLE, "--final-human-review",
+                 str(pkg / f"{name}.finished-media-review.json"), "--authorized-by", "频道主", "--quote", "修复完的可以编辑上传",
+                 "--out", str(repl)]) == 0
+    plan, journal, done = out / "plan.json", tmp_path / "base/reports/same_bv_repair_ledger.jsonl", out / "done.json"
+    assert main(["cover-repair-plan", "--manifest", str(repl), "--bvid", bvid, "--out", str(plan), "--journal", str(journal)]) == 0
+    walk = ["--plan", str(plan), "--journal", str(journal)]
+    assert main(["cover-repair-run", *walk]) == 0
+    assert main(["cover-repair-verify-live", *walk, "--out", str(done)]) == 0
+    rows = [r for r in load_publication_registry(runtime_path=registry.path())["entries"] if r.get("bvid") == bvid]
+    assert [(r["candidate_id"], r["publication_reconciliation"]["status"], r["publication_reconciliation"]["cid"])
+            for r in rows] == [(name, "VERIFIED_SAME_BV_COVER", cid)]
+    chain = receipt_chain.resolve(rows[0]["publication_reconciliation"]["authority"])
+    assert chain.first_receipt == receipt and chain.online_cover_sha256 == _sha(pkg / f"{name}.cover.png")

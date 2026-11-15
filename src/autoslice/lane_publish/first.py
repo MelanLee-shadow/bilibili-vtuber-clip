@@ -95,9 +95,7 @@ def upload(manifest_path: Path) -> dict[str, Any]:
             "notes": [] if set(doc["tags"]) <= set(tags) else [f"线上标签少了：{sorted(set(doc['tags']) - set(tags))}"],
             "verified_at": now()}
         write_json(done, receipt)
-        registry.add_published({"candidate_id": doc["candidate_id"], "recording_date": doc["recording_date"], "bvid": bvid,
-                                "aid": receipt["aid"], "title": doc["title"], "status": "published",
-                                "publication_reconciliation": {"status": "VERIFIED_PUBLIC", "authority": bind(done),
-                                                               "published_at": receipt["verified_at"]}})
+        registry.add_published(candidate_id=doc["candidate_id"], recording_date=doc["recording_date"], bvid=bvid,
+                               aid=receipt["aid"], cid=receipt["cid"], title=doc["title"], authority=bind(done))
         registry.ledger_add("published", manifest_sha256=digest, bvid=bvid)
     return receipt
