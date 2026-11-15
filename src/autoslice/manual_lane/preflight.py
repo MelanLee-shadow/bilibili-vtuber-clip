@@ -60,6 +60,12 @@ def local_checks(report: Report) -> bool:
     else:
         report.ok(f"{LAYOUT_FILE}（主机、目录、录像位置）")
     report.tried("manual_lane_channel.json（提示词里关于频道的话）", "各步提示词", channel.text)
+    _identity_still_template(report)
+    _assets_still_template(report)
+    for name, step in (("proper_nouns.json", "第 3、6 步"), ("mishearing_pairs.json", "第 3 步")):
+        table = channel.name_table(name)
+        report.tried(f"本频道的{'名字表' if name.startswith('proper') else '误听对照表'} {table.relative_to(REPO_ROOT)}", step,
+                     lambda table=table: json.loads(table.read_text(encoding="utf-8")))
     report.tried("投稿标签规则 upload_tag_policy.json", "选片和第 7 步", load_selected_upload_tag_policy)
     _host_name_in_base_tags(report, load_selected_upload_tag_policy)
     report.tried("标题方法 title_editorial_method.json", "第 6 步", load_title_editorial_method)
@@ -77,6 +83,88 @@ def local_checks(report: Report) -> bool:
     else:
         report.note("片头清单写明不用片头（enabled: false）：第 5 步不加片头，第 8 步按没有片头检查成片")
     return enabled
+
+
+# identity keys the template fills with an explanation or a placeholder; its speaker labels (主播/嘉宾) are usable as they are
+_TEMPLATE_PLACEHOLDERS = ("display_name", "prompt_name", "room_id", "output_directory", "cover_identity.")
+
+
+def _identity_still_template(report: Report) -> None:
+    """profile.json's identity keys whose text is still the template's (a goldfish's channel ran with the template's
+    prompt_name and its nine cover_identity explanations: the validator accepts them, the cover judge reads them)."""
+    from src.autoslice.channel_profile import resolve_channel_profile_manifest
+
+    def strings(node: object, at: str = "") -> dict[str, str]:
+        if isinstance(node, dict):
+            return {k: v for key, value in node.items() for k, v in strings(value, f"{at}.{key}" if at else key).items()}
+        return {at: node} if isinstance(node, str) and node.strip() else {}
+
+    template = REPO_ROOT / "profiles/_template/profile.json"
+    manifest = resolve_channel_profile_manifest(REPO_ROOT, environ=os.environ)
+    if not template.is_file() or manifest.resolve() == template.resolve():
+        return
+    ours = strings(json.loads(manifest.read_text(encoding="utf-8")).get("identity"))
+    theirs = strings(json.loads(template.read_text(encoding="utf-8")).get("identity"))
+    left = sorted(key for key, value in ours.items() if theirs.get(key) == value and key.startswith(_TEMPLATE_PLACEHOLDERS))
+    if left:
+        report.problem(f"profile.json 的 identity 里这些键还是模板原文：{'、'.join('identity.' + k for k in left)}"
+                       "（第 6 步封面判官和各步提示词会照它读）")
+    else:
+        report.ok("profile.json 的 identity 都已改成本频道的内容")
+
+
+_IDENTITY_ASSETS = ("glossary", "persona", "title_style", "cover_identity_prompt")
+
+
+def _assets_still_template(report: Report) -> None:
+    """The channel's own words (layer-1 identity files) still the template's, or its host subtitle style the default
+    channel's (goldfish 4: persona.md carried the example channel's real-case lines; the public template's style was
+    the default channel's blue)."""
+    from src.autoslice.channel_profile import load_channel_profile
+
+    profile = load_channel_profile(REPO_ROOT)
+    template = REPO_ROOT / "assets/_template"
+    if not template.is_dir() or profile.asset_root.resolve() == template.resolve():
+        return
+    same = []
+    for key in _IDENTITY_ASSETS:
+        try:
+            ours = profile.asset_file(key)
+        except (KeyError, ValueError):
+            continue
+        theirs = template / ours.name
+        if ours.is_file() and theirs.is_file() and ours.read_bytes() == theirs.read_bytes():
+            same.append(ours.name)
+    if same:
+        report.problem(f"assets/{profile.profile_id}/ 里这些文件还是模板原文：{'、'.join(same)}（各步提示词照它读，要换成本频道的）")
+    try:
+        default = load_channel_profile(REPO_ROOT, profile_id="lidousha", environ={})
+        mine = json.loads(profile.asset_file("subtitle_burn_style").read_text(encoding="utf-8"))
+        theirs = json.loads(default.asset_file("subtitle_burn_style").read_text(encoding="utf-8"))
+    except Exception:                       # no default channel in this tree, or the style is reported elsewhere
+        return
+    if default.profile_id != profile.profile_id and mine.get("host") == theirs.get("host"):
+        report.problem("subtitle_burn_style.json 的 host 和示例频道的主播样式一样：换成本频道自己的颜色（第 5 步烧进成片）")
+
+
+def _channel_tree_digest() -> tuple[list[str], str] | None:
+    """The channel's profile and asset directories as `sha256sum` lists them, hashed (the host runs the same pipe):
+    goldfish 4 had to remember to rsync after every profile edit, and a missed sync runs the old files silently."""
+    import hashlib
+
+    from src.autoslice.channel_profile import load_channel_profile
+
+    try:
+        profile = load_channel_profile(REPO_ROOT)
+    except Exception:                       # reported by the profile checks
+        return None
+    roots = [profile.manifest_path.parent, profile.asset_root]
+    dirs = [r.resolve().relative_to(REPO_ROOT.resolve()).as_posix() for r in roots]
+    files = sorted((p for r in roots for p in r.rglob("*") if p.is_file()),
+                   key=lambda p: p.resolve().relative_to(REPO_ROOT.resolve()).as_posix().encode())
+    lines = "".join(f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.resolve().relative_to(REPO_ROOT.resolve()).as_posix()}\n"
+                    for p in files)
+    return dirs, hashlib.sha256(lines.encode()).hexdigest()
 
 
 def _host_name_in_base_tags(report: Report, load: Callable[[], object]) -> None:
@@ -113,6 +201,13 @@ def host_checks(report: Report, remote: Remote, *, intro: bool) -> None:
         ("archive", f"sudo -n test -d {q(lay.archive_room_dir.rsplit('/', 1)[0])}", f"录像根 {lay.archive_room_dir.rsplit('/', 1)[0]}", True),
         ("room", f"sudo -n test -d {q(lay.archive_room_dir)}", f"这个直播间的录像目录 {lay.archive_room_dir}（没有＝还没录过）", False),
     ]
+    tree = _channel_tree_digest()
+    if tree is not None:
+        dirs, digest = tree
+        listing = (f"cd {q(lay.remote_repo)} && find {' '.join(q(d) for d in dirs)} -type f -print0 | LC_ALL=C sort -z"
+                   " | xargs -0 sha256sum | sha256sum | cut -d' ' -f1")
+        rows.append(("sync", f"test \"$({listing})\" = {digest}",
+                     f"主机仓库副本里本频道的 {'、'.join(dirs)} 和这边一致（改了 profile 或资产要同步过去）", True))
     if intro:
         rows.append(("intro", f"test -n \"$(ls {q(lay.intro_dir)} 2>/dev/null)\"", f"片头素材目录 {lay.intro_dir}（第 5 步）", True))
     if voice:

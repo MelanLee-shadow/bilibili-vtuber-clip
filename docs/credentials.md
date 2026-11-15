@@ -4,7 +4,12 @@
 真实制作、录制、救援和发布各有不同依赖，不必为了生成审阅包先准备上传账号。
 所有 cookie、key、授权文档和声纹都应保存在仓库外，不能提交或打印到诊断报告。
 
-`.env` 只是模板，不会自动加载：
+**手推线（`scripts/manual_lane.py`）**：控制端不读 `.env`，也不需要任何密钥；各步在媒体主机上运行，凭据只从主机的
+`<autoslice_base>/cpa.env`、`mai.env`、`moss.env` 读取（`autoslice_base` 写在 `profiles/<id>/manual_lane.json`）。
+各步用哪个模型写在 `assets/manual_lane/lane_rules.json`，以它为准，本文下面的模型名属于旧的参考 runner。
+开跑前运行 `.venv/bin/python scripts/manual_lane.py preflight`，它在两边逐项检查各步要读的文件和凭据是否在位。
+
+下面是旧的整场参考 runner 的配置说明，只用手推线可以跳过。`.env` 只是模板，不会自动加载：
 
 ```bash
 set -a
@@ -19,7 +24,7 @@ set +a
 ## CPA：真实文字与视觉流程
 
 `CPA_BASE_URL` 和 `CPA_API_KEY` 指向自己的网关。包装器和内容质量阶段默认
-`gpt-6-sol`，健康探针使用 `gpt-6-luna`；`gpt-6-astra` 不作默认或自动回退。
+`gpt-6-sol`，健康探针使用 `gpt-6-luna`；`gpt-6-astra` 不作默认或自动回退（手推线不用这组默认，见上）。
 部分调用点显式指定模型和 effort，不全部服从包装器环境覆盖。
 文字校对和图像裁判需要相应能力，单次文字请求成功不证明图像请求也可用。
 
@@ -50,7 +55,7 @@ AGY CLI 和 Gemini API 是不同接入方式；不能只因名称接近就假定
 后备是否可用还受调用路径与配额门约束，设置 key 不保证每条路径自动切换。
 示例 `.env.example` 显式设置 `GEMINI_PAID_BACKUP_DAILY_CAP=0`，但这不免除主服务费用。
 缺少局部听音能力时相应门可以拒绝，不能为了出片跳过证据要求。
-`preflight.py` 提供部署体检；真实声音是否正确仍须通过有界的音频实例检验。
+`scripts/preflight.py` 是参考 runner 的部署体检（手推线用 `manual_lane.py preflight`）；真实声音是否正确仍须通过有界的音频实例检验。
 
 ## 录制登录
 

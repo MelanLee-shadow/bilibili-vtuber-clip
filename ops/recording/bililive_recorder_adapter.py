@@ -817,16 +817,32 @@ def _prepare_disposition_identity_validation(
     bindings: dict[str, dict[str, Any]],
     paths: dict[str, Path],
     identity_rebinds: Any,
+    released: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     effective, previous_receipt_sha256, previous_mount = _validate_disposition_rebind_chain(
         row=row,
         bindings=bindings,
         identity_rebinds=identity_rebinds,
     )
-    try:
-        current = {role: _regular_file_fingerprint(paths[role]) for role in _DISPOSITION_FILE_ROLES}
-    except AdapterError:
-        raise
+    released = released or {}
+    if released and isinstance(identity_rebinds, list) and identity_rebinds:
+        raise AdapterError("source disposition released successor cannot carry FUSE rebinds")
+    # A successor the mover released (local copy gone after 115 and 123 were
+    # verified) is compared through its pre-deletion stat in the receipt.
+    current = {
+        role: (
+            {key: released[role][key] for key in _FILE_FINGERPRINT_KEYS}
+            if role in released
+            else _regular_file_fingerprint(paths[role])
+        )
+        for role in _DISPOSITION_FILE_ROLES
+    }
+    if any(
+        current[role] != {key: effective[role].get(key) for key in _FILE_FINGERPRINT_KEYS}
+        or effective[role].get("sha256") not in (None, released[role].get("sha256"))
+        for role in released
+    ):
+        raise AdapterError("source disposition released successor differs from its binding")
     exact_fingerprints = all(
         all(effective[role].get(key) == current[role][key] for key in _FILE_FINGERPRINT_KEYS)
         for role in _DISPOSITION_FILE_ROLES
@@ -4557,6 +4573,7 @@ def validate_connection_stub_disposition(
     ffprobe_bin: str = "ffprobe",
     identity_rebinds: list[dict[str, Any]] | None = None,
     identity_rebind_attestations: dict[str, dict[str, Any]] | None = None,
+    archive: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Revalidate immutable identity without rereading historical media bytes.
 
@@ -4779,11 +4796,26 @@ def validate_connection_stub_disposition(
         "successor_source": successor_source,
         "successor_mp4": successor_mp4,
     }
+    released: dict[str, dict[str, Any]] = {}
+    if archive is not None:
+        # The mover's receipt for a successor evicted after 115 and 123 verified.
+        try:
+            try:
+                from ops.recording import recording_archive as archive_identity
+            except ModuleNotFoundError:
+                import recording_archive as archive_identity
+            released = archive_identity.released_successors(
+                archive, finalized=finalized, webhook_files=webhook_files,
+                stub=relative, row=row, record_root=record_root,
+            )
+        except (ValueError, KeyError, TypeError) as exc:
+            raise AdapterError(f"source disposition successor release is invalid: {exc}") from exc
     identity_validation = _prepare_disposition_identity_validation(
         row=row,
         bindings=disposition_bindings,
         paths=disposition_paths,
         identity_rebinds=identity_rebinds,
+        released=released,
     )
     expected_ledger = {
         "source_size": ledger.get("source_size"),
@@ -4837,6 +4869,7 @@ def revalidate_source_dispositions(
     ffprobe_bin: str = "ffprobe",
     allow_identity_rebind_start: bool = False,
     identity_rebind_spool: Path | None = None,
+    archive_state_path: Path | None = None,
 ) -> set[str]:
     """Revalidate every persisted ignore row on every adapter iteration."""
     dispositions = state.get("source_dispositions")
@@ -4861,6 +4894,17 @@ def revalidate_source_dispositions(
         return set()
     if not isinstance(webhook_files, dict):
         raise AdapterError("adapter source disposition webhook state is malformed")
+    archive = None
+    if archive_state_path is not None and archive_state_path.exists():
+        # The mover's local receipt (released successors); never a CD2 probe.
+        try:
+            try:
+                from ops.recording import recording_archive as archive_identity
+            except ModuleNotFoundError:
+                import recording_archive as archive_identity
+            archive = archive_identity.read_json(archive_state_path)
+        except (ValueError, OSError) as exc:
+            raise AdapterError("local archive receipt is unreadable") from exc
     filename_rx = re.compile(FILENAME_RX_TEMPLATE.format(room=re.escape(str(room_id))))
     validated: set[str] = set()
     for relative, row in dispositions.items():
@@ -4909,6 +4953,7 @@ def revalidate_source_dispositions(
                     finalized=finalized,
                     ffprobe_bin=ffprobe_bin,
                     identity_rebinds=identity_rebinds,
+                    archive=archive,
                 )
         except SourceDispositionIdentityRebindRequired as required:
             if identity_rebind_spool is None:
@@ -4931,6 +4976,7 @@ def revalidate_source_dispositions(
                 ffprobe_bin=ffprobe_bin,
                 identity_rebinds=identity_rebinds,
                 identity_rebind_attestations=attestations,
+                archive=archive,
             )
         except AdapterError as exc:
             raise AdapterError(f"source disposition drift: {relative}: {exc}") from exc
@@ -5312,6 +5358,7 @@ def run_once(args: argparse.Namespace) -> int:
             ffprobe_bin=args.ffprobe,
             allow_identity_rebind_start=not bool(room.get("streaming") or room.get("recording")),
             identity_rebind_spool=args.state_path.parent / ".source-disposition-identity-rebind",
+            archive_state_path=getattr(args, "archive_state_path", None),
         )
     except AdapterError as exc:
         atomic_write_json(args.state_path, state, mode=0o600)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One OCI3 mover daemon: sealed local recordings -> CD2 -> verified eviction.
+"""One OCI3 mover daemon: sealed local recordings -> CD2 (115 + 123) -> verified eviction.
 
 No container/service control or provider-direct calls exist in this module.
 The existing disk-guard service also calls this entry with --disk-guard-only,
@@ -89,15 +89,21 @@ def append_event(path: Path, event: dict[str, Any]) -> None:
 
 
 class UploadObservations:
-    def __init__(self, client: CD2Status, path: Path):
+    def __init__(self, client: CD2Status, path: Path, roots: tuple[Path, ...] | None = None):
         self.client, self.path = client, path
+        # Given roots are fixed now; None = the 115 archive only, read at call time.
+        self.prefixes = None if roots is None else tuple(self.prefix(root) for root in roots)
         self.lock = threading.Lock()
         self.ready = threading.Event()
         self.rows = identity.read_json(path) if path.exists() else {}
 
+    @staticmethod
+    def prefix(root: Path) -> str:
+        return "/" + (root / identity.ROOM).relative_to(identity.CLOUD_MOUNT).as_posix() + "/"
+
     def note(self, row: dict[str, Any]) -> None:
-        prefix = "/" + (identity.ARCHIVE_ROOT / identity.ROOM).relative_to(identity.CLOUD_MOUNT).as_posix() + "/"
-        if not str(row.get("destPath", "")).startswith(prefix) or not row.get("key"):
+        prefixes = self.prefixes or (self.prefix(identity.ARCHIVE_ROOT),)
+        if not str(row.get("destPath", "")).startswith(prefixes) or not row.get("key"):
             return
         with self.lock:
             # A later non-finished update invalidates an earlier Finished.
@@ -144,8 +150,11 @@ class UploadObservations:
 class Mover:
     def __init__(self, *, spool: Path, archive_root: Path, state_path: Path,
                  archive_path: Path, client: CD2Status, observations: UploadObservations,
-                 mount: Path = identity.CLOUD_MOUNT):
+                 mount: Path = identity.CLOUD_MOUNT, backup_root: Path | None = None):
         self.spool, self.archive_root, self.mount = spool, archive_root, mount
+
+
+        self.backup_root = backup_root
         self.state_path, self.archive_path = state_path, archive_path
         self.client, self.observations = client, observations
         self.archive = identity.read_json(archive_path) if archive_path.exists() else {
@@ -180,12 +189,43 @@ class Mover:
             raise identity.ArchiveError("FLV changed since adapter finalization")
         if row["files"][relative[:-4] + ".mp4"]["sha256"] != ledger["target_sha256"]:
             raise identity.ArchiveError("MP4 differs from adapter finalized SHA")
+        if self.backup_root is not None:
+            for name, item in row["files"].items():
+                self.backup_place(name, item)
         self.archive["segments"][relative] = row
         self.save()
         return row
 
-    def copy_file(self, name: str, item: dict[str, Any]) -> None:
-        source, target = self.spool / name, self.archive_root / identity.ROOM / name
+    def backup_place(self, name: str, item: dict[str, Any]) -> dict[str, Any]:
+        """The 123 copy's own placement record, kept beside the 115 fields.
+
+        Rows prepared before the backup existed get the record on first use.
+        """
+        assert self.backup_root is not None
+        expected = identity.cloud_path(name, archive_root=self.backup_root, mount=self.mount)
+        place = item.setdefault("backup", {"cloud_path": expected})
+        if place.get("cloud_path") != expected:
+            raise identity.ArchiveError("123 backup placement differs from the topology")
+        return place
+
+    def backup_proven(self, name: str, item: dict[str, Any]) -> bool:
+        place = item.get("backup")
+        if self.backup_root is None or not isinstance(place, dict):
+            return False
+        expected = identity.cloud_path(name, archive_root=self.backup_root, mount=self.mount)
+        return (place.get("cloud_path") == expected and bool(place.get("cloud_object_id"))
+                and identity.proof_valid(place.get("proof"), path=expected, size=item["size"]))
+
+    def copy_file(self, name: str, item: dict[str, Any], place: dict[str, Any] | None = None,
+                  root: Path | None = None) -> None:
+        """Copy to the 115 archive (place=item) or to the 123 backup placement.
+
+        Content identity (size, SHA, local preimage) always comes from item;
+        creation receipts are per placement.
+        """
+        place = item if place is None else place
+        root = self.archive_root if root is None else root
+        source, target = self.spool / name, root / identity.ROOM / name
         if identity.fingerprint(source) != item["local_fingerprint"]:
             raise identity.ArchiveError("source preimage changed")
         # No mkdir/write before the exact CloudFS mount has been checked.
@@ -195,7 +235,7 @@ class Mover:
         length = 0
         exists = target.exists()
         if exists:
-            if not item.get("destination_created"):
+            if not place.get("destination_created"):
                 raise identity.ArchiveError("destination exists without this mover's creation receipt")
             length = target.stat().st_size
             if length > item["size"]:
@@ -212,13 +252,13 @@ class Mover:
         try:
             out = target.open("xb")
         except FileExistsError:
-            if not item.get("destination_created"):
+            if not place.get("destination_created"):
                 # An unrelated or crash-before-receipt object is never adopted.
                 raise identity.ArchiveError("destination exists without this mover's creation receipt")
             out = target.open("r+b")
         else:
-            item["destination_created"] = True
-            item["copy_started_at_epoch"] = time.time()
+            place["destination_created"] = True
+            place["copy_started_at_epoch"] = time.time()
             self.save()
         with out, source.open("rb") as inp:
             # Resume only our own create-only file, after comparing its entire
@@ -239,20 +279,21 @@ class Mover:
         if (identity.fingerprint(source) != item["local_fingerprint"]
                 or identity.sha256_file(target) != item["sha256"]):
             raise identity.ArchiveError("copy SHA/preimage mismatch")
-        item["copy_complete"] = True
+        place["copy_complete"] = True
         self.save()
 
-    def verify_file(self, item: dict[str, Any]) -> None:
-        path = item["cloud_path"]
+    def verify_file(self, item: dict[str, Any], place: dict[str, Any] | None = None) -> None:
+        place = item if place is None else place
+        path = place["cloud_path"]
         for upload in self.client.upload_list(Path(path).name):
             if upload.get("destPath") == path:
                 self.observations.note(upload)
         upload = self.observations.get(path)
         if (upload.get("statusEnum") != 5 or upload.get("size") != item["size"]
-                or upload.get("observed_at_epoch", 0) < item["copy_started_at_epoch"]):
+                or upload.get("observed_at_epoch", 0) < place["copy_started_at_epoch"]):
             raise identity.ArchiveError("CD2 has not reported this file Finished")
         remote = self.client.refresh(path)
-        if item.get("cloud_object_id") and remote.get("id") != item["cloud_object_id"]:
+        if place.get("cloud_object_id") and remote.get("id") != place["cloud_object_id"]:
             raise identity.ArchiveError("refreshed cloud object identity changed")
         proof = {"method": "CD2_FINISHED_AND_FORCE_REFRESH", "upload": upload,
                  "object": remote, "forceRefresh": True, "checked_at_epoch": time.time()}
@@ -261,26 +302,54 @@ class Mover:
         # Bind the verified copy's own placement after refresh, never reuse the
         # spool inode/mtime for its legitimate create-only archive copy.
         target = self.mount / path.lstrip("/")
+        content = {"size": item["size"], "sha256": item["sha256"],
+                   "archive_fingerprint": place.get("archive_fingerprint")}
         archive_fingerprint = identity.validate_artifact(
-            target, item,
-            fingerprint_key="archive_fingerprint" if "archive_fingerprint" in item else None,
+            target, content,
+            fingerprint_key="archive_fingerprint" if "archive_fingerprint" in place else None,
         )
-        item["archive_fingerprint"] = archive_fingerprint
-        item["cloud_object_id"] = remote["id"]
-        item["proof"] = proof
+        place["archive_fingerprint"] = archive_fingerprint
+        place["cloud_object_id"] = remote["id"]
+        place["proof"] = proof
         self.save()
 
     def evict(self, relative: str, row: dict[str, Any]) -> None:
         current = identity.read_json(self.state_path)
         if not identity.verified_segment(current, self.archive, relative):
             raise identity.ArchiveError("archive/adapter identity changed before eviction")
+        stubs = None
         if relative in identity.disposition_references(current):
-            row["retained_reason"] = "ADAPTER_DISPOSITION_PHYSICAL_EVIDENCE"
-            self.save()
-            return
+            # A connection stub's successor is released once 115 and 123 are
+            # both verified; any other bound evidence keeps its local bytes.
+            stubs = (identity.stub_successor_rows(current, relative)
+                     if self.backup_root is not None else None)
+            if stubs is None:
+                row["retained_reason"] = "ADAPTER_DISPOSITION_PHYSICAL_EVIDENCE"
+                self.save()
+                return
+        if self.backup_root is not None and not all(
+                item.get("deleted") or self.backup_proven(name, item)
+                for name, item in row["files"].items()):
+            raise identity.ArchiveError("123 backup not verified; eviction deferred")
         paths = [self.spool / name for name in row["files"]]
         if open_files(paths):
             raise identity.ArchiveError("local artifact is in use; eviction deferred")
+        if stubs is not None:
+            release = row.get("disposition_release")
+            expected = {stub: stub_row["canonical_integrity"]["canonical_json_sha256"]
+                        for stub, stub_row in stubs.items()}
+            if release is None:
+                # Persisted before any unlink, so validators always see either
+                # the exact local file or this receipt.
+                release = identity.successor_release(row, relative, stubs, self.spool)
+                row["disposition_release"] = release
+                row.pop("retained_reason", None)
+                append_event(self.events, {"event": "DISPOSITION_SUCCESSOR_RELEASED",
+                                           "relative": relative, "dispositions": expected,
+                                           "checked_at_epoch": time.time()})
+                self.save()
+            elif release.get("dispositions") != expected:
+                raise identity.ArchiveError("disposition changed after successor release")
         for name, item in row["files"].items():
             path = self.spool / name
             if item.get("deleted"):
@@ -322,26 +391,59 @@ class Mover:
                 identity.sealed_ledger(state, relative)
                 row = (row if row and row.get("phase") != "unprepared"
                        else self.prepare(state, relative))
+                names = identity.artifact_paths(relative)
+                live = [name for name in names if not row["files"][name].get("deleted")]
+                if (row["phase"] == "verified" and row.get("retained_reason")
+                        and relative in identity.disposition_references(state)
+                        and (self.backup_root is None
+                             or identity.stub_successor_rows(state, relative) is None)
+                        and (self.backup_root is None
+                             or all(self.backup_proven(name, row["files"][name]) for name in live))):
+                    # Kept local only as adapter evidence, so nothing here will
+                    # be deleted: do not re-read the archived copies through
+                    # CD2 on every tick (that re-downloaded ~2 GiB forever).
+                    continue
                 if row["phase"] != "verified":
-                    for name in identity.artifact_paths(relative):
+                    for name in names:
                         item = row["files"][name]
                         if not item.get("copy_complete"):
                             self.copy_file(name, item)
+                # Copy the 123 backups before any verification: neither upload
+                # waits for the other. Files already evicted (before the
+                # backup existed) cannot be copied and are not required.
+                if self.backup_root is not None:
+                    for name in live:
+                        item = row["files"][name]
+                        place = self.backup_place(name, item)
+                        if not place.get("copy_complete"):
+                            self.copy_file(name, item, place, self.backup_root)
+                if row["phase"] != "verified":
                     # Verification needs authenticated CD2 evidence; copying
                     # each sealed artifact does not. A failed RPC must not
                     # block the remaining artifacts in this group.
-                    for name in identity.artifact_paths(relative):
+                    for name in names:
                         item = row["files"][name]
                         self.verify_file(item)
                     row["phase"] = "verified"
                     row.pop("error", None)
                     self.save()
+                    rechecked = True
                 else:
+                    rechecked = False
+                # 123 is checked before any 115 re-check, so waiting for the
+                # backup upload does not re-read the 115 copies on each retry.
+                # A backup proven once stays proven; 115 stays the archive of
+                # record and is re-checked right before deletion.
+                if self.backup_root is not None:
+                    for name in live:
+                        item = row["files"][name]
+                        if not self.backup_proven(name, item):
+                            self.verify_file(item, self.backup_place(name, item))
+                if not rechecked:
                     # A retry after verification/crash obtains a new refreshed
                     # listing before deleting any remaining local preimage.
-                    for item in row["files"].values():
-                        if not item.get("deleted"):
-                            self.verify_file(item)
+                    for name in live:
+                        self.verify_file(row["files"][name])
                 self.evict(relative, row)
                 row.pop("error", None)
                 row.pop("next_attempt_epoch", None)
@@ -384,11 +486,13 @@ def main() -> int:
     with args.archive_state.with_suffix(".lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         client = CD2Status(GrpcWeb(args.cd2_endpoint, args.cd2_token_file))
-        observations = UploadObservations(client, args.archive_state.with_name("cd2-uploads.json"))
+        observations = UploadObservations(client, args.archive_state.with_name("cd2-uploads.json"),
+                                          roots=(identity.ARCHIVE_ROOT, identity.BACKUP_ROOT))
         threading.Thread(target=observations.watch, daemon=True).start()
         mover = Mover(spool=args.spool, archive_root=identity.ARCHIVE_ROOT,
                       state_path=args.state_path, archive_path=args.archive_state,
-                      client=client, observations=observations)
+                      client=client, observations=observations,
+                      backup_root=identity.BACKUP_ROOT)
         last_capacity_check = 0.0
         while True:
             if time.time() - last_capacity_check >= 60:

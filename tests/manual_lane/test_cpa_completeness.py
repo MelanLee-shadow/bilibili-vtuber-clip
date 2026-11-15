@@ -231,7 +231,8 @@ def test_pick_frame_reading_cut_by_the_provider_is_an_error_not_a_verdict(tmp_pa
 
 def test_pick_frame_complete_reading_still_gives_its_verdict(tmp_path, monkeypatch):
     pf = _load(REMOTE / "pick_frame.py", "pick_frame_control")
-    answers = iter([_payload("completed", "CLEAN"), _payload("completed", '{"danmaku": [], "person": [], "guest": []}')])
+    answers = iter([_payload("completed", "CLEAN"), _payload("completed", "FACE"),
+                    _payload("completed", '{"danmaku": [], "person": [], "guest": []}')])
     monkeypatch.setattr(pf.urllib.request, "urlopen",
                         lambda req, timeout: _JsonResp(json.dumps(next(answers)).encode()))
     monkeypatch.setattr(pf, "extract", lambda cut, t, path: "aW1n")

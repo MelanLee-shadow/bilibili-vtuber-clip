@@ -25,6 +25,7 @@ ROOM = TOPOLOGY.room
 SPOOL_ROOT = TOPOLOGY.spool_root
 CLOUD_MOUNT = TOPOLOGY.cloud_mount
 ARCHIVE_ROOT = TOPOLOGY.archive_root
+BACKUP_ROOT = TOPOLOGY.backup_root
 STATE_DIR = TOPOLOGY.state_dir
 ARCHIVE_STATE = STATE_DIR / "archive-state.json"
 ARCHIVE_SCHEMA = "recording-local-first-archive.v1"
@@ -142,10 +143,17 @@ def validate_artifact(path: Path, item: dict[str, Any], *,
     The local and archive copies share a SHA, but have different legitimate
     inode/device/time bindings. Each is compared to its own saved placement;
     a cache keyed only by stat must not hide a same-size rewrite.
+    CD2's FUSE renumbers the inode of an unchanged cloud object (
+    53 -> 878 with the same object id, size, mtime and ctime), so the archive
+    placement is bound by its other fields plus the full rehash below.
     """
     before = fingerprint(path)
-    if (before["size"] != item["size"]
-            or (fingerprint_key is not None and before != item.get(fingerprint_key))):
+    recorded = item.get(fingerprint_key) if fingerprint_key is not None else None
+    placement_only = {"inode"} if fingerprint_key == "archive_fingerprint" else set()
+    if before["size"] != item["size"] or (fingerprint_key is not None and (
+            not isinstance(recorded, dict)
+            or {k: v for k, v in before.items() if k not in placement_only}
+            != {k: v for k, v in recorded.items() if k not in placement_only})):
         raise ArchiveError(f"artifact fingerprint drifted: {path}")
     if (not re.fullmatch(r"[0-9a-f]{64}", str(item.get("sha256", "")))
             or sha256_file(path) != item["sha256"]):
@@ -265,15 +273,178 @@ def disposition_references(state: dict[str, Any]) -> set[str]:
     return protected
 
 
-def retained_validation_source(relative: str, archive: dict[str, Any],
-                               *, spool: Path | None = None) -> Path | None:
+CONNECTION_STUB_SCHEMA = "recording-connection-stub.v1"
+SUCCESSOR_RELEASE_SCHEMA = "recording-disposition-successor-release.v1"
+SUCCESSOR_RELEASE_POLICY = "LOCAL_SUCCESSOR_REPLACED_BY_VERIFIED_115_AND_123_COPIES"
+SUCCESSOR_ROLES = {"successor_source": ".flv", "successor_mp4": ".mp4"}
+STAT_KEYS = ("size_bytes", "mtime_ns", "ctime_ns", "device", "inode", "mode")
+
+
+def canonical_sha256(payload: dict[str, Any]) -> str:
+    """The adapter's canonical JSON digest (same encoding as its receipts)."""
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, allow_nan=False, sort_keys=True,
+                                     separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def disposition_stat(path: Path) -> dict[str, int]:
+    """The fingerprint a disposition binds: lstat of a regular file, with mode."""
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode):
+        raise ArchiveError(f"not a regular file: {path}")
+    return {"size_bytes": info.st_size, "mtime_ns": info.st_mtime_ns, "ctime_ns": info.st_ctime_ns,
+            "device": info.st_dev, "inode": info.st_ino, "mode": stat.S_IMODE(info.st_mode)}
+
+
+def _as_local_fingerprint(binding: dict[str, Any]) -> dict[str, Any]:
+    return {"size": binding.get("size_bytes"),
+            **{key: binding.get(key) for key in ("mtime_ns", "ctime_ns", "inode", "device")}}
+
+
+def stub_successor_rows(state: dict[str, Any], relative: str) -> dict[str, dict[str, Any]] | None:
+    """Connection-stub rows that reference this segment only as their successor.
+
+    None when any other row (truncated, untyped, or one carrying FUSE rebind
+    state) references it: that evidence keeps its local placement.
+    """
+    rows: dict[str, dict[str, Any]] = {}
+    rebinds = state.get("source_disposition_identity_rebinds") or {}
+    tasks = state.get("source_disposition_identity_rebind_tasks") or {}
+    for stub, row in state.get("source_dispositions", {}).items():
+        if relative not in disposition_references({"source_dispositions": {stub: row}}):
+            continue
+        session = row.get("session") if isinstance(row, dict) else None
+        if (stub == relative or not isinstance(session, dict)
+                or row.get("schema_version") != CONNECTION_STUB_SCHEMA
+                or session.get("successor_relative_path") != relative
+                or not isinstance(row.get("canonical_integrity"), dict)
+                or rebinds.get(stub) or stub in tasks):
+            return None
+        rows[stub] = row
+    return rows or None
+
+
+def successor_release(row: dict[str, Any], relative: str, stubs: dict[str, dict[str, Any]],
+                      spool: Path) -> dict[str, Any]:
+    """The receipt written before a disposition-bound successor is evicted.
+
+    It binds the exact local stat the disposition recorded to the archive
+    row's SHA and its verified 115 and 123 objects. Bytes are rehashed by
+    the eviction loop right before each unlink.
+    """
+    files = {}
+    for role, suffix in SUCCESSOR_ROLES.items():
+        name = relative[:-4] + suffix
+        item = row["files"][name]
+        local = disposition_stat(spool / name)
+        if item.get("deleted") or _as_local_fingerprint(local) != item["local_fingerprint"]:
+            raise ArchiveError("local successor changed since archival")
+        for stub_row in stubs.values():
+            binding = stub_row["session"][role]
+            if (any(binding.get(key) != local[key] for key in STAT_KEYS)
+                    or binding.get("sha256") not in (None, item["sha256"])):
+                raise ArchiveError("local successor differs from its disposition binding")
+        backup = item.get("backup") or {}
+        files[name] = {"role": role, "local": local, "sha256": item["sha256"],
+                       "cloud_path": item["cloud_path"], "cloud_object_id": item["cloud_object_id"],
+                       "backup_cloud_path": backup.get("cloud_path"),
+                       "backup_cloud_object_id": backup.get("cloud_object_id")}
+    receipt = {"schema_version": SUCCESSOR_RELEASE_SCHEMA, "policy": SUCCESSOR_RELEASE_POLICY,
+               "successor_relative_path": relative,
+               "dispositions": {stub: stub_row["canonical_integrity"]["canonical_json_sha256"]
+                                for stub, stub_row in stubs.items()},
+               "files": files}
+    receipt["canonical_integrity"] = {"algorithm": "sha256",
+                                      "canonical_json_sha256": canonical_sha256(receipt)}
+    return receipt
+
+
+def released_successor(archive: dict[str, Any], *, finalized: dict[str, Any],
+                       webhook_files: dict[str, Any], stub: str, row: dict[str, Any],
+                       role: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """(binding, archive item) for a successor file the mover released, else None.
+
+    Callers use it only when the local file is gone. The binding is the
+    exact pre-deletion stat plus SHA; the item names the verified 115 copy.
+    """
+    successor = (row.get("session") or {}).get("successor_relative_path")
+    segment = archive.get("segments", {}).get(successor) if isinstance(successor, str) else None
+    release = segment.get("disposition_release") if isinstance(segment, dict) else None
+    if release is None:
+        return None
+    if not isinstance(release, dict) or not isinstance(release.get("files"), dict):
+        raise ArchiveError("disposition successor release receipt is invalid")
+    unsigned = {key: value for key, value in release.items() if key != "canonical_integrity"}
+    name = successor[:-4] + SUCCESSOR_ROLES[role]
+    entry = release["files"].get(name)
+    if (not isinstance(entry, dict)
+            or release.get("canonical_integrity") != {"algorithm": "sha256",
+                                                      "canonical_json_sha256": canonical_sha256(unsigned)}
+            or release.get("schema_version") != SUCCESSOR_RELEASE_SCHEMA
+            or release.get("policy") != SUCCESSOR_RELEASE_POLICY
+            or release.get("successor_relative_path") != successor
+            or (release.get("dispositions") or {}).get(stub)
+            != (row.get("canonical_integrity") or {}).get("canonical_json_sha256")):
+        raise ArchiveError("disposition successor release receipt is invalid")
+    if not verified_segment({"finalized": finalized, "webhook_files": webhook_files}, archive, successor):
+        raise ArchiveError("released successor is not a verified archive segment")
+    item = segment["files"][name]
+    backup = item.get("backup") or {}
+    local = entry.get("local") or {}
+    if (entry.get("role") != role or not item.get("delete_authorized")
+            or entry.get("sha256") != item["sha256"]
+            or set(local) != set(STAT_KEYS) or _as_local_fingerprint(local) != item["local_fingerprint"]
+            or entry.get("cloud_path") != item["cloud_path"]
+            or entry.get("cloud_object_id") != item["cloud_object_id"]
+            or entry.get("backup_cloud_path") != backup.get("cloud_path")
+            or not entry.get("backup_cloud_object_id")
+            or entry.get("backup_cloud_object_id") != backup.get("cloud_object_id")
+            or not proof_valid(backup.get("proof"), path=backup.get("cloud_path"), size=item["size"])):
+        raise ArchiveError("released successor differs from its archive receipt")
+    return {**local, "sha256": item["sha256"]}, item
+
+
+def released_successors(archive: dict[str, Any], *, finalized: dict[str, Any],
+                        webhook_files: dict[str, Any], stub: str, row: dict[str, Any],
+                        record_root: Path, identity_rebinds: Any = None,
+                        recheck_cloud: bool = False) -> dict[str, dict[str, Any]]:
+    """Release bindings for successor files missing from their disposition placement.
+
+    With recheck_cloud (the inventory, unless its cloud-date pass already did
+    it), each released file's verified 115 copy is rehashed against its own
+    placement. The adapter reads only local receipts, never the cloud.
+    """
+    released: dict[str, dict[str, Any]] = {}
+    successor = (row.get("session") or {}).get("successor_relative_path")
+    for role, suffix in SUCCESSOR_ROLES.items():
+        if not archive or os.path.lexists((record_root / str(successor or "")).with_suffix(suffix)):
+            continue
+        found = released_successor(archive, finalized=finalized, webhook_files=webhook_files,
+                                   stub=stub, row=row, role=role)
+        if found is None:
+            continue
+        binding, item = found
+        if recheck_cloud:
+            validate_artifact(CLOUD_MOUNT / str(item["cloud_path"]).lstrip("/"), item,
+                              fingerprint_key="archive_fingerprint")
+        released[role] = binding
+    if released and identity_rebinds:
+        raise ArchiveError("released successor cannot carry FUSE rebind receipts")
+    return released
+
+
+def retained_validation_source(relative: str, archive: dict[str, Any], *,
+                               spool: Path | None = None,
+                               state: dict[str, Any] | None = None) -> Path | None:
     """Resolve physical disposition evidence without confusing it with bytes.
 
     The cloud piece keeps the same SHA. Its original local evidence remains
-    available for the existing inode/metadata-based disposition validator.
+    available for the existing inode/metadata-based disposition validator,
+    rehashed against the archive SHA until a release receipt replaces it.
     """
     row = archive.get("segments", {}).get(relative, {})
-    if row.get("retained_reason") != "ADAPTER_DISPOSITION_PHYSICAL_EVIDENCE":
+    if row.get("retained_reason") != "ADAPTER_DISPOSITION_PHYSICAL_EVIDENCE" and (
+            "disposition_release" in row or state is None
+            or relative not in disposition_references(state)):
         return None
     root = spool or SPOOL_ROOT / ROOM
     for name in artifact_paths(relative):
