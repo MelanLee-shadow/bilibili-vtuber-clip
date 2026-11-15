@@ -234,10 +234,11 @@ def write_subtitles(ctx: Ctx, bcut: Sequence[SrtCue], final_doubts: Sequence[dou
         merged = merged_timing(bcut, final_doubts)   # time follows the words CPA merged into a line
         decided = [cast(SrtCue, dict(c, text=by_id[c['id']]['final_text'] or c['text'], **merged.get(c['id'], {})))
                    for c in bcut if c['id'] in by_id]
+        decided, number_hits = normalize.numeral_cues(decided)   # U136 number spelling: code, not the agent (G4)
         shaped = normalize.shape_decided_cues(decided)
         normalized = shaped
         base_log = {'canon_replacements': [], 'extra_cues_from_split': len(shaped) - len(decided), 'adjacent_repeats': [],
-                    'lone_chars': [], 'numerals': []}
+                    'lone_chars': [], 'numerals': number_hits}
     else:
         normalized, base_log = _final_cues(bcut, kept, one_speaker=not linked_session(ctx.session), lines=lines)
     norm_log = cast(SubtitleLog, base_log)

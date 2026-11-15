@@ -138,7 +138,7 @@ def _assets_still_template(report: Report) -> None:
     if same:
         report.problem(f"assets/{profile.profile_id}/ 里这些文件还是模板原文：{'、'.join(same)}（各步提示词照它读，要换成本频道的）")
     try:
-        default = load_channel_profile(REPO_ROOT, profile_id="lidousha", environ={})
+        default = load_channel_profile(REPO_ROOT, environ={})      # the tree's default channel (no AUTOSLICE_PROFILE)
         mine = json.loads(profile.asset_file("subtitle_burn_style").read_text(encoding="utf-8"))
         theirs = json.loads(default.asset_file("subtitle_burn_style").read_text(encoding="utf-8"))
     except Exception:                       # no default channel in this tree, or the style is reported elsewhere

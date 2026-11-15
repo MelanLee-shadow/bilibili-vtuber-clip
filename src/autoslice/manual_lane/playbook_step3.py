@@ -718,6 +718,7 @@ class _Agent:
         dp, fp, norm = write_subtitles(self.ctx, self.bcut, final, preserve_decisions=True)
         retained_unsplit = False
         if partitioned is not None:
+            partitioned = normalize.numeral_cues(partitioned)[0]     # as final.srt: a number spelt by U136 is no content change
             shaped, lone = normalize.release_shape(partitioned, one_speaker=True)
             before = _content(''.join(cue['text'] for cue in partitioned))
             after = _content(''.join(cue['text'] for cue in shaped))
