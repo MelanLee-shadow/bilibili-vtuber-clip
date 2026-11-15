@@ -28,7 +28,18 @@ def test_prompt_fills_the_three_placeholders_and_keeps_the_json_braces():
     out = trim.prompt('选题理由XYZ', '12.0s SC 某人 你好', cues((3.14, 65.04, '第一句'), (66., 67., '第二句')))
     assert '选题理由XYZ' in out and '12.0s SC 某人 你好' in out
     assert '{hook}' not in out and '{events}' not in out and '{cues}' not in out
-    assert '{"remove": [{"start_cue": 整数, "end_cue": 整数' in out
+    assert '"remove": [{"start_cue": 整数, "end_cue": 整数' in out and out.count('{"main_line"') == 1
+
+
+def test_an_answer_carrying_the_judges_own_main_line_still_parses():
+    # The judge states the clip's main line itself (owner not taken from the selection reason or title).
+    got = trim.parse_kinds({'main_line': '和弹幕互动搞笑', 'remove': [{'start_cue': 2, 'end_cue': 3, 'kind': 'topic'}]}, 5)
+    assert got == {(2, 3): 'topic'}
+
+
+def test_the_selection_reason_is_not_the_main_line():
+    text = (trim.PROMPTS / 'trim.md').read_text(encoding='utf-8')
+    assert '看选题理由' not in text and '选题理由没有提到它' not in text
 
 
 def test_prompt_cue_line_is_number_seconds_text_with_newlines_as_spaces():
@@ -396,6 +407,14 @@ def test_carried_doubt_that_holds_the_package_back_still_does_and_the_others_sti
     assert all((r['confidence'], r['affects_meaning']) in {('低', True), ('高', False)} for r in rows)
 
 
+def test_carried_doubt_keeps_the_run_agreement_so_a_later_regrade_does_not_hold_it():
+    agreed = doubt('a', (3.1, 4.9), confidence='低', affects_meaning=True, runs_same=3)
+    assert not doubt_policy.is_hold(agreed)
+    row = carry([agreed, doubt('b', (12.1, 13.9))])
+    assert row[0]['runs_same'] == 3 and 'runs_same' not in row[1]
+    assert not doubt_policy.is_hold(dict(row[0], confidence='低', affects_meaning=True))   # the review's regrade
+
+
 def test_carried_doubt_on_no_final_cue_follows_its_own_time_and_one_in_the_hole_is_dropped():
     rows = carry([doubt('gap', (5.1, 5.4)), doubt('hole', (8.4, 8.9)), doubt('late', (11.6, 11.9), dropped=True)])
     assert [(r['id'], r['start_s'], r['end_s'], r.get('dropped')) for r in rows] == [
@@ -416,3 +435,48 @@ def test_carried_doubts_refuse_inconsistent_inputs():
         carry([doubt('a', (3.1, 4.9))], new_cues=CARRY_NEW[:-1])
     with pytest.raises(ValueError, match='no time'):
         carry([{'id': 'n', 'cue_id': 99}])
+
+
+# ----- unrelated topics (owner 中间无关的话题…最好还是剪掉) -------------------------------------------
+def test_parse_kinds_reads_the_kind_and_an_answer_without_one_is_a_thanks():
+    answer = {"remove": [{"start_cue": 2, "end_cue": 3, "kind": "topic"}, {"start_cue": 5, "end_cue": 5}]}
+    assert trim.parse_kinds(answer, 6) == {(2, 3): "topic", (5, 5): "thanks"}
+    assert trim.parse_answer(answer, 6) == [(2, 3), (5, 5)]
+
+
+def test_parse_kinds_rejects_an_unknown_kind():
+    with pytest.raises(ValueError, match="kind"):
+        trim.parse_kinds({"remove": [{"start_cue": 2, "end_cue": 3, "kind": "boring"}]}, 6)
+
+
+def test_topic_cues_are_the_cues_both_answers_call_a_topic():
+    first = {(2, 4): "topic"}
+    second = {(3, 5): "topic", (1, 1): "thanks"}
+    assert trim.topic_cues(first, second) == frozenset({3, 4})
+    assert trim.topic_cues(first, {(2, 4): "thanks"}) == frozenset()
+
+
+def test_guard_lets_a_topic_span_without_a_thanks_word_through_when_both_answers_call_it_a_topic():
+    assert guard([(2, 2)], topic=frozenset({2})) == ([(2, 2)], [])
+
+
+def test_guard_a_span_only_partly_called_a_topic_still_needs_a_thanks_word():
+    passed, vetoed = guard([(2, 2)], topic=frozenset())
+    assert passed == [] and vetoed[0]["veto"] == "NO_THANKS"
+
+
+def test_guard_a_topic_span_at_the_edge_or_leaving_too_little_is_still_vetoed():
+    assert guard([(1, 2)], topic=frozenset({1, 2}))[1][0]["veto"] == "EDGE"
+    assert guard([(3, 3)], topic=frozenset({3}), min_keep_s=12.5)[1][0]["veto"] == "TOO_SHORT"
+
+
+def test_prompt_asks_for_both_kinds():
+    text = trim.prompt("钩子", "", [{"start_s": 0.0, "end_s": 1.0, "text": "a"}])
+    assert '"kind": "thanks" 或 "topic"' in text and "中途抽奖" in text
+
+
+def test_guard_unrelated_topics_longer_than_a_third_of_the_clip_are_not_an_insert():
+    # LINES: 13 s clip; cues 2..4 run 3 s..8 s (5 s > 13/3 s); cue 3 alone runs 5 s..6 s
+    passed, vetoed = guard([(2, 4)], topic=frozenset({2, 3, 4}))
+    assert passed == [] and vetoed[0]["veto"] == "TOPIC_TOO_LONG"
+    assert guard([(3, 3)], topic=frozenset({3}))[0] == [(3, 3)]

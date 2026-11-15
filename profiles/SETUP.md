@@ -48,7 +48,7 @@ python3 scripts/init_channel_profile.py <id> --display-name <主播名> --room <
 `assets/<id>/` 里写着「（待填」的字段是还没填的说明，不是值。然后逐项填写：
 
 1. `profiles/<id>/profile.json`：主播的名字和自称、说话人标签、标题前缀、封面身份描述、资产清单。
-   `short_name` 是主播的简称（没有就写全名）；`self_reference_aliases` 只列她真的用来称呼自己的词。
+   标题前缀（`talk_prefix` 等）的【】里写主播全名（如【礼墨Sumi】），不写简称；`short_name` 是主播的简称（没有就写全名）；`self_reference_aliases` 只列她真的用来称呼自己的词。
    **每次改完都要登记**：`python3 scripts/archive_channel_profile.py profiles/<id>/profile.json`（不登记，校验会报
    `manifest history not updated`；每次登记在 `profiles/manifest_history/` 多一条记录，这是预期的）。
    `tools.cover_regenerator` 指向早先流水线的一个脚本，不在这一版里：校验输出的 `missing_runtime_paths` 列出它是预期的，做片不需要它。
@@ -66,6 +66,8 @@ python3 scripts/init_channel_profile.py <id> --display-name <主播名> --room <
    - 标题的编辑方法：原文在 `assets/<id>/title_method/`（模板带一份通用写法），流水线读由它生成的
      `assets/<id>/title_editorial_method.json`。改了原文就重新生成：
      `AUTOSLICE_PROFILE=<id> python3 scripts/build_title_editorial_method.py`。
+   - `subtitle_burn_style.json`：烧进成片的字幕样式，`host` 是主播的话、`guest` 是别人的话（ASS Style 的值，颜色写法
+     `&HAABBGGRR`）。换成自己频道的颜色（比如取主播形象的主色做描边），不要沿用别的频道的主播颜色；没有这个文件第 5 步会停下。
    - `slice_selection_metric.md`：必须换成自己频道的，是「## 优先级分层」里以「第一层」开头的那一条（这个频道什么题材最要紧）。
      文中的 `lidousha_centrality` 是代码里的评分字段名，意思是“和主播本人有多相关”，不要改名。
 

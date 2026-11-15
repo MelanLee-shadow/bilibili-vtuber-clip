@@ -63,6 +63,7 @@
       "speech_memory_ledger": "speech_memory_ledger.v1.json",
       "subtitle_correction_principles": "subtitle_correction_principles.md",
       "subtitle_truth_ledger": "subtitle_truth_ledger.v1.json",
+      "subtitle_burn_style": "subtitle_burn_style.json",
       "timely_term_seeds": "timely_term_seeds.json",
       "timely_term_sources": "timely_term_sources.json",
       "timely_terms": "timely_terms.json",

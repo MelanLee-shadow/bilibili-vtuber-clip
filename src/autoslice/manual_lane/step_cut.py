@@ -77,7 +77,7 @@ def _compilation_boundary(ctx: Ctx, manifest: compilation.Manifest) -> StepOutco
     adopted = {"start_cue": clip["start_cue"], "end_cue": clip["end_cue"], "start_ms": clip["start_ms"],
                "end_ms": clip["end_ms"]}
     if manifest.get("kind") == compilation.KIND_TRIM:
-        reason = (f"片中剪除：本片由 {manifest['origin']['cid']} 挖掉与主线无关的致谢后拼成，"
+        reason = (f"片中剪除：本片由 {manifest['origin']['cid']} 挖掉与主线无关的话题段或致谢后拼成，"
                   "起止沿用原片已定的边界，所以不再跑边界审查")
     else:
         reason = ("同场合集：各段起止已由选段步骤按 cue 边界定好并拼接（compilation.json），整条拼接片就是候选；"

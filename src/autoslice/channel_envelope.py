@@ -49,6 +49,9 @@ _BRACKETED = (
 HOST_NAME = (
     _TALK_PREFIX[len(ENVELOPE_OPENER) : -len(ENVELOPE_CLOSER)] if _BRACKETED else _TALK_PREFIX
 )
+# Every name the host goes by (the prefix name, the display and short names): none of them is ever a partner
+# (sumi prefix 礼墨Sumi, prompts 礼墨 -> the model listed 礼墨 on stage and got 【礼墨Sumi×礼墨】).
+HOST_NAMES = frozenset({HOST_NAME, CHANNEL_PROFILE.display_name, CHANNEL_PROFILE.short_name} - {""})
 _BANNED = re.escape(ENVELOPE_OPENER + ENVELOPE_CLOSER + PAIR_SEPARATOR)
 _PARTNER_PATTERN = rf"[^{_BANNED}\s](?:[^{_BANNED}]*[^{_BANNED}\s])?"
 _PARTNER_RX = re.compile(_PARTNER_PATTERN)
@@ -91,7 +94,7 @@ def _partner_tuple_problem(partners: Sequence[str]) -> str | None:
     for value in values:
         if not isinstance(value, str) or _PARTNER_RX.fullmatch(value) is None:
             return "TALK_PARTNER_INVALID"
-        if value == HOST_NAME:
+        if value in HOST_NAMES:
             return "TALK_PARTNER_IS_HOST"
     if len(set(values)) != len(values):
         return "TALK_PARTNER_DUPLICATE"

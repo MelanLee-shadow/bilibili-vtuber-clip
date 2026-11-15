@@ -35,6 +35,7 @@ from .reselect import SUPERSEDED, supersede_candidate
 from .runner import Ctx
 from .state import ClipState, StateError, utc_now
 from .step_import import IMPORT_DIR, record_import
+from .publication_id import publication_cid
 from .trim_run import MAX_CID, AdaptersFor
 
 if TYPE_CHECKING:
@@ -183,8 +184,8 @@ def revise_clip(*, task: Path, cid: str, reason: str, adapters_for: AdaptersFor,
     state_x = ClipState.load(task / "state" / f"{cid}.json")
     _check_source(task, cid, state_x, adapters_for)
     successor = successor_id(task, cid)
-    if len(successor) > MAX_CID:
-        raise StateError(f"the successor id {successor} is longer than {MAX_CID} characters")
+    if len(publication_cid(successor)) > MAX_CID:
+        raise StateError(f"the manuscript id of {successor} is longer than {MAX_CID} characters")
     remote_x = state_x.data["clip"]["remote_dir"]
     remote_y = f"{remote_x.rsplit('/', 1)[0]}/{successor}"
     has_media = _copy_cut_on_host(adapters_for, remote_x, remote_y)

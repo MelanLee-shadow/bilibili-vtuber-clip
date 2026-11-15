@@ -2,7 +2,8 @@
 
 Orchestration of the pure parts in trim.py.  For a plain clip X whose subtitles (step 3) and speakers (step 4) are done:
 
-1. CPA is asked twice (prompts/trim.md, call ids trim-1 and trim-2) which runs of final cues are thanks nobody picks up;
+1. CPA is asked twice (prompts/trim.md, call ids trim-1 and trim-2) which runs of final cues are thanks nobody picks up
+   or a stretch on a topic unrelated to the main line;
    only the cues both answers propose, and only those `trim.guard` lets through, are cut.
 2. X is not edited.  A new clip Y (`<X>_trim`) is built from the kept intervals of the same recording with the same
    machinery as a same-session compilation (`compilation.compile_pieces`), runs steps 1, 0 and 2, receives X's decided
@@ -59,7 +60,8 @@ if TYPE_CHECKING:
 PURPOSE = "trim"
 SUFFIX = publication_id.TRIM_SUFFIX
 OWNER_MARKS = "owner_cut_marks"      # decision["source"] when the cut is the channel owner's 删 marks
-MAX_CID = 41                         # the longest candidate id the lane's files accept
+MAX_CID = 41                         # the longest manuscript id the lane's files accept (package slug, publication id);
+                                     # a successor's files are named by its manuscript id, so its own endings do not count
 FINAL = frozenset({"NONE", "TRIMMED", "SKIP_SUPERSEDED", "SKIP_COMPILATION", "SKIP_IMPORTED"})
 QUOTE_CHARS = 200
 AdaptersFor = Callable[[str], Adapters]       # a clip's remote directory -> the adapters whose remote runs its scripts
@@ -96,6 +98,7 @@ class TrimDecision(TypedDict):
     pieces_ms: NotRequired[list[tuple[int, int]]]
     proposed: NotRequired[list[list[trim.Span]]]
     agreed: NotRequired[list[trim.Span]]
+    topic_cues: NotRequired[list[int]]          # the cues both answers call an unrelated topic (not a thanks)
     passed: NotRequired[list[trim.Span]]
     vetoed: NotRequired[list[trim.Veto]]
     removed: NotRequired[list[RemovedRun]]
@@ -210,8 +213,9 @@ def _events(ctx: Ctx, length_s: float) -> list[Danmaku]:
 
 
 # ----- the two asks --------------------------------------------------------------------------------------
-def _ask_twice(ctx: Ctx, task: Path, prompts: Sequence[str], n_cues: int, decision: TrimDecision) -> list[list[trim.Span]]:
-    """Both asks in order; returns the spans of each answer.  `decision` gets the raw answers (`answers`) and the CPA
+def _ask_twice(ctx: Ctx, task: Path, prompts: Sequence[str], n_cues: int, decision: TrimDecision
+               ) -> list[dict[trim.Span, str]]:
+    """Both asks in order; returns the spans of each answer with their kinds.  `decision` gets the raw answers (`answers`) and the CPA
     records (`calls`) as they arrive, so a failed run still shows what was asked and said.  The CPA records of the calls (prompt and
     completion) go under <task>/trim-cpa/<X>/cpa/, away from X's own directory; the raw answers go to
     clips/<X>/trim/answer-N.txt as they came.  _Failed on a failed call or an unusable answer; an unusable answer is also
@@ -221,7 +225,7 @@ def _ask_twice(ctx: Ctx, task: Path, prompts: Sequence[str], n_cues: int, decisi
                  adapters=ctx.adapters)
     out = ctx.clip_dir / "trim"
     out.mkdir(parents=True, exist_ok=True)
-    spans: list[list[trim.Span]] = []
+    spans: list[dict[trim.Span, str]] = []
     answers = decision.setdefault("answers", [])
     records = decision.setdefault("calls", [])
     for number, prompt in enumerate(prompts, 1):
@@ -233,7 +237,7 @@ def _ask_twice(ctx: Ctx, task: Path, prompts: Sequence[str], n_cues: int, decisi
         answers.append(record["response_text"])
         (out / f"answer-{number}.txt").write_text(record["response_text"], encoding="utf-8")
         try:
-            spans.append(trim.parse_answer(_json_from_text(record["response_text"]), n_cues))
+            spans.append(trim.parse_kinds(_json_from_text(record["response_text"]), n_cues))
         except ValueError as exc:
             Path(str(record.get("cache_path", ""))).unlink(missing_ok=True)
             raise _Failed(f"CPA_RESPONSE_UNUSABLE: trim-{number}: {exc}") from exc
@@ -288,8 +292,8 @@ def _build(task: Path, ctx: Ctx, mat: _Material, passed: list[trim.Span], adapte
     cid, clip = ctx.state.data["clip"]["cid"], ctx.state.data["clip"]
     successor = f"{cid}{SUFFIX}"
     decision["successor"] = successor
-    if len(successor) > MAX_CID:
-        raise _Failed(f"the successor id {successor} is longer than {MAX_CID} characters")
+    if len(publication_id.publication_cid(successor)) > MAX_CID:
+        raise _Failed(f"the manuscript id of {successor} is longer than {MAX_CID} characters")
     if (task / "state" / f"{successor}.json").exists():
         raise _Failed(f"{successor} already exists")
     windows = trim.keep_windows(mat.final_cues, passed, mat.length_s)
@@ -344,7 +348,7 @@ def _build(task: Path, ctx: Ctx, mat: _Material, passed: list[trim.Span], adapte
     cut_text = " ".join(" ".join(str(mat.final_cues[n - 1]["text"]).split()) for a, b in passed for n in range(a, b + 1))
     spans_text = "、".join(f"{a}" if a == b else f"{a}–{b}" for a, b in passed)
     why = ("是频道主标为删的句子，视频随字幕一起剪掉" if decision.get("source") == OWNER_MARKS
-           else "是与主线无关、没人接的致谢，两遍问答一致且过保险")
+           else "是与主线无关的话题段或没人接的致谢，两遍问答一致且过保险")
     done = supersede_candidate(
         task_dir=task, cid=cid, by=successor, authority=f"片中剪除（trim 命令）：{cid}", quote=cut_text[:QUOTE_CHARS],
         reason=f"片中剪除：第 {spans_text} 句{why}；剪掉后另建 {successor}，原片保留可回退")
@@ -401,10 +405,12 @@ def trim_clip(*, task: Path, cid: str, adapters_for: AdaptersFor, source_dir: st
         else:
             events = trim.events_text(_events(ctx, mat.length_s))
             prompts = [trim.prompt(clip["hook"], events, numbered, run=run) for run in (1, 2)]
-            spans = _ask_twice(ctx, task, prompts, len(numbered), decision)
+            kinds = _ask_twice(ctx, task, prompts, len(numbered), decision)
+            spans = [sorted(k) for k in kinds]
             agreed = trim.agreed(*spans)
+            decision["topic_cues"] = sorted(topic := trim.topic_cues(*kinds))
             passed, vetoed = trim.guard(agreed, numbered, thanks_words=rules("trim_thanks_words")["words"],
-                                        clip_len_s=mat.length_s, min_keep_s=gates.CLIP_MIN_SECONDS)
+                                        clip_len_s=mat.length_s, min_keep_s=gates.CLIP_MIN_SECONDS, topic=topic)
         decision["proposed"], decision["agreed"], decision["passed"], decision["vetoed"] = spans, agreed, passed, vetoed
         decision["removed"] = [{"span": [a, b], "cues": [{"n": n, "start_s": numbered[n - 1]["start_s"],
                                                           "end_s": numbered[n - 1]["end_s"], "text": numbered[n - 1]["text"]}

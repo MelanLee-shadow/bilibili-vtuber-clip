@@ -149,9 +149,9 @@ def _write_sapphire_ass_from_srt(
     # (or a later operator correction) while leaving its recorded hash intact.
     cues = _parse_srt(srt_path, normalize_terms=False)
     # SRT labels are metadata: colour/style distinguishes speech from lyrics.
-    from scripts.apply_speaker_turn_overrides import (
-        GUEST_WHITE_STYLE, HOST_SPEAKER, LDS_SAPPHIRE_STYLE,
-    )
+    # The host/guest styles are the active channel's (profile asset subtitle_burn_style).
+    from scripts.apply_speaker_turn_overrides import HOST_SPEAKER, channel_burn_styles
+    styles = channel_burn_styles()
     ass_path.parent.mkdir(parents=True, exist_ok=True)
     # Typography retains the approved sapphire72 metrics emitted by
     # .agent/skills/song-lyrics-timeline-aligner/scripts/align_timed_lyrics.py
@@ -160,8 +160,8 @@ def _write_sapphire_ass_from_srt(
     ass_path.write_text(render_burned_ass(
         [BurnedAssCue(c.source_start_ms, c.source_end_ms, c.text) for c in cues],
         host_speaker=HOST_SPEAKER,
-        lane=AssLaneStyle(styles=(("Default", LDS_SAPPHIRE_STYLE),
-                                 ("LDS", LDS_SAPPHIRE_STYLE), ("GUEST", GUEST_WHITE_STYLE)),
+        lane=AssLaneStyle(styles=(("Default", styles["host"]),
+                                 ("LDS", styles["host"]), ("GUEST", styles["guest"])),
                           max_chars_per_line=max_chars_per_line),
     ), encoding="utf-8")
 

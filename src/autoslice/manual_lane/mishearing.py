@@ -72,13 +72,13 @@ class PairsDocument(TypedDict):
     entries: list[MishearingPair]
 
 ROOT = Path(__file__).resolve().parents[3]
-OUTPUT = ROOT / "assets/manual_lane/mishearing_pairs.json"
+OUTPUT = channel.name_table("mishearing_pairs.json")     # the active channel's
+# The active channel's own tables, by the asset keys its profile registers (a channel names its files itself).
 SOURCES = {
-    "entities": f"{channel.ASSETS_REL}/entity_confusables.json",
-    "ledger": f"{channel.ASSETS_REL}/subtitle_truth_ledger.v1.json",
-    "memory": f"{channel.ASSETS_REL}/speech_memory_ledger.v1.json",
-    "roster": f"{channel.ASSETS_REL}/psplive_roster_sources.v1.json",
-    "names": "assets/manual_lane/proper_nouns.json",
+    **{kind: channel.profile().asset_file(key).relative_to(ROOT).as_posix() for kind, key in (
+        ("entities", "entity_confusables"), ("ledger", "subtitle_truth_ledger"), ("memory", "speech_memory_ledger"),
+        ("roster", "psplive_roster_sources"))},
+    "names": channel.name_table("proper_nouns.json").relative_to(ROOT).as_posix(),
 }
 
 

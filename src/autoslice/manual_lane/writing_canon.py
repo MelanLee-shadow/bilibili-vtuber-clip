@@ -1,6 +1,6 @@
 """One word, one written form: the proper-noun table's `canonical` writing (维护者 / 11-09).
 
-assets/manual_lane/proper_nouns.json gives each word a `canonical` writing, the other writings of the SAME word in
+The channel's proper_nouns.json (channel.name_table) gives each word a `canonical` writing, the other writings of the SAME word in
 `variants`, and a `condition` (when a text is that word).  `aliases` are other names of the same object and are never
 a writing.  `variants` may still hold such a second name, so a hit is rewritten only when it is the same word:
 

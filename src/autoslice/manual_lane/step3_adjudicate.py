@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from ..topic_entity_graph_load import load_topic_entity_graph
 from . import (
+    channel,
     doubt_policy,
     mishearing,
     normalize,
@@ -25,7 +26,7 @@ from .runner import Ctx, StepOutcome
 from .config import participant_description, unknown_participant
 from .srt_text import SrtCue, _json_from_text
 from .step3_evidence import ADJUDICATE_BATCH
-from .step_io import HOST_LABEL, REMOTE_TOOLS, _ask_cpa, _cpa_ok, _fail, _render
+from .step_io import HOST_LABEL, _ask_cpa, _cpa_ok, _fail, _render
 
 if TYPE_CHECKING:
     from .lane_lines import LinePlan
@@ -55,8 +56,8 @@ def adjudicate_mode() -> str:
     return mode
 
 
-MISHEARING_PAIRS = REMOTE_TOOLS.parent / "mishearing_pairs.json"
-PROPER_NOUNS = REMOTE_TOOLS.parent / "proper_nouns.json"
+MISHEARING_PAIRS = channel.name_table("mishearing_pairs.json")
+PROPER_NOUNS = channel.name_table("proper_nouns.json")
 
 
 def _participant_line(ctx: Ctx) -> str:
