@@ -131,12 +131,36 @@ def _spellings(names: Sequence[tuple[str, tuple[str, ...]]]) -> list[tuple[str, 
     return [(s, name) for name, aliases in names for s in (name, *aliases)]
 
 
+def _spelled_out(text: str, spelling: str) -> bool:
+    """A name written only in Latin letters (four or more) that the recogniser wrote as Chinese characters sounding it out:
+    the run's toneless pinyin, joined, is the name (阿娃娃 a-wa-wa = awawa, 苏米 = Sumi)."""
+    latin = spelling.lower()
+    if len(latin) < 4 or not latin.isascii() or not latin.isalpha():
+        return False
+    for run in _HAN.findall(text):
+        tokens = text_pinyin_tokens(run) or []
+        if len(tokens) != len(run):
+            continue
+        for i in range(len(run) - 1):
+            joined = ""
+            for token in tokens[i:]:
+                joined += token.lower()
+                if joined == latin:
+                    return True
+                if not latin.startswith(joined):
+                    break
+    return False
+
+
 def near_names(text: str, names: Sequence[tuple[str, tuple[str, ...]]]) -> list[str]:
-    """Names whose Chinese part (two or more characters) the sentence says in other characters."""
+    """Names whose Chinese part (two or more characters) the sentence says in other characters, and Latin-only names
+    the sentence sounds out in Chinese characters."""
     hits: list[str] = []
     spellings = _spellings(names)
     written = {s for s, _ in spellings if s in text}
     for spelling, name in spellings:
+        if name not in hits and _spelled_out(text, spelling):
+            hits.append(name)
         han = "".join(_HAN.findall(spelling))
         if len(han) < 2 or name in hits or spelling in written:
             continue

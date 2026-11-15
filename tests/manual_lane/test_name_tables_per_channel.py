@@ -47,3 +47,14 @@ def test_the_hint_reaches_the_name_doubt_reasons():
     reasons = name_match.detection_reasons("不愧是你们苏菲", NAMES, {"near_name": True, "latin_unknown": False})
     assert any("近音全名" in r and "礼墨Sumi" in r for r in reasons)
     assert rules("detection")["near_name"] is True
+
+
+@pytest.mark.parametrize("heard, name", [("我说看到阿娃娃在直播睡觉", "安晚awa"), ("苏米你来啦", "礼墨Sumi")])
+def test_a_latin_only_name_sounded_out_in_chinese_characters_is_hinted(heard, name):
+    # owner awawa 是安晚awa 的昵称 — three recognisers wrote 阿娃娃 (a-wa-wa) and nothing pointed at the name
+    assert name in name_match.near_names(heard, [*NAMES, ("安晚awa", ("安晚", "awawa"))])
+
+
+@pytest.mark.parametrize("heard", ["阿娃在吗", "你说什么呀", "苏醒了"])
+def test_a_shorter_or_unrelated_run_does_not_sound_out_the_latin_name(heard):
+    assert name_match.near_names(heard, [*NAMES, ("安晚awa", ("安晚", "awawa"))]) == []

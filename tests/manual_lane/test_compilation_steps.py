@@ -277,7 +277,7 @@ def test_step1_of_a_trim_clip_says_why_it_does_not_review_the_boundary(tmp_path)
     out = step1_boundary(ctx)
     assert out.ok and cpa.calls == []
     decision = json.loads((ctx.clip_dir / "boundary/decision.json").read_text(encoding="utf-8"))
-    assert decision["skipped"] == ("片中剪除：本片由 orig-clip 挖掉与主线无关的致谢后拼成，"
+    assert decision["skipped"] == ("片中剪除：本片由 orig-clip 挖掉与主线无关的话题段或致谢后拼成，"
                                    "起止沿用原片已定的边界，所以不再跑边界审查")
     assert decision["adopted"] == {"start_cue": 1, "end_cue": 10, "start_ms": 0, "end_ms": 20000}
     assert out.process[0] == decision["skipped"]

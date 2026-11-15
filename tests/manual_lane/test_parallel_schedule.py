@@ -544,7 +544,7 @@ def test_a_clip_that_cannot_be_started_ends_with_code_two_and_the_others_still_r
 def test_one_clip_prints_exactly_what_it_printed_before(tmp_path, monkeypatch, capsys):
     task = _task(tmp_path, ["a"])
     _lane(monkeypatch)
-    assert cli.main(["run", "--task-dir", str(task), "--cid", "a"]) == 0
+    assert cli.main(["run", "--task-dir", str(task), "--cid", "a", "--no-trim"]) == 0     # trim is on by default
     lines = capsys.readouterr().out.splitlines()
     assert len(lines) == 1 and json.loads(lines[0])["passed"] == [4, 5, 6, 7, 8, 9]
     assert not (task / "run-logs").exists()
