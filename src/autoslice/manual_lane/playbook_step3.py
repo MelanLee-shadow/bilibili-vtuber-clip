@@ -329,7 +329,8 @@ class _Agent:
                 item['readout_matches'] = hits
             if cue['id'] in thanked:
                 item['sender_of_message_read_next'] = thanked[cue['id']]
-            near = list(dict.fromkeys(n for t in readings for n in name_match.near_names(t, names)))
+            near = list(dict.fromkeys(n for t in readings for n in (*name_match.near_names(t, names),
+                                                                    *name_match.near_full_names(t, names))))
             if near:
                 item['near_names'] = [dict({'name': n, 'spellings': spellings[n]}, **({'source': 'work'}
                                                                                      if n in spelled_by_work else {}))

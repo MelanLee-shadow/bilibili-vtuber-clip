@@ -9,9 +9,10 @@ compile        same-session theme compilation: CPA picks disjoint intervals of o
 run            run the steps, each when the steps it depends on are done (stages.DEPENDS; steps that do not depend on
                each other run at once); a step is skipped when its products exist.  --cid may be repeated (or
                --cids-file, one per line): the clips run side by side, each with its own log file.  --upload needs
-               --quote and runs step 10, the upload (step10_run.py).  --trim (off by default): after the speaker step, try the mid-clip cut of
-               `trim` and, when it makes a new clip, run the later steps on that one.  A clip whose import brought
-               subs/cut.srt (the owner's 删 marks) takes that cut without --trim, and stops if it cannot be made
+               --quote and runs step 10, the upload (step10_run.py).  After the speaker step the mid-clip cut of `trim` is tried
+               (on by default, as in `auto`; --no-trim leaves it out) and, when it makes a new clip, the later steps run
+               on that one.  A clip whose import brought subs/cut.srt (the owner's 删 marks) takes that cut even with
+               --no-trim, and stops if it cannot be made
 status         print the step table for one clip
 listen-queue   build the static listening page for the UNRESOLVED, meaning-affecting doubts (muted audio)
 listen-import  store 维护者's exported labels in each clip's state (validated all-or-nothing)
@@ -19,7 +20,7 @@ import-subtitles  a hand push's decided subtitles and speakers become step 3's i
 resolve-dissent   replace the default (keep) of one review objection to what the owner edited: keep it by name or take the review's
 reselect       --from-counter only: open a candidate from CPA's last cut (U103)
 supersede      mark a candidate SUPERSEDED by a named successor (its file is kept)
-trim           cut unrelated thanks out of a finished clip: ask CPA twice, build a new clip without them, move the decided
+trim           cut unrelated topics and thanks out of a finished clip: ask CPA twice, build a new clip without them, move the decided
                subtitles onto it, supersede the original (trim_run.py).  Exit 0 trimmed / nothing to cut / skipped, 3 not
                ready (steps 3 and 4 not done), 2 failed
 score          score clips/<cid>/subs/final.srt against truth labels (cer_whole first; time-aligned text, speaker)
@@ -264,7 +265,7 @@ def cmd_auto(args: argparse.Namespace) -> int:
 
     def run_clips(cids: list[str]) -> int:
         one = argparse.Namespace(task_dir=str(task), on_media_host=args.on_media_host, upload=upload, quote=quote,
-                                 until=None, trim=False, source_dir=None)
+                                 until=None, trim=True, source_dir=None)
         return run_many(cids, lambda cid, progress: _run_clip_cid(one, task, cid, progress),
                         log_dir=task / "run-logs", errors=RUN_ERRORS)
 
@@ -544,9 +545,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--on-media-host", action="store_true", help="run controller and media work on the media host")
     p.add_argument("--upload", action="store_true", help="also run step 10; requires --quote (维护者's words)")
     p.add_argument("--quote", default=None)
-    p.add_argument("--trim", action="store_true",
-                   help="after the speaker step, cut unrelated thanks out of the clip (as `trim`); when that makes a new clip "
-                        "the later steps run on it.  Off by default")
+    p.add_argument("--trim", dest="trim", action="store_true", default=True,
+                   help="after the speaker step, cut unrelated topics and thanks out of the clip (as `trim`); when that makes "
+                        "a new clip the later steps run on it.  On by default (owner 2026-11-14)")
+    p.add_argument("--no-trim", dest="trim", action="store_false", help="leave the mid-clip cut out")
     p.add_argument("--source-dir", default=None,
                    help="where the clip's recording is on the media host when its state records none (default: <its work "
                         "directory>/sources); the directory it is found in is recorded in the clip")
@@ -619,7 +621,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reason", required=True)
     p.set_defaults(func=cmd_supersede)
 
-    p = sub.add_parser("trim", help="cut unrelated thanks out of a finished clip into a new clip (original superseded)")
+    p = sub.add_parser("trim", help="cut unrelated topics and thanks out of a finished clip into a new clip (original superseded)")
     p.add_argument("--task-dir", required=True)
     p.add_argument("--cid", required=True, help="a plain clip whose subtitles (step 3) and speakers (step 4) are done")
     p.add_argument("--on-media-host", action="store_true", help="run controller and media work on the media host")

@@ -24,6 +24,31 @@ EXPECTED_SOURCE = "https://live.bilibili.com/"
 # Bilibili's public/member archive surfaces prepend the copyright source URL.
 # Freeze the observed public contract instead of treating that deterministic
 # server-side projection as metadata drift.
+
+
+def _channel_lines() -> list[str] | None:
+    """The active channel's own description lines after the attribution line (its ``upload_description`` asset,
+    ``{"lines": [...]}``).  None for the default channel without that asset (the lines above are its own); any other
+    channel without it gets no lines, never another channel's homepage and room."""
+    import json
+    import os
+    from pathlib import Path
+
+    from src.autoslice.channel_profile import DEFAULT_CHANNEL_PROFILE_ID, load_channel_profile
+
+    channel = load_channel_profile(Path(__file__).resolve().parents[2])
+    if "upload_description" in channel.asset_files:
+        raw = json.loads(channel.asset_file("upload_description").read_text(encoding="utf-8"))
+        return [str(line) for line in raw["lines"]]
+    if channel.profile_id == DEFAULT_CHANNEL_PROFILE_ID:
+        return None
+    given = os.environ.get("AUTOSLICE_UPLOAD_DESC", "").strip()   # a deployer's own lines, as the public tree reads them
+    return [given] if given else []
+
+
+_LINES = _channel_lines()
+if _LINES is not None:
+    SUBMISSION_DESCRIPTION = "\n".join([PROJECT_ATTRIBUTION_LINE, *_LINES])
 DEFAULT_DESCRIPTION = EXPECTED_SOURCE + "\n" + SUBMISSION_DESCRIPTION
 assert_audience_text(DEFAULT_DESCRIPTION, surface="description")
 

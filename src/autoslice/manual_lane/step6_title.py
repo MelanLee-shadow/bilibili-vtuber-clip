@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, cast
 
-from src.autoslice.channel_envelope import EnvelopeError, HOST_NAME, parse_talk_title, render_talk_title
+from src.autoslice.channel_envelope import EnvelopeError, HOST_NAMES, parse_talk_title, render_talk_title
 
 from . import channel
 from . import (
@@ -176,7 +176,7 @@ def title_checks(cand: TitleCandidate, names: Sequence[str], subtitles: str, *,
     not_named = [n for n in on_stage if n not in title]
     if not_named:
         failed["named"] = "标题未点名出场者：" + "、".join(not_named)
-    partners = tuple(dict.fromkeys(n for n in on_stage if n != HOST_NAME))
+    partners = tuple(dict.fromkeys(n for n in on_stage if n not in HOST_NAMES))
     if (envelope_error or (envelope is None and partners)
             or (envelope is not None and set(envelope.partners) != set(partners))):
         failed["prefix_names"] = f"前缀未写出场者或与出场名单不一致（应为【{channel.HOST}×…】）"
@@ -390,7 +390,7 @@ def _title_rounds(ctx: Ctx, names: Sequence[str], cpa_calls: list[CpaEvent]
                 on_stage = list(dict.fromkeys(name.strip() for name in (raw_stage or []) if name.strip()))
                 if on_stage and all(name in names for name in on_stage):
                     try:
-                        title = render_talk_title(title, [name for name in on_stage if name != HOST_NAME])
+                        title = render_talk_title(title, [name for name in on_stage if name not in HOST_NAMES])
                     except EnvelopeError as exc:
                         envelope_error = str(exc)
             cand["title"] = title

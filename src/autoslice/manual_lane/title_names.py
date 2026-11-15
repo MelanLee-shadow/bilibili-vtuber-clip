@@ -1,6 +1,6 @@
 """Formal spellings of the names a clip's subtitles mention, for the title (step 6).
 
-The proper-noun table (assets/manual_lane/proper_nouns.json) gives each name a `canonical` spelling and the
+The proper-noun table (the channel's proper_nouns.json, channel.name_table) gives each name a `canonical` spelling and the
 `variants` it is also written as.  For one clip, the entries whose canonical or any variant occurs in the final
 subtitles (a one-character canonical is ignored), plus the session's participants, are the names the title prompt
 gives as "write it this way, not that way".  Two things are then checked on a candidate title:

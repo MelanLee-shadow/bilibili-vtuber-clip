@@ -108,15 +108,15 @@ def write_ass(cues: list[tuple[float, float, str]], out: Path, *, play_res: str)
     font_size = 72 if height >= 1080 else 48
     margin_h = 60 if width >= 1920 else 40
     margin_v = 40 if height >= 1080 else 30
-    from scripts.apply_speaker_turn_overrides import GUEST_WHITE_STYLE, HOST_SPEAKER
+    from scripts.apply_speaker_turn_overrides import HOST_SPEAKER, channel_burn_styles
     from src.autoslice.subtitle_rendering import AssLaneStyle, BurnedAssCue, render_burned_ass
 
-    style = (
-        f"Microsoft YaHei,{font_size},&H00FFFFFF,&H000000FF,&H00BA520F,&H70000000,"
-        f"0,0,0,0,100,100,0,0,1,3,2,2,{margin_h},{margin_h},{margin_v},1"
-    )
-    guest = GUEST_WHITE_STYLE.split(",")
-    guest[1], guest[-4], guest[-3], guest[-2] = map(str, (font_size, margin_h, margin_h, margin_v))
+    # The channel's own host/guest styles (profile asset subtitle_burn_style), resized for the play resolution.
+    channel_styles = channel_burn_styles()
+    host, guest = channel_styles["host"].split(","), channel_styles["guest"].split(",")
+    for fields in (host, guest):
+        fields[1], fields[-4], fields[-3], fields[-2] = map(str, (font_size, margin_h, margin_h, margin_v))
+    style = ",".join(host)
     out.write_text(render_burned_ass(
         [BurnedAssCue(max(0, round(a * 100)) * 10, max(0, round(b * 100)) * 10, text)
          for a, b, text in cues],

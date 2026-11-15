@@ -1,6 +1,6 @@
 """Names of the proper-noun table in a sentence (TASK-28; COACH-ADVICE e05 §1.1 第3/6条, §5.3, §5.5, §5.7).
 
-The table (assets/manual_lane/proper_nouns.json, U117) and the session's participant groups give the names and their
+The channel's table (channel.name_table("proper_nouns.json"), U117) and the session's participant groups give the names and their
 aliases.  Three questions, all for detection and the record (no text is replaced here: CPA writes the name, U107; no
 global string replacement, 41-semantic-repair 第11条):
 - near_names: a run of the sentence that sounds like the Chinese part of a name (toneless pinyin, the initials and
@@ -21,10 +21,10 @@ import json
 import re
 from collections.abc import Iterable, Sequence
 from functools import lru_cache
-from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, cast
 
 from ..acoustic_pinyin import text_pinyin_tokens
+from . import channel
 from .config import unknown_participant
 from .lane_rules import rules
 
@@ -53,7 +53,7 @@ class UnresolvedSpelling(TypedDict, total=False):
     count: int | None
     note: str
 
-PROPER_NOUNS = Path(__file__).resolve().parents[3] / "assets" / "manual_lane" / "proper_nouns.json"
+PROPER_NOUNS = channel.name_table("proper_nouns.json")   # the active channel's table
 _HAN = re.compile(r"[一-鿿]+")
 _MARKS = re.compile(r"[《》〈〉「」『』“”‘’\"']")      # marks that set a title or a quotation off inside a sentence
 _LATIN = re.compile(r"[A-Za-z][A-Za-z0-9]*")
@@ -131,12 +131,36 @@ def _spellings(names: Sequence[tuple[str, tuple[str, ...]]]) -> list[tuple[str, 
     return [(s, name) for name, aliases in names for s in (name, *aliases)]
 
 
+def _spelled_out(text: str, spelling: str) -> bool:
+    """A name written only in Latin letters (four or more) that the recogniser wrote as Chinese characters sounding it out:
+    the run's toneless pinyin, joined, is the name (阿娃娃 a-wa-wa = awawa, 苏米 = Sumi)."""
+    latin = spelling.lower()
+    if len(latin) < 4 or not latin.isascii() or not latin.isalpha():
+        return False
+    for run in _HAN.findall(text):
+        tokens = text_pinyin_tokens(run) or []
+        if len(tokens) != len(run):
+            continue
+        for i in range(len(run) - 1):
+            joined = ""
+            for token in tokens[i:]:
+                joined += token.lower()
+                if joined == latin:
+                    return True
+                if not latin.startswith(joined):
+                    break
+    return False
+
+
 def near_names(text: str, names: Sequence[tuple[str, tuple[str, ...]]]) -> list[str]:
-    """Names whose Chinese part (two or more characters) the sentence says in other characters."""
+    """Names whose Chinese part (two or more characters) the sentence says in other characters, and Latin-only names
+    the sentence sounds out in Chinese characters."""
     hits: list[str] = []
     spellings = _spellings(names)
     written = {s for s, _ in spellings if s in text}
     for spelling, name in spellings:
+        if name not in hits and _spelled_out(text, spelling):
+            hits.append(name)
         han = "".join(_HAN.findall(spelling))
         if len(han) < 2 or name in hits or spelling in written:
             continue
@@ -153,6 +177,55 @@ def near_names(text: str, names: Sequence[tuple[str, tuple[str, ...]]]) -> list[
                     hits.append(name)
                     break
             if name in hits:
+                break
+    return hits
+
+
+_PINYIN_INITIALS = ("zh", "ch", "sh", "b", "p", "m", "f", "d", "t", "n", "l", "g", "k", "h", "j", "q", "x", "r", "z",
+                    "c", "s", "y", "w")
+_PART = re.compile(r"[一-鿿]+|[A-Za-z]+")
+
+
+def _initial(syllable: str) -> str:
+    return next((i for i in _PINYIN_INITIALS if syllable.startswith(i)), "")
+
+
+def _loosely(got: Sequence[str], want: Sequence[str]) -> bool:
+    """Two blurred syllable runs that a recogniser can confuse for a name: every initial the same and the first
+    syllable the same (礼墨 li-mo heard as 你们 ni-men: n/l one sound, m kept)."""
+    return (len(got) == len(want) > 0 and got[0] == want[0]
+            and all(_initial(a) == _initial(b) for a, b in zip(got, want)))
+
+
+def near_full_names(text: str, names: Sequence[tuple[str, tuple[str, ...]]]) -> list[str]:
+    """Names written as a Chinese part next to a Latin part (礼墨Sumi) that the sentence says with the Chinese part in
+    other, loosely alike characters right beside the Latin part, or beside a character whose syllable begins the Latin
+    part (你们苏菲, 你们Sumi).  The Latin neighbour is what ties the run to the name: the loose sound alone (你们) is an
+    ordinary word."""
+    hits: list[str] = []
+    for spelling, name in _spellings(names):
+        parts = _PART.findall(spelling)
+        if name in hits or spelling in text or len(parts) != 2 or {bool(_HAN.fullmatch(p)) for p in parts} != {True, False}:
+            continue
+        han, latin = (parts[0], parts[1]) if _HAN.fullmatch(parts[0]) else (parts[1], parts[0])
+        han_first = parts[0] == han
+        want = _pinyin(han)
+        if len(han) < 2 or len(want) != len(han):
+            continue
+        for i in range(len(text) - len(han) + 1):
+            window = text[i:i + len(han)]
+            got = _pinyin(window) if _HAN.fullmatch(window) else []
+            if window == han or len(got) != len(han) or not _loosely(got, want):
+                continue
+            beside = text[i + len(han):].lstrip() if han_first else text[:i].rstrip()
+            if han_first:
+                tie = beside[:len(latin)].lower() == latin.lower() or (
+                    bool(beside) and _HAN.fullmatch(beside[0]) is not None
+                    and latin.lower().startswith(((text_pinyin_tokens(beside[0]) or [""])[0]).lower() or "\0"))
+            else:
+                tie = beside[-len(latin):].lower() == latin.lower()
+            if tie:
+                hits.append(name)
                 break
     return hits
 
@@ -203,6 +276,8 @@ def detection_reasons(text: str, names: Sequence[tuple[str, tuple[str, ...]]], c
     out = []
     if cfg.get("near_name"):
         out += [f"近音名字：本句可能说的是名字表里的「{n}」（拼音相近、写法不同）" for n in near_names(text, names)]
+        out += [f"近音全名：本句紧挨着名字的字母部分，前面几个字和「{n}」的汉字部分声母相同，可能说的是全名「{n}」"
+                for n in near_full_names(text, names) if n not in near_names(text, names)]
     if cfg.get("latin_unknown"):
         latin = unknown_latin(text, names)
         if latin:

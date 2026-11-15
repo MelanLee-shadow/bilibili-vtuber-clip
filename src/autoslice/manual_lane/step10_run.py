@@ -49,6 +49,7 @@ LOCK_BUSY = "shared upload/repair lock is busy"      # authorized_upload.py Uplo
 ATTEMPT_UNRESOLVED = "UPLOAD_ATTEMPT_UNRESOLVED"
 PACKAGE_CHANGED = "UPLOAD_PACKAGE_CHANGED"
 READBACK_MISMATCH = "UPLOAD_READBACK_MISMATCH"
+NOT_ON_HOST = "UPLOAD_PACKAGE_NOT_ON_MEDIA_HOST"
 
 _sleep = time.sleep         # a test replaces these two
 _epoch = time.time
@@ -127,6 +128,9 @@ class _Run:
     # ----- the phases --------------------------------------------------------------------------------------------------
     def _audit(self) -> None:
         rc = self._cmd("audit", commands.audit(self.job), None, accept=None)         # the audit's JSON decides, as in the hand run
+        if rc == 2 and "NOT_SEALED" in self.last.stdout:     # sealed here (step10_check), not there: the paths are this machine's
+            stop(NOT_ON_HOST, f"包在本机已封存，媒体主机上没有 {self.package}：第 10 步的命令按本机路径在主机上读写，控制端不在"
+                 "媒体主机上时发不了；把任务目录放到主机上同一路径，在主机上用 run --on-media-host 发")
         try:
             data = read_json(self.out / "package_audit.json")
         except (OSError, ValueError):

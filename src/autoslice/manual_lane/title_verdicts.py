@@ -41,7 +41,10 @@ class VerdictCandidate(TypedDict):
 
 class VerdictClip(TypedDict):
     """One clip the owner went through.  `approved_title_body` / `approved_evidence` are present only when he picked the
-    title body for this clip himself (the body without the prefix, and his words)."""
+    title body for this clip himself (the body without the prefix, and his words): he said to use it as the title.  A
+    sentence he says while naming the draw or faulting a title is the draw, not a picked title (owner "这个是
+    说看点，不是说标题…可以直接用，也可以按照这个围绕看点再起一个新的"): it goes in main_line/punchline with his words as
+    `retitle_evidence`, and the title step writes the title from it."""
     no: int
     cid: str
     main_line: str

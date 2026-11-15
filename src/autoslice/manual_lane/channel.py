@@ -62,6 +62,15 @@ def asset(name: str) -> Path:
     return ASSETS / name
 
 
+def name_table(name: str) -> Path:
+    """The channel's name tables (proper_nouns.json, mishearing_pairs.json): beside the channel's spelling table when its
+    profile has one (the default channel's predate the profile split and sit in assets/manual_lane), else in the
+    channel's own asset directory.  Never another channel's: a clip of one channel must not be written with another
+    channel's names (owner)."""
+    table = profile().spelling_table_path
+    return (table.parent if table is not None else ASSETS) / name
+
+
 def prompt_fields() -> dict[str, str]:
     doc = text()
     return {"host": HOST, "fans_name": str(doc["fans_name"]), "channel_entities": str(doc["channel_entities"]).rstrip("\n"),

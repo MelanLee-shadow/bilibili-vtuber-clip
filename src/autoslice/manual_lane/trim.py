@@ -1,9 +1,10 @@
-"""Cutting thanks that do not touch the main line and that nobody picks up out of the middle of a finished clip: the
-pure part (no network, no media).
+"""Cutting what does not touch the main line out of the middle of a finished clip: the pure part (no network, no media).
 
-A run of consecutive final cues that only thanks someone (for a gift, an SC, or by name alone), is unrelated to what is
-being said and is not answered or built on afterwards, is found by two independent model answers
-(prompts/trim.md); a cue is cut only when both answers propose it, and only when `guard` lets the run through.  The
+Two kinds of run of consecutive final cues are cut (prompts/trim.md): a thanks nobody picks up (for a gift, an SC, or a
+name alone; kind "thanks"), and a stretch on a topic unrelated to the clip's main line that she leaves and comes back from
+(a lottery in the middle of a talk, sorting out the stream; kind "topic"; owner 中间无关的话题…最好还是剪掉).
+Both are found by two independent model answers; a cue is cut only when both answers propose it, and only when `guard`
+lets the run through.  The
 kept intervals of the clip clock, the final cues moved onto the shortened clock and the source-recording pieces to cut
 are plain computations on the cue list.
 
@@ -48,6 +49,10 @@ class OriginalDoubt(doubt_policy.FinalDoubt, total=False):
     speaker: str | None
     speaker_confidence: str | None
 
+# A stretch called an unrelated topic is "插进来的一段" only while it is short against the clip: more than this share of
+# the clip is not an insert but a wrong main line or boundary (measured a 礼墨 clip's mid-talk lottery is 17%;
+# a run of danmaku-requested acts in a 李豆沙 clip, which belongs to the clip, was proposed at 60%).
+TOPIC_MAX_SHARE = 1 / 3
 _ROUND_TOLERANCE_S = 0.0005   # windows are rounded to the millisecond; a cue edge may sit that far outside
 _SHIFT_TOLERANCE_S = 0.05     # a Y cut snapped into silence may leave a cue this far outside the cut
 _EVENT_KIND = {"sc": "SC", "gift": "礼物", "guard": "上舰", "礼物": "礼物", "上舰": "上舰"}   # the offline trial's names
@@ -66,11 +71,20 @@ def prompt(hook: str, events_text: str, cues: Sequence[TimedText], *, run: int =
     return text if run == 1 else text.rstrip("\n") + f"\n（第 {run} 遍）\n"
 
 
+KINDS = ("thanks", "topic")
+
+
 def parse_answer(answer: object, n_cues: int) -> list[Span]:
-    """The spans of `{"remove": [{"start_cue": int, "end_cue": int, ...}, ...]}`, by start; ValueError on anything else."""
+    """The spans of `{"remove": [{"start_cue": int, "end_cue": int, "kind": ..., ...}, ...]}`, by start; ValueError on
+    anything else."""
+    return sorted(parse_kinds(answer, n_cues))
+
+
+def parse_kinds(answer: object, n_cues: int) -> dict[Span, str]:
+    """Each span of the answer with its kind ("thanks" when the answer gives none, as before topics were asked about)."""
     if not isinstance(answer, dict) or not isinstance(answer.get("remove"), list):
         raise ValueError("answer must be an object whose 'remove' is a list")
-    spans: list[Span] = []
+    kinds: dict[Span, str] = {}
     for index, item in enumerate(answer["remove"]):
         if not isinstance(item, dict):
             raise ValueError(f"remove[{index}] is not an object")
@@ -79,12 +93,21 @@ def parse_answer(answer: object, n_cues: int) -> list[Span]:
             raise ValueError(f"remove[{index}]: start_cue and end_cue must be integers, got {start!r} and {end!r}")
         if not 1 <= start <= end <= n_cues:
             raise ValueError(f"remove[{index}]: need 1 <= start_cue <= end_cue <= {n_cues}, got {start}..{end}")
-        spans.append((start, end))
-    spans.sort()
+        kind = item.get("kind", "thanks")
+        if kind not in KINDS:
+            raise ValueError(f"remove[{index}]: kind must be one of {list(KINDS)}, got {kind!r}")
+        kinds[(start, end)] = kind
+    spans = sorted(kinds)
     for (a, b), (c, d) in zip(spans, spans[1:]):
         if c <= b:
             raise ValueError(f"remove spans {a}..{b} and {c}..{d} overlap")
-    return spans
+    return kinds
+
+
+def topic_cues(*answers: dict[Span, str]) -> frozenset[int]:
+    """The cues every answer calls part of an unrelated topic (not a thanks)."""
+    sets = [{n for (a, b), kind in kinds.items() if kind == "topic" for n in range(a, b + 1)} for kinds in answers]
+    return frozenset(set.intersection(*sets)) if sets else frozenset()
 
 
 def _runs(numbers: Sequence[int]) -> list[Span]:
@@ -132,10 +155,12 @@ def agreed(first: list[Span], second: list[Span]) -> list[Span]:
 
 # ----- the insurances ----------------------------------------------------------------------------------
 def guard(spans: Sequence[Span], cues: Sequence[TimedText], *,
-          thanks_words: Sequence[str] | None, clip_len_s: float, min_keep_s: float) -> tuple[list[Span], list[Veto]]:
+          thanks_words: Sequence[str] | None, clip_len_s: float, min_keep_s: float,
+          topic: frozenset[int] = frozenset()) -> tuple[list[Span], list[Veto]]:
     """(spans that pass, vetoed spans as `{'span', 'veto', 'detail'}`).  Per span, the first rule that hits vetoes it:
     EDGE (holds the first or last cue: head and tail belong to the boundary step), NO_THANKS (no cue of the span has a
-    thanks word).  Then TOO_SHORT: if the passed spans leave less than `min_keep_s` of clip, all of them are vetoed.
+    thanks word; not asked of a span whose every cue both answers call an unrelated topic, `topic`).  Then TOPIC_TOO_LONG:
+    the topic spans that passed are vetoed when together they last more than TOPIC_MAX_SHARE of the clip.  Then TOO_SHORT: if the passed spans leave less than `min_keep_s` of clip, all of them are vetoed.
     Whether a thanks is picked up afterwards (an SC read out, an answer, a joke) is the model's judgment in
     prompts/trim.md, asked twice; no code rule second-guesses it.  `thanks_words=None`: the spans are the channel owner's
     own cut marks (not a model's guess), so NO_THANKS does not apply; EDGE and TOO_SHORT cannot be done mechanically
@@ -150,10 +175,17 @@ def guard(spans: Sequence[Span], cues: Sequence[TimedText], *,
         inside = texts[a - 1:b]
         if a == 1 or b == len(cues):
             vetoed.append({"span": (a, b), "veto": "EDGE", "detail": f"span {a}..{b} holds the first or last of {len(cues)} cues"})
-        elif thanks_words is not None and not any(w in t for t in inside for w in words):
+        elif (thanks_words is not None and not set(range(a, b + 1)) <= topic
+              and not any(w in t for t in inside for w in words)):
             vetoed.append({"span": (a, b), "veto": "NO_THANKS", "detail": f"no cue of {a}..{b} holds {list(thanks_words)!r}"})
         else:
             passed.append((a, b))
+    topical = [span for span in passed if set(range(span[0], span[1] + 1)) <= topic]
+    topic_s = sum(float(cues[b - 1]["end_s"]) - float(cues[a - 1]["start_s"]) for a, b in topical)
+    if topical and topic_s > TOPIC_MAX_SHARE * clip_len_s:
+        detail = f"{topic_s:.1f}s of unrelated topic is more than {TOPIC_MAX_SHARE:.0%} of the {clip_len_s:.1f}s clip"
+        vetoed += [{"span": span, "veto": "TOPIC_TOO_LONG", "detail": detail} for span in topical]
+        passed = [span for span in passed if span not in topical]
     if passed:
         kept = sum(end - start for start, end in keep_windows(cues, passed, clip_len_s))
         if kept < min_keep_s:
@@ -347,5 +379,7 @@ def carried_doubts(doubts: Sequence[OriginalDoubt], *, final_cues: Sequence[Time
                      "meaning_basis": f"片中剪除：沿用原片疑点 {doubt['id']} 的放行判定（{'阻止封存' if holds else '不阻止封存'}）"}
         if doubt.get("dropped"):
             row["dropped"] = True
+        if type(doubt.get("runs_same")) is int:     # the agreement that decided it (is_hold) goes with the wording
+            row["runs_same"] = doubt["runs_same"]
         out.append(row)
     return out
