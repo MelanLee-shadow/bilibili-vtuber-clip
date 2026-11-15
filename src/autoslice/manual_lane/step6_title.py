@@ -330,6 +330,9 @@ def _title_rounds(ctx: Ctx, names: Sequence[str], cpa_calls: list[CpaEvent]
     understanding = title_understanding.understand(ctx, lines, cpa_calls)
     if isinstance(understanding, StepOutcome):
         return understanding
+    if (retitle := verdicts.retitle(cid)) and not approved:   # he said what the clip's draw is: titles are written from it
+        understanding["merged"]["main_line"] = retitle["main_line"]
+        understanding["merged"]["punchline"] = retitle["punchline"]
     formal = title_names.canonical_names(title_authority.subtitle_text(track), names)
     graph = graph_context.read(ctx, [title_authority.subtitle_text(track)])
     circle = circle_context.gather(ctx, understanding["merged"], lines, cpa_calls, graph)
@@ -552,7 +555,8 @@ def pick_title(ctx: Ctx) -> tuple[str, list[str], list[str], list[CpaEvent], Pat
         return writing_canon.failed(exc, cpa_calls)
     from .revise_run import title_online      # that module reaches the steps through trim_run: imported when used
 
-    online = None if approved else title_online(ctx.clip_dir, ctx.state)      # a revision keeps the title online
+    retitle = verdicts.retitle(str(ctx.state.data["clip"].get("cid") or ""))
+    online = None if approved or retitle else title_online(ctx.clip_dir, ctx.state)   # a revision keeps the title online
     title = online or title
     cands_path = _local(ctx, "title/candidates.json")
     cands_path.write_text(json.dumps({
@@ -573,6 +577,9 @@ def pick_title(ctx: Ctx) -> tuple[str, list[str], list[str], list[CpaEvent], Pat
     process.append(canon_line)
     if online:
         process.append(f"修订沿用线上标题：{online}（已发布稿件的修订不改题；改题走改题回执，本轮候选只用来定封面字）")
+    elif retitle and not approved:
+        process.append(f"频道主要求换标题（原话：{retitle['evidence']}），修订不沿用线上标题，用本轮选出的标题；"
+                       f"标题与封面字按他说的看点写（笑点：{retitle['punchline']}），不按模型自己读出的主线")
     process.append(title_understanding.process_line(understanding))
     process.extend(circle_context.process_lines(circle))
     process.extend(title_pick.process_line(rnd["pick_call"], n) for n, rnd in enumerate(rounds) if rnd["pick_call"])

@@ -50,11 +50,18 @@ class VerdictClip(TypedDict):
     candidates: list[VerdictCandidate]
     approved_title_body: NotRequired[str]
     approved_evidence: NotRequired[str]
+    retitle_evidence: NotRequired[str]       # he asked for a new title without writing one (his words)
 
 
 class ApprovedTitle(TypedDict):
     title_body: str
     evidence: str
+
+
+class Retitle(TypedDict):
+    evidence: str     # his words asking for a new title
+    main_line: str    # what the clip is about, by his reading
+    punchline: str    # its main draw, by his reading
 
 
 def _text(row: object, key: str, where: str) -> str:
@@ -101,6 +108,10 @@ def _clip(raw: object, index: int) -> VerdictClip:
             raise AuthorityError(f"title_owner_verdicts.v1.json: {where} needs both a non-empty approved_title_body "
                                  f"and the approved_evidence (his words)")
         clip["approved_title_body"], clip["approved_evidence"] = body, evidence
+    if "retitle_evidence" in raw:
+        clip["retitle_evidence"] = _text(raw, "retitle_evidence", where)
+        if not clip["retitle_evidence"].strip():
+            raise AuthorityError(f"title_owner_verdicts.v1.json: {where}.retitle_evidence is empty")
     return clip
 
 
@@ -125,6 +136,16 @@ class OwnerVerdicts:
         for clip in self.clips:
             if clip["cid"] == publication_cid(cid) and "approved_title_body" in clip:
                 return {"title_body": clip["approved_title_body"].strip(), "evidence": clip["approved_evidence"]}
+        return None
+
+    def retitle(self, cid: str) -> Retitle | None:
+        """His words asking for a new title on this manuscript, with what he says the clip is about (main_line,
+        punchline of his verdict): a revision then takes the title step's own pick, written from his reading of the clip
+        instead of the model's, rather than keeping the title online.  None when he has not."""
+        for clip in self.clips:
+            if clip["cid"] == publication_cid(cid) and "retitle_evidence" in clip:
+                return {"evidence": clip["retitle_evidence"], "main_line": clip["main_line"],
+                        "punchline": clip["punchline"]}
         return None
 
     def liked_and_disliked(self, exclude_cid: str) -> str:

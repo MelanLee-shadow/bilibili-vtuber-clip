@@ -87,3 +87,32 @@ def test_only_the_screenshot_at_the_moves_frame_counts():
     assert not on_action(shot, plan, 157.9)                          # a redo moved to another frame
     assert not on_action({"route": "ai_sticker"}, plan, 69.0)
     assert not on_action(shot, {"action_frame": None}, 69.0)
+
+
+def _screenshot_route(tmp_path, job_extra):
+    """The real cover_candidates.py screenshot route on a frame where the head reader finds no face."""
+    from src.autoslice.manual_lane import stage_impl as si
+
+    spec = importlib.util.spec_from_file_location("action_candidates", si.COVER_CANDIDATES_TOOL)
+    cc = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cc)
+    shot = tmp_path / "spec.json"
+    shot.write_text(json.dumps({"id": "screenshot", "crop": [0, 0, 1920], "lines": [{"text": "a"}], "keep": []}), "utf-8")
+    cover = object.__new__(cc.Run)
+    cover.job = {"screenshot_spec": str(shot), **job_extra}
+    cover.frame, cover.guest_boxes, cover.specs, cover.failed, cover.plans = "frame.png", [[0, 0, 1, 1]], [], [], {}
+    cover.head = lambda: (None, None)
+    cover.guest_in_frame = lambda: None
+    cover.screenshot()
+    return cover
+
+
+def test_the_move_hiding_her_face_still_makes_the_screenshot(tmp_path):
+    made = _screenshot_route(tmp_path, {"on_action": True, "host_box": [777, 479, 1213, 1080]})
+    assert made.failed == [] and made.specs[0][0] == "screenshot"
+    assert made.specs[0][4]["face"] == [777, 479, 1213, 479 + 601 * 2 // 5]      # the top of her figure stands for it
+
+
+def test_without_the_move_a_frame_without_her_face_is_not_made(tmp_path):
+    made = _screenshot_route(tmp_path, {"on_action": False, "host_box": [777, 479, 1213, 1080]})
+    assert made.failed == [{"id": "screenshot", "route": "screenshot", "failure": "HOST_FACE_NOT_FOUND"}]

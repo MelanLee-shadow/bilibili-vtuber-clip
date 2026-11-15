@@ -593,6 +593,7 @@ def _render_cover(ctx: Ctx, cues: Sequence[SrtCue], cover_lines: Sequence[str],
     identity = profile_asset_text("cover_identity_prompt").strip()   # the repo cover identity, one definition
     routes = cover_stages(plan)[0]
     job = _cover_job(ctx, cover_lines, plan, boxes, title, names, identity, routes)
+    job["on_action"] = on_action({"route": "screenshot"}, plan, t)     # a face hidden by the move is no reason to drop it
     local_job = _local(ctx, "cover/job.json")
     local_job.write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8")
     for local, remote in ((local_spec, "cover/spec.json"), (local_job, "cover/job.json"), (COVER_RENDERER, "cover/render_cover.py"),

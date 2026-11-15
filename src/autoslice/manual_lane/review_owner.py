@@ -68,10 +68,12 @@ def subtitle_edits(fixes: Sequence[ReviewFix | None], track: Sequence[subtitle_t
 
 
 def _title_picked(ctx: Ctx, skipped: list[str]) -> bool:
-    """Whether the owner picked this clip's title body (step 6's lookup).  An asset that cannot be read counts as no
-    pick, and the reason goes to `skipped` (PROCESS) rather than failing the review."""
+    """Whether the owner picked this clip's title body, or asked for a new title and named the draw it is written from
+    (step 6's lookups: the review rewrote the 1305990 retitle back to the draw he had said was not the point,
+).  An asset that cannot be read counts as no pick, and the reason goes to `skipped` (PROCESS)."""
     try:
-        return title_verdicts.load_verdicts().approved(str(ctx.state.data["clip"].get("cid") or "")) is not None
+        verdicts, cid = title_verdicts.load_verdicts(), str(ctx.state.data["clip"].get("cid") or "")
+        return verdicts.approved(cid) is not None or verdicts.retitle(cid) is not None
     except (AuthorityError, OSError) as exc:
         skipped.append(f"选定标题资产读不到，按没有选定标题处理：{exc}"[:200])
         return False

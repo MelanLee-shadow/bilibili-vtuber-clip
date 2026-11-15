@@ -915,7 +915,7 @@ def _write_review_md(ctx: Ctx, review: ReviewAnswer, record: ReviewRecord,
              f"{applied['holds']} 句；明确处置疑点 {applied['decisions']} 条",
              *(f"- 未采用：{s}" for s in record["skipped"]),
              f"- 定不下且影响意思：{len(held)} 句" + ("" if not held else "：" + doubt_policy.held_summary(held, numbers)),
-             *(f"- 最终疑点判断 {d['id']}：confidence={d.get('confidence')}，"
+             *doubt_policy.overruled_review_lines(doubts, held), *(f"- 最终疑点判断 {d['id']}：confidence={d.get('confidence')}，"
                f"affects_meaning={d.get('affects_meaning')}；{d.get('review_note')}"
                for d in doubts if str(d.get("review_note") or "").startswith("复审最终判断：")),
              *(f"- 记录：{n.get('item', '')} 第 {n.get('cue_id', '-')} 句 {n.get('text', '')}" for n in record["notes"])]
