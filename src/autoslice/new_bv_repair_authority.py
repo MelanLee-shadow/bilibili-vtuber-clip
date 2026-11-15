@@ -1,28 +1,23 @@
-"""The publication authority (which clip is which published video, and the proofs a revision of a published video
-must replay) is the operating state and safety chain of one channel.  It is not part of this public snapshot;
-this module keeps the names the pipeline imports so that everything before publishing runs unchanged.
-"""
+"""The same-BV authority of a revision (which published BV a successor package may replace), built from and replayed
+against the first-publication receipt the public upload tool wrote: src/autoslice/lane_publish/authority.py."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
+from src.autoslice.lane_publish.authority import SCHEMA_VERSION, build, replay_first
+from src.autoslice.lane_publish.authority import AuthorityError as NewBvRepairAuthorityError
+from src.autoslice.lane_publish.authority import validate as validate_new_bv_repair_authority
 
-class PublicationAuthorityUnavailable(RuntimeError):
-    """The channel's publication authority is not part of this snapshot."""
-
-
-def build_new_bv_repair_authority(*args: Any, **kwargs: Any) -> dict[str, Any]:
-    raise PublicationAuthorityUnavailable("revising a published video needs the channel's own publication authority")
-
-
-def replay_first_publication_manifest(*args: Any, **kwargs: Any) -> dict[str, Any]:
-    raise PublicationAuthorityUnavailable("revising a published video needs the channel's own publication authority")
+__all__ = ["SCHEMA_VERSION", "NewBvRepairAuthorityError", "build_new_bv_repair_authority", "replay_first_publication_manifest",
+           "validate_new_bv_repair_authority"]
 
 
-class NewBvRepairAuthorityError(RuntimeError):
-    """The channel's publication authority is not part of this snapshot."""
+def build_new_bv_repair_authority(publication_path: Path, *, candidate_id: str, title: str, **_: Any) -> dict[str, Any]:
+    return build(Path(publication_path), candidate_id=candidate_id, title=title)
 
 
-def validate_new_bv_repair_authority(*args: Any, **kwargs: Any) -> Any:
-    raise RuntimeError("validate_new_bv_repair_authority: the channel's publication authority is not part of this snapshot")
+def replay_first_publication_manifest(authority: Mapping[str, Any], **_: Any) -> dict[str, Any]:
+    return replay_first(authority)

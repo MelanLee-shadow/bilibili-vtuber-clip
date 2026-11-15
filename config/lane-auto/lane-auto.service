@@ -1,0 +1,23 @@
+# One unattended round of the clip lane (example; replace every <...> with your own host's values).
+# A round: find recording days not yet seen, run every unfinished clip on as far as it can go, seal the finished ones.
+# It does not publish: run step 10 (scripts/lane_publish.py through `manual_lane.py run`) after someone has looked at
+# the sealed clip.  Adding --upload to ExecStart makes the round publish sealed clips itself; decide that for your
+# own channel, knowing nobody will have looked at them.
+[Unit]
+Description=One unattended round of the clip lane
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=<user>
+WorkingDirectory=<repository checkout>
+Environment=HOME=<home of that user>
+Environment=AUTOSLICE_PROFILE=<your profile id>
+Environment=AUTOSLICE_BASE=<runtime base: recordings, state, lane_publish.json>
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=<venv>/bin/python -B scripts/manual_lane.py auto --task-dir <task directory> --on-media-host
+TimeoutStartSec=8h
+KillMode=control-group
+StandardOutput=journal
+StandardError=journal

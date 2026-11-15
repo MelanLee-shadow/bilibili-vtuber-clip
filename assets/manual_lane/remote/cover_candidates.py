@@ -513,8 +513,7 @@ def _peer_layers(host, guest, renderer, host_side, face_sizes, top_min=PEER_FACE
 
 
 def cutout_ready(job, out, redraw, frame):
-    """The cut-out made earlier in this clip's step 6 (same prompt, same frame), or None: never generated just to
-    serve another candidate."""
+    """This clip's earlier step-6 cut-out (same prompt and frame), or None: never generated for another candidate."""
     cut_png = os.path.join(out, "gen-cutout.png")
     key_path = cut_png + ".key.json"
     if not (os.path.exists(cut_png) and os.path.exists(key_path)):
@@ -629,13 +628,6 @@ def separate_people(src, people, renderer):
     return people
 
 
-
-def action_head(figure):
-    """Her signature move may hide her face (head in her arms): the frame is the one wanted, so the layout protects the
-    top of the figure the vision model boxed instead of a measured face.  Returns (head box, head top)."""
-    x0, y0, x1, y1 = (int(v) for v in figure)
-    return [x0, y0, x1, y0 + max(1, (y1 - y0) * 2 // 5)], y0
-
 class Run:
     """One cover run: the job, the loaded renderer and redraw, and what the routes leave for each other (the guest's
     face in the live frame, read once; the cut-out's guest layer, reused by the sticker).  TASK-13: main() did all of
@@ -699,8 +691,7 @@ class Run:
         return style, text_fit.renderer_ink(self.renderer, self.job["font"], spec["lines"], style)
 
     def need_top(self):
-        """The face top the punchline's floor size needs (None: not reachable), computed once from the style the rotation
-        will try first."""
+        """Face top the punchline's floor size needs (None: unreachable), once, from the rotation's first style."""
         if not hasattr(self, "_need_top"):
             ink = self.text_ink({"lines": self.lines})[1]
             self._need_top = text_fit.need_face_top(ink, len(self.lines), self.rules, self.rules["punch_floor_px"])
@@ -731,8 +722,9 @@ class Run:
             spec = json.load(fh)
         # the text keeps clear of the faces actually in this frame (the caller's face box is only a default)
         hf, head_top = self.head()
-        if hf is None and job.get("on_action") and job.get("host_box"):
-            hf, head_top = action_head(job["host_box"])
+        if hf is None and job.get("on_action") and job.get("host_box"):   # the move hides her face: keep her box's top
+            x0, head_top, x1, y1 = (int(v) for v in job["host_box"])
+            hf = [x0, head_top, x1, head_top + max(1, (y1 - head_top) * 2 // 5)]
         if hf is None:                          # a cover of her without her face is not made
             return self.fail("screenshot", "HOST_FACE_NOT_FOUND")
         gf = self.guest_in_frame()

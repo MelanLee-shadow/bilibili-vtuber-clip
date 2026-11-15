@@ -75,7 +75,7 @@ def test_the_ranking_prompt_has_the_corpus_without_this_clip_the_main_line_and_t
     assert not isinstance(si.pick_title(ctx), StepOutcome)
     prompt = cpa.prompts[cpa.calls.index("title-pick-r0")]
     assert "{" not in prompt.split("只输出一个 JSON 对象，不要任何其他文字：\n", 1)[0]        # every placeholder filled
-    assert prompt.count("### 片 ") == 19 and clip["owner_comment"] not in prompt
+    assert prompt.count("### 片 ") == len(clips) - 1 and clip["owner_comment"] not in prompt    # the corpus grows
     assert "这段讲的是：李豆沙讲了她的主线\n笑点：她先嘴硬，接着自己拆台（序号 3）\n" in prompt
     assert "候选（序号从 0 起）：\n" + "\n".join(f"{i} 【李豆沙】{b}" for i, b in enumerate(BODIES)) + "\n" in prompt
 

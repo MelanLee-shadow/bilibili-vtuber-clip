@@ -1,0 +1,12 @@
+# Starts lane-auto.service every 30 minutes; a round still running when the next one is due is not started twice.
+[Unit]
+Description=Run the clip lane's unattended round every 30 minutes
+
+[Timer]
+OnCalendar=*-*-* *:10/30:00 UTC
+Persistent=true
+AccuracySec=1min
+Unit=lane-auto.service
+
+[Install]
+WantedBy=timers.target

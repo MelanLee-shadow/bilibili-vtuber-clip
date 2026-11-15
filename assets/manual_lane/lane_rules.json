@@ -597,7 +597,7 @@
     "edge_tolerance_s": 0.1
   },
   "upload": {
-    "_doc": "第 10 步（上传）读的数：授权人与授权原话、等线上的间隔与次数、首发配额不足时的重试间隔。授权文字不是每条片手填：首发读 authorization.first_publication，同稿件换视频/换封面读 authorization.revision；任何一项（授权人、原话、规则日期）为空，第 10 步在发出任何命令前以 UPLOAD_RULES_UNSET 失败。等线上：执行命令（repair-run / cover-repair-run）返回 6（仍在推进）时，按 wait.poll_interval_s 隔开重跑同一条命令，最多 wait.max_polls 次；用完仍未完成，步骤停在 UPLOAD_WAITING_LIVE，下次 run 只继续轮询。配额不足（上传命令返回 8）时，步骤停在 UPLOAD_WAITING_QUOTA，可重试的最早时间取工具报出的时刻，工具没报时取现在加 quota.retry_after_s。",
+    "_doc": "第 10 步（上传）读的数：授权人与授权原话、等线上的间隔与次数、首发配额不足时的重试间隔。授权文字不是每条片手填：首发读 authorization.first_publication，同稿件换视频/换封面读 authorization.revision；任何一项（授权人、原话、规则日期）为空，第 10 步在发出任何命令前以 UPLOAD_RULES_UNSET 失败。等线上：执行命令（repair-run / cover-repair-run）返回 6（仍在推进）时，按 wait.poll_interval_s 隔开重跑同一条命令，最多 wait.max_polls 次；用完仍未完成，步骤停在 UPLOAD_WAITING_LIVE，下次 run 只继续轮询。配额不足（上传命令返回 8）时，步骤停在 UPLOAD_WAITING_QUOTA，可重试的最早时间取工具报出的时刻，工具没报时取现在加 quota.retry_after_s。tools：第 10 步把命令发给哪个上传工具、哪个包审计（scripts 下的脚本名加前置参数）；本部署是 authorized_upload.py 与 audit_lidousha_review_package.py，公开版是 lane_publish.py（同一套子命令，见 src/autoslice/lane_publish）。publish：lane_publish 投新稿的分区（tid 27）、转载（copyright 2）与来源，以及等公开（public_wait_s，每 public_poll_s 看一次）、等追加的分 P 出现（new_part_wait_s）的秒数。",
     "source": "wait：2026-11-11 九条片上线实跑，换视频用了 7-10 分钟、只换封面 25 秒-2 分钟（reports/publication-evidence-20261111/README.md），间隔 180 秒、最多 12 次与当时人工脚本一致；quota.retry_after_s 是实现选择（工具的 24 小时滚动估算只给“已满”，不给解除时刻）。authorization：频道主“默认发布”规则的原话（2026-10-15）与修好的稿件编辑上线的原话（2026-07-18）。",
     "authorization": {
       "authorized_by": "维护者",
@@ -616,6 +616,23 @@
     },
     "quota": {
       "retry_after_s": 3600
+    },
+    "tools": {
+      "upload": [
+        "lane_publish.py"
+      ],
+      "audit": [
+        "lane_publish.py",
+        "audit"
+      ]
+    },
+    "publish": {
+      "tid": 27,
+      "copyright": 2,
+      "source": "https://live.bilibili.com/",
+      "public_wait_s": 600,
+      "public_poll_s": 30,
+      "new_part_wait_s": 900
     }
   }
 }

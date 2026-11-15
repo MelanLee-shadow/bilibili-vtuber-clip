@@ -117,7 +117,8 @@ def test_an_answer_the_step_cannot_read_is_not_kept_in_the_cache(tmp_path):
 
 def test_the_session_keyword_reaches_the_adjudicator_with_its_context_note_and_is_not_a_person(tmp_path):
     lines = si._confusion_lines()
-    assert "本场梗词（正式写法）：契约do爱（是契约恋爱的谐音改口" in lines and "不能把所有『独爱』都换成它" in lines
+    line = next(x for x in lines.splitlines() if "契约do爱" in x)       # the line's layout is the spelling table's
+    assert "是契约恋爱的谐音改口" in line and "不能把所有『独爱』都换成它" in line
     ctx = make_ctx(tmp_path, remote=FakeRemote(), cpa=None)
     names, _ = si.speaker_context_lines(ctx)
     assert "契约do爱" not in names and "雾深Girimi" in names

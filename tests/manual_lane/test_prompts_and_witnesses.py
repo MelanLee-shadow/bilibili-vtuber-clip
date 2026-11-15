@@ -40,9 +40,17 @@ def test_prompt_keeps_reviewer_rules_pronoun_numbers_and_danmaku_clue_only():
     assert "danmaku：本场弹幕" in PROMPT and "只是线索" in PROMPT
 
 
-def test_no_versioned_prompt_files_remain():
+def test_no_versioned_or_unread_prompt_files_remain():
+    # was a fixed list of the 13 files of 11-02; the lane has added prompts since.  The rule: no old versions, no prompt
+    # that nothing reads (subtitle_playbook_no_words.md lost its reader in the 11-09 step-3 rewrite and stayed behind)
+    import re
+    from pathlib import Path
     names = sorted(p.name for p in si.PROMPTS.iterdir())
-    assert names == ["boundary.md", "cover_brief.md", "cover_judge.md", "cover_retry.md", "import_meaning.md", "listen_blind.md", "listen_two_speakers.md", "name_consistency.md", "review.md", "speaker_review.md", "subtitle_adjudicate.md", "subtitle_review.md", "title.md"]
+    assert not [n for n in names if not n.endswith(".md") or re.search(r"[._-](v\d+|old|new|bak)\.md$", n)]
+    root = Path(si.PROMPTS).parents[2]
+    code = "\n".join(p.read_text(encoding="utf-8") for d in ("src", "scripts", "assets/manual_lane/remote")
+                     for p in (root / d).rglob("*.py"))
+    assert [n for n in names if n not in code and f'"{n[:-3]}"' not in code and f"'{n[:-3]}'" not in code] == []
 
 
 def test_danmaku_lines_are_shifted_onto_the_cut_timeline(tmp_path):
