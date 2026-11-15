@@ -58,7 +58,9 @@ def test_the_asset_loads_and_has_the_shape_the_renderers_read():
     verdicts = title_verdicts.load_verdicts()
     # he adds batches and later candidates to the same file: it only grows
     assert len(verdicts.clips) >= 20 and [c["no"] for c in verdicts.clips] == list(range(1, len(verdicts.clips) + 1))
-    assert all(len(c["candidates"]) >= 4 and c["owner_comment"] for c in verdicts.clips)
+    # a batch he graded has its four candidates; a remark on a published title has that one title
+    assert all((len(c["candidates"]) >= 4 or [x["letter"] for x in c["candidates"]] == ["online"]) and c["owner_comment"]
+               for c in verdicts.clips)
     assert verdicts.source.sha256 == hashlib.sha256(ASSET.read_bytes()).hexdigest()
     top = json.loads(ASSET.read_text(encoding="utf-8"))
     assert top["schema_version"] == "title-owner-verdicts.v1" and top["recorded_at"].endswith("Z")
@@ -155,7 +157,7 @@ def test_the_real_asset_texts_leave_out_the_clip_asked_about():
     for text in (liked, corpus):
         assert clip["owner_comment"] not in text
         assert not any(c["title_body"].strip() in text for c in clip["candidates"])
-    assert "### 片 13\n" not in corpus and corpus.count("### 片 ") == 19
+    assert corpus.count("### 片 ") == len(verdicts.clips) - 1
 
 
 # ----- what step 6 does with it ----------------------------------------------------------------------------------
@@ -226,3 +228,21 @@ def test_a_missing_or_broken_asset_stops_the_title_step_before_any_call(tmp_path
     _ctx, cpa, picked = _pick(tmp_path / "w")
     assert isinstance(picked, StepOutcome) and picked.reason == "TITLE_AUTHORITY_MISSING"
     assert "title_owner_verdicts.v1.json" in picked.note and cpa.calls == []
+
+
+def test_a_retitle_request_is_read_for_the_manuscript_and_its_revisions(tmp_path, monkeypatch):
+    asked = dict(_clip(1, "alpha", ["线上标题"], "原话", grades=(None,)), retitle_evidence="“标题没体现看点”")
+    path = _write(tmp_path / "v.json", [asked, _clip(2, "beta", ["乙"], "原话", grades=(None,))])
+    monkeypatch.setattr(title_verdicts, "VERDICTS", path)
+    verdicts = title_verdicts.load_verdicts()
+    assert verdicts.retitle("alpha_r2") == {"evidence": "“标题没体现看点”", "main_line": asked["main_line"],
+                                            "punchline": asked["punchline"]}
+    assert verdicts.retitle("beta_r2") is None
+    assert verdicts.approved("alpha_r2") is None
+
+
+def test_an_empty_retitle_request_is_an_authority_error(tmp_path, monkeypatch):
+    path = _write(tmp_path / "v.json", [dict(_clip(1, "alpha", ["线上标题"], "原话", grades=(None,)), retitle_evidence=" ")])
+    monkeypatch.setattr(title_verdicts, "VERDICTS", path)
+    with pytest.raises(AuthorityError, match="retitle_evidence is empty"):
+        title_verdicts.load_verdicts()

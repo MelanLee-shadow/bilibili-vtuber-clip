@@ -652,3 +652,21 @@ def test_returned_exhausted_failure_is_preserved_and_not_restarted(tmp_path, mon
     event_after = next(c for c in ctx.state.data['review']['cpa'] if c['call_id'] == 'review-held')
     assert event_after == event and '模拟既有 provider 重试耗尽' in (ctx.clip_dir / 'PROCESS.md').read_text()
     assert all(p.read_bytes() == data for p, data in main_original.items())
+
+
+def test_a_review_not_release_overruled_by_agreeing_runs_is_said_in_the_report():
+    """Goldfish gap #70 : the reviewer judged d032 low confidence and meaning-changing and wrote "暂不放行",
+    but three independent runs wrote that wording, so HOLD_RULE counts it decided and the clip sealed without a hold;
+    the report has to say so instead of leaving the reviewer's "not released" unanswered."""
+    note = "复审最终判断：仍无法确定"
+    agreed = {"id": "d032", "state": "FIT_CONTEXT", "confidence": "低", "affects_meaning": True, "runs_same": 3,
+              "final_text": "只是上次说填表", "review_note": note}
+    alone = {"id": "d040", "state": "FIT_CONTEXT", "confidence": "低", "affects_meaning": True, "runs_same": 1,
+             "final_text": "另一句", "review_note": note}
+    minor = {"id": "d016", "state": "FIT_CONTEXT", "confidence": "低", "affects_meaning": False, "runs_same": 1,
+             "final_text": "嗯", "review_note": note}
+    doubts = [agreed, alone, minor]
+    held = doubt_policy.holds(doubts)
+    assert held == [alone]                   # the rule: the agreed wording is decided, the lone one held
+    lines = doubt_policy.overruled_review_lines(doubts, held)
+    assert len(lines) == 1 and "d032" in lines[0] and "3 遍独立写法一致" in lines[0] and "不生效" in lines[0]

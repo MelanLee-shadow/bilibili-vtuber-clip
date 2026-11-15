@@ -468,3 +468,18 @@ def is_concatenation(final_text: str, candidate_texts: Sequence[str]) -> bool:
         return False
     cand_norms = [text_overlap.key(c) for c in candidate_texts]
     return any(not any(cn.count(s) >= 2 for cn in cand_norms) for s in runs)
+
+
+def overruled_review_lines(doubts: Sequence[Mapping[str, object]], held: Sequence[object]) -> list[str]:
+    """The reviewer's own text may say "not released" for a doubt it judged low confidence and meaning-changing that
+    HOLD_RULE (is_hold) still counts as decided (independent runs wrote the same wording): one line per such doubt, so the
+    report says plainly that the clip was not held for it and why."""
+    out = []
+    for d in doubts:
+        if (d in held or not str(d.get("review_note") or "").startswith("复审最终判断：")
+                or d.get("confidence") != "低" or d.get("affects_meaning") is False):
+            continue
+        out.append(f"- 复审判 {d['id']} 低把握且影响意思，但不拦：{d.get('runs_same')} 遍独立写法一致"
+                   f"（「{d.get('final_text')}」），按拦截规则（is_hold：两遍一致即定）算已定；复审正文里的"
+                   "“不放行”对这一句不生效")
+    return out

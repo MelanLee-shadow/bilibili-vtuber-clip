@@ -245,3 +245,29 @@ def test_a_revision_of_a_published_clip_is_titled_as_it_is_online(tmp_path):
     assert title == "【李豆沙】线上的标题" and cover_lines == ["破防了", "半分钟"]
     assert (ctx.clip_dir / "title/title.txt").read_text(encoding="utf-8") == "【李豆沙】线上的标题\n"
     assert any(line.startswith("修订沿用线上标题：【李豆沙】线上的标题") for line in process)
+
+
+def test_a_revision_the_owner_asked_to_retitle_takes_the_new_pick(tmp_path, monkeypatch):
+    """Owner (the 撒娇 was not in the title): his request to retitle lets the revision drop the online title."""
+    from src.autoslice.manual_lane import title_verdicts
+
+    cpa = FakeCpa([_answer(_cand("她半分钟后真的破防了")), _answer(_cand("她半分钟后真的破防了"))])
+    ctx = make_ctx(tmp_path, remote=FakeRemote(), cpa=cpa)
+    (ctx.clip_dir / "subs").mkdir(parents=True, exist_ok=True)
+    (ctx.clip_dir / "subs/final.srt").write_text(srt(3), encoding="utf-8")
+    before = tmp_path / "clips" / "published"
+    (before / "upload").mkdir(parents=True)
+    (before / "upload/online.json").write_text('{"bvid": "BV1", "title": "【李豆沙】线上的标题"}', encoding="utf-8")
+    ctx.state.data["revised_from"] = {"cid": "published", "reason": "标题", "at": "t"}
+    loaded = title_verdicts.load_verdicts()
+    asked = {"evidence": "“标题没体现看点”", "main_line": "她讲改ID，后段撒娇", "punchline": "我可听kmx的啦"}
+    monkeypatch.setattr(type(loaded), "retitle", lambda self, cid: asked)
+    picked = si.pick_title(ctx)
+    assert not isinstance(picked, StepOutcome), picked
+    title, _lines, process, _calls, _path = picked
+    assert title != "【李豆沙】线上的标题" and "破防" in title
+    assert any(line.startswith("频道主要求换标题（原话：“标题没体现看点”）") for line in process)
+    # the title rounds are written from what he says the draw is, not from the model's own reading of the clip
+    assert all("我可听kmx的啦" in p and "她讲改ID，后段撒娇" in p for p in cpa.title_prompts)
+    stored = json.loads((ctx.clip_dir / "title/candidates.json").read_text(encoding="utf-8"))["understanding"]["merged"]
+    assert (stored["main_line"], stored["punchline"]) == ("她讲改ID，后段撒娇", "我可听kmx的啦")

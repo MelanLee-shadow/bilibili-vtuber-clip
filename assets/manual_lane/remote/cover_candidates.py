@@ -629,6 +629,13 @@ def separate_people(src, people, renderer):
     return people
 
 
+
+def action_head(figure):
+    """Her signature move may hide her face (head in her arms): the frame is the one wanted, so the layout protects the
+    top of the figure the vision model boxed instead of a measured face.  Returns (head box, head top)."""
+    x0, y0, x1, y1 = (int(v) for v in figure)
+    return [x0, y0, x1, y0 + max(1, (y1 - y0) * 2 // 5)], y0
+
 class Run:
     """One cover run: the job, the loaded renderer and redraw, and what the routes leave for each other (the guest's
     face in the live frame, read once; the cut-out's guest layer, reused by the sticker).  TASK-13: main() did all of
@@ -724,6 +731,8 @@ class Run:
             spec = json.load(fh)
         # the text keeps clear of the faces actually in this frame (the caller's face box is only a default)
         hf, head_top = self.head()
+        if hf is None and job.get("on_action") and job.get("host_box"):
+            hf, head_top = action_head(job["host_box"])
         if hf is None:                          # a cover of her without her face is not made
             return self.fail("screenshot", "HOST_FACE_NOT_FOUND")
         gf = self.guest_in_frame()
