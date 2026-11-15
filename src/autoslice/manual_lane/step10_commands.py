@@ -1,6 +1,7 @@
 """The script text of each command step 10 sends to the media host, one function per command.
 
-These are the commands the nine-clip hand run used , in the same spelling: the upload tool is run as root with
+These are the commands the nine-clip hand run used , in the same spelling: the upload tool (lane_rules upload.tools:
+this deployment's authorized_upload.py, or lane_publish.py, which implements the same commands) is run as root with
 AUTOSLICE_BASE set, from the deployed repo, through `adapters.root_script` (its wrapper hands what the command wrote back to
 the lane's user).  Arguments, their order and the output files follow that run's drivers; only the paths are the clip's
 own.  Nothing here decides anything: the tool's own gates (hashes, ledger, registry, quota, season, public readback) are
@@ -17,10 +18,6 @@ from .adapters import PROFILE_ENV, REMOTE_PY, REMOTE_REPO, root_script
 from .layout import layout
 from .step10_route import COVER, FIRST, VIDEO
 
-UPLOAD_TOOL = "authorized_upload.py"
-AUDIT_TOOL = "audit_review_package.py"
-
-
 @dataclass(frozen=True)
 class Job:
     route: str
@@ -32,6 +29,8 @@ class Job:
     predecessor: str | None
     authorized_by: str
     quote: str
+    upload_tool: tuple[str, ...]    # lane_rules upload.tools (step10_rules): the script and its leading arguments
+    audit_tool: tuple[str, ...]
 
     @property
     def fm(self) -> str:
@@ -78,9 +77,10 @@ def _q(value: object) -> str:
     return shlex.quote(str(value))
 
 
-def _tool(job: Job, script: str, args: Sequence[object], redirect: str) -> str:
+def _tool(job: Job, tool: Sequence[str], args: Sequence[object], redirect: str) -> str:
+    script, *lead = tool
     cmd = (f"cd {_q(REMOTE_REPO)} && env {PROFILE_ENV} AUTOSLICE_BASE={_q(layout().autoslice_base)} "
-           f"{shlex.join([REMOTE_PY, '-B', f'scripts/{script}', *map(str, args)])} {redirect}")
+           f"{shlex.join([REMOTE_PY, '-B', f'scripts/{script}', *lead, *map(str, args)])} {redirect}")
     return root_script(cmd.replace("'", "'\\''"), env=(), owned=str(job.out), recursive=True)
 
 
@@ -93,7 +93,7 @@ def audit(job: Job) -> str:
     seal = job.package / "review_manifest.json"
     return (f"[ -f {_q(seal)} ] || {{ echo NOT_SEALED {_q(job.package)}; exit 2; }}\n"
             f"rm -f {_q(job.package / 'package_audit.json')}\nmkdir -p {_q(job.out)}\n"
-            + _tool(job, AUDIT_TOOL, [job.package, "--json"], f"> {_q(job.out / 'package_audit.json')} 2> {_q(job.out / 'package_audit.err')}"))
+            + _tool(job, job.audit_tool, [job.package, "--json"], f"> {_q(job.out / 'package_audit.json')} 2> {_q(job.out / 'package_audit.err')}"))
 
 
 def make_manifest(job: Job) -> str:
@@ -103,12 +103,12 @@ def make_manifest(job: Job) -> str:
         args += ["--tags", job.tags]
     else:
         args += ["--final-human-review", job.package_file(".finished-media-review.json")]
-    return _tool(job, UPLOAD_TOOL, [*args, "--authorized-by", job.authorized_by, "--quote", job.quote, "--out", job.manifest],
+    return _tool(job, job.upload_tool, [*args, "--authorized-by", job.authorized_by, "--quote", job.quote, "--out", job.manifest],
                  _log(job, "make-manifest.log"))
 
 
 def verify_manifest(job: Job) -> str:
-    return _tool(job, UPLOAD_TOOL, ["verify", "--manifest", job.manifest], _log(job, "verify.log"))
+    return _tool(job, job.upload_tool, ["verify", "--manifest", job.manifest], _log(job, "verify.log"))
 
 
 def plan(job: Job, *, dry_run: bool) -> str:
@@ -119,25 +119,25 @@ def plan(job: Job, *, dry_run: bool) -> str:
         args += ["--predecessor-completed", job.predecessor]
     if dry_run:
         args.append("--dry-run")
-    return _tool(job, UPLOAD_TOOL, args, _log(job, "plan-dry.log" if dry_run else "plan.log"))
+    return _tool(job, job.upload_tool, args, _log(job, "plan-dry.log" if dry_run else "plan.log"))
 
 
 def status(job: Job) -> str:
-    return _tool(job, UPLOAD_TOOL, [job.sub("repair-status"), "--plan", job.plan, "--journal", job.journal], _log(job, "status.log"))
+    return _tool(job, job.upload_tool, [job.sub("repair-status"), "--plan", job.plan, "--journal", job.journal], _log(job, "status.log"))
 
 
 def run(job: Job, *, log: str, dry_run: bool = False) -> str:
     args: list[object] = [job.sub("repair-run"), "--plan", job.plan, "--journal", job.journal]
-    return _tool(job, UPLOAD_TOOL, [*args, *(["--dry-run"] if dry_run else [])], _log(job, log))
+    return _tool(job, job.upload_tool, [*args, *(["--dry-run"] if dry_run else [])], _log(job, log))
 
 
 def verify_live(job: Job) -> str:
-    return _tool(job, UPLOAD_TOOL, [job.sub("repair-verify-live"), "--plan", job.plan, "--journal", job.journal, "--out", job.completed],
+    return _tool(job, job.upload_tool, [job.sub("repair-verify-live"), "--plan", job.plan, "--journal", job.journal, "--out", job.completed],
                  _log(job, "verify-live.log"))
 
 
 def upload(job: Job) -> str:
-    return _tool(job, UPLOAD_TOOL, ["upload", "--manifest", job.manifest], _log(job, "upload.log"))
+    return _tool(job, job.upload_tool, ["upload", "--manifest", job.manifest], _log(job, "upload.log"))
 
 
 def duration(path: Path) -> str:

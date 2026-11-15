@@ -2,10 +2,15 @@
 
 下文保留已公开的完整说明；执行命令前同时阅读文末的接口兼容说明。
 
+本版第 10 步的上传工具是 `scripts/lane_publish.py`（lane_rules 的 `upload.tools` 指向它），
+子命令与下文早先私有工具 `authorized_upload.py` 同名同参；
+返回码、出版登记与账本见 `src/autoslice/lane_publish/__init__.py`。
+只改标题的修订不在本版里。
+
 # 90 授权上传、同 BV 修复与公开验收
 
-本文件是发布步骤的**分步权威**。唯一程序入口是
-`scripts/authorized_upload.py`；`.agent/skills/bilive-autoslice-publish/SKILL.md`
+本文件是发布步骤的**分步权威**。程序入口是
+`scripts/lane_publish.py`；`.agent/skills/bilive-autoslice-publish/SKILL.md`
 只提供操作顺序，不得另立规则。
 
 ## 机械验收与真实人工复核的分流（2026-09-14）
@@ -17,17 +22,12 @@
 普通新 BV 的当前代码本就不要求 `final_human_review`；不得在其现有 package/声文/边界/
 标题封面/授权门外凭报告添加这一项。对有 recovery authority 的同 BV 包，正常机械路线为：
 
-```sh
-python3 scripts/build_final_human_review.py <package> \
-  --package-audit <current-audit.json> --mechanical --out <package>/verification/mechanical-delivery-review.json
-```
-
-该命令复用当前 canonical auditor、同候选/目标/标题/封面/片头绑定和 create-only writer，输出
-独立的 `lidousha-mechanical-delivery-review.v1 / VERIFIED_MECHANICAL_DELIVERY`。
-`fresh_human_full_playback_claimed=false`、`new_upload_authorized=false` 必须保持；没有 reviewer
-个人身份、伪造八项观看 observations 或补签旧人审。receipt 绑定当前 review manifest/audit、
-实际 record/video/SRT/cover 字节与精确 publication authority；构建和使用时均重跑当前审计并
-重新计算绑定，旧 PASS、损坏/漂移包、错 BV/CID 或未决内容不能借此放行。
+第 8 步写出包的终审回执；`lane_publish.py make-manifest --final-human-review <回执>`
+要求回执结论为 PASS，
+并把回执、包审计与包文件的哈希一起绑进清单。
+不声称有人完整看过，也不授权投新稿；
+旧 PASS、漂移的包、错 BV/CID 不能借此放行。
+（早先私有工具生成的 mechanical-delivery-review 回执本版没有。）
 
 `make-manifest --final-human-review <mechanical-receipt>` 仅是既有兼容参数名；validator 会按独立
 schema 走机械重验，并继续拒绝新建 BV、越权、错目标及未知上传效果重发。接到这个入口不等于

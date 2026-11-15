@@ -1,17 +1,16 @@
-"""The publication authority (which clip is which published video, and the proofs a revision of a published video
-must replay) is the operating state and safety chain of one channel.  It is not part of this public snapshot;
-this module keeps the names the pipeline imports so that everything before publishing runs unchanged.
-
-A fresh installation has published nothing: the registry is empty.
-"""
+"""The publication registry (which package is which published BV) is the one the public upload tool writes:
+src/autoslice/lane_publish/registry.py.  A fresh installation has published nothing; a machine without the runtime
+state directory cannot say, and raises rather than answer "nothing"."""
 
 from __future__ import annotations
 
 from typing import Any
 
+from src.autoslice.lane_publish.registry import load
+
 
 def load_publication_registry() -> dict[str, Any]:
-    return {"entries": []}
+    return load()
 
 
 def _candidate_ids(*args: Any, **kwargs: Any) -> Any:

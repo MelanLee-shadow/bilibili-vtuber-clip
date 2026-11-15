@@ -45,7 +45,7 @@ PACKAGE_UNREADABLE = "UPLOAD_PACKAGE_UNREADABLE"
 WAITING_LIVE = "UPLOAD_WAITING_LIVE"
 WAITING_QUOTA = "UPLOAD_WAITING_QUOTA"
 WAITING_LOCK = "UPLOAD_WAITING_LOCK"
-LOCK_BUSY = "shared upload/repair lock is busy"      # authorized_upload.py UploadLockBusy: refused before anything starts
+LOCK_BUSY = "shared upload/repair lock is busy"      # the upload tool's words for its lock held: refused before anything starts
 ATTEMPT_UNRESOLVED = "UPLOAD_ATTEMPT_UNRESOLVED"
 PACKAGE_CHANGED = "UPLOAD_PACKAGE_CHANGED"
 READBACK_MISMATCH = "UPLOAD_READBACK_MISMATCH"
@@ -123,7 +123,8 @@ class _Run:
         except (OSError, ValueError, KeyError, TypeError) as exc:
             stop(PACKAGE_UNREADABLE, f"读不到包里的标题或标签：{type(exc).__name__}: {exc!s:.300}")
         return commands.Job(route=route.kind, bvid=route.bvid, package=self.package, out=self.out, title=title, tags=tags,
-                            predecessor=route.predecessor, authorized_by=auth.by, quote=auth.quote)
+                            predecessor=route.predecessor, authorized_by=auth.by, quote=auth.quote,
+                            upload_tool=self.rules.upload_tool, audit_tool=self.rules.audit_tool)
 
     # ----- the phases --------------------------------------------------------------------------------------------------
     def _audit(self) -> None:
@@ -264,7 +265,7 @@ class _Run:
             stop(exc.reason, exc.note)
         if route.kind == NONE:
             self.route = route
-            self.job = commands.Job(NONE, route.bvid, self.package, self.out, "", "", None, "", "")
+            self.job = commands.Job(NONE, route.bvid, self.package, self.out, "", "", None, "", "", (), ())
             path = self._online(route, record=None, problems=[])
             return StepOutcome(True, products={"online": str(path)}, note=f"无需上线：{route.why}", process=self.process())
         cover_material(self.ctx)

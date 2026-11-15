@@ -33,6 +33,8 @@ class UploadRules:
     poll_interval_s: float
     max_polls: int
     quota_retry_s: float
+    upload_tool: tuple[str, ...]        # scripts/<first> and its leading arguments: the upload tool step 10 sends commands to
+    audit_tool: tuple[str, ...]         # the same for the package audit (it is given `<package> --json` after these)
 
 
 def _text(doc: Mapping[str, Any], *path: str) -> str:
@@ -64,9 +66,16 @@ def load() -> UploadRules:
         return Authorization(by=by, quote=_text(doc, "authorization", kind, "quote"),
                              rule_date=_text(doc, "authorization", kind, "rule_date"))
 
+    def tool(name: str) -> tuple[str, ...]:
+        value = (doc.get("tools") or {}).get(name) if isinstance(doc.get("tools"), Mapping) else None
+        if not (isinstance(value, list) and value and all(isinstance(v, str) and v.strip() for v in value)
+                and value[0].endswith(".py") and "/" not in value[0]):
+            raise UploadRulesUnset(f"lane_rules.json upload.tools.{name} 应是 [\"<scripts 下的脚本>.py\", 参数…]：{value!r}")
+        return tuple(value)
+
     polls = int(_number(doc, "wait", "max_polls"))
     if polls < 1:
         raise UploadRulesUnset("lane_rules.json upload.wait.max_polls 至少为 1")
     return UploadRules(first_publication=authorization("first_publication"), revision=authorization("revision"),
                        poll_interval_s=_number(doc, "wait", "poll_interval_s"), max_polls=polls,
-                       quota_retry_s=_number(doc, "quota", "retry_after_s"))
+                       quota_retry_s=_number(doc, "quota", "retry_after_s"), upload_tool=tool("upload"), audit_tool=tool("audit"))

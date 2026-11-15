@@ -78,16 +78,23 @@ python3 scripts/bili_archive_tool.py view \
   --bvid <your-bvid> --cookie-json <absolute-cookie-path>
 ```
 
-发布还需要自己的 `AUTOSLICE_SEASON_IDS`、出版登记及独立授权。
-公共示例的合集 ID 不可使用；完整门见 [发布步骤](pipeline/90-publish.md)。
+发布还需要频道 profile 里自己的合集资产（`season_routes`）和授权原话；
+公共示例的合集 ID 不可使用。出版登记由上传工具自己在运行目录里建，不用手填。
 
 ## biliup：只在上传时需要
 
-使用 biliup 自己的登录流程生成 cookie，保存在仓库外。
-参考位置为 `/opt/bilive/app/tmp_manual_upload/biliup_cookies.json`；
-授权入口可用 `--biliup-cookie-json` 显式传入。
+使用 `biliup login` 生成 cookie，保存在仓库外。第 10 步的上传工具
+[`scripts/lane_publish.py`](../scripts/lane_publish.py) 从运行目录（`AUTOSLICE_BASE`）的
+`lane_publish.json` 读 biliup 和这份 cookie 的位置：
+
+```json
+{"biliup_bin": "/absolute/path/to/biliup", "biliup_cookies": "/absolute/path/outside/the/repo/cookies.json"}
+```
+
+投稿、换视频、换封面和加入合集都只用这一份 cookie（它同时带创作中心的登录态）。
 登录、续期会涉及网络和登录态变化，不属于本项目的离线测试。
-**不要裸调 `do_upload.sh`，实际发布通过 `authorized_upload.py`。**
+**不要直接调 biliup 投稿，实际发布通过 `lane_publish.py`**：它先审计封存包、记账，再投稿，
+中断后重跑同一条命令从已投出的 BV 接着核对，不会再投一次。
 
 ## 官方回放救援：可选依赖
 
