@@ -153,3 +153,14 @@ def test_batch_titles_and_recent_covers_skip_a_superseded_candidate(tmp_path, mo
     assert history.batch == ("【李豆沙】live的标题",)
     covers = _lane_covers(SimpleNamespace(clip_dir=task / "clips/me"))
     assert [c["cid"] for c in covers] == ["live"]
+
+
+def test_init_finds_a_candidate_by_the_clip_id_discover_gives_it(tmp_path):
+    # goldfish 4: the clip id carries the recording start (_11151438), the recording's recall.json does not
+    from src.autoslice.manual_lane import cli
+    selection = tmp_path / "recall.json"
+    selection.write_text(json.dumps({"input_pool": [{"cid": "semantictalk_15540_158170", "x": 1}]}), encoding="utf-8")
+    assert cli._selection_entry(selection, "semantictalk_15540_158170_11151438")["x"] == 1
+    assert cli._selection_entry(selection, "semantictalk_15540_158170")["x"] == 1
+    with pytest.raises(cli.StateError):
+        cli._selection_entry(selection, "semantictalk_15540_158171_11151438")

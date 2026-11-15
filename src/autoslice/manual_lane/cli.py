@@ -79,8 +79,11 @@ SPEAKER_STEP = next(step.number for step in STEPS if step.key == "speaker")     
 
 def _selection_entry(selection_path: Path, cid: str) -> SelectionEntry:
     data = cast(SelectionDocument, json.loads(Path(selection_path).read_text(encoding="utf-8")))
+    # discover's clip id is the candidate's id plus the recording start (lane_cid: _MMDDHHMM); the recording's own
+    # selection file (recall.json) names the candidate without it -- goldfish 4 had to edit the file to init a clip
+    bare = re.sub(r"_\d{8}$", "", cid)
     for entry in data.get("input_pool", []):
-        if entry.get("cid") == cid:
+        if entry.get("cid") in (cid, bare):
             return entry
     raise StateError(f"candidate {cid} not found in {selection_path}")
 

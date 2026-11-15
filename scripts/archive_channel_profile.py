@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.autoslice.channel_profile import ChannelProfileError, load_channel_profile
 from src.autoslice.profile_manifest_history import archive_manifest
 
 
@@ -22,6 +23,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("manifest", type=Path)
     args = parser.parse_args(argv)
     manifest = args.manifest if args.manifest.is_absolute() else ROOT / args.manifest
+    try:            # an invalid manifest is not registered (it used to be, and stayed in the history as a version)
+        load_channel_profile(ROOT, manifest_path=manifest, environ={})
+    except ChannelProfileError as exc:
+        print(f"PROFILE_INVALID: {exc}", file=sys.stderr)
+        return 2
     print(archive_manifest(ROOT, manifest))
     return 0
 

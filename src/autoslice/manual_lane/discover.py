@@ -101,7 +101,11 @@ def resolve_session(task: Path, date: str) -> tuple[SessionConfig, dict[str, str
     from src.autoslice.channel_profile import load_channel_profile
 
     day_dir = root_of(task) / date
-    doc: dict[str, Any] = {"recording_date": date, "participants": [list(load_channel_profile(REPO_ROOT).self_reference_aliases)],
+    profile = load_channel_profile(REPO_ROOT)
+    # the host's group leads with her display name: it is how the lane names her to every judge and how it checks
+    # that she is there (HOST_MISSING); her own words for herself follow as aliases
+    host = [profile.display_name, *(a for a in profile.self_reference_aliases if a != profile.display_name)]
+    doc: dict[str, Any] = {"recording_date": date, "participants": [host],
                            "speaker_mode": "uniform_host", "own_uploader_mids": []}
     given = day_dir / "participants.json"
     source, note = "channel_default", SINGLE_HOST_NOTE
@@ -264,6 +268,11 @@ def discover(*, task: Path, adapters: Adapters, dates: Sequence[str] | None = No
             if not dates and not settled:
                 report.deferred.append({"date": date, "reason": "RECORDING_MAY_BE_IN_PROGRESS" if inv.segments else "NO_RECORDINGS_YET"})
                 continue
+            if not settled:                          # a named day: its finished recordings now, the growing one later
+                inv, held = inv.finished(float(cfg["settle_minutes"]))
+                report.deferred += [{"date": date, "segment": s.name, "reason": "RECORDING_MAY_BE_IN_PROGRESS"} for s in held]
+                if not inv.segments:
+                    continue
             day = ledger["days"].setdefault(date, {"date": date})
             day.update(explicit=bool(dates), settled=settled)
             try:
@@ -302,4 +311,6 @@ def ledger_lines(task: Path) -> list[str]:
                      f"候选 {s['candidates']} 入选 {s['seated']} 落选 {s['rejected']} 已建片 {s['built']}  {days[date]['session']['note']}")
         lines += [f"    {r['name']} {r['status']} {r['prepare' if r['status'].startswith('PREPARE') else 'select']['code']}"
                   for r in days[date]["segments"] if r["status"].endswith("_FAILED")]
+        lines += [f"    落选 {r.get('cid')} {r.get('reason')}" + (f"：{str(r['detail'])[:80]}" if r.get("detail") else "")
+                  for r in days[date]["selection"]["rejected"]]         # why, without opening the ledger (goldfish 4)
     return lines

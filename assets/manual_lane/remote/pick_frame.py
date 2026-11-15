@@ -63,7 +63,11 @@ ACTION_QUESTION = ("这是一段直播切片按时间顺序抽出的若干帧，
                    "只输出一个 JSON 对象：{\"cell\": 编号, \"what\": \"动作的简短描述\"}；没有这样的格就输出 {\"cell\": null}。")
 ACTION_PICK = ("这几格是同一段直播切片里不同时刻、主播" + HOST + "做出标志性动作的画面，格子左上角是编号。哪一格的动作最完整、"
                "最能一眼认出、最适合当视频封面？只输出一个 JSON 对象：{\"cell\": 编号, \"what\": \"动作的简短描述\"}。")
-READING_KEY = BOX_QUESTION + "\n" + ACTION_QUESTION + "\n" + ACTION_PICK   # a reading made with other questions is not reused
+FACE_QUESTION = ("这是直播切片的一帧（1920x1080）。画面里能不能看清主播" + HOST + "本人的脸"
+                 + (f"（{FACE_HINT.strip('，')}）" if FACE_HINT else "") + "？镜头只拍到腿、脚、身体别的部分，脸在画面外，"
+                 "或者只有角落里很小的头像、图标、表情贴图，都算看不清。看得清只回答 FACE，看不清只回答 NOFACE。只回答这一个词。")
+READING_KEY = (BOX_QUESTION + "\n" + ACTION_QUESTION + "\n" + ACTION_PICK + "\n" + FACE_QUESTION)   # a reading made
+#                                                                     with other questions is not reused
 
 
 def duration(cut):
@@ -137,9 +141,14 @@ def find_action(cut, frame_dir, base, key):
     return {"t": t, "what": what, "seen": [{"t": f[0], "what": f[1]} for f in found]}
 
 
+# Every box of the cover is read and placed in 1920x1080 (the questions say so, cover_face_crop.FRAME_W/H): a source of
+# another size is scaled into it (goldfish 4, a 1280x720 stream: every screenshot crop fell outside the frame)
+FRAME_SIZE_FILTER = "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
+
+
 def extract(cut, t, path):
     subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{t:.3f}", "-i", cut,
-                    "-frames:v", "1", "-q:v", "3", path], check=True)
+                    "-frames:v", "1", "-vf", FRAME_SIZE_FILTER, "-q:v", "3", path], check=True)
     with open(path, "rb") as fh:
         return base64.b64encode(fh.read()).decode("ascii")
 
@@ -216,6 +225,7 @@ def main(argv):
     if action.get("t") is not None:     # the move's own frame first, then the frames around the cover line
         times = [action["t"], *[t for t in times if abs(t - action["t"]) >= 0.01]]
     checked, chosen, boxes = [], None, None
+    first_clean = None           # (t, image) of the first clean frame: taken when no clean frame shows her face
     for index, t in enumerate(times):
         path = os.path.join(frame_dir, f"frame-{index}.jpg")
         try:
@@ -225,14 +235,31 @@ def main(argv):
             checked.append({"t": t, "verdict": "ERROR", "text": type(exc).__name__})
             continue
         verdict = "CLEAN" if "CLEAN" in text.upper() and "DIRTY" not in text.upper() else "NOT_CLEAN"
-        checked.append({"t": t, "verdict": verdict, "text": text[:40]})
-        if verdict == "CLEAN":
-            chosen = t
-            try:
-                boxes = read_boxes(ask(base, key, image, BOX_QUESTION, max_tokens=300, kind="boxes", t=t))
-            except (urllib.error.URLError, OSError, ValueError):
-                boxes = None
+        row = {"t": t, "verdict": verdict, "text": text[:40]}
+        checked.append(row)
+        if verdict != "CLEAN":
+            continue
+        first_clean = first_clean or (t, image)
+        if action.get("t") is not None and abs(t - action["t"]) < 0.01:
+            chosen = t           # the signature move may hide her face (owner 2026-11-14): its frame is not asked
             break
+        try:                     # 1645880 (2026-11-15): the cover line fell where the camera showed only her shoes
+            face = ask(base, key, image, FACE_QUESTION, kind="face", t=t).upper()
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            row["face"] = f"ERROR {type(exc).__name__}"
+            continue
+        row["face"] = "FACE" if "FACE" in face and "NOFACE" not in face else "NOFACE"
+        if row["face"] == "FACE":
+            chosen = t
+            break
+    if chosen is None and first_clean is not None:
+        chosen = first_clean[0]  # no clean frame shows her face: the first clean one, as before (recorded below)
+    if chosen is not None:
+        image = first_clean[1] if first_clean and first_clean[0] == chosen else image
+        try:
+            boxes = read_boxes(ask(base, key, image, BOX_QUESTION, max_tokens=300, kind="boxes", t=chosen))
+        except (urllib.error.URLError, OSError, ValueError):
+            boxes = None
     with open(out_json, "w", encoding="utf-8") as fh:
         json.dump({"chosen": chosen, "checked": checked, "boxes": boxes, "calls": CALLS, "times": asked, "question": READING_KEY,
                    "action": action, "looked_at": times},

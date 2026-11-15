@@ -16,7 +16,7 @@ from src.autoslice.manual_lane import channel
 REPO = Path(__file__).resolve().parents[2]
 LANE = REPO / "src/autoslice/manual_lane"
 # identifiers of persisted records and of files outside the lane: renaming them is not a change of channel
-KEPT = ("lidousha-title-cover-route.v1", "audit_review_package.py", "lidousha-speaker-uniform-host-phase",
+KEPT = ("lidousha-title-cover-route.v1", "audit_review_package.py",
         "_write_sapphire_ass_from_srt")
 DOC_KEYS = ("_doc", "source", "reason")
 

@@ -68,6 +68,41 @@ def _row(cid, total, *, measured=True, action=False, veto=False):
             "face_status": "MEASURED" if measured else "UNMEASURED", "face_px": 300, "repeat": False}
 
 
+def _main_with(pf, monkeypatch, tmp_path, action_t, answers, times="93.3,89.3,97.3"):
+    monkeypatch.setattr(pf, "find_action", lambda cut, d, base, key: {"t": action_t} if action_t else {"t": None})
+    monkeypatch.setattr(pf, "extract", lambda cut, t, path: f"img-{t}")
+    asked = []
+    replies = iter(answers)
+    monkeypatch.setattr(pf, "ask", lambda base, key, image, question, **kw: asked.append((kw.get("kind"), image))
+                        or next(replies))
+    monkeypatch.setenv("CPA_BASE_URL", "https://cpa.invalid/v1")
+    monkeypatch.setenv("CPA_API_KEY", "test-only")
+    out = tmp_path / "out.json"
+    pf.main(["pick_frame.py", "cut.mp4", str(tmp_path / "f"), str(out), times])
+    return json.loads(out.read_text(encoding="utf-8")), asked
+
+
+def test_a_clean_frame_that_does_not_show_her_face_is_passed_over(monkeypatch, tmp_path):
+    # 1645880 : at the cover line the camera showed only her shoes; the sticker then copied the tiny avatar
+    pf = _load()
+    doc, asked = _main_with(pf, monkeypatch, tmp_path, None, ["CLEAN", "NOFACE", "CLEAN", "FACE", '{"person": []}'])
+    assert doc["chosen"] == 89.3 and [r.get("face") for r in doc["checked"]] == ["NOFACE", "FACE"]
+    assert asked[-1] == ("boxes", "img-89.3")                       # the boxes are read on the chosen frame
+
+
+def test_when_no_clean_frame_shows_her_face_the_first_clean_one_stays(monkeypatch, tmp_path):
+    pf = _load()
+    doc, asked = _main_with(pf, monkeypatch, tmp_path, None,
+                            ["CLEAN", "NOFACE", "DIRTY", "CLEAN", "NOFACE", '{"person": []}'])
+    assert doc["chosen"] == 93.3 and asked[-1] == ("boxes", "img-93.3")
+
+
+def test_the_moves_frame_is_not_asked_about_her_face(monkeypatch, tmp_path):
+    pf = _load()
+    doc, asked = _main_with(pf, monkeypatch, tmp_path, 40.0, ["CLEAN", '{"person": []}'])
+    assert doc["chosen"] == 40.0 and [k for k, _ in asked] == ["clean", "boxes"]
+
+
 def test_a_passing_screenshot_of_the_move_goes_first_even_with_her_face_covered():
     ranked = cover_pick.rank([_row("high", 18), _row("shot", 12, measured=False, action=True), _row("low", 10)],
                              repeats=lambda r: False, target_px=400)

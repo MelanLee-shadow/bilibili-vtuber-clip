@@ -47,9 +47,32 @@ def test_hints_tool_returns_the_existing_per_cue_candidates(tmp_path, monkeypatc
     assert item['id'] == 1
     assert item['readout_matches'][0]['text'] == '兴陈大海加油'
     assert item['readout_matches'][0]['relation'] == 'readout_candidate'
-    assert item['near_names'] == [{'name': '星辰大海', 'spellings': ['星辰大海', '大海']}]
+    assert item['near_names'] == [{'name': '星辰大海', 'spellings': ['星辰大海', '大海'],      # the chat line has 大海
+                                   'chat_near': [{'sent_s': item['near_names'][0]['chat_near'][0]['sent_s'], 'text': '兴陈大海加油'}]}]
     assert item['mishearing'] == ['- 兴陈 → 星辰']
     assert '机械候选' in whole['note']
+
+
+def test_a_near_name_says_when_viewers_write_it_just_after_she_says_it(tmp_path, monkeypatch):
+    # 289470 (owner's final 「理解一下李姐吧」): both recognisers wrote 理解一下理解吧; viewers sent 李姐李姐 seconds later
+    monkeypatch.setattr(pb.mishearing, 'load_pairs', lambda *_a: [])
+    cpa = AgentCpa(rows('结果'), tools=[{'tool': 'hints'}])
+    ctx = context(tmp_path, monkeypatch, cpa, bcut='理解一下理解吧', jianying='理解一下理解吧')
+    ctx.adapters.danmaku.xml = '<i><d p="5,1,1">李姐李姐</d><d p="200,1,1">李姐</d></i>'.encode()
+    assert step._step3_body(ctx).ok
+    near = {n['name']: n for n in results(ctx, 'hints')[0]['hints'][0]['near_names']}
+    assert '李姐' in near['李豆沙']['spellings']                  # the channel's name table: her self-name
+    assert [r['text'] for r in near['李豆沙']['chat_near']] == ['李姐李姐']
+
+
+def test_viewers_writing_a_name_is_looked_for_from_before_the_sentence_to_shortly_after_it():
+    from src.autoslice.manual_lane import playbook_evidence as pe
+    cue = {'id': 1, 'start_s': 30., 'end_s': 32.}
+    chat = [{'t_s': -70., 'text': '李姐早'}, {'t_s': 10., 'text': '李姐来了'}, {'t_s': 35., 'text': '李姐李姐'},
+            {'t_s': 36., 'text': 'lijie'}, {'t_s': 60., 'text': '李姐晚安'}]
+    assert pe.said_in_chat_around(['甲乙丙', '李姐'], cue, chat) == {
+        'chat_near': [{'sent_s': 10., 'text': '李姐来了'}, {'sent_s': 35., 'text': '李姐李姐'}]}
+    assert pe.said_in_chat_around(['丙丁'], cue, chat) == {}
 
 
 def test_hints_with_nothing_to_report_is_empty_not_an_error(tmp_path, monkeypatch):
@@ -153,6 +176,20 @@ def test_a_known_mishearing_candidate_says_when_viewers_just_wrote_the_name():
     assert pe.said_in_chat_before('甲乙', cue, chat) == {'chat_just_before': [{'sent_s': 25.7, 'text': '不让甲乙看'}]}
     assert pe.said_in_chat_before('KmX', cue, [{'t_s': 20., 'text': '不让kmx看'}])['chat_just_before'][0]['sent_s'] == 20.
     assert pe.said_in_chat_before('丙丁', cue, chat) == {}
+
+
+def test_the_thanks_slot_says_when_every_recogniser_heard_a_shorter_name_than_the_sender():
+    # 289470 (owner's final 「谢谢老莎的SC」): the SC was sent by 帅小沙OvO; the pipeline wrote the full name every run
+    from src.autoslice.manual_lane import playbook_evidence as pe
+    wrote = {'bcut': '谢谢老莎的副驾', 'jianying': '先上了三个副驾', 'mai': ''}
+    assert pe.thanks_slot(wrote, '帅小沙OvO') == {'thanks_slot': {
+        'heard': {'bcut': '老莎', 'jianying': '了三'}, 'characters': 2, 'name_characters': 3}}
+    assert pe.thanks_slot({'bcut': '谢谢帅小沙的SC', 'jianying': '谢谢帅小沙的SC'}, '帅小沙OvO') == {}   # the full name
+    assert pe.thanks_slot({'bcut': '谢谢老莎的副驾'}, '帅小沙OvO') == {}                      # one recogniser proves nothing
+    assert pe.thanks_slot({'bcut': '谢谢老莎的副驾', 'jianying': '谢谢小沙沙的副驾'}, '帅小沙OvO') == {}   # they disagree
+    assert pe.thanks_slot({'bcut': '好的谢谢', 'jianying': '好的谢谢'}, '帅小沙OvO') == {}           # no name place
+    # 289470 (owner's final 「谢谢我听说我听说sc」): both wrote 谢谢我的…; one character is a pronoun, not a short name
+    assert pe.thanks_slot({'bcut': '谢谢我的手机的什么枪', 'jianying': '谢谢我手机的手机壳'}, '我听说我听说_Channel') == {}
 
 
 def test_characters_no_other_recogniser_has_a_counterpart_for_are_listed():

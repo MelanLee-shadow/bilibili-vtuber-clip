@@ -39,7 +39,7 @@ from src.autoslice.llm_client import (
     extract_json_object,
     runtime_cpa_command_environment,
 )
-from src.autoslice.source_fact_review import EDITORIAL_RESEARCH_METHOD_PROVENANCE
+from src.autoslice.editorial_research_provenance import editorial_research_method_provenance, profile_assets_locator
 from src.autoslice.normal_text_generation_checkpoint import (
     completed_generation, subtitle_dependency,
 )
@@ -481,7 +481,7 @@ def _deployed_editorial_method_receipt() -> dict[str, object] | None:
         "schema_version": "profile-assets-fallback.v1",
         "version": "title-tag-editorial-method.v1",
         "source_kind": "deployed_profile_assets",
-        "path": "profiles/lidousha/profile.json#assets.title_style,assets.upload_tag_policy",
+        "path": profile_assets_locator(CHANNEL_PROFILE, ROOT),
         "sha256": binding_sha256,
         "source_sha256": binding_sha256,
         "asset_key": "title_style+upload_tag_policy",
@@ -497,7 +497,7 @@ def _deployed_editorial_method_receipt() -> dict[str, object] | None:
             "Use source-specific candidates only when explicitly hash-bound.",
             "Do not read undeployed reports or invent proper-noun candidates.",
         ],
-        "research_method_sources": [dict(row) for row in EDITORIAL_RESEARCH_METHOD_PROVENANCE],
+        "research_method_sources": editorial_research_method_provenance(CHANNEL_PROFILE.profile_id),
         "inapplicable_reason": (
             "No source-specific candidate application is bound to this normal call; "
             "the generic editorial method remains applicable."

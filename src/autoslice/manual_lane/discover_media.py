@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import datetime as dt
 import hashlib
 import json
@@ -110,6 +112,18 @@ class DayInventory:
         `lone_danmaku_hours` after its danmaku was written is not coming.  By the host's clock."""
         waiting = any(self.now - written <= lone_danmaku_hours * 3600 for written in self.lone_danmaku)
         return bool(self.segments) and not waiting and self.now - self.newest > minutes * 60
+
+    def finished(self, minutes: float) -> tuple[DayInventory, tuple[Segment, ...]]:
+        """The day without the recording the recorder may still be writing: a recording is finished when a later one
+        of the day exists or nothing of it was written in the last `minutes` (goldfish 4 had to copy the finished
+        files elsewhere to keep a named day's growing last file out).  Returns the day and what was held back."""
+        if not self.segments:
+            return self, ()
+        last = self.segments[-1]
+        written = max(float(last.mtime), float(last.xml_mtime or 0.0))
+        if self.now - written > minutes * 60:
+            return self, ()
+        return dataclasses.replace(self, segments=self.segments[:-1]), (last,)
 
     def same_recordings(self, recorded: Sequence[Mapping[str, Any]]) -> bool:
         """The day's recordings are the ones in `recorded` (a ledger day's segments): the same file names with the same

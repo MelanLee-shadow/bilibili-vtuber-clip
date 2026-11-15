@@ -15,8 +15,7 @@ from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 if TYPE_CHECKING:
     from src.autoslice.cpa_gemini_client import JsonValue
 
-SPEAKER_RULE = ("默认 uniform_host 不分色；只有 10-30 起手动开启的联动场次才分色（memory: "
-                "lidousha-speaker-uniform-host-phase）。开启须有记录，否则不分色。")
+SPEAKER_RULE = "默认 uniform_host 不分色；只有手动开启的联动场次才分色。开启须有记录，否则不分色。"
 
 
 class SpeakerPeople(TypedDict, total=False):

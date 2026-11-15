@@ -41,7 +41,7 @@ rsync -a --exclude=.venv --exclude=.git ./ <主机>:<autoslice_base>/current/rep
 ## 3. 建频道
 
 ```bash
-python3 scripts/init_channel_profile.py <id> --display-name <主播名> --room <直播间号>
+.venv/bin/python scripts/init_channel_profile.py <id> --display-name <主播名> --room <直播间号>
 ```
 
 它从模板建好 `assets/<id>/` 和 `profiles/<id>/` 下的三个文件，做完所有机械替换，并清掉模板里的示例词条。
@@ -49,7 +49,7 @@ python3 scripts/init_channel_profile.py <id> --display-name <主播名> --room <
 
 1. `profiles/<id>/profile.json`：主播的名字和自称、说话人标签、标题前缀、封面身份描述、资产清单。
    标题前缀（`talk_prefix` 等）的【】里写主播全名（如【礼墨Sumi】），不写简称；`short_name` 是主播的简称（没有就写全名）；`self_reference_aliases` 只列她真的用来称呼自己的词。
-   **每次改完都要登记**：`python3 scripts/archive_channel_profile.py profiles/<id>/profile.json`（不登记，校验会报
+   **每次改完都要登记**：`.venv/bin/python scripts/archive_channel_profile.py profiles/<id>/profile.json`（不登记，校验会报
    `manifest history not updated`；每次登记在 `profiles/manifest_history/` 多一条记录，这是预期的）。
    `tools.cover_regenerator` 指向早先流水线的一个脚本，不在这一版里：校验输出的 `missing_runtime_paths` 列出它是预期的，做片不需要它。
 2. `profiles/<id>/manual_lane.json`：第 1、2 节的那些根，以及录像位置（第 4 节）。`_` 开头的键是说明。
@@ -65,9 +65,12 @@ python3 scripts/init_channel_profile.py <id> --display-name <主播名> --room <
      `persona.md` 给字幕、标题等文字步骤的提示词；`profile.json` 的 `cover_identity` 给在画面里找主播、核对是不是她的检查。
    - 标题的编辑方法：原文在 `assets/<id>/title_method/`（模板带一份通用写法），流水线读由它生成的
      `assets/<id>/title_editorial_method.json`。改了原文就重新生成：
-     `AUTOSLICE_PROFILE=<id> python3 scripts/build_title_editorial_method.py`。
+     `AUTOSLICE_PROFILE=<id> .venv/bin/python scripts/build_title_editorial_method.py`。
    - `subtitle_burn_style.json`：烧进成片的字幕样式，`host` 是主播的话、`guest` 是别人的话（ASS Style 的值，颜色写法
      `&HAABBGGRR`）。换成自己频道的颜色（比如取主播形象的主色做描边），不要沿用别的频道的主播颜色；没有这个文件第 5 步会停下。
+   - `proper_nouns.json`（名字表）和 `mishearing_pairs.json`（误听对照）：第 3 步写字幕时查名字用。`init_channel_profile`
+     已建好，名字表里只有主播一行；同圈主播、常提到的作品和人照那一行的格式往下加，加完运行
+     `AUTOSLICE_PROFILE=<id> .venv/bin/python -m src.autoslice.manual_lane.mishearing` 重新生成误听对照。
    - `slice_selection_metric.md`：必须换成自己频道的，是「## 优先级分层」里以「第一层」开头的那一条（这个频道什么题材最要紧）。
      文中的 `lidousha_centrality` 是代码里的评分字段名，意思是“和主播本人有多相关”，不要改名。
 
@@ -78,9 +81,9 @@ python3 scripts/init_channel_profile.py <id> --display-name <主播名> --room <
 用 `AUTOSLICE_PROFILE=<id>` 选频道（进程启动时读取）。检查：
 
 ```bash
-python3 scripts/archive_channel_profile.py profiles/<id>/profile.json
-AUTOSLICE_PROFILE=<id> python3 scripts/validate_channel_profile.py --profile <id> --config-only
-AUTOSLICE_PROFILE=<id> python3 -m pytest -q tests/manual_lane/test_channel_neutral.py
+.venv/bin/python scripts/archive_channel_profile.py profiles/<id>/profile.json
+AUTOSLICE_PROFILE=<id> .venv/bin/python scripts/validate_channel_profile.py --profile <id> --config-only
+AUTOSLICE_PROFILE=<id> .venv/bin/python -m pytest -q tests/manual_lane/test_channel_neutral.py
 ```
 
 `--config-only` 只查配置能否读通；不带它会连同声纹、名额授权等生产素材一起查，新频道在备齐之前是 `BLOCKED`，这不妨碍做片。
@@ -102,17 +105,23 @@ AUTOSLICE_PROFILE=<id> python3 -m pytest -q tests/manual_lane/test_channel_neutr
 
 ```bash
 export AUTOSLICE_PROFILE=<id>
-python3 scripts/manual_lane.py preflight                                 # 开工前自检：频道文件和主机上缺什么，一次查完
-python3 scripts/manual_lane.py discover --task-dir <任务目录>            # 一天的录像 → 候选 → 建任务
-python3 scripts/manual_lane.py status --task-dir <任务目录>              # 每天的账本和各条片的片号、做到哪一步
-python3 scripts/manual_lane.py run --task-dir <任务目录> --cid <片号> --until 9
+.venv/bin/python scripts/manual_lane.py preflight                                 # 开工前自检：频道文件和主机上缺什么，一次查完
+.venv/bin/python scripts/manual_lane.py discover --task-dir <任务目录>            # 一天的录像 → 候选 → 建任务
+.venv/bin/python scripts/manual_lane.py status --task-dir <任务目录>              # 每天的账本和各条片的片号、做到哪一步
+.venv/bin/python scripts/manual_lane.py run --task-dir <任务目录> --cid <片号> --until 9
 ```
 
 `preflight` 不改任何东西、不调用模型；有“缺”的先补上再开始，免得做到后面几步才停。录像根可以是只读目录。
 一条两分钟的片，字幕一步通常要二十分钟到一个多小时（疑点要逐个复听），`run` 期间每一步开始和结束会在终端打一行。
 
 每条片的目录里有 `PROCESS.md`：每一步做了什么、模型怎么判、采用了什么；某一步停下时，原因写在那里和状态文件里。
-停下就读原因，不要重复运行去碰运气。第 10 步（上传）不在公开版里。
+停下就读原因，不要重复运行去碰运气。第 10 步（上传）用 `run ... --upload` 单独触发，见 README「发布」一节。
+
+- **discover 一个座位都没排上**：`status` 会逐条列出落选的候选和原因（置信度不够、留作备选、是歌）。
+  要做其中一条，用 `manual_lane.py init`（参数见 `init --help`）：`--selection` 是那段录像的
+  `<任务目录>/discover/<日期>/<录像名>/recall.json`，`--cid` 用 `status` 列出的片号，`--session` 是
+  `<任务目录>/discover/<日期>/session.json`。显式给 `--date` 时，录像器可能还在写的最后一个文件会被留到下一次
+  （报告里记为 RECORDING_MAY_BE_IN_PROGRESS），不必另外挑出已完成的文件。
 
 - **第 9 步扣下了句子**（`PROCESS.md` 的“定不下且影响意思”、`pkg/REVIEW.md`）：是名字、自称、梗的写法拿不准时，把写法补进
   `assets/<id>/glossary.txt`（听错的写法也写进去），再 `redo --task-dir <任务目录> --cid <片号> --from subtitles` 重做；要人听才能定的，

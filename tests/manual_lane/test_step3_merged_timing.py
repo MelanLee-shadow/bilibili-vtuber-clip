@@ -142,3 +142,16 @@ def test_split_without_sources_still_interpolates_as_before():
     # segments that do not describe the text are ignored
     bad = [{'start_s': 0., 'end_s': 6., 'chars': 3}]
     assert normalize.split_cue(text, 0., 6., audit, bad) == normalize.split_cue(text, 0., 6., audit)
+
+
+# --- U136 number spelling is code on the agent path too (G4) ----------------------------------------------------------
+def test_agent_path_spells_numbers_by_the_rule(tmp_path):
+    bcut = cues((0., 2., '反应了两秒钟'), (3., 5., '等我一下子'))
+    final = rows(bcut)
+    ctx = make_ctx(tmp_path, remote=FakeRemote(), cpa=IdCpa())
+    _, path, log = write_subtitles(ctx, bcut, final, preserve_decisions=True)
+    texts = [c['text'].replace('\n', '') for c in subtitle_track.parse_blocks(path.read_text(encoding='utf-8'))]
+    assert texts == ['反应了2秒钟', '等我一下子']
+    assert len(log['numerals']) == 1
+    again, hits = normalize.numerals('反应了2秒钟')
+    assert again == '反应了2秒钟' and hits == []

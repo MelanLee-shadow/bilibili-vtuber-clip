@@ -204,6 +204,22 @@ def test_without_a_date_a_day_that_may_still_be_recording_is_left_alone(tmp_path
     assert not run(tmp_path, Host()).days                                # and a finished day is not looked at again
 
 
+def test_a_named_day_takes_its_finished_recordings_and_leaves_the_one_still_being_written(tmp_path):
+    # goldfish 4: with --date, discover read the recorder's growing last file; it now waits for it
+    last = sorted(SEGMENTS)[-1]
+    seg = lambda name, mtime: dm.Segment(date=DATE, path=f"{ARCHIVE}/{name}.flv", size=10**9, mtime=str(mtime),
+                                         xml_size=10, xml_mtime=str(mtime), stub=False)
+    inv = dm.DayInventory(date=DATE, now=1000.0, exists=True, segments=(seg("a", 100), seg(last, 990)))
+    kept, held = inv.finished(5)
+    assert [s.name for s in kept.segments] == ["a"] and [s.name for s in held] == [last]
+    assert inv.finished(5)[0] is not inv and dm.DayInventory(date=DATE, now=2000.0, exists=True, segments=inv.segments).finished(5)[1] == ()
+    recording = Host(now=1_000_000_600.0, written=1_000_000_000.0)       # last written ten minutes ago
+    report = run(tmp_path, recording, dates=[DATE])
+    assert {"date": DATE, "segment": last, "reason": "RECORDING_MAY_BE_IN_PROGRESS"} in report.deferred
+    paths = [s["path"] for s in dv.load_ledger(tmp_path / "task")["days"][DATE]["segments"]]
+    assert report.days and paths and not any(p.endswith(f"{last}.flv") for p in paths)
+
+
 def test_a_day_whose_danmaku_came_before_its_recordings_waits_for_them_and_a_late_recording_reopens_it(tmp_path):
     shell = [next(iter(SEGMENTS))]                                       # only the empty shell has arrived; the danmaku of all four has
     hours = 3600.0

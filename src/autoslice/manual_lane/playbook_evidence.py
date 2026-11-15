@@ -13,10 +13,14 @@ from .recorder_events import evidence_texts
 
 # what the agent is told about the hints below (playbook_step3's `hints` tool)
 HINTS_NOTE = ('机械候选，可能有误，只是证据：readout_matches 是同期弹幕/SC 中可能被念出或回响的原记录'
-              '（relation=readout_candidate 为句前或句内已发出）；near_names 是句中与名字表拼音相近而写法不同的名字；'
+              '（relation=readout_candidate 为句前或句内已发出）；near_names 是句中与名字表拼音相近而写法不同的名字（spellings 含她的自称和昵称）；'
+              '带 chat_near 的，是句前一分半钟到句后 20 秒内有观众在弹幕里写了这个名字的某种写法：观众在回应或复述她刚说的称呼，'
+              '这一处多半就是这个名字，即使同音的普通词放在句里也讲得通，也写成名字；'
               'sender_of_message_read_next 是紧接着被念出正文的那条付费留言的发送者：她通常在念正文前或同一句里叫这个名字致谢，'
               '这一带若有一段听不成词、又与该名字音节数相近或部分同音的称呼，多半就是它（平台后缀不念）；'
-              '若她清楚地叫的是另一个短称呼，照她叫的写；'
+              '若她清楚地叫的是另一个短称呼，照她叫的写；带 thanks_slot 的，是各家在“谢谢某某的”称呼那一格写的字（heard），'
+              '各家字数一致（characters）且少于发送者名字的汉字数（name_characters）：她叫的是更短的昵称或简称，不是全名——'
+              '按这几个字数，写成读音最接近、并与发送者名字有共同音节的短称呼，不补成全名；'
               'mishearing 是频道已知误听对；begins_like_a_known_mishearing 是有的识别在这里写出了某个已知误听写法的开头（heard），'
               '有的识别写了别的，那个误听写法（known_mishearing）代表 standard。各家在这一处互不相同，就没有哪一家的写法算'
               '“现稿”可以原样保留：在 standard 和各家写法里，取最能同时解释各家音形、音节数和这句话在说谁的那个；'
@@ -114,6 +118,36 @@ def senders_read_next(cues: list[dict], hits_by_cue: dict[int, list[dict]], read
 
 
 _HAN_RUN = re.compile(r'[\u4e00-\u9fff]+')
+_THANKS_SLOT = re.compile(r'谢谢([\u4e00-\u9fff]{1,6}?)的')
+
+
+def thanks_slot(wrote: dict[str, str], sender: str) -> dict:
+    """What each recogniser wrote where she says the sender's name in 谢谢<name>的, when one of them heard that shape.
+    The other recognisers' letters at the same places are read off an alignment that keeps the length there (they may
+    have heard 谢谢 as something else: 289470, BCUT 谢谢老莎的, JianYing 先上了三个).  Reported when two or more
+    recognisers give that place and all of them the same number of characters, fewer than the Chinese part of the
+    sender's name: she called the sender by a shorter name, not the full one.  {} otherwise."""
+    name = ''.join(_HAN_RUN.findall(str(sender)))
+    texts = {k: text_overlap.key(v) for k, v in wrote.items() if v}
+    for anchor_name, anchor in texts.items():
+        found = _THANKS_SLOT.search(anchor)
+        if not found:
+            continue
+        i, j = found.span(1)
+        heard = {anchor_name: anchor[i:j]}
+        for other, text in texts.items():
+            if other == anchor_name:
+                continue
+            for tag, a0, a1, b0, b1 in SequenceMatcher(None, anchor, text, autojunk=False).get_opcodes():
+                if a0 <= i and j <= a1 and tag in ('equal', 'replace') and a1 - a0 == b1 - b0:
+                    heard[other] = text[b0 + i - a0:b0 + j - a0]
+        sizes = {len(v) for v in heard.values()}
+        if len(heard) >= 2 and len(sizes) == 1 and 1 < sizes.pop() < len(name):   # one character is 我的/你的, not a name
+            return {'thanks_slot': {'heard': heard, 'characters': j - i, 'name_characters': len(name)}}
+        return {}
+    return {}
+
+
 
 
 def misheard_heads(pairs: list[dict]) -> dict[str, list[dict]]:
@@ -155,6 +189,18 @@ def said_in_chat_before(word: str, cue: dict, rows: list[dict], *, within_s: flo
     found = [{'sent_s': float(r['t_s']), 'text': r['text']} for r in rows
              if cue['end_s'] - within_s <= float(r['t_s']) <= cue['end_s'] and key and key in text_overlap.key(r['text']).casefold()]
     return {'chat_just_before': found[-2:]} if found else {}
+
+
+def said_in_chat_around(spellings: list[str], cue: dict, rows: list[dict], *, before_s: float = 90.0,
+                        after_s: float = 20.0) -> dict:
+    """{'chat_near': [...]} when viewers wrote one of a name's `spellings` in the chat from `before_s` before the cue ends
+    to `after_s` after it (they answer her, or echo the name she just said), else {}.  At most the two nearest."""
+    keys = [k for k in (text_overlap.key(s).casefold() for s in spellings) if k]
+    found = [{'sent_s': float(r['t_s']), 'text': r['text']} for r in rows
+             if cue['end_s'] - before_s <= float(r['t_s']) <= cue['end_s'] + after_s
+             and any(k in text_overlap.key(r['text']).casefold() for k in keys)]
+    found.sort(key=lambda r: abs(r['sent_s'] - cue['end_s']))
+    return {'chat_near': sorted(found[:2], key=lambda r: r['sent_s'])} if found else {}
 
 
 def written_by_one(text: str, others: list[str]) -> list[str]:
