@@ -1,6 +1,6 @@
 """A session's chat XML, read on the media host itself.
 
-The recorder's files reach the media host through the archive mount (`n100_archive_root` of the recording topology,
+The recorder's files reach the media host through the archive mount (`archive_root` of the recording topology,
 ops/recording/oci3-recording-topology.json: `<root>/<room id>/<date>/<name>.xml`); only root can read it.  When the lane's
 controller runs on the media host (`--on-media-host`) the chat is read there: the recorder host cannot be reached from the
 media host, and a chat that cannot be read leaves the session's SCs, gifts and read-out comments unknown.  The paths the lane
@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import subprocess
 from collections.abc import Sequence
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
+from typing import Any
 
 from .layout import layout
 
@@ -50,3 +51,22 @@ class ArchiveChat:
         """The XML files of one recording date (one live session), by name."""
         listing = self._read(["ls", "-1", self._here(remote_dir)], "danmaku listing")
         return [n for n in listing.decode("utf-8").splitlines() if n.endswith(".xml")]
+
+
+class RecordingDirChat:
+    """The chat beside the recordings in a directory the lane reads itself (same protocol)."""
+
+    def fetch(self, path: str) -> bytes:
+        return Path(path).read_bytes()
+
+    def names(self, directory: str) -> list[str]:
+        return sorted(p.name for p in Path(directory).glob("*.xml"))
+
+
+def session_chat(adapter: Any, recording_date: str, source_dir: str | None) -> tuple[Any, str]:
+    """(reader, directory) of a session's chat: the directory the clip's recording is read from when its chat is there,
+    else the recorder's room directory through the adapter.  OCI3 recorded the day itself and N100, recording
+    as a backup, uploaded nothing; the recorder's archive had no such day and every clip of it went without chat."""
+    if source_dir and any(Path(source_dir).glob("*.xml")):
+        return RecordingDirChat(), source_dir
+    return adapter, f"{layout().danmaku_dir}/{recording_date}"

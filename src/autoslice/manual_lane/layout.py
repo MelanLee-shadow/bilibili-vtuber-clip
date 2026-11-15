@@ -77,7 +77,7 @@ class Layout:
     @property
     def archive_room_dir(self) -> str:
         """The room's recordings on the media host: the one place discover and the chat reader look."""
-        root = self.archive_root or str(json.loads(TOPOLOGY_FILE.read_text(encoding="utf-8"))["n100_archive_root"])
+        root = self.archive_root or str(json.loads(TOPOLOGY_FILE.read_text(encoding="utf-8"))["archive_root"])
         return f"{root}/{self.room_id}"
 
     def need_speaker_v8(self) -> None:

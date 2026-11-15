@@ -46,7 +46,7 @@ WAITING_LIVE = "UPLOAD_WAITING_LIVE"
 WAITING_QUOTA = "UPLOAD_WAITING_QUOTA"
 WAITING_LOCK = "UPLOAD_WAITING_LOCK"
 LOCK_BUSY = "shared upload/repair lock is busy"      # the upload tool's words for its lock held: refused before anything starts
-ATTEMPT_UNRESOLVED = "UPLOAD_ATTEMPT_UNRESOLVED"
+ATTEMPT_UNRESOLVED, RESUMING_TOOL = "UPLOAD_ATTEMPT_UNRESOLVED", "lane_publish.py"
 PACKAGE_CHANGED = "UPLOAD_PACKAGE_CHANGED"
 READBACK_MISMATCH = "UPLOAD_READBACK_MISMATCH"
 NOT_ON_HOST = "UPLOAD_PACKAGE_NOT_ON_MEDIA_HOST"
@@ -97,7 +97,7 @@ class _Run:
             self._cmd(phase, body, log, accept=accept)
             self._mark(phase)
 
-    def _prepare(self, seal: str, route: Route) -> None:
+    def _prepare(self, seal: str) -> Route:
         try:
             state = read_json(self.out / STATE_FILE)
         except (OSError, ValueError):
@@ -106,13 +106,20 @@ class _Run:
             if "plan" in state["done"] or state.get("upload_started_at"):
                 stop(PACKAGE_CHANGED, f"{self.out} 里的上线进度是为另一个封存包建的（计划或上传已发出）：包已变，不能沿用，也不重建计划")
             state = {}
+        # decided once, kept: after a first publication, deciding again takes the clip for its own successor (BV1ZvWf6dEGZ, 11-15)
         if state.get("schema") == SCHEMA:
-            route = Route(**{**state["route"], "flags": tuple(state["route"]["flags"])})     # decided once, kept
+            route = Route(**{**state["route"], "flags": tuple(state["route"]["flags"])})
         else:
+            try:
+                route = step10_route.decide(self.ctx)
+            except RouteRefused as exc:
+                stop(exc.reason, exc.note)
             state = {"schema": SCHEMA, "seal_sha256": seal, "route": dataclasses.asdict(route), "done": [], "commands": [],
                      "polls": 0, "upload_started_at": None, "quota_retry_epoch": None}
         self.route, self.state = route, state
-        self._save()
+        if route.kind != NONE:
+            self._save()
+        return route
 
     def _job(self, route: Route) -> commands.Job:
         auth = self.rules.first_publication if route.kind == FIRST else self.rules.revision
@@ -207,10 +214,14 @@ class _Run:
             if retry and _epoch() < retry:
                 stop(WAITING_QUOTA, f"首发配额不足，可重试的最早时间 {_at(retry)}：到时间下次 run 再试")
             if not job.uploaded.is_file():            # a receipt that is there: the upload went through, the step stopped before noting it
-                if state.get("upload_started_at") and LOCK_BUSY not in (tail(self.out / "upload.log") or ""):
+                # lane_publish resumes a posted BV from its ledger and itself refuses a dispatch that got none: sent again (11-15)
+                resumes = job.upload_tool[:1] == (RESUMING_TOOL,)
+                if state.get("upload_started_at") and not resumes and LOCK_BUSY not in (tail(self.out / "upload.log") or ""):
                     stop(ATTEMPT_UNRESOLVED, f"上一次 run 在 {state['upload_started_at']} 发出了上传命令，没有留下完成回执：不重发，"
                          "以上传工具的 ledger 为准查清后处理")
                 rc, words = self._send(job)
+                if rc == 7 and resumes:
+                    stop(WAITING_LIVE, f"已投出、还没公开（多半在审核）：{words[-300:]}；下次 run 再发同一条 upload，从账本里的 BV 接着核对")
                 if rc == 8:
                     until = re.search(r"until (\d+(?:\.\d+)?)", words)
                     state["quota_retry_epoch"] = float(until.group(1)) if until else _epoch() + self.rules.quota_retry_s
@@ -258,19 +269,12 @@ class _Run:
         except UploadRulesUnset as exc:
             stop(RULES_UNSET, str(exc))
         held(self.ctx)
-        seal = sealed(self.ctx, self.package)
-        try:
-            route = step10_route.decide(self.ctx)
-        except RouteRefused as exc:
-            stop(exc.reason, exc.note)
+        route = self._prepare(sealed(self.ctx, self.package))
         if route.kind == NONE:
-            self.route = route
             self.job = commands.Job(NONE, route.bvid, self.package, self.out, "", "", None, "", "", (), ())
             path = self._online(route, record=None, problems=[])
             return StepOutcome(True, products={"online": str(path)}, note=f"无需上线：{route.why}", process=self.process())
         cover_material(self.ctx)
-        self._prepare(seal, route)
-        route = self.route = self.route or route
         self.job = self._job(route)
         if "audit" not in self.state["done"]:
             self._audit()

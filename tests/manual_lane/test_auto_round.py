@@ -81,7 +81,8 @@ def test_a_clip_that_stops_at_the_same_place_three_rounds_is_left_alone(tmp_path
             finish(tmp_path, cid)
     assert [round_(tmp_path, run)[1] for _ in range(3)] == [[["bad", "good"]], [["bad"]], [["bad"]]]
     result, calls = round_(tmp_path, run)
-    assert calls == [] and result["stuck"] == [{"cid": "bad", "step": "subtitles", "reason": "ASR_MISSING_SOURCE", "times": 3}]
+    assert calls == [] and result["stuck"] == [{"cid": "bad", "step": "subtitles", "reason": "ASR_MISSING_SOURCE", "times": 3,
+                                             "version": ""}]
     ledger = json.loads(ar.ledger_path(tmp_path).read_text())
     assert ledger["clips"]["bad"]["runs"] == 3 and "stopped" not in ledger["clips"]["good"]
     stop(tmp_path, "bad", "subtitles", "ANOTHER_REASON")              # it stops somewhere else now (someone changed something)
@@ -193,3 +194,44 @@ def test_a_stop_that_is_the_surroundings_doing_is_waited_out_too(tmp_path):
     assert all(result["waiting_provider"] == ["limited", "redeployed"] for result, _ in rounds)
     assert [s["cid"] for s in rounds[-1][0]["stuck"]] == ["broken"]
     assert rounds[-1][1] == [["limited", "redeployed"]]
+
+
+def test_a_clip_superseded_by_one_that_is_online_is_reclaimed_with_it(tmp_path):
+    # a trimmed or revised clip's original kept its media for ever
+    from fakes import FakeRemote
+    from src.autoslice.manual_lane.adapters import RemoteResult
+
+    for cid, after, steps in (("orig", "orig_trim", {"review": {"status": "DONE"}}),
+                              ("orig_trim", None, {"upload": {"status": "DONE"}}),
+                              ("held", "held_trim", {"review": {"status": "DONE"}}),
+                              ("held_trim", None, {"review": {"status": "DONE"}})):
+        state = clip(tmp_path, cid, steps)
+        state.data["clip"].update(remote_dir=str(tmp_path / "host" / cid), **({"superseded_by": after} if after else {}))
+        state.save()
+        media = tmp_path / "clips" / cid / "pkg/final.mp4"
+        media.parent.mkdir(parents=True, exist_ok=True)
+        media.write_bytes(b"0" * 2_000_000)
+    online = tmp_path / "clips/orig_trim/upload/online.json"
+    online.parent.mkdir(parents=True)
+    online.write_text("{}")
+    remote = FakeRemote(on_script=lambda name, body, remote: RemoteResult(0, "RECLAIMED\n", ""))
+    now = online.stat().st_mtime + 8 * 86400
+    reclaimed = ar.auto_round(tmp_path, discover_days=lambda: {}, run_clips=lambda cids: 0, upload=False, remote=remote,
+                              now=now)["reclaimed"]
+    assert sorted((r["cid"], r["what"]) for r in reclaimed) == [("orig", "final"), ("orig", "intermediates"),
+                                                                ("orig_trim", "final"), ("orig_trim", "intermediates")]
+    assert not (tmp_path / "clips/orig/pkg/final.mp4").exists()
+    assert (tmp_path / "clips/held/pkg/final.mp4").exists() and (tmp_path / "clips/held_trim/pkg/final.mp4").exists()
+
+
+def test_a_stuck_clip_is_run_once_more_when_another_version_is_deployed(tmp_path, monkeypatch):
+    # 1084420 stayed stuck at step 8 after the fix for it was deployed
+    clip(tmp_path, "bad")
+    def run(cid):
+        stop(tmp_path, cid, "package", "FMR_CHECK_FAILED")
+    monkeypatch.setattr(ar, "deployed_version", lambda: "v1")
+    assert [round_(tmp_path, run)[1] for _ in range(4)] == [[["bad"]], [["bad"]], [["bad"]], []]
+    monkeypatch.setattr(ar, "deployed_version", lambda: "v2")
+    assert round_(tmp_path, run)[1] == [["bad"]]                       # the new version may hold the fix
+    assert json.loads(ar.ledger_path(tmp_path).read_text())["clips"]["bad"]["stopped"] == {
+        "step": "package", "reason": "FMR_CHECK_FAILED", "times": 1, "version": "v2"}

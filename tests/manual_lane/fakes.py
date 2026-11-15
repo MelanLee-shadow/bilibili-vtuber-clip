@@ -35,6 +35,7 @@ def fmr_check_wrote(args) -> None:
         evidence = Path(args[args.index("--package") + 1]) / "evidence"
         evidence.mkdir(parents=True, exist_ok=True)
         (evidence / "auto-checks.json").write_text("{}", encoding="utf-8")
+        (evidence.parent / f"{evidence.parent.name}.record.json").write_text("{}", encoding="utf-8")
 
 
 def srt(n: int = 40, step: float = 2.0) -> str:

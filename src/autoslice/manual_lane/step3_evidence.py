@@ -28,6 +28,7 @@ from .lane_rules import rules
 from .layout import layout
 from .runner import Ctx
 from . import session_events
+from .chat_archive import session_chat
 from . import voices
 from .step_io import REMOTE_TOOLS, _clip, _local, _run_remote
 
@@ -374,12 +375,12 @@ def danmaku_timeline(ctx: Ctx, cut_len: float) -> tuple[list[evidence_attach.Dan
     and SC, gifts and guards reach back to the start of the broadcast, because the streamer reads missed ones long
     after they were sent.  Read-only archive input."""
     clip = _clip(ctx)
-    directory = f"{DANMAKU_XML_ROOT}/{clip['recording_date']}"
+    source, directory = session_chat(ctx.adapters.danmaku, clip["recording_date"], clip.get("source_dir"))
     stem = Path(clip["source_name"]).stem
     local_xml = _local(ctx, "danmaku/recording.xml")
     if not local_xml.exists():
-        local_xml.write_bytes(ctx.adapters.danmaku.fetch(f"{directory}/{stem}.xml"))
-    session, unknown = session_events.load(ctx.adapters.danmaku, directory, stem, local_xml.read_bytes(),
+        local_xml.write_bytes(source.fetch(f"{directory}/{stem}.xml"))
+    session, unknown = session_events.load(source, directory, stem, local_xml.read_bytes(),
                                            _local(ctx, "danmaku/session.json"))
     start = clip["start_ms"] / 1000
     rows: list[evidence_attach.Danmaku] = []

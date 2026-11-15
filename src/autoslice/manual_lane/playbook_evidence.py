@@ -21,6 +21,8 @@ HINTS_NOTE = ('机械候选，可能有误，只是证据：readout_matches 是�
               '若她清楚地叫的是另一个短称呼，照她叫的写；带 thanks_slot 的，是各家在“谢谢某某的”称呼那一格写的字（heard），'
               '各家字数一致（characters）且少于发送者名字的汉字数（name_characters）：她叫的是更短的昵称或简称，不是全名——'
               '按这几个字数，写成读音最接近、并与发送者名字有共同音节的短称呼，不补成全名；'
+              '带 thanks_stretch 的正相反：各家从“谢谢”到句末写的汉字（heard）都比发送者名字的汉字数（name_characters）多，'
+              '她念的是全名（后面接“的”或 SC），中间被识别成“的”的字也是名字的一部分——写全名，不缩成短称呼；'
               'mishearing 是频道已知误听对；begins_like_a_known_mishearing 是有的识别在这里写出了某个已知误听写法的开头（heard），'
               '有的识别写了别的，那个误听写法（known_mishearing）代表 standard。各家在这一处互不相同，就没有哪一家的写法算'
               '“现稿”可以原样保留：在 standard 和各家写法里，取最能同时解释各家音形、音节数和这句话在说谁的那个；'
@@ -146,6 +148,26 @@ def thanks_slot(wrote: dict[str, str], sender: str) -> dict:
             return {'thanks_slot': {'heard': heard, 'characters': j - i, 'name_characters': len(name)}}
         return {}
     return {}
+
+
+def thanks_stretch(wrote: dict[str, str], sender: str) -> dict:
+    """The opposite case of thanks_slot: every recogniser that wrote 谢谢 in this cue begins what follows with the sound
+    of the name's first character and writes, from there to the end of the cue, one to three Chinese characters more
+    than the Chinese part of the sender's name (the name plus 的/SC).  289470: sender 我听说我听说, BCUT
+    谢谢我的手机的什么枪 (8), JianYing 谢谢我手机的手机壳 (7) — she read the whole name; the 的 after three characters
+    split it in the recognisers, it is not a shorter nickname.  {} when fewer than two recognisers wrote 谢谢 here."""
+    name = ''.join(_HAN_RUN.findall(str(sender)))
+    first = name_match.sound_key(name[:1]) if name else None
+    heard = {}
+    for recogniser, text in wrote.items():
+        text = text_overlap.key(text or '')
+        if '谢谢' in text:
+            heard[recogniser] = ''.join(_HAN_RUN.findall(text[text.rindex('谢谢') + 2:]))
+    if (len(name) < 2 or first is None or len(heard) < 2
+            or any(not len(name) < len(v) <= len(name) + 3 or name_match.sound_key(v[0]) != first
+                   for v in heard.values())):
+        return {}
+    return {'thanks_stretch': {'heard': heard, 'name_characters': len(name)}}
 
 
 

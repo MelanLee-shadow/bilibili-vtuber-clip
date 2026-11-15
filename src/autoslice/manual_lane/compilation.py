@@ -518,19 +518,18 @@ def _remote_exists(remote: Remote, path: str) -> bool:
 
 
 def _write_danmaku(clip_dir: Path, manifest: Manifest, recordings: Sequence[RecordingInput], recording_date: str,
-                   adapters: Adapters) -> None:
+                   adapters: Adapters, source_dir: str) -> None:
     """Danmaku of every recording on the joined clock, where step 3 reads its cached XML (kept if already there)."""
     danmaku_local = clip_dir / "danmaku" / "source.xml"
     if danmaku_local.exists():
         return
-    from .step3_evidence import DANMAKU_XML_ROOT
+    from .chat_archive import session_chat
 
-    xml = {r.name: adapters.danmaku.fetch(f"{DANMAKU_XML_ROOT}/{recording_date}/{Path(r.name).stem}.xml").decode(
+    source, directory = session_chat(adapters.danmaku, recording_date, source_dir)
+    xml = {r.name: source.fetch(f"{directory}/{Path(r.name).stem}.xml").decode(
         "utf-8", errors="replace") for r in recordings if any(p["recording"] == r.name for p in manifest["pieces"])}
     first_name = manifest["pieces"][0]["recording"]
-    session_rows, unknown = session_events.load(
-        adapters.danmaku, f"{DANMAKU_XML_ROOT}/{recording_date}", Path(first_name).stem,
-        xml[first_name].encode("utf-8"))
+    session_rows, unknown = session_events.load(source, directory, Path(first_name).stem, xml[first_name].encode("utf-8"))
     danmaku_local.parent.mkdir(parents=True, exist_ok=True)
     danmaku_local.write_text(remap_danmaku(manifest, xml, session_rows), encoding="utf-8")
     if unknown:   # a segment that could not be read is unknown, not empty: say which
@@ -620,7 +619,7 @@ def compile_session(*, task: Path, cid: str, theme: str, session: SessionConfig,
         raise CompilationError("COMPILATION_ASR_EMPTY", f"{bcut_local} has no cues")
 
     # 4. danmaku of every recording on the joined clock, where step 3 reads its cached XML
-    _write_danmaku(clip_dir, manifest, recordings, session.recording_date, adapters)
+    _write_danmaku(clip_dir, manifest, recordings, session.recording_date, adapters, source_dir)
 
     # 5. one input_pool entry: the existing `init` and `run` take it as an ordinary candidate
     entry_file, first, last = _write_entry(work, cid, virtual_path, manifest, virtual_cues)

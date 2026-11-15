@@ -9,71 +9,55 @@
 [![CI](https://github.com/MelanLee-shadow/bilibili-vtuber-clip/actions/workflows/ci.yml/badge.svg)](https://github.com/MelanLee-shadow/bilibili-vtuber-clip/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
-**把中文直播录播变成可审阅的切片包：选片、字幕、标题封面、烧录和交付。**
-软件围绕可追溯证据组织流程；质量检查不通过就保留诊断并停止交付，
-不会把“脚本跑完”当成“内容已经正确”。
+录完一场直播，它自己找出值得切的片段，写字幕、起标题、做封面、烧录、打包，再投到 B 站。
+示例频道 [李豆沙](https://space.bilibili.com/1703797642) 的谈话切片现在就是这条流水线每天自动做出来的。
 
-> A Chinese-first, evidence-driven VTuber clipping pipeline for Bilibili.
-> Producing a review package and authorizing publication are separate operations.
+> A Chinese-first VTuber clipping pipeline for Bilibili: from a stream recording to a published clip.
 
 > [!IMPORTANT]
 > **不推荐人类手动配置本项目——请直接把整个仓库交给你的 AI agent 去配置。**
-> [AGENTS.md](AGENTS.md) 是它的操作入口：先验证环境，再依据模板询问频道信息，
-> 由 agent 完成配置与验证。人类负责提供真实频道资料、素材授权和发布决定；
-> 不需要先读完整仓库，也不能让 agent 编造这些事实。
+> [AGENTS.md](AGENTS.md) 是它的操作入口：先检查环境，再照着模板问你频道信息，
+> 由 agent 完成配置并跑通。你只需要提供频道资料、素材和是否发布的决定。
 
-这是工程项目，不是双击即用的视频编辑器。下面的命令同时供 agent 执行和维护者核验；
-愿意手工配置时也可以按同一流程操作。
+## 它做什么
 
-## 能做什么，不能替你做什么
+代码在 `src/autoslice/manual_lane/`，入口 `scripts/manual_lane.py`。
 
-这一版是重写后的流水线（代码在 `src/autoslice/manual_lane/`，入口 `scripts/manual_lane.py`），
-加上它实际调用的支撑模块和几个独立工具。早先版本里的整条自动审校链不再随仓库分发。
-
-| 入口 | 输入 | 产出与边界 |
+| 入口 | 输入 | 做什么 |
 |---|---|---|
-| `manual_lane.py discover` | 一天的录播 `.flv` / `.mp4`、弹幕 `.xml` 与频道配置 | 整场识别稿 → 候选片 → 按分数和当天名额排座，入选的建成切片任务 |
-| `manual_lane.py run` | 一条切片任务 | 边界、外片查重、剪辑、字幕、说话人、烧录、标题封面、标签、成片包、复审；工具失败或输入缺失就停在那一步并写明原因 |
-| `manual_lane.py auto` | 任务目录 | 无人值守的一轮：发现新的录像日，把没做完的片接着做；同一处连停三轮的片留给人看 |
-| `manual_lane.py revise` / `redo` / `trim` / `import-subtitles` | 已有切片 | 修订、重做某一步、剪掉无关段落、导入人工定稿的字幕 |
-| 活字乱刷（[`huozi_luanshua.py`](scripts/huozi_luanshua.py)） | 历史直播语料和你想拼的句子 | 从主播说过的话里选取语音片段，核对文字与说话人出处后拼成新句子 |
-| 爬虫与知识图（`scripts/crawl_*.py`、[`build_knowledge_graph.py`](scripts/build_knowledge_graph.py)） | 公开来源 | 圈内新闻、名单、动态、时效词的候选条目；实体与关系逐条带出处，字幕用的名表是知识图的投影 |
-| 人设工具（`apply_persona_review.py`、`promote_persona_projection.py`、`extract_persona_facts.py`） | 已审定的事实 | 人设事实台账及其投影 |
-| 录制运维（`ops/recording/`） | 直播间 | 录制、归档与健康检查的参考部署 |
+| `manual_lane.py discover` | 一天的录播 `.flv` / `.mp4`、弹幕 `.xml`、频道配置 | 整场识别 → 找候选片 → 按分数和每天名额挑片，建成切片任务；频道账号在弹幕里发“标记”的地方必切 |
+| `manual_lane.py run` | 一条切片任务 | 边界、查重、剪辑、字幕、说话人、烧录、标题封面、标签、成片包、复审、投稿 |
+| `manual_lane.py auto` | 任务目录 | 定时跑的一轮：发现新录像，把没做完的片接着做，回收已上线片的中间文件 |
+| `manual_lane.py revise` / `redo` / `trim` / `import-subtitles` | 已有切片 | 改片换源、重做某一步、剪掉无关段落、导入人工定稿的字幕 |
+| 活字乱刷（[`huozi_luanshua.py`](scripts/huozi_luanshua.py)） | 历史直播和你想拼的句子 | 从主播说过的话里挑语音片段，拼成新句子 |
+| 爬虫与知识图（`scripts/crawl_*.py`、[`build_knowledge_graph.py`](scripts/build_knowledge_graph.py)） | 公开网页 | 圈内新闻、成员名单、动态、新词，整理成带出处的人物关系图；字幕和标题都从这里查名字 |
+| 人设工具（`apply_persona_review.py`、`promote_persona_projection.py`、`extract_persona_facts.py`） | 切片里认出的事实 | 主播的人设资料 |
+| 录制运维（`ops/recording/`） | 直播间 | 录像、边录边传到网盘、磁盘健康检查 |
 
-**公共仓库提供软件、通用契约、模板和测试，不提供运营账户、真实授权记录、私有审片材料或声纹。**
-
-**发布（第 10 步）** 用随仓的 [`scripts/lane_publish.py`](scripts/lane_publish.py)
+**投稿（第 10 步）** 用 [`scripts/lane_publish.py`](scripts/lane_publish.py)
 （说明在 [`src/autoslice/lane_publish/__init__.py`](src/autoslice/lane_publish/__init__.py)）：
-发布前审计封存包、投新稿、同一稿件换视频或换封面，并在本机的出版登记里记下哪个包对应哪个已发布视频；
-修订片（同一条片改过后重做）从这份登记和首发回执接着走，不会再投一个新稿。它需要：
+先核对封存的成片包，再投新稿，或给已发布的稿件换视频、换封面，并记进出版登记。
+同一条片改过之后重做，会接着原来的稿件换源，不会再投一个新稿。需要：
 
-- biliup 可执行文件和用 `biliup login` 生成的 cookie，路径写在运行目录（`AUTOSLICE_BASE`）的
-  `lane_publish.json`：`{"biliup_bin": "...", "biliup_cookies": "..."}`，两者都放在仓库外；
-- 频道 profile 的合集资产 `season_routes`（谈话片投进哪个合集），没有时第 10 步不投稿；
-- 授权人和授权原话（`assets/manual_lane/lane_rules.json` 的 `upload.authorization`），写进每份上传清单。
+- biliup 和 `biliup login` 生成的 cookie，路径写在运行目录（`AUTOSLICE_BASE`）的
+  `lane_publish.json`：`{"biliup_bin": "...", "biliup_cookies": "..."}`，都放在仓库外；
+- 频道 profile 里的合集设置 `season_routes`；
+- 授权人和授权原话（`assets/manual_lane/lane_rules.json` 的 `upload.authorization`），会写进每份上传清单。
 
-流水线跑到封存为止；第 10 步由 `manual_lane.py run ... --upload` 单独触发，建议有人看过封存的片再运行。
-无人值守轮次的参考 systemd 配置在 [`config/lane-auto/`](config/lane-auto/)，默认不带 `--upload`。
+投稿由 `manual_lane.py run ... --upload` 触发。定时轮次的参考 systemd 配置在
+[`config/lane-auto/`](config/lane-auto/)，默认只做到封存，看过再传。
 
-**不在这一版里：**
+**这一版还没有：** 只改标题的工具（线上标题在 B 站创作中心改）、歌切、官方回放抢救。
 
-- **只改标题**：已发布视频单独改标题（不换视频、不换封面）的工具没有随仓。这类修订第 10 步判为“无需上线”，
-  核对改题回执时会明确报“需要频道自己的出版授权”；线上标题要在 B 站创作中心自己改。
-- **歌切**、**官方回放抢救**：尚未移入重写后的流水线。
+活字乱刷是单独运行的语音重组工具：尽量挑长的、连续的原话，少拼碎片；
+改一两个字能让句子更顺时，会把原句和改句都生成出来让你试听。
+用法见 [活字乱刷操作指引](.agent/skills/huozi-luanshua/SKILL.md)。
 
-活字乱刷是按需运行的独立语音重组流程：优先选择较长、连续的原话，减少零碎拼接；
-如果小幅改句能让拼接更自然，可以分别生成原句与建议句供试听比较。
-它通过剪接重组真实录音，由用户单独触发；入口见
-[活字乱刷操作指引](.agent/skills/huozi-luanshua/SKILL.md)。
+## 快速开始
 
-## 快速开始：先离线验证
+### 1. 安装
 
-### 1. 安装环境
-
-Python **3.11+**；CI 当前覆盖 **3.11、3.12**。媒体流程还需要 `ffmpeg`、`ffprobe`
-和可用的字幕渲染支持；Linux 请安装 CJK 字体，例如 `fonts-noto-cjk`。
-参考部署面向 Linux；在其他系统上先通过配置检查和测试，再验证媒体及外部工具。
+Python **3.11+**（CI 跑 3.11 和 3.12），另需 `ffmpeg`、`ffprobe`；Linux 装上 CJK 字体，例如 `fonts-noto-cjk`。
 
 ```bash
 git clone --depth 1 https://github.com/MelanLee-shadow/bilibili-vtuber-clip.git
@@ -82,13 +66,9 @@ python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 ```
 
-安装依赖需要联网。`requirements.txt` 包含 VAD 和可选声纹流程使用的
-`onnxruntime`、`torch`、`modelscope`，安装体积不小；它们的存在不代表声纹已经录入。
-CI 先安装 CPU 版 PyTorch，以免下载 CUDA 依赖。
+`requirements.txt` 里有声纹和语音检测用的 `onnxruntime`、`torch`、`modelscope`，体积较大；CI 装的是 CPU 版 PyTorch。
 
-### 2. 最小无凭据示例
-
-先使用随仓的示例 profile 检查配置，再查看实际 CLI。这些命令不会制作或上传视频：
+### 2. 先跑一遍离线检查
 
 ```bash
 .venv/bin/python scripts/validate_channel_profile.py --profile lidousha --config-only
@@ -96,86 +76,67 @@ CI 先安装 CPU 版 PyTorch，以免下载 CUDA 依赖。
 .venv/bin/python -m pytest -q
 ```
 
-输入是 `profiles/lidousha/profile.json` 及其公开模板资产；输出是配置检查结果。
-这是配置检查的预期结果：**配置可读不等于已具备声纹或全部生产前提**。
-测试套件使用合成数据和模型替身；运行测试前不要设置 `AUTOSLICE_PROFILE`。
-测试成功不证明外部服务、真实音频质量或账号发布权限正常。CI 在 Linux 上跑 Python 3.11 和 3.12，更新的版本没有在 CI 里测；
-在 macOS 上有一条与系统文件读取有关的用例会失败，与本项目的功能无关，加 `--deselect "tests/test_no_dead_imports.py::test_no_dead_imports[src.autoslice.external_duplicate_check]"` 跳过。
+这几条不联网、不做视频。测试用的是合成数据和假模型，跑测试前不要设置 `AUTOSLICE_PROFILE`。
+在 macOS 上有一条和系统文件读取有关的用例会失败，加
+`--deselect "tests/test_no_dead_imports.py::test_no_dead_imports[src.autoslice.external_duplicate_check]"` 跳过。
 
-### 3. 配置自己的频道和服务
+### 3. 配置自己的频道
 
-按 [profiles/README.md](profiles/README.md) 从 `profiles/_template/` 与
-`assets/_template/` 建立自己的频道。先填写词表、人物设定、标题风格和封面身份描述；
-不要把示例频道的资料或账号合集 ID 当成自己的配置。
-详细问卷和李豆沙真例保留在模板中；知识与运行记录的区别、近期开发的资产落点见
-[频道资产同步说明](docs/channel-assets.md)。
+从 `profiles/_template/` 和 `assets/_template/` 建自己的频道，步骤见 [profiles/README.md](profiles/README.md)：
+词表、人设、标题风格、封面里主播长什么样。模板里附了李豆沙的真实例子可以对照。
+知识和运行记录各放哪，见 [频道资产同步说明](docs/channel-assets.md)。
 
 ```bash
 cp .env.example .env
-# 编辑 .env：使用自己的目录、频道和服务凭据；不要提交此文件。
+# 编辑 .env：填自己的目录、频道和服务凭据；不要提交这个文件。
 set -a
 source .env
 set +a
 ```
 
-`.env` **不会自动加载**。参考部署另外读取 `$AUTOSLICE_BASE/cpa.env`；
-手工运行时应显式导出环境变量。详细入口与凭据校验见
-[docs/credentials.md](docs/credentials.md)。
+`.env` 不会自动加载；参考部署另外读 `$AUTOSLICE_BASE/cpa.env`。凭据清单见 [docs/credentials.md](docs/credentials.md)。
 
-换频道就是换 profile：流水线的提示词、规则数值和代码里不写任何频道的名字，主播是谁、怎么称呼观众、
-怎么在画面里认出她，都从 `profiles/<id>/` 读。从零搭起来的完整步骤（媒体主机上要有什么、频道的三个文件、
+换频道就是换 profile：提示词、规则和代码里不写任何频道的名字，主播是谁、怎么称呼观众、
+画面里怎么认出她，都从 `profiles/<id>/` 读。从零搭起来的完整步骤（媒体主机要装什么、频道的三个文件、
 录像放哪、第一条片）见 [profiles/SETUP.md](profiles/SETUP.md)。
 
-### 4. 第一支真实切片
+### 4. 做第一条片
 
-真实制作**有网络、会消耗模型额度并写入工作目录**，不属于离线验证。先准备自己有权处理的录播、
-已配置的模型网关和复听服务，再按 [操作说明](docs/pipeline/manual-lane-supervision.md) 的命令走：
-`discover`（或 `init`）建任务，`run` 逐步制作，`status` 看每一步的状态。
-每条切片的 `PROCESS.md` 记录每步做了什么、模型怎么判、采用了什么。
+这一步要联网、会用模型额度。准备好录播、模型网关和复听服务后，按
+[操作说明](docs/pipeline/manual-lane-supervision.md) 走：`discover`（或 `init`）建任务，`run` 制作，`status` 看进度。
+每条片的 `PROCESS.md` 写着每一步做了什么、模型怎么判的、最后用了什么；某一步停下时，原因也写在那里。
+示例频道的片头不随仓分发，自己的频道在 profile 里配片头或关掉。
 
-没有合格候选或某一步的检查失败时，读取那一步写下的原因，而不是重复调用以抽到通过结果。
-耗时受片长、编码硬件、服务响应和重试影响，没有固定完成时间。
-示例 profile 的片头媒体不随仓分发；自己的频道应在 profile 中配置真实片头或关闭片头。
-
-## 流水线与模型职责
+## 流水线
 
 ```text
-录播与弹幕 → 整场识别稿 → 候选与排座 → 边界、剪辑
-          → 两份识别稿打底（可选整片识别）→ 三个代理各自独立写字幕、逐处取多数
-          → 拿不准的句子逐级复听 → 弹幕、名表、人设、圈内指称作为证据
-          → 说话人 → 烧录 → 标题与封面（只读最终字幕）→ 标签 → 成片包与成片检查 → 复审
+录播与弹幕 → 整场识别 → 候选与挑片 → 边界、剪辑
+          → 两份识别稿打底 → 三个代理各自写字幕、逐句取多数
+          → 拿不准的句子逐级复听 → 弹幕、名字表、人设、圈内知识当证据
+          → 说话人 → 烧录 → 标题与封面（只读最终字幕）→ 标签 → 成片包 → 复审 → 投稿
 ```
 
-**识别稿是底稿，模型按证据定字。** 唯一不放行的是“定不下且影响意思”的句子：
-流水线照常做到成片包，只是不封存。没有出处、各来源连读音都不一致的名字，不自己推一个写上去。
+识别稿只是底稿，每个字由模型对照证据定。只有“定不下、又影响意思”的句子会让一条片停在封存前，等补到证据。
 
-模型标识、档位和各步的数值规则集中在 [`assets/manual_lane/lane_rules.json`](assets/manual_lane/lane_rules.json)，
-以该文件和当前源码为准。这些是**本项目发送给网关的标识**，不保证每个部署都能访问同名模型。
-CPA 是本项目使用的 [CLIProxyAPI](https://github.com/luispater/CLIProxyAPI) 接入层，
-不是随仓提供的模型服务；涉及看图的步骤必须具备相应视觉能力。
+各步用哪个模型、阈值多少，都在 [`assets/manual_lane/lane_rules.json`](assets/manual_lane/lane_rules.json)。
+模型经 [CLIProxyAPI](https://github.com/luispater/CLIProxyAPI)（本项目叫它 CPA）调用，需要自己部署；看图的步骤要用支持视觉的模型。
 
-## 实验与已知限制
+## 已知限制
 
-- **外部依赖不稳定。** 识别接口、模型网关、复听服务和 B 站接口不受本仓控制；
-  服务不可用、配额不足或不兼容响应会留下失败原因，不能由测试通过推定在线可用。
-- **身份与多人场景有限。** 说话人靠声纹，声纹需要单独配置；不要把匿名说话人编号自动绑定为真实人物。
-- **新频道还需要自己的素材。** 声纹（多人场分人用）、片头、表情包库、标题风格都是按频道准备的；没有的部分按
-  [profiles/SETUP.md](profiles/SETUP.md) 关掉或留空，流水线会在真正需要它的那一步写明缺什么。
-- **随仓的上传工具还没有在真实投稿上跑过。** 本项目自己的频道仍用早先的私有工具发布；
-  `lane_publish` 是按第 10 步的接口重写的，首发、重试、配额、换视频、换封面由离线测试覆盖，
-  第一次真实投稿时请留意它的回执和出版登记。
-- **部署不是通用的一键安装器。** 参考脚本要按自己的主机、目录和服务配置审查后使用。
+- **依赖外部服务。** 识别接口、模型网关、复听服务和 B 站接口出问题时，流水线停在那一步并写明原因，恢复后下一轮接着做。
+- **多人场要声纹。** 联动和看视频的片靠声纹分人，声纹按频道单独录。
+- **新频道要准备自己的素材。** 声纹、片头、表情包、标题风格都按频道准备；没有的按
+  [profiles/SETUP.md](profiles/SETUP.md) 关掉，流水线会在用到的那一步说明缺什么。
+- **部署脚本是参考。** 按自己的主机、目录和服务改过再用。
 
 ## 进一步阅读
 
-初次配置读 [profiles/README.md](profiles/README.md)；修改具体步骤前先读
-[流水线索引](docs/pipeline/README.md)，它指向该步的规则、代码和资产。
-分步文档里提到、但上文“不在这一版里”列出的部件，在本仓库中没有对应代码。
+第一次配置读 [profiles/README.md](profiles/README.md)；改某一步之前读
+[流水线索引](docs/pipeline/README.md)，它指向这一步的规则、代码和资产。
+分步文档里提到、而上面“这一版还没有”列出的部件，本仓库没有代码。
 
-贡献见 [CONTRIBUTING.md](CONTRIBUTING.md)，代理操作约定见 [AGENTS.md](AGENTS.md)，
-安全问题按 [SECURITY.md](SECURITY.md) 私密报告，社区约定见
-[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)。CI 的具体环境与命令以
-[工作流文件](.github/workflows/ci.yml) 为准。
+贡献见 [CONTRIBUTING.md](CONTRIBUTING.md)，agent 操作约定见 [AGENTS.md](AGENTS.md)，
+安全问题按 [SECURITY.md](SECURITY.md) 私下报告，社区约定见 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)。
 
 ## 致谢与许可
 
@@ -186,7 +147,7 @@ CPA 是本项目使用的 [CLIProxyAPI](https://github.com/luispater/CLIProxyAPI
 
 [Apache-2.0](LICENSE)。再分发请保留 `LICENSE` 与 [NOTICE](NOTICE)。
 商业使用时注明本项目并附仓库链接是礼节性请求，不是额外许可条件。
-使用者对所处理素材和发布内容负责；本项目不承诺成品一定正确，也无法代替平台处置站外内容。
+素材和发布内容由使用者自己负责。
 
 ## 友情链接
 
@@ -194,8 +155,7 @@ CPA 是本项目使用的 [CLIProxyAPI](https://github.com/luispater/CLIProxyAPI
 
 ## 本版配置与 GC 接口
 
-本项目提供可复现的配置与验证流程。先从离线配置和快速自检开始，再由部署者验证真实输入与外部服务。
-运行时 GC 的完整配置说明继续保留。当前统一入口是
-`scripts/runtime_gc.py`，Linux service/timer 示例见 `config/runtime-gc/`；
-旧 `terminal_out_gc.py` 已由生命周期收集替代。执行前读
+本项目提供可复现的配置与验证流程：先跑离线检查，再接真实录像和外部服务。
+运行时回收的统一入口是 `scripts/runtime_gc.py`，Linux service/timer 示例在 `config/runtime-gc/`；
+旧的 `terminal_out_gc.py` 已被它取代。用之前读
 [当前生命周期接口](docs/pipeline/10-source-recording.md#当前生命周期-gc-接口)。

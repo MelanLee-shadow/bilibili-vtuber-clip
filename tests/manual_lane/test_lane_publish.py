@@ -151,15 +151,15 @@ def package(root: Path, *, video: bytes = b"video-1", cover: bytes = PNG, title:
     return pkg
 
 
-def _first(host, tmp_path, capsys) -> tuple[Path, dict]:
-    pkg = package(tmp_path / "pkg1")
+def _first(host, tmp_path, capsys, title: str = TITLE) -> tuple[Path, dict]:
+    pkg = package(tmp_path / "pkg1", title=title)
     name, out = pkg.name, tmp_path / "upload1"
     out.mkdir()
     assert main(["audit", str(pkg), "--json"]) == 0
     (out / "package_audit.json").write_text(capsys.readouterr().out)
     man = out / "authorized-upload-manifest.json"
     assert main(["make-manifest", "--video", str(pkg / f"{name}.mp4"), "--cover", str(pkg / f"{name}.cover.png"),
-                 "--package-audit", str(out / "package_audit.json"), "--title", TITLE, "--tags", "虚拟主播,切片",
+                 "--package-audit", str(out / "package_audit.json"), "--title", title, "--tags", "虚拟主播,切片",
                  "--authorized-by", "频道主", "--quote", "默认发布", "--out", str(man)]) == 0
     assert main(["verify", "--manifest", str(man)]) == 0
     assert main(["upload", "--manifest", str(man)]) == 0
@@ -182,6 +182,27 @@ def test_a_first_publication_is_one_bv_in_the_collection_with_a_receipt_the_lane
     assert chain.first_receipt == first.receipt_path(tmp_path / "upload1/authorized-upload-manifest.json")
     assert receipt_chain.used_packages(chain)[0]["package_root"] == str(pkg)
     assert receipt_chain.first_manifest_meta(chain.first_receipt) == (("虚拟主播", "切片"), "简介第一行\n第二行")
+
+
+def test_the_channels_repair_authority_builder_takes_this_tools_receipt(host, tmp_path, capsys):
+    """Step 8 of a revision builds its same-BV authority with src/autoslice/new_bv_repair_authority (
+    semantictalk_1084420_r2 stopped there, 'first-publication evidence closure is missing')."""
+    from src.autoslice import new_bv_repair_authority as channel_builder
+
+    from src.autoslice.channel_envelope import render_talk_title
+
+    titled = render_talk_title("假如我变成薯条，你也会喜欢我吗？")   # the channel's title policy applies here
+    pkg, receipt = _first(host, tmp_path, capsys, title=titled)
+    path = first.receipt_path(tmp_path / "upload1/authorized-upload-manifest.json")
+    where = {"runtime_path": registry.path()}
+    built = channel_builder.build_new_bv_repair_authority(path, candidate_id=pkg.name, title=titled, **where)
+    assert built == authority.build(path, candidate_id=pkg.name, title=titled)
+    assert channel_builder.validate_new_bv_repair_authority(built, candidate_id=pkg.name, **where) == built
+    assert channel_builder.replay_first_publication_manifest(built, **where)["title"] == titled
+    man = Path(receipt["evidence"]["manifest"]["path"])
+    man.write_text(man.read_text(encoding="utf-8").replace(titled, "别的标题"), encoding="utf-8")
+    with pytest.raises(ValueError):
+        channel_builder.validate_new_bv_repair_authority(built, candidate_id=pkg.name, **where)
 
 
 def test_upload_again_or_after_a_stop_never_posts_a_second_bv(host, tmp_path, capsys):
@@ -215,8 +236,56 @@ def test_a_dispatch_without_a_bv_quota_and_a_held_lock_are_refused_with_step_10s
     assert main(["upload", "--manifest", str(man)]) == 3 and "没有 BV" in capsys.readouterr().err
 
 
-def test_a_channel_without_a_talk_collection_stops_at_the_manifest(host, tmp_path, monkeypatch):
-    monkeypatch.undo()          # the real profile lookup: the default test profile has no season_routes asset
+def test_a_public_read_carries_the_upload_accounts_login_cookie(host, tmp_path, monkeypatch):
+    #, the first real run: Bilibili answered the anonymous read-back from the server with HTTP 412
+    import io
+    import urllib.request
+
+    cookies = Path(json.loads((host.base / "lane_publish.json").read_text())["biliup_cookies"])
+    cookies.write_text(json.dumps({"cookie_info": {"cookies": [{"name": "SESSDATA", "value": "s"},
+                                                               {"name": "bili_jct", "value": "j"}]}}))
+    sent = []
+
+    def urlopen(request, timeout):
+        sent.append(request)
+        return io.BytesIO(b'{"code": 0, "data": {"cid": 1}}')
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    assert bili._fetch(bili.VIEW.format(bvid="BV1x")) == {"code": 0, "data": {"cid": 1}}
+    assert sent[0].unredirected_hdrs["Cookie"] == "SESSDATA=s; bili_jct=j"
+
+
+def test_a_package_with_an_unresolved_subtitle_doubt_is_not_sent(host, tmp_path, capsys):
+
+    doubt = {"final_review": {"unresolved_findings_disclosed": [{"cue_index": 7, "suspect": "李姐"}]}}
+    pkg = package(tmp_path / "p", extra=doubt)
+    out = tmp_path / "u"
+    out.mkdir()
+    (out / "a.json").write_text(json.dumps(dict(audit.audit(pkg), passed=True)))     # an audit that let it through
+    args = dict(video=pkg / f"{pkg.name}.mp4", cover=pkg / f"{pkg.name}.cover.png", package_audit=out / "a.json", title=TITLE,
+                tags="a,b", final_human_review=None, authorized_by="x", quote="y", out=out / "m.json")
+    with pytest.raises(manifest.Refused, match="POSTBURN_UNRESOLVED_FINDINGS"):
+        manifest.make(**args)
+    clean = package(tmp_path / "q")
+    (out / "b.json").write_text(json.dumps(audit.audit(clean)))
+    manifest.make(**dict(args, video=clean / f"{clean.name}.mp4", cover=clean / f"{clean.name}.cover.png",
+                         package_audit=out / "b.json"))
+    record = clean / f"{clean.name}.record.json"
+    record.write_text(json.dumps(dict(json.loads(record.read_text()), **doubt)))      # a doubt written after the manifest
+    assert main(["upload", "--manifest", str(out / "m.json")]) != 0 and host.runs == []
+    capsys.readouterr()
+
+
+def test_the_collection_is_read_where_every_uploader_reads_it_and_a_channel_without_one_stops(host, tmp_path, monkeypatch):
+    # the first real run refused the default channel, whose talk collection is clip_profile's own route
+    from src.autoslice import clip_profile
+
+    monkeypatch.undo()          # the real lookup: the default channel, no season_routes asset
+    monkeypatch.setenv("AUTOSLICE_SEASON_IDS", json.dumps({"talk": {"season_id": 8110001, "section_id": 9110001}}))  # public build
+    season = manifest._season()
+    assert (season["season_title"], season["season_id"], season["section_id"]) == (
+        clip_profile.SEASON_TITLES["talk"], *clip_profile.season_ids()["talk"].values())
+    monkeypatch.setattr(clip_profile, "season_ids", lambda: {})      # a channel with no collections at all
     with pytest.raises(manifest.Refused, match="season_routes"):
         manifest._season()
 

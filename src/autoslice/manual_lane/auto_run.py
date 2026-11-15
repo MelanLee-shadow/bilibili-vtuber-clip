@@ -5,7 +5,8 @@
    Finished means its last step is DONE - the upload when the round uploads, else the review.
    A reviewed clip someone kept back (`<clip>/upload/HOLD`) is left to them.
 3. A clip that stopped at the same step for the same reason `STUCK_AFTER` rounds in a row is left alone and listed: someone
-   has to look, and running it again would only spend the same calls.  A clip waiting for the platform (the upload still
+   has to look, and running it again would only spend the same calls - until another version is deployed: it may hold the
+   fix, so the clip is run once more (1084420 sat stuck after its step-8 fix went live).  A clip waiting for the platform (the upload still
    going live, the day's quota) did not fail: it is polled every round.  Neither did a clip whose step stopped because
    the model gave no answer (the account's quota or balance, the route, an outage) or something else outside the clip
    was in the way (a redeploy under the round, a recogniser's rate limit; `provider_failed`): the next round
@@ -55,6 +56,12 @@ def publication_paused(remote: Remote, base: str) -> bool:
     return result.rc != 0 or result.stdout.strip() != "PUBLISH_OPEN"
 
 
+def deployed_version() -> str:
+    """The commit the runtime was deployed from (deploy writes `<repo>/DEPLOYED_COMMIT`); "" outside a deployed tree."""
+    path = Path(__file__).resolve().parents[3] / "DEPLOYED_COMMIT"
+    return path.read_text(encoding="utf-8").strip() if path.is_file() else ""
+
+
 def ledger_path(task: Path) -> Path:
     return task / "auto" / "ledger.json"
 
@@ -92,8 +99,10 @@ def finished(state: ClipState, *, upload: bool) -> bool:
     return state.step("upload" if upload else "review").get("status") == "DONE"
 
 
-def pending(task: Path, ledger: dict[str, Any], *, upload: bool) -> tuple[list[str], list[dict[str, Any]]]:
-    """(the clips to run this round, the clips left alone as stuck)."""
+def pending(task: Path, ledger: dict[str, Any], *, upload: bool,
+            version: str | None = None) -> tuple[list[str], list[dict[str, Any]]]:
+    """(the clips to run this round, the clips left alone as stuck under this deployed `version`)."""
+    version = deployed_version() if version is None else version
     run, stuck = [], []
     for path in sorted((task / "state").glob("*.json")):
         state = ClipState.load(path)
@@ -103,7 +112,8 @@ def pending(task: Path, ledger: dict[str, Any], *, upload: bool) -> tuple[list[s
         if upload and state.step("review").get("status") == "DONE" and (task / "clips" / cid / HOLD_FILE).is_file():
             continue                                  # looked at and kept back by someone: only the upload is left, and it is theirs
         seen = ledger["clips"].get(cid, {}).get("stopped")
-        if seen and seen["times"] >= STUCK_AFTER and stopped_at(state) == (seen["step"], seen["reason"]):
+        if (seen and seen["times"] >= STUCK_AFTER and stopped_at(state) == (seen["step"], seen["reason"])
+                and seen.get("version", "") == version):
             stuck.append({"cid": cid, **seen})
         else:
             run.append(cid)
@@ -126,7 +136,9 @@ def _record(task: Path, ledger: dict[str, Any], cids: Sequence[str]) -> list[str
         else:
             seen = entry.get("stopped") or {}
             same = (seen.get("step"), seen.get("reason")) == stop
-            entry["stopped"] = {"step": stop[0], "reason": stop[1], "times": seen["times"] + 1 if same else 1}
+            same = same and seen.get("version", "") == deployed_version()
+            entry["stopped"] = {"step": stop[0], "reason": stop[1], "times": seen["times"] + 1 if same else 1,
+                                "version": deployed_version()}
     write_json(ledger_path(task), ledger)
     return waiting
 
@@ -146,15 +158,26 @@ def _delete_media(directory: Path, least: int) -> int:
 
 def reclaim(task: Path, ledger: dict[str, Any], remote: Remote, *, now: float) -> list[dict[str, Any]]:
     """The media of clips that are online (lane_rules `auto`): the intermediates at once, the package's video after
-    `final_keep_days`.  Text, subtitles, covers and records stay.  What was done is noted in the ledger, once."""
+    `final_keep_days`.  A clip superseded (trim, revise) by one that is online counts as online with it: nothing will
+    read its media again (originals were never reclaimed).  Text, subtitles, covers and records stay.  What
+    was done is noted in the ledger, once."""
     cfg = rules("auto")
     least, keep_s = int(cfg["media_min_bytes"]), float(cfg["final_keep_days"]) * 86400
-    done = []
-    for path in sorted((task / "state").glob("*.json")) if (task / "state").is_dir() else ():
-        state = ClipState.load(path)
-        cid = state.data["clip"]["cid"]
+    states = {p.stem: ClipState.load(p) for p in sorted((task / "state").glob("*.json"))} if (task / "state").is_dir() else {}
+
+    def online_of(cid: str, seen: frozenset[str] = frozenset()) -> Path | None:
+        state = states.get(cid)
+        if state is None or cid in seen:
+            return None
+        if (after := state.data["clip"].get("superseded_by")):
+            return online_of(str(after), seen | {cid})
         online = task / "clips" / cid / "upload" / "online.json"
-        if state.step("upload").get("status") != "DONE" or not online.is_file():
+        return online if state.step("upload").get("status") == "DONE" and online.is_file() else None
+
+    done = []
+    for state in states.values():
+        cid = state.data["clip"]["cid"]
+        if (online := online_of(cid)) is None:
             continue
         entry = ledger["clips"].setdefault(cid, {"runs": 0})
         if "intermediates_deleted" not in entry:

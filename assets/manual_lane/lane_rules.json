@@ -346,11 +346,11 @@
     "source": "docs/pipeline/20-selection.md；docs/pipeline/10-source-recording.md；人工盘点脚本（inventory.py、prepare_sources.py、recall_ready.py）的做法",
     "stub_max_bytes": 120000,
     "stub_max_bytes_source": "开播瞬间的空壳：小于约 120 KB 的 .flv 没有内容（人工盘点脚本 inventory.py 的 size < 120000）",
-    "settle_minutes": 90,
+    "settle_minutes": 60,
     "lone_danmaku_hours": 24,
     "direct_keep_days": 3,
     "lone_danmaku_hours_source": "2026-11-13 实测：每段的弹幕文件随直播先到归档，录像本身晚 6–12 小时，而且不按顺序到（11-10 一场：弹幕 04:44–06:38Z 到，五段录像 10:47Z、13:53Z、17:48Z、17:49Z、18:21Z 到；11-13 一场开播 5 小时后归档里只有一个空壳录像和五份弹幕）。弹幕到了而录像没到的这一天不算录完；一份弹幕等了 24 小时录像还没来，就当它不会来了。",
-    "settle_minutes_source": "推导式：录制每 30 分钟一段，直播中最新一段的修改时间不会比 30 分钟更旧；再加云盘归档的延迟（延迟的实际长度未实测，这里留 60 分钟）。该日最新一段的修改时间距主机现在超过 90 分钟，才算已录完、可以处理；比这更新的日期可能还在录或还没归档完，不处理",
+    "settle_minutes_source": "2026-11-15 起（原 90 分钟，公开规则问一条切片要多久）：录像在 OCI3 本机录，每段录完几分钟内就拷到流水线这边，没拷齐时拷贝脚本每两分钟碰一次 .copy_pending，算作当天有写入，所以不再需要等云盘归档。剩下只等“她是不是真下播了”：直播中最新一段每 30 分钟换一次，断线重连通常几分钟内；当天最后一次写入距主机现在超过 60 分钟才算录完。旧说法：录制每 30 分钟一段，再加云盘归档的延迟（未实测，留 60 分钟），合计 90 分钟",
     "auto_not_before": "2026-11-09",
     "auto_not_before_source": "2026-11-12：无人值守从 2026-11-09 这场开始接手；更早的场次是人工出的片（出版登记里按另一套片号登记），自动再选一遍会选到已经发过的段落。不给 --date 时不看早于这一天的日期目录；要处理更早的日期用 --date 明说",
     "auto_recent_dates": 3,
@@ -597,7 +597,7 @@
     "edge_tolerance_s": 0.1
   },
   "upload": {
-    "_doc": "第 10 步（上传）读的数：授权人与授权原话、等线上的间隔与次数、首发配额不足时的重试间隔。授权文字不是每条片手填：首发读 authorization.first_publication，同稿件换视频/换封面读 authorization.revision；任何一项（授权人、原话、规则日期）为空，第 10 步在发出任何命令前以 UPLOAD_RULES_UNSET 失败。等线上：执行命令（repair-run / cover-repair-run）返回 6（仍在推进）时，按 wait.poll_interval_s 隔开重跑同一条命令，最多 wait.max_polls 次；用完仍未完成，步骤停在 UPLOAD_WAITING_LIVE，下次 run 只继续轮询。配额不足（上传命令返回 8）时，步骤停在 UPLOAD_WAITING_QUOTA，可重试的最早时间取工具报出的时刻，工具没报时取现在加 quota.retry_after_s。tools：第 10 步把命令发给哪个上传工具、哪个包审计（scripts 下的脚本名加前置参数）；本部署是 authorized_upload.py 与 audit_lidousha_review_package.py，公开版是 lane_publish.py（同一套子命令，见 src/autoslice/lane_publish）。publish：lane_publish 投新稿的分区（tid 27）、转载（copyright 2）与来源，以及等公开（public_wait_s，每 public_poll_s 看一次）、等追加的分 P 出现（new_part_wait_s）的秒数。",
+    "_doc": "第 10 步（上传）读的数：授权人与授权原话、等线上的间隔与次数、首发配额不足时的重试间隔。授权文字不是每条片手填：首发读 authorization.first_publication，同稿件换视频/换封面读 authorization.revision；任何一项（授权人、原话、规则日期）为空，第 10 步在发出任何命令前以 UPLOAD_RULES_UNSET 失败。等线上：执行命令（repair-run / cover-repair-run）返回 6（仍在推进）时，按 wait.poll_interval_s 隔开重跑同一条命令，最多 wait.max_polls 次；用完仍未完成，步骤停在 UPLOAD_WAITING_LIVE，下次 run 只继续轮询。配额不足（上传命令返回 8）时，步骤停在 UPLOAD_WAITING_QUOTA，可重试的最早时间取工具报出的时刻，工具没报时取现在加 quota.retry_after_s。tools：第 10 步把命令发给哪个上传工具、哪个包审计（scripts 下的脚本名加前置参数）；本部署上传用 lane_publish.py（2026-11-15 起；同一套子命令，见 src/autoslice/lane_publish，与 authorized_upload.py 共用一份出版登记），包审计仍用更严的 audit_lidousha_review_package.py；公开版两样都用 lane_publish.py。publish：lane_publish 投新稿的分区（tid 27）、转载（copyright 2）与来源，以及等公开（public_wait_s，每 public_poll_s 看一次）、等追加的分 P 出现（new_part_wait_s）的秒数。",
     "source": "wait：2026-11-11 九条片上线实跑，换视频用了 7-10 分钟、只换封面 25 秒-2 分钟（reports/publication-evidence-20261111/README.md），间隔 180 秒、最多 12 次与当时人工脚本一致；quota.retry_after_s 是实现选择（工具的 24 小时滚动估算只给“已满”，不给解除时刻）。authorization：频道主“默认发布”规则的原话（2026-10-15）与修好的稿件编辑上线的原话（2026-07-18）。",
     "authorization": {
       "authorized_by": "维护者",

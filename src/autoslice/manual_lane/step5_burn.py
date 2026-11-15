@@ -82,7 +82,7 @@ def step5_burn(ctx: Ctx) -> StepOutcome:
     ctx.adapters.remote.put(REMOTE_TOOLS / "render_ass.py", f"{rd}/tools/render_ass.py")
     ctx.adapters.remote.put(REMOTE_TOOLS / "prepend_intro.py", f"{rd}/tools/prepend_intro.py")
     body = (f"mkdir -p {rd}/burn {rd}/tools\n"
-            f"{remote_python(f'{rd}/tools/render_ass.py {rd}/burn/speaker.srt {rd}/burn/final.ass')} || exit 11\n"
+            f"{remote_python(f'{rd}/tools/render_ass.py {rd}/burn/speaker.srt {rd}/burn/final.ass {REMOTE_FONTS}')} || exit 11\n"
             f"ffmpeg -hide_banner -loglevel error -y -i {rd}/cut/cut.mp4 "
             f"-vf \"subtitles='{rd}/burn/final.ass':fontsdir='{REMOTE_FONTS}'\" "
             f"-c:v libx264 -preset veryfast -crf 20 -c:a copy -movflags +faststart {rd}/burn/main_burned.mp4 || exit 12\n"
@@ -90,6 +90,9 @@ def step5_burn(ctx: Ctx) -> StepOutcome:
             f"{remote_python(f'{rd}/tools/prepend_intro.py {rd}/burn/main_burned.mp4 {rd}/burn/final.mp4 ')}"
             f"{rd}/burn/intro_work {rd}/burn/intro_result.json {identity_args} || exit 13\n")
     res = _run_remote(ctx, "s5-burn", body, timeout=3600)
+    if res.rc == 11 and "GLYPH_MISSING" in res.stdout:
+        return _fail("SUBTITLE_GLYPH_MISSING", "字幕里有主机上没有字体能画的字，烧出来会是方框；先在主机装上能画它的字体"
+                     "（单色字体，例如 apt 的 fonts-symbola；主机的 libass 不画彩色 emoji），再重跑第 5 步：" + res.stdout.split("GLYPH_MISSING", 1)[1][:300])
     if res.rc != 0:
         return _fail(f"BURN_FAILED_RC{res.rc}", (res.stdout + res.stderr)[-400:])
     local_result = _local(ctx, "burn/intro_result.json")

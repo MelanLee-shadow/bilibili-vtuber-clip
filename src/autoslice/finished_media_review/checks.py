@@ -235,6 +235,16 @@ def _intro_offset_ms(ctx: Context) -> int:
     return value
 
 
+def _latin_names() -> list[str]:
+    """The Latin-letter runs of the channel's canonical name writings (kmx, IT of IT达人, Sumi of 礼墨Sumi): the
+    witness ASR writes their sound, not their letters, so the timing check lets each stand for a few witness
+    characters (subtitle_audio_correspondence.MASKED_WRITING_SPAN)."""
+    from src.autoslice.manual_lane.channel import name_table
+
+    rows = json.loads(name_table("proper_nouns.json").read_text(encoding="utf-8"))
+    return sorted({run for row in rows for run in re.findall(r"[A-Za-z][A-Za-z0-9]+", str(row.get("canonical") or ""))})
+
+
 def a4_audio_witness(ctx: Context) -> dict[str, Any]:
     """BCUT witness via the existing library; disagreement cues go to nominations.json for the reviewer."""
     from src.autoslice.final_subtitle_audio_gate import (
@@ -258,7 +268,7 @@ def a4_audio_witness(ctx: Context) -> dict[str, Any]:
     }
     try:
         capture_final_subtitle_audio_check(
-            record, ctx.files["srt"], ctx.root, ctx.cid, adapters=ctx.adapters.gate)
+            record, ctx.files["srt"], ctx.root, ctx.cid, adapters=ctx.adapters.gate, masked_writings=_latin_names())
         validate_final_subtitle_audio_check(
             record, ctx.files["srt"], ctx.files["video"], ctx.root, candidate_id=ctx.cid)
     except (FinalSubtitleAudioGateError, ValueError, OSError) as exc:

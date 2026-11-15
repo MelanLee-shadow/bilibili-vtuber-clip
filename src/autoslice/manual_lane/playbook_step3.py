@@ -330,7 +330,8 @@ class _Agent:
             if cue['id'] in thanked:
                 item['sender_of_message_read_next'] = thanked[cue['id']]
                 for row in thanked[cue['id']]:
-                    item.update(pe.thanks_slot(wrote[cue['id']], row['sender']))
+                    item.update(pe.thanks_slot(wrote[cue['id']], row['sender'])
+                                or pe.thanks_stretch(wrote[cue['id']], row['sender']))
             near = list(dict.fromkeys(n for t in readings for n in (*name_match.near_names(t, names),
                                                                     *name_match.near_full_names(t, names))))
             if near:

@@ -50,7 +50,7 @@ from .discover_media import (
     remote_dir_of,
     write_json,
 )
-from .discover_select import RecallCallError, Selector, lane_cid, load_recall, recall_segment, seat_day
+from .discover_select import OWNER_MARK_NOT_COVERED, RecallCallError, Selector, lane_cid, load_recall, recall_segment, seat_day
 from .lane_rules import rules
 from .layout import REPO_ROOT
 from .multi_run import say
@@ -161,6 +161,8 @@ def _work_segment(task: Path, adapters: Adapters, segment: Segment, selector: Se
         entries = [dict(e, cid=lane_cid(e["candidate_id"], segment.name)) for e in recall["input_pool"]]
         rec["select"] = {"status": "OK", "reused": reused, "candidates": len(entries),
                          "inputs": recall["inputs"], "danmaku": "OK" if prepared["xml"]["exists"] else "MISSING"}
+        if tied := recall.get("owner_marks", {}).get("tied"):
+            rec["owner_marks"] = tied
         rec["status"] = "SELECTED"
         return rec, entries
     except Exception as exc:  # noqa: BLE001 - the per-recording boundary: one recording's failure must not stop the others
@@ -200,6 +202,9 @@ def _process_day(task: Path, adapters: Adapters, inv: DayInventory, day: dict[st
         done = list(pool.map(lambda s: _work_segment(task, adapters, s, selector), content))
     failures = [{"date": date, "segment": rec["name"], **rec[phase]} for rec, _ in done
                 for phase in ("prepare", "select") if rec.get(phase, {}).get("status") == "FAILED"]
+    failures += [{"date": date, "segment": rec["name"], "code": OWNER_MARK_NOT_COVERED,
+                  "detail": f"owner mark at {m['at_ms'] / 1000:.0f}s ({m['text']}): no candidate holds it, not even a recall around it"}
+                 for rec, _ in done for m in rec.get("owner_marks", []) if m.get("candidate_id") is None]
     for rec, entries in done:
         say(f"[{date} {rec['name']}] {rec['status']}" + (f" 候选 {len(entries)}" if entries else ""))
     day["segments"] = sorted([rec for rec, _ in done] + stubs, key=lambda r: r["name"])

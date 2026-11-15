@@ -104,6 +104,24 @@ def test_step8_stops_when_the_check_crashed_with_the_findings_exit_code(tmp_path
     assert not out.ok and out.reason == "FMR_CHECK_DID_NOT_FINISH" and "_parse_srt" in out.note
 
 
+def test_step8_stops_at_a_failed_check_that_left_no_record(tmp_path, monkeypatch):
+    """1084420 : A4 could not anchor the subtitle timing; no record, so the attest after the review was refused."""
+    ctx, _ = _prepared(tmp_path)
+    rec = Recorder(codes={"check": 1})
+
+    def failed(*args):
+        out = rec(*args)
+        if args[0] == "check":
+            package = sp.Path(args[args.index("--package") + 1])
+            (package / f"{package.name}.record.json").unlink()
+            return subprocess.CompletedProcess(args, 1, "A4   FAIL               FMR_A4_AUDIO_WITNESS_REJECTED\n", "")
+        return out
+
+    _patch(monkeypatch, failed)
+    out = sp.step8_package(ctx)
+    assert not out.ok and out.reason == "FMR_CHECK_FAILED" and "FMR_A4_AUDIO_WITNESS_REJECTED" in out.note
+
+
 def test_step8_stops_only_when_the_lane_refuses_init_or_check(tmp_path, monkeypatch):
     ctx, _ = _prepared(tmp_path / "a")
     _patch(monkeypatch, Recorder(codes={"init": 2}))

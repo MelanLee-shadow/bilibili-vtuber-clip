@@ -17,7 +17,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 from scripts.free_asr_client import to_srt as _bcut_to_srt
 from scripts.free_asr_client import transcribe_bcut as _transcribe_bcut
@@ -30,6 +30,7 @@ from src.autoslice.subtitle_audio_correspondence import (
     check_subtitle_audio_correspondence,
     sha256_file,
 )
+from src.autoslice.subtitle_audio_masked import masked_writings_of, normalized as _masked
 
 
 GATE_SCHEMA_VERSION = "final-subtitle-audio-gate.v1"
@@ -566,6 +567,7 @@ def _validate_artifacts(
             intro_offset_ms=expected_intro,
             assess_text=stored_declared == "ASSESSED",
             anchor_uniqueness=anchor_uniqueness_policy_of(_expected_receipt(envelope)),
+            masked_writings=masked_writings_of(_expected_receipt(envelope)),
         )
     except CorrespondenceInputError as exc:
         raise FinalSubtitleAudioGateError(
@@ -683,6 +685,7 @@ def _load_cache(
     actual_media: Path,
     output_dir: Path,
     expected_intro: int,
+    masked_writings: Sequence[str] = (),
 ) -> dict[str, Any] | None:
     paths = _artifact_paths(output_dir, candidate_id)
     if not all(path.is_file() and not path.is_symlink() for path in paths.values()):
@@ -708,16 +711,9 @@ def _load_cache(
             "intro_offset_ms": envelope.get("intro_offset_ms"),
             "receipt": envelope.get("receipt"),
         }
-        receipt = _validate_artifacts(
-            cached_record,
-            actual_media=actual_media,
-            final_srt=final_srt,
-            package_dir=output_dir,
-            candidate_id=candidate_id,
-            package_stem=candidate_id,
-            require_pass=False,
-        )
-        if anchor_uniqueness_policy_of(receipt) != ANCHOR_UNIQUENESS_POLICY:
+        receipt = _validate_artifacts(cached_record, actual_media=actual_media, final_srt=final_srt, package_dir=output_dir,
+                                      candidate_id=candidate_id, package_stem=candidate_id, require_pass=False)
+        if anchor_uniqueness_policy_of(receipt) != ANCHOR_UNIQUENESS_POLICY or masked_writings_of(receipt) != _masked(masked_writings):
             # The cached BCUT observation has just been validated under the
             # rule its stored receipt declares.  A capture must emit the
             # current rule, so only the deterministic receipt is recomputed
@@ -732,6 +728,7 @@ def _load_cache(
                 paths["provenance"],
                 intro_offset_ms=expected_intro,
                 assess_text=True,
+                masked_writings=masked_writings,
             )
             envelope = dict(envelope)
             envelope["receipt"] = upgraded
@@ -739,20 +736,14 @@ def _load_cache(
                 "from_anchor_uniqueness": anchor_uniqueness_policy_of(receipt),
                 "to_anchor_uniqueness": ANCHOR_UNIQUENESS_POLICY,
                 "previous_receipt_sha256": previous_receipt_sha256,
-                "previous_status": receipt.get("status"),
+                "previous_status": receipt.get("status"), **({"to_masked_writings": list(_masked(masked_writings))} if masked_writings else {}),
                 "provider_calls": 0,
             }
             _write_json_atomic(paths["correspondence"], envelope)
             cached_record["subtitle_audio_correspondence"]["receipt"] = upgraded
-            receipt = _validate_artifacts(
-                cached_record,
-                actual_media=actual_media,
-                final_srt=final_srt,
-                package_dir=output_dir,
-                candidate_id=candidate_id,
-                package_stem=candidate_id,
-                require_pass=False,
-            )
+            receipt = _validate_artifacts(cached_record, actual_media=actual_media, final_srt=final_srt,
+                                          package_dir=output_dir, candidate_id=candidate_id, package_stem=candidate_id,
+                                          require_pass=False)
     except (FinalSubtitleAudioGateError, CorrespondenceInputError, OSError, ValueError):
         return None
     return {"paths": paths, "envelope": envelope, "receipt": receipt}
@@ -765,6 +756,7 @@ def capture_final_subtitle_audio_check(
     candidate_id: str,
     *,
     adapters: FinalSubtitleAudioGateAdapters | None = None,
+    masked_writings: Sequence[str] = (),     # the channel's Latin-letter names (subtitle_audio_masked)
 ) -> dict[str, Any]:
     """Capture or safely resume the exact burned-media timing witness.
 
@@ -794,6 +786,7 @@ def capture_final_subtitle_audio_check(
         actual_media=burned,
         output_dir=output,
         expected_intro=expected_intro,
+        masked_writings=masked_writings,
     )
     if cached is not None:
         return _record_evidence(
@@ -874,6 +867,7 @@ def capture_final_subtitle_audio_check(
             paths["provenance"],
             intro_offset_ms=expected_intro,
             assess_text=True,
+            masked_writings=masked_writings,
         )
     except CorrespondenceInputError as exc:
         receipt = {

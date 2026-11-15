@@ -14,3 +14,4 @@ tests/manual_lane/test_pronoun_rule_authority.py::test_no_second_pronoun_rule_is
 tests/manual_lane/test_task11_speaker_clusters.py::test_the_session_keyword_reaches_the_adjudicator_with_its_context_note_and_is_not_a_person | reads an example-channel asset whose wording the export rewrites
 tests/manual_lane/test_title_authority_guard.py::test_the_title_prompt_carries_the_skill_the_style_note_and_the_corpus_with_their_sha256 | pins wording of the title method that the export sanitises
 tests/manual_lane/test_title_authority_guard.py::test_the_review_prompt_carries_the_skills_title_rules_and_hash | pins wording of the title method that the export sanitises
+tests/manual_lane/test_owner_marks.py::test_the_default_channel_names_its_own_account | the channel owner's account id (owner_marks.json) is private; the public asset has none
