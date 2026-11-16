@@ -44,8 +44,8 @@ def test_listen_pass_returns_only_the_records_of_its_own_windows_and_models(tmp_
     recs = si._listen_pass(ctx, "L2", [{"win": "C000"}], [si.M38])
     assert [(r["win"], r["model"]) for r in recs] == [("C000", si.M38["name"])]
     assert ctx.remote_dir == RD
-    # the first level's stand-in is the second level's model: its record of the second level is not the first level's
-    assert si.ARGON["name"] in si.M38.get("then", [])
+
+    assert si.ARGON["name"] not in (si.M38["name"], *si.M38.get("then", ()))
 
 
 def test_c_settled_at_level_one_reads_only_3_8_and_asr_not_the_other_models(tmp_path, monkeypatch):
