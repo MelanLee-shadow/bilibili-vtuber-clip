@@ -26,6 +26,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
+from src.autoslice import crawl_window
 from src.autoslice.bilibili_wbi import (
     WbiProtocolError,
     mixin_key as bilibili_wbi_mixin_key,
@@ -79,39 +80,7 @@ class FetchLimitError(CrawlError):
     """A request exceeded the configured request or response budget."""
 
 
-@dataclass(frozen=True)
-class CrawlWindow:
-    as_of: dt.date
-    start: dt.date
-    end: dt.date
-
-    @classmethod
-    def around(
-        cls,
-        as_of: dt.date,
-        *,
-        lookback_months: int = 9,
-        lookahead_months: int = 6,
-    ) -> "CrawlWindow":
-        if not 0 <= lookback_months <= 24 or not 0 <= lookahead_months <= 24:
-            raise ValueError("lookback/lookahead months must be between 0 and 24")
-        return cls(
-            as_of=as_of,
-            start=_shift_months(as_of, -lookback_months),
-            end=_shift_months(as_of, lookahead_months),
-        )
-
-
-def _shift_months(value: dt.date, months: int) -> dt.date:
-    month_index = value.year * 12 + value.month - 1 + months
-    year, zero_month = divmod(month_index, 12)
-    month = zero_month + 1
-    if month == 12:
-        next_month = dt.date(year + 1, 1, 1)
-    else:
-        next_month = dt.date(year, month + 1, 1)
-    last_day = (next_month - dt.timedelta(days=1)).day
-    return dt.date(year, month, min(value.day, last_day))
+CrawlWindow = crawl_window.CrawlWindow          # one definition of the 9/6-month window (crawl_window)
 
 
 def _fuzzy_date(value: object) -> dt.date | None:

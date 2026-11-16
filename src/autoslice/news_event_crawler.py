@@ -16,11 +16,13 @@ import time
 import urllib.error
 from collections import Counter
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol
 
+from src.autoslice import community_name_graph as names
 from src.autoslice import news_event_graph as store
+from src.autoslice.crawl_window import CrawlWindow
 from src.autoslice import news_event_judge as judge
 from src.autoslice.knowledge_graph import GraphError, JsonValue, load_graph
 from src.autoslice.llm_client import LlmCallError
@@ -63,6 +65,7 @@ class Report:
     left_out: int = 0
     candidates: dict[str, int] = field(default_factory=dict)
     previous_discarded: str | None = None
+    community: dict[str, JsonValue] | None = None
 
     def error(self, text: str) -> None:
         if len(self.errors) < MAX_ERRORS_LISTED:
@@ -76,13 +79,15 @@ class Report:
             "candidates": {k: v for k, v in self.candidates.items()}}
         names: list[JsonValue] = [s.name for s in self.seeds]
         origins: dict[str, JsonValue] = {k: v for k, v in Counter(s.origin for s in self.seeds).items()}
-        return counts | {
+        doc: dict[str, JsonValue] = counts | {
             "schema_version": REPORT_SCHEMA, "generated_at": self.generated_at, "owner": self.owner,
             "inputs": {k: v for k, v in self.inputs.items()}, "errors": [e for e in self.errors],
             "seeds": {"count": len(self.seeds), "by_origin": origins, "names": names},
             "findings": {"new_nodes": [n for n in self.new_nodes], "new_edges": [e for e in self.new_edges],
                          "left_out_id_collision": self.left_out},
             "previous_discarded": self.previous_discarded}
+        doc["community"] = self.community
+        return doc
 
 
 class NewsEventError(RuntimeError):
@@ -202,12 +207,53 @@ def _search_all(report: Report, search: RouterSearch, seeds: Sequence[Seed], own
     return found
 
 
+def _in_window(findings: Sequence[judge.Finding], window: CrawlWindow) -> tuple[list[judge.Finding], int]:
+    """The findings whose time as news overlaps the window, and how many fell outside it."""
+    kept = [f for f in findings if window.holds(f.valid_from, f.valid_until)]
+    return kept, len(findings) - len(kept)
+
+
+def _date_undated(report: Report, previous: store.Candidates, llm_call: Callable[[str], str], now: dt.datetime
+                  ) -> store.Candidates:
+    """Events and projects collected before every item carried its time are dated by CPA from their own summary and
+    URLs; one it cannot date is dropped (its edges go in store.accumulate), since it cannot be placed in time.  A call
+    that fails leaves its batch as it was, for the next run."""
+    nodes = dict(previous[0])
+    undated = [n for n in nodes.values() if n.kind in store.DATED_KINDS and not n.valid]
+    for start in range(0, len(undated), judge.DATE_BATCH):
+        batch = undated[start:start + judge.DATE_BATCH]
+        items: list[dict[str, JsonValue]] = [
+            {"id": n.id, "kind": n.kind, "name": n.names["display"], "summary": n.summary,
+             "urls": [s.ref for s in n.sources]} for n in batch]
+        report.cpa["date_attempted"] += 1
+        try:
+            dated = judge.parse_dates(_call_json(llm_call, judge.date_prompt(now.date().isoformat(), items)),
+                                      [n.id for n in batch])
+        except (LlmCallError, judge.JudgeError) as exc:
+            report.cpa["date_failed"] += 1
+            report.error(f"date batch {start // judge.DATE_BATCH}: {type(exc).__name__}: {str(exc)[:200]}")
+            continue
+        report.cpa["date_ok"] += 1
+        for node in batch:
+            if node.id in dated:
+                nodes[node.id] = replace(node, valid=dated[node.id])
+                report.cpa["dated"] += 1
+            else:
+                del nodes[node.id]
+                report.cpa["undatable_dropped"] += 1
+    return nodes, previous[1]
+
+
 def crawl(*, owner: str, repo_root: Path, runtime_root: Path, registry: Registry | None,
           dynamics: Dynamics | None, search: RouterSearch, llm_call: Callable[[str], str], now: dt.datetime,
           max_seeds: int = MAX_SEEDS, clock: Callable[[], float] = time.monotonic,
-          notes: Sequence[str] = (), clip_names: Sequence[str] = ()) -> Report:
+          notes: Sequence[str] = (), clip_names: Sequence[str] = (),
+          community: names.Community | None = None,
+          name_videos: Callable[[str], Sequence[names.Video]] | None = None,
+          origin_limit: int = names.ORIGIN_LIMIT) -> Report:
     """One run.  Returns the report that was written next to the graph; raises NewsEventError on failure."""
     stamp = now.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    window = CrawlWindow.around(now.date())
     repo = load_graph(repo_root)
     report = Report(stamp, owner, {"registry": registry is not None, "dynamics": dynamics is not None},
                     errors=list(notes))
@@ -226,6 +272,7 @@ def crawl(*, owner: str, repo_root: Path, runtime_root: Path, registry: Registry
     except (GraphError, OSError, ValueError) as exc:  # re-derivable from search; discarded loudly, not silently
         previous = ({}, {})
         report.previous_discarded = f"{type(exc).__name__}: {str(exc)[:300]}"
+    previous = _date_undated(report, previous, llm_call, now)
     known = store.with_candidates(repo, previous)
     repo_edges = {e.id for e in repo.edges}
     fresh: store.Candidates = ({}, {})
@@ -244,6 +291,8 @@ def crawl(*, owner: str, repo_root: Path, runtime_root: Path, registry: Registry
             continue
         report.cpa["judge_ok"] += 1
         report.rejected.update(bad)
+        got, late = _in_window(got, window)
+        report.rejected["outside the 9-month-back / 6-month-ahead window"] += late
         for finding in got:
             report.per_seed[finding.seed]["findings"] += 1
         added, left_out = store.candidates_from(got, known, repo_edges, now=stamp)
@@ -255,8 +304,18 @@ def crawl(*, owner: str, repo_root: Path, runtime_root: Path, registry: Registry
                              f"({report.cpa['judge_failed']} failed, {report.cpa['judge_attempted']} attempted)",
                              report)
     report.cpa["rejected_items"] = sum(report.rejected.values())
+    if community is not None:  # the community-name crawler's names, deduped against this graph (owner)
+        name_notes: list[str] = []
+        folded, report.community = names.run(
+            community, known, search=search.search if clock() < search.deadline else None,
+            ask_json=lambda prompt: _call_json(llm_call, prompt), today=now.date(), at=stamp,
+            notes=name_notes, owner=owner, videos=name_videos if clock() < search.deadline else None,
+            limit=origin_limit)
+        for line in name_notes:
+            report.error(line)
+        fresh = store.merge(fresh, folded)
 
-    merged = store.accumulate(previous, fresh, repo=repo, now=stamp)
+    merged = store.accumulate(previous, fresh, repo=repo, now=stamp, window=window)
     report.new_nodes = sorted(set(fresh[0]) - set(previous[0]))
     report.new_edges = sorted(set(fresh[1]) - set(previous[1]))
     report.candidates = {"nodes": len(merged[0]), "edges": len(merged[1])}

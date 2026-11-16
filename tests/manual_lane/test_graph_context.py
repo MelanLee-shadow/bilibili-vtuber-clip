@@ -281,3 +281,19 @@ def test_step_6_completes_without_the_runtime_graph_and_without_any_graph(repo, 
     record = json.loads((ctx.clip_dir / "title/context.json").read_text(encoding="utf-8"))["graph"]
     assert record["status"] == "none" and "仓库图读不到" in record["reason"]
     assert any(line.startswith("知识图：没有用图") for line in picked[2])
+
+
+# ----- time as news against the clip's day (owner) -----------------------------------------------------
+def test_news_is_placed_against_the_clip_day_over_is_said_over_and_far_off_is_left_out():
+    import datetime as dt
+    festival = node("七天乐", "event", summary="国庆活动", status="candidate", valid={"from": "2026-10-01", "until": "2026-10-14"})
+    ancient = node("旧大会", "event", summary="很久以前", status="candidate", valid={"from": "2025-01-01", "until": "2025-01-10"})
+    league = node("老联盟", "group", summary="长期联盟", status="candidate", valid={"from": "2024-01-01", "until": None})
+    graph = Graph([MEMBER, festival, ancient, league],
+                  [edge(MEMBER, "participates_in", x, status="candidate") for x in (festival, ancient, league)])
+    during = gc.background(graph, [MEMBER], dt.date(2026, 10, 5)).block()
+    after = gc.background(graph, [MEMBER], dt.date(2026, 11, 16)).block()
+    assert "七天乐" in during and "已结束" not in during.split("七天乐")[1].split("\n")[0]
+    assert "七天乐" in after and "本片录制时已结束" in after
+    assert "旧大会" not in after and "老联盟" in after
+    assert "旧大会" in gc.background(graph, [MEMBER]).block(), "no clip day: nothing is filtered"

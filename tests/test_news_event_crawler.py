@@ -111,8 +111,8 @@ def _answer(*items):
 
 
 def _item(url="https://x.test/1", **fields):
-    base = {"url": url, "kind": "event", "name": "新企划", "participants": [
-        {"name": "东爱璃", "kind": "person", "relation": "participates_in"}]}
+    base = {"url": url, "kind": "event", "name": "新企划", "valid_from": "2026-11-08", "date_basis": "11月8日",
+            "participants": [{"name": "东爱璃", "kind": "person", "relation": "participates_in"}]}
     return base | fields
 
 
@@ -516,3 +516,46 @@ def test_a_seed_no_result_mentions_is_searched_once_more():
     done = {"": [{"url": "u", "title": "安晚来了", "snippet": ""}]}
     assert crawler._search_seed(_search(FakeLookup(done)), report, crawler.Seed("安晚", "graph"), OWNER)
     assert report.search["asked_again"] == 1
+
+
+# ---- time as news (owner window -9/+6 months; each item its own validity) ------------------------------
+
+def test_an_item_needs_a_start_read_from_the_result_and_an_end_not_before_it():
+    raw = _answer(_item(valid_from=None), _item(date_basis=None), _item(valid_until="2026-11-01"),
+                  _item(url="https://x.test/2", valid_until="2026-11-20"))
+    found, rejected = judge.parse_judgement(raw, ROWS)
+    assert [(f.valid_from, f.valid_until) for f in found] == [("2026-11-08", "2026-11-20")]
+    assert {"valid_from is required", "valid_until is before valid_from"} <= set(rejected)
+
+
+def test_a_run_keeps_only_news_whose_time_overlaps_nine_months_back_and_six_ahead(tmp_path, repo):
+    rows = [{"title": f"t{i}", "url": f"https://x.test/{i}", "snippet": "s"} for i in range(4)]
+    llm = _cpa(_answer(
+        _item(url=rows[0]["url"], name="国庆七天乐", valid_from="2025-10-01", valid_until="2025-10-14"),   # long over
+        _item(url=rows[1]["url"], name="跨年夜谈", valid_from="2026-12-31", valid_until="2027-01-07"),
+        _item(url=rows[2]["url"], kind="group", name="老联盟", valid_from="2024-03-01"),                  # still going
+        _item(url=rows[3]["url"], name="明年夏祭", valid_from="2027-07-01", valid_until="2027-07-10")),   # too far ahead
+        mentions=["塔露拉航天"])
+    report = _run(tmp_path, repo, FakeLookup({"塔露拉航天": rows}), llm)
+    assert report.rejected["outside the 9-month-back / 6-month-ahead window"] == 2
+    names = {n.names["display"] for n in store.load_combined(repo, tmp_path / "runtime").nodes.values()
+             if n.status == "candidate"}
+    assert {"跨年夜谈", "老联盟"} <= names and not {"国庆七天乐", "明年夏祭"} & names
+
+
+def test_items_collected_without_a_time_are_dated_or_dropped(tmp_path, repo):
+    from src.autoslice.knowledge_graph import Graph, Node, dump_graph
+    src = (Source("search", "https://x.test/2026/10/01/qi", "2026-11-09T00:00:00Z"),)
+    old = [Node(id=f"event:{name}", kind="event", names={"display": name}, aliases=(), summary="国庆活动",
+                status="candidate", sources=src) for name in ("七天乐", "某活动")]
+    dump_graph(Graph(old, []), tmp_path / "runtime")
+
+    def answer(prompt):
+        if "当时没有记下时效" in prompt:
+            return json.dumps({"items": [{"id": "event:七天乐", "valid_from": "2026-10-01", "valid_until": "2026-10-14",
+                                          "date_basis": "2026/10/01"}]}, ensure_ascii=False)
+        return _answer()
+    report = _run(tmp_path, repo, FakeLookup(), _cpa(answer))
+    assert report.cpa["dated"] == 1 and report.cpa["undatable_dropped"] == 1
+    kept = store.load_combined(repo, tmp_path / "runtime").nodes
+    assert kept["event:七天乐"].valid == {"from": "2026-10-01", "until": "2026-10-14"} and "event:某活动" not in kept

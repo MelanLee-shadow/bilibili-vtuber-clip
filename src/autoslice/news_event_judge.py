@@ -116,17 +116,23 @@ def judge_prompt(owner: str, today: str, nodes: Sequence[Mapping[str, JsonValue]
         "2. url 必须逐字取自该条结果；一条结果最多输出一项。\n"
         "3. kind：event（一次或一个系列活动、联动）、project（企划/节目/合作项目）、group（联盟/团体）。\n"
         "4. name 用结果里通行的写法；aliases 写同一事物的其他叫法。summary 一两句话（不超过 160 字），"
-        "写清是什么、谁参与、何时；valid_from/valid_until 只在结果明写时填，格式 YYYY-MM-DD。\n"
-        "5. 先对照下面的“已知节点”：结果说的事物或人物就是其中某一个（同一件事的简称、繁简体、近音近形写法也算）时，"
+        "写清是什么、谁参与、何时。\n"
+        "5. 每项都要写它作为圈内新闻的时效（YYYY-MM-DD）：valid_from＝开始或公布的日子；valid_until＝它不再算"
+        "当前新闻的日子。时效长短看事情本身：一次性的活动、节日企划只在举办前后有效，一般写到结束后一周左右"
+        "（例如国庆期间的“七天乐”只在国庆前后约两周有效）；仍在进行的长期企划、联盟、团体 valid_until 留空。"
+        "日期必须能从这条结果的标题、摘要或网址里读出，date_basis 逐字抄写你依据的那段日期文字；"
+        "结果没写年份时按今天往前最近的那一年算；读不出任何日期的结果不要输出。\n"
+        "6. 先对照下面的“已知节点”：结果说的事物或人物就是其中某一个（同一件事的简称、繁简体、近音近形写法也算）时，"
         "在 id 填该节点的 id（逐字），name 仍写结果里的写法；确实不在其中才不填 id。同一件事在不同结果里"
         "写法不同，也要用同一个 name。\n"
-        "6. participants 是参与者：relation 取 member_of（是某团体/联盟的成员）、founded（发起了它）、"
+        "7. participants 是参与者：relation 取 member_of（是某团体/联盟的成员）、founded（发起了它）、"
         "participates_in（参加了该事件/项目）、related_to（有关但不属于以上）；关系方向为“参与者 → 本项”。"
         "参与者同样可填已知节点 id。\n\n"
         f"已知节点：{json.dumps(nodes, ensure_ascii=False)}\n\n"
         f"检索材料：{json.dumps(material, ensure_ascii=False)}\n\n"
-        '只输出 JSON：{"items": [{"url", "kind", "id"?, "name", "aliases"?, "summary"?, "valid_from"?, '
-        '"valid_until"?, "participants": [{"id"?, "name", "kind", "relation"}]}]}；没有符合的就返回 {"items": []}。')
+        '只输出 JSON：{"items": [{"url", "kind", "id"?, "name", "aliases"?, "summary"?, "valid_from", '
+        '"valid_until"?, "date_basis", "participants": [{"id"?, "name", "kind", "relation"}]}]}；'
+        '没有符合的就返回 {"items": []}。')
 
 
 def _object(raw: str) -> Mapping[str, JsonValue]:
@@ -184,7 +190,19 @@ def _finding(row: JsonValue, seed_of_url: Mapping[str, str]) -> Finding:
         participants=tuple(_participant(p) for p in participants), id=_id(row.get("id")),
         aliases=tuple(dict.fromkeys(a for a in clean if a and len(a) <= MAX_NAME_CHARS))[:MAX_ALIASES],
         summary=_optional_text(row.get("summary"), "summary", limit=MAX_SUMMARY_CHARS),
-        valid_from=_date(row.get("valid_from")), valid_until=_date(row.get("valid_until")))
+        **_window(row))
+
+
+def _window(row: Mapping[str, JsonValue]) -> dict[str, str | None]:
+    """The item's time as news (owner each item carries its own real validity): a start is required and
+    must be read from the result (date_basis), an end may be open; an item with no date is not placed in time."""
+    start, end = _date(row.get("valid_from")), _date(row.get("valid_until"))
+    if start is None:
+        raise JudgeError("valid_from is required")
+    _text(row.get("date_basis"), "date_basis", limit=MAX_SUMMARY_CHARS)
+    if end is not None and end < start:
+        raise JudgeError("valid_until is before valid_from")
+    return {"valid_from": start, "valid_until": end}
 
 
 def parse_judgement(raw: str, batches: Batch) -> tuple[list[Finding], Counter[str]]:
@@ -201,3 +219,35 @@ def parse_judgement(raw: str, batches: Batch) -> tuple[list[Finding], Counter[st
         except JudgeError as exc:
             rejected[str(exc)] += 1
     return found, rejected
+
+
+DATE_BATCH = 20
+
+
+def date_prompt(today: str, items: Sequence[Mapping[str, JsonValue]]) -> str:
+    """Asks for the news time of items collected before every item carried one (id, kind, name, summary, urls)."""
+    return (
+        f"今天是 {today}。下面是以前从网页收集的虚拟主播圈事件、企划和联盟，当时没有记下时效。请只依据每项的名称、"
+        "摘要和网址，写出它作为圈内新闻的时效（YYYY-MM-DD）：valid_from＝开始或公布的日子；valid_until＝它不再算"
+        "当前新闻的日子。一次性的活动、节日企划只在举办前后有效，一般写到结束后一周左右（例如国庆期间的“七天乐”"
+        "只在国庆前后约两周有效）；仍在进行的长期企划、联盟、团体 valid_until 留空。date_basis 逐字抄写你依据的"
+        "那段文字（摘要或网址里的日期）。材料里读不出任何日期的项不要输出，不要凭自己的记忆补。\n"
+        f"材料：{json.dumps(list(items), ensure_ascii=False)}\n\n"
+        '只输出 JSON：{"items": [{"id", "valid_from", "valid_until"?, "date_basis"}]}')
+
+
+def parse_dates(raw: str, ids: Sequence[str]) -> dict[str, dict[str, str | None]]:
+    """id -> {"from", "until"} for the items CPA could date; an item it could not date, or dated badly, is absent."""
+    items = _object(raw).get("items")
+    if not isinstance(items, list):
+        raise JudgeError("items must be a list")
+    out: dict[str, dict[str, str | None]] = {}
+    for row in items:
+        if not isinstance(row, dict) or row.get("id") not in ids:
+            continue
+        try:
+            window = _window(row)
+        except JudgeError:
+            continue
+        out[str(row["id"])] = {"from": window["valid_from"], "until": window["valid_until"]}
+    return out

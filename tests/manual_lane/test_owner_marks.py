@@ -5,6 +5,7 @@ import types
 from src.autoslice.manual_lane import discover as dv, discover_select as ds
 
 import test_discover as td
+from test_discover import _no_core_draws  # noqa: F401 - the autouse fixture: these tests are about the marks
 
 OWNER, OTHER = 10001, 12345
 RULES = {"owner_mids": [OWNER], "mark_text_contains": ["标记"], "before_ms": 5000, "after_ms": 1000}
