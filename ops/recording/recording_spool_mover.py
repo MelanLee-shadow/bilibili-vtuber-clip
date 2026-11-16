@@ -106,8 +106,16 @@ class UploadObservations:
         if not str(row.get("destPath", "")).startswith(prefixes) or not row.get("key"):
             return
         with self.lock:
+            now = time.time()
+            previous = self.rows.get(row["destPath"], {})
+            # progress_at_epoch: when this upload last changed (task, state or
+            # bytes). Re-reading an unchanged stuck task does not move it.
+            same = all(previous.get(key) == row.get(key)
+                       for key in ("key", "statusEnum", "transferedBytes"))
+            progress = previous.get("progress_at_epoch", now) if same and previous else now
             # A later non-finished update invalidates an earlier Finished.
-            self.rows[row["destPath"]] = {**row, "observed_at_epoch": time.time()}
+            self.rows[row["destPath"]] = {**row, "observed_at_epoch": now,
+                                          "progress_at_epoch": progress}
             identity.atomic_json(self.path, self.rows)
 
     def get(self, path: str) -> dict[str, Any]:
@@ -149,6 +157,12 @@ class UploadObservations:
 
 # Below this much free space recording wins: segments are evicted even if the clip lane has not copied them.
 LANE_FLOOR_BYTES = 12 * 1024**3
+
+# A copied file CD2 no longer tracks (Finished missed, task gone) or whose task
+# has not moved for this long is uploaded again: proof stays a fresh Finished.
+REUPLOAD_GRACE_SECONDS = 30 * 60
+UPLOAD_STALL_SECONDS = 2 * 3600
+REUPLOAD_ATTEMPTS = 3
 
 
 class Mover:
@@ -286,18 +300,97 @@ class Mover:
                 or identity.sha256_file(target) != item["sha256"]):
             raise identity.ArchiveError("copy SHA/preimage mismatch")
         place["copy_complete"] = True
+        place["copy_completed_at_epoch"] = time.time()
         self.save()
+
+    def placement_name(self, item: dict[str, Any], place: dict[str, Any]) -> tuple[str, Path]:
+        """The artifact's spool name and archive root, checked against the topology."""
+        path = place["cloud_path"]
+        name = "/".join(Path(path).parts[-2:])
+        for root in (self.archive_root, self.backup_root):
+            if root is not None and identity.cloud_path(name, archive_root=root, mount=self.mount) == path:
+                if identity.cloud_path(name, archive_root=self.archive_root, mount=self.mount) != item["cloud_path"]:
+                    break
+                return name, root
+        raise identity.ArchiveError("cloud placement differs from the topology")
+
+    def reupload(self, item: dict[str, Any], place: dict[str, Any], *, reason: str,
+                 upload: dict[str, Any]) -> None:
+        """Upload an unproven copy again, so CD2 reports a fresh Finished.
+
+        CD2 lost the task (a Finished missed between push reconnects, then gone
+        from its queue) or the task stopped moving. A force-refreshed listing
+        shows a stuck upload at full size, so it cannot stand in for Finished.
+        Only this mover's own unproven object is removed, and only while the
+        local preimage still matches the sealed SHA; local deletion still
+        needs the normal proof for every placement.
+        """
+        name, root = self.placement_name(item, place)
+        if place.get("proof"):
+            raise identity.ArchiveError("a proven cloud copy is never uploaded again")
+        if not place.get("destination_created"):
+            raise identity.ArchiveError("cloud object lacks this mover's creation receipt")
+        source = self.spool / name
+        if (identity.fingerprint(source) != item["local_fingerprint"]
+                or identity.sha256_file(source) != item["sha256"]):
+            raise identity.ArchiveError("local preimage changed; cloud copy not uploaded again")
+        attempts = place.setdefault("reuploads", [])
+        if not attempts or attempts[-1].get("reset_at_epoch"):
+            if len(attempts) >= REUPLOAD_ATTEMPTS:
+                raise identity.ArchiveError("CD2 re-upload attempts exhausted; local copy kept")
+            attempts.append({"reason": reason, "requested_at_epoch": time.time(),
+                             "previous_copy_started_at_epoch": place.get("copy_started_at_epoch"),
+                             "upload": upload})
+            append_event(self.events, {"event": "CLOUD_REUPLOAD_AUTHORIZED", "cloud_path": place["cloud_path"],
+                                       "reason": reason, "attempt": len(attempts),
+                                       "size": item["size"], "sha256": item["sha256"],
+                                       "checked_at_epoch": time.time()})
+            self.save()
+        require_cloud_mount(self.mount, self.mount)
+        target = root / identity.ROOM / name
+        if any(parent.is_symlink() for parent in (target, *target.parents)):
+            raise identity.ArchiveError("destination traverses a symlink")
+        if target.exists():
+            if not target.is_file() or target.stat().st_size > item["size"]:
+                raise identity.ArchiveError("cloud object is not this mover's copy")
+            target.unlink()
+        if target.exists():
+            raise identity.ArchiveError("cloud object still present after unlink; re-upload deferred")
+        for key in ("destination_created", "copy_started_at_epoch", "copy_complete",
+                    "copy_completed_at_epoch", "archive_fingerprint", "cloud_object_id"):
+            place.pop(key, None)
+        attempts[-1]["reset_at_epoch"] = time.time()
+        append_event(self.events, {"event": "CLOUD_COPY_RESET", "cloud_path": place["cloud_path"],
+                                   "reason": reason, "checked_at_epoch": time.time()})
+        self.save()
+
+    def unfinished(self, item: dict[str, Any], place: dict[str, Any], upload: dict[str, Any],
+                   queued: bool) -> None:
+        """Decide a copy CD2 has not reported Finished: wait, or upload again. Always raises."""
+        now = time.time()
+        copied_at = place.get("copy_completed_at_epoch", place.get("copy_started_at_epoch", now))
+        if not place.get("proof") and place.get("copy_complete"):
+            if queued and now - upload.get("progress_at_epoch", now) >= UPLOAD_STALL_SECONDS:
+                self.reupload(item, place, reason="CD2_UPLOAD_STALLED", upload=upload)
+                raise identity.ArchiveError("CD2 upload stalled; uploading again")
+            if not queued and now - copied_at >= REUPLOAD_GRACE_SECONDS:
+                self.reupload(item, place, reason="CD2_NO_UPLOAD_RECORD", upload=upload)
+                raise identity.ArchiveError("CD2 has no record of this upload; uploading again")
+        raise identity.ArchiveError("CD2 has not reported this file Finished")
 
     def verify_file(self, item: dict[str, Any], place: dict[str, Any] | None = None) -> None:
         place = item if place is None else place
         path = place["cloud_path"]
-        for upload in self.client.upload_list(Path(path).name):
-            if upload.get("destPath") == path:
-                self.observations.note(upload)
+        listed = [upload for upload in self.client.upload_list(Path(path).name)
+                  if upload.get("destPath") == path]
+        # A task left behind by an earlier copy must not mask a newer Finished.
+        for upload in sorted(listed, key=lambda upload: upload.get("statusEnum") == 5):
+            self.observations.note(upload)
+        queued = bool(listed) and all(upload.get("statusEnum") != 5 for upload in listed)
         upload = self.observations.get(path)
         if (upload.get("statusEnum") != 5 or upload.get("size") != item["size"]
                 or upload.get("observed_at_epoch", 0) < place["copy_started_at_epoch"]):
-            raise identity.ArchiveError("CD2 has not reported this file Finished")
+            self.unfinished(item, place, upload, queued)
         remote = self.client.refresh(path)
         if place.get("cloud_object_id") and remote.get("id") != place["cloud_object_id"]:
             raise identity.ArchiveError("refreshed cloud object identity changed")
@@ -318,6 +411,21 @@ class Mover:
         place["cloud_object_id"] = remote["id"]
         place["proof"] = proof
         self.save()
+
+    def verify_each(self, placements: list[tuple[dict[str, Any], dict[str, Any] | None]]) -> None:
+        """Verify every placement; one unfinished copy does not hold back the rest.
+
+        A contract failure is raised after the others were tried. A CD2/RPC
+        failure stops at once (each further call would only wait out the same outage).
+        """
+        failed: identity.ArchiveError | None = None
+        for item, place in placements:
+            try:
+                self.verify_file(item, place)
+            except identity.ArchiveError as exc:
+                failed = failed or exc
+        if failed is not None:
+            raise failed
 
     def lane_holds(self, relative: str, row: dict[str, Any]) -> bool:
         """True while the clip lane has not yet copied this segment's FLV/XML (oci3_lane_spool_copy.sh).
@@ -452,11 +560,9 @@ class Mover:
                             self.copy_file(name, item, place, self.backup_root)
                 if row["phase"] != "verified":
                     # Verification needs authenticated CD2 evidence; copying
-                    # each sealed artifact does not. A failed RPC must not
-                    # block the remaining artifacts in this group.
-                    for name in names:
-                        item = row["files"][name]
-                        self.verify_file(item)
+                    # each sealed artifact does not. One file CD2 has not
+                    # reported does not block proving the rest of the group.
+                    self.verify_each([(row["files"][name], None) for name in names])
                     row["phase"] = "verified"
                     row.pop("error", None)
                     self.save()
@@ -468,10 +574,8 @@ class Mover:
                 # A backup proven once stays proven; 115 stays the archive of
                 # record and is re-checked right before deletion.
                 if self.backup_root is not None:
-                    for name in live:
-                        item = row["files"][name]
-                        if not self.backup_proven(name, item):
-                            self.verify_file(item, self.backup_place(name, item))
+                    self.verify_each([(row["files"][name], self.backup_place(name, row["files"][name]))
+                                      for name in live if not self.backup_proven(name, row["files"][name])])
                 if not rechecked:
                     # A retry after verification/crash obtains a new refreshed
                     # listing before deleting any remaining local preimage.
