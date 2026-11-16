@@ -109,8 +109,8 @@ def pending(task: Path, ledger: dict[str, Any], *, upload: bool,
         cid = state.data["clip"]["cid"]
         if state.data["clip"].get("status") == "SUPERSEDED" or finished(state, upload=upload):
             continue
-        if upload and state.step("review").get("status") == "DONE" and (task / "clips" / cid / HOLD_FILE).is_file():
-            continue                                  # looked at and kept back by someone: only the upload is left, and it is theirs
+        if (task / "clips" / cid / HOLD_FILE).is_file():
+            continue                                  # kept back by someone: not run on (clips held mid-way kept using models)
         seen = ledger["clips"].get(cid, {}).get("stopped")
         if (seen and seen["times"] >= STUCK_AFTER and stopped_at(state) == (seen["step"], seen["reason"])
                 and seen.get("version", "") == version):

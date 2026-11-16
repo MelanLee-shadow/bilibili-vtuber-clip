@@ -71,6 +71,17 @@ def test_a_reviewed_clip_someone_kept_back_is_not_run_by_an_uploading_round(tmp_
     assert round_(tmp_path, lambda cid: finish(tmp_path, cid, "upload"), upload=True)[1] == [["kept"]]
 
 
+def test_a_clip_kept_back_half_way_is_not_run_on(tmp_path):
+    """clips held for their selection score kept running steps 5-9 on the models."""
+    clip(tmp_path, "kept", {"cut": {"status": "DONE"}})
+    hold = tmp_path / "clips/kept/upload/HOLD"
+    hold.parent.mkdir(parents=True)
+    hold.write_text("under the selection score")
+    assert round_(tmp_path, lambda cid: finish(tmp_path, cid))[1] == []
+    hold.unlink()
+    assert round_(tmp_path, lambda cid: finish(tmp_path, cid))[1] == [["kept"]]
+
+
 def test_a_clip_that_stops_at_the_same_place_three_rounds_is_left_alone(tmp_path):
     clip(tmp_path, "bad")
     clip(tmp_path, "good")

@@ -37,6 +37,7 @@ PKG_ROOT = Path(__file__).resolve().parents[3]
 PROMPTS = PKG_ROOT / "assets" / "manual_lane" / "prompts"
 REMOTE_TOOLS = PKG_ROOT / "assets" / "manual_lane" / "remote"
 REMOTE_FONTS = f"{REMOTE_REPO}/{channel.ASSETS_REL}/fonts"
+REMOTE_LANE_FONTS = f"{REMOTE_REPO}/assets/manual_lane/fonts"   # fallback fonts of every channel (monochrome emoji)
 ROOM_ID = int(layout().room_id)   # the channel's live room (profile identity.room_id)
 
 
