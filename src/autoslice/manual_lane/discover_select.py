@@ -4,7 +4,7 @@ The selection logic is the old pipeline's and is called, not rewritten: `select_
 recalls candidates from a recording's whole-recording subtitles (and its danmaku), each with the scorecard the
 metric defines.  This module only (1) feeds it from a prepared recording and keeps its answer next to the inputs'
 fingerprints, and (2) seats the day's candidates the way the production selection does: hard Tier, then absolute score,
-then confidence (`selection_rank_key`); the candidate-level admission (`selection_scorecard_production_admission`); the
+then confidence (`selection_rank_key`), the score raised by the channel's core draws (`core_draws`); the candidate-level admission (`selection_scorecard_production_admission`); the
 lowest confidence; the lowest score of every seat; the quota of the recording date (`resolve_quota_grant`, the dated authority asset); the soft per-recording
 limit that slack refills.  The numbers that are not read from those modules are the `discover` rules of lane_rules.json.
 A candidate that is not seated keeps the reason.  Every import of the old pipeline is in this file (import_boundary.json).
@@ -29,6 +29,7 @@ from src.autoslice.selection_scorecard import (
 )
 from src.autoslice.talk_quota_authority import resolve_quota_grant
 
+from . import core_draws
 from .discover_media import DiscoverError, Prepared, is_date, write_json
 from .lane_rules import rules
 from .srt_text import parse_srt
@@ -210,7 +211,7 @@ def recall_segment(prepared: Prepared, directory: Path, *, ask: Callable[[str], 
     The owner's marks are tied to candidates on top of either (`_attach_owner_marks`)."""
     xml = directory / "source.xml"
     if (kept := load_recall(directory, prepared)) is not None:
-        return _attach_owner_marks(kept, None, xml, directory, ask=ask, selector=selector)
+        return _with_draws(_attach_owner_marks(kept, None, xml, directory, ask=ask, selector=selector), directory, ask)
     cues = _cues(directory)
     hints: str | None = None
     if xml.exists():
@@ -225,7 +226,15 @@ def recall_segment(prepared: Prepared, directory: Path, *, ask: Callable[[str], 
     pool = [_entry(c, source, diagnostics) for c in candidates]
     doc = Recall(schema=RECALL_SCHEMA, inputs=_inputs(prepared), source=source, input_pool=pool, diagnostics=diagnostics)
     write_json(directory / "recall.json", doc)
-    return _attach_owner_marks(doc, cues, xml, directory, ask=ask, selector=selector)
+    return _with_draws(_attach_owner_marks(doc, cues, xml, directory, ask=ask, selector=selector), directory, ask)
+
+
+def _with_draws(doc: Recall, directory: Path, ask: Callable[[str], str]) -> Recall:
+    """The core draws of every candidate in the pool (one call for the ones not yet labelled), written back next to the
+    recall.  A failed call or answer raises: the recording is left for the next run, its recall is kept."""
+    if core_draws.label(doc["input_pool"], ask):
+        write_json(directory / "recall.json", doc)
+    return doc
 
 
 @dataclass(frozen=True)
@@ -242,6 +251,18 @@ def _span(entry: Mapping[str, Any]) -> tuple[str, int, int]:
 def _overlaps(entry: Mapping[str, Any], taken: Sequence[tuple[str, int, int]]) -> bool:
     name, start, end = _span(entry)
     return any(name == n and start < e and s < end for n, s, e in taken)
+
+
+def score(entry: Mapping[str, Any]) -> float:
+    """The seating score: the scorecard's effective score plus the points of the candidate's core draws (the channel's
+ draws asset, fitted on the views of its published clips; 公开规则：按照播放量来解释各个要素)."""
+    return round(float(entry["selection_scorecard"]["effective_score"]) + core_draws.points(entry), 2)
+
+
+def _rank(entry: Mapping[str, Any]) -> tuple[float, float, float, str]:
+    """Hard Tier first, then the seating score, then confidence (the order of `selection_rank_key`, on `score`)."""
+    tier, _, confidence, cid = selection_rank_key(entry)
+    return tier, -score(entry), confidence, cid
 
 
 def _admitted(pool: Sequence[Mapping[str, Any]], done: set[str], lowest: float, min_score: float,
@@ -261,8 +282,9 @@ def _admitted(pool: Sequence[Mapping[str, Any]], done: set[str], lowest: float, 
             reject(entry, BELOW_MIN_CONFIDENCE, f"confidence={confidence}, lowest {lowest}")
         elif (admission := selection_scorecard_production_admission(entry.get("selection_scorecard"))).get("status") != "ADMIT":
             reject(entry, ADMISSION_HOLD, f"{admission.get('reason_code')}: {admission.get('reason', '')}"[:200])
-        elif float(card["effective_score"]) < min_score:         # ADMIT means a valid card
-            reject(entry, BELOW_MIN_SCORE, f"effective_score={card['effective_score']}, lowest {min_score}")
+        elif score(entry) < min_score:                           # ADMIT means a valid card
+            reject(entry, BELOW_MIN_SCORE, f"score={score(entry)} (effective_score={card['effective_score']} + core draws "
+                                           f"{core_draws.points(entry)}), lowest {min_score}")
         else:
             eligible.append(entry)
     return eligible
@@ -305,14 +327,13 @@ def seat_day(date: str, pool: Sequence[Mapping[str, Any]], built: Sequence[Mappi
     policy["owner_marked"] = owner_seats
     ranked = sorted(_admitted([e for e in pool if e not in marked], done, float(cfg["min_confidence"]),
                               float(cfg["min_effective_score"]), reject),
-                    key=selection_rank_key)
+                    key=_rank)
 
     def extra_seat_ok(entry: Mapping[str, Any]) -> bool:
         gate = grant.extra_slot_min_score          # seats past base_talk_seats exist only where a dated authority made them
         if gate is None or len(built) + len(seated) - owner_seats + 1 <= int(cfg["base_talk_seats"]):
             return True
-        card = entry.get("selection_scorecard")
-        return bool(selection_scorecard_is_valid(card) and float(card["effective_score"]) >= gate)
+        return bool(selection_scorecard_is_valid(entry.get("selection_scorecard")) and score(entry) >= gate)
 
     def seat(entry: Mapping[str, Any]) -> None:
         seated.append(dict(entry))
@@ -335,5 +356,5 @@ def seat_day(date: str, pool: Sequence[Mapping[str, Any]], built: Sequence[Mappi
         elif extra_seat_ok(entry):
             seat(entry)
         else:
-            reject(entry, EXTRA_SEAT_BELOW_SCORE, f"seat {len(built) + len(seated) - owner_seats + 1} needs effective_score >= {grant.extra_slot_min_score}")
+            reject(entry, EXTRA_SEAT_BELOW_SCORE, f"seat {len(built) + len(seated) - owner_seats + 1} needs score >= {grant.extra_slot_min_score}")
     return Seating(seated=seated, rejected=rejected, policy=policy)

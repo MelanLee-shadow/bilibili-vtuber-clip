@@ -9,6 +9,12 @@ from fakes import FakeDanmaku, FakeRemote
 from src.autoslice.manual_lane import discover as dv, discover_media as dm, discover_select as ds, layout as layout_module
 from src.autoslice.manual_lane.adapters import Adapters, RemoteResult
 
+@pytest.fixture(autouse=True)
+def _no_core_draws(monkeypatch):
+    """These tests are about the recordings and the seats; the core-draw labels and points have their own (test_core_draws)."""
+    monkeypatch.setattr(ds.core_draws, "load", lambda: None)
+
+
 DATE = "2026-11-09"
 ARCHIVE = dm.archive_dir(DATE)
 # a real scorecard of the trial (texts shortened); raw = sum(dimension * weight) / 4
@@ -52,7 +58,7 @@ def test_the_cap_is_a_ceiling_every_seat_needs_the_lowest_score():
     seating = ds.seat_day(DATE, pool, built=[])
     assert [e["cid"] for e in seating.seated] == ["high"] and seating.policy["free_seats"] == 5
     assert {r["cid"]: r["reason"] for r in seating.rejected} == {f"low{n}": ds.BELOW_MIN_SCORE for n in range(4)}
-    assert "effective_score=70.0, lowest 75.0" in seating.rejected[0]["detail"]
+    assert "score=70.0 (effective_score=70.0 + core draws 0.0), lowest 75.0" in seating.rejected[0]["detail"]
 
 
 def test_clip_id_carries_the_recording_start_and_fits_the_package_slug():

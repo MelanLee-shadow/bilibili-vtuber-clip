@@ -8,6 +8,7 @@ reference but never ground a title's assertion.  An unreadable graph never stops
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 import tempfile
 from collections import Counter
@@ -20,6 +21,7 @@ from urllib.parse import urlparse
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.knowledge_graph import EDGES_FILE, NODES_FILE, Edge, Graph, Node, Source, load_graph
 from src.autoslice.combined_knowledge_graph import load_combined
+from src.autoslice.crawl_window import CrawlWindow
 
 from .lane_rules import rules
 from .layout import REPO_ROOT, layout
@@ -144,22 +146,45 @@ def _ranked(lines: list[Line]) -> list[Line]:
     return lines
 
 
-def _edge_line(graph: Graph, edge: Edge, hub: Node, other: Node, conn: int) -> Line:
+def _when(valid: dict[str, str | None] | None, on: dt.date | None) -> str:
+    """The item's time as news, said against the clip's day: an item over by then is said to be over, one not begun
+    is said to be ahead (owner a festival event is news only around its own weeks)."""
+    window = valid or {}
+    start, end = window.get("from"), window.get("until")
+    if not start and not end:
+        return ""
+    text = f"（时间：{start or ''}~{end or ''}"
+    if on is not None and end and dt.date.fromisoformat(end) < on:
+        text += "；本片录制时已结束，不是当时的新闻"
+    elif on is not None and start and dt.date.fromisoformat(start) > on:
+        text += "；本片录制时还没开始"
+    return text + "）"
+
+
+def _placed(valid: dict[str, str | None] | None, around: CrawlWindow | None) -> bool:
+    """Whether an item with this time belongs near the clip's day (nine months back, six ahead); undated items stay."""
+    return around is None or not valid or around.holds(valid.get("from"), valid.get("until"))
+
+
+def _edge_line(graph: Graph, edge: Edge, hub: Node, other: Node, conn: int, on: dt.date | None = None) -> Line:
     verified = edge.status == hub.status == other.status == "accepted"
     window = edge.valid or other.valid or {}
-    when = f"{window.get('from') or ''}~{window.get('until') or ''}"
     source, target, nearby = (graph.name(i, "display") for i in (edge.from_id, edge.to_id, other.id))
     text = (f"{source}{RELATION[edge.type]}{target}；{nearby}（{KIND[other.kind]}）"
-            + (f"：{other.summary}" if other.summary else "") + (f"（时间：{when}）" if when != "~" else ""))
+            + (f"：{other.summary}" if other.summary else "") + _when(window, on))
     if not verified:
         text += _clue([*edge.sources, *(s for n in (hub, other) if n.status != "accepted" for s in n.sources)])
     stamps = [s.at or "" for s in (*edge.sources, *other.sources)] + [v or "" for v in window.values()]
     return Line(verified, False, conn, max(stamps), text, (hub.id, other.id))
 
 
-def background(graph: Graph, nodes: Sequence[Node]) -> GraphContext:
-    """One-hop background of the named entities (nodes linked by alias_of are one entity), as ranked, capped lines."""
+def background(graph: Graph, nodes: Sequence[Node], on: dt.date | None = None) -> GraphContext:
+    """One-hop background of the named entities (nodes linked by alias_of are one entity), as ranked, capped lines.
+    With the clip's day `on`, what lies outside nine months back / six ahead of it is left out and what is over by
+    then is said to be over."""
     cfg = rules("graph_context")
+    around = CrawlWindow.around(on) if on is not None else None
+    nodes = [n for n in nodes if _placed(n.valid, around)]
     kinds, per_entity, cap = cfg["neighbour_kinds"], cfg["neighbours_per_entity"], cfg["lines_per_clip"]
     group_of = {i: tuple(g) for g in graph.alias_groups() for i in g}
     entities = sorted({group_of[n.id] for n in nodes})
@@ -167,18 +192,25 @@ def background(graph: Graph, nodes: Sequence[Node]) -> GraphContext:
     for group in entities:
         rows = {e.id: (e, hub, o) for hub in (graph.nodes[i] for i in group)
                 for e, o in graph.neighbors(hub.id, status=("accepted", "candidate"))
-                if e.type != "alias_of" and o.kind in kinds and o.id not in group}
+                if e.type != "alias_of" and o.kind in kinds and o.id not in group
+                and _placed(e.valid, around) and _placed(o.valid, around)}
         found.append([rows[k] for k in sorted(rows)])
     conn = Counter(i for rows in found for i in {o.id for _, _, o in rows})
     lines: list[Line] = []
     for group, rows in zip(entities, found, strict=True):
         for hub in (graph.nodes[i] for i in group):
             if hub.summary and hub.status != "retired":
-                text = f"{graph.name(hub.id, 'display')}（{KIND[hub.kind]}）：{hub.summary}"
+                text = f"{graph.name(hub.id, 'display')}（{KIND[hub.kind]}）：{hub.summary}{_when(hub.valid, on)}"
                 lines.append(Line(hub.status == "accepted", True, 1, max(s.at or "" for s in hub.sources),
                                   text if hub.status == "accepted" else text + _clue(hub.sources), group))
-        lines.extend(_ranked([_edge_line(graph, e, hub, o, conn[o.id]) for e, hub, o in rows])[:per_entity])
+        lines.extend(_ranked([_edge_line(graph, e, hub, o, conn[o.id], on) for e, hub, o in rows])[:per_entity])
     return GraphContext(COMBINED, "", graph, tuple(nodes), tuple(_ranked(lines)[:cap]))
+
+
+def clip_day(ctx: Ctx) -> dt.date | None:
+    """The day the clip was recorded (the clip record's recording_date), the day its news is placed against."""
+    day = ctx.state.data.get("clip", {}).get("recording_date")
+    return dt.date.fromisoformat(str(day)) if day else None
 
 
 def read(ctx: Ctx, texts: Iterable[str]) -> GraphContext:
@@ -186,7 +218,7 @@ def read(ctx: Ctx, texts: Iterable[str]) -> GraphContext:
     loaded = load(ctx)
     if loaded.graph is None:
         return loaded
-    built = background(loaded.graph, mentions(loaded.graph, texts))
+    built = background(loaded.graph, mentions(loaded.graph, texts), clip_day(ctx))
     return replace(loaded, mentioned=built.mentioned, lines=built.lines)
 
 

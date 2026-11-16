@@ -16,11 +16,12 @@ import time
 import urllib.error
 from collections import Counter
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol
 
 from src.autoslice import news_event_graph as store
+from src.autoslice.crawl_window import CrawlWindow
 from src.autoslice import news_event_judge as judge
 from src.autoslice.knowledge_graph import GraphError, JsonValue, load_graph
 from src.autoslice.llm_client import LlmCallError
@@ -202,12 +203,50 @@ def _search_all(report: Report, search: RouterSearch, seeds: Sequence[Seed], own
     return found
 
 
+def _in_window(findings: Sequence[judge.Finding], window: CrawlWindow) -> tuple[list[judge.Finding], int]:
+    """The findings whose time as news overlaps the window, and how many fell outside it."""
+    kept = [f for f in findings if window.holds(f.valid_from, f.valid_until)]
+    return kept, len(findings) - len(kept)
+
+
+def _date_undated(report: Report, previous: store.Candidates, llm_call: Callable[[str], str], now: dt.datetime
+                  ) -> store.Candidates:
+    """Events and projects collected before every item carried its time are dated by CPA from their own summary and
+    URLs; one it cannot date is dropped (its edges go in store.accumulate), since it cannot be placed in time.  A call
+    that fails leaves its batch as it was, for the next run."""
+    nodes = dict(previous[0])
+    undated = [n for n in nodes.values() if n.kind in store.DATED_KINDS and not n.valid]
+    for start in range(0, len(undated), judge.DATE_BATCH):
+        batch = undated[start:start + judge.DATE_BATCH]
+        items: list[dict[str, JsonValue]] = [
+            {"id": n.id, "kind": n.kind, "name": n.names["display"], "summary": n.summary,
+             "urls": [s.ref for s in n.sources]} for n in batch]
+        report.cpa["date_attempted"] += 1
+        try:
+            dated = judge.parse_dates(_call_json(llm_call, judge.date_prompt(now.date().isoformat(), items)),
+                                      [n.id for n in batch])
+        except (LlmCallError, judge.JudgeError) as exc:
+            report.cpa["date_failed"] += 1
+            report.error(f"date batch {start // judge.DATE_BATCH}: {type(exc).__name__}: {str(exc)[:200]}")
+            continue
+        report.cpa["date_ok"] += 1
+        for node in batch:
+            if node.id in dated:
+                nodes[node.id] = replace(node, valid=dated[node.id])
+                report.cpa["dated"] += 1
+            else:
+                del nodes[node.id]
+                report.cpa["undatable_dropped"] += 1
+    return nodes, previous[1]
+
+
 def crawl(*, owner: str, repo_root: Path, runtime_root: Path, registry: Registry | None,
           dynamics: Dynamics | None, search: RouterSearch, llm_call: Callable[[str], str], now: dt.datetime,
           max_seeds: int = MAX_SEEDS, clock: Callable[[], float] = time.monotonic,
           notes: Sequence[str] = (), clip_names: Sequence[str] = ()) -> Report:
     """One run.  Returns the report that was written next to the graph; raises NewsEventError on failure."""
     stamp = now.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    window = CrawlWindow.around(now.date())
     repo = load_graph(repo_root)
     report = Report(stamp, owner, {"registry": registry is not None, "dynamics": dynamics is not None},
                     errors=list(notes))
@@ -226,6 +265,7 @@ def crawl(*, owner: str, repo_root: Path, runtime_root: Path, registry: Registry
     except (GraphError, OSError, ValueError) as exc:  # re-derivable from search; discarded loudly, not silently
         previous = ({}, {})
         report.previous_discarded = f"{type(exc).__name__}: {str(exc)[:300]}"
+    previous = _date_undated(report, previous, llm_call, now)
     known = store.with_candidates(repo, previous)
     repo_edges = {e.id for e in repo.edges}
     fresh: store.Candidates = ({}, {})
@@ -244,6 +284,8 @@ def crawl(*, owner: str, repo_root: Path, runtime_root: Path, registry: Registry
             continue
         report.cpa["judge_ok"] += 1
         report.rejected.update(bad)
+        got, late = _in_window(got, window)
+        report.rejected["outside the 9-month-back / 6-month-ahead window"] += late
         for finding in got:
             report.per_seed[finding.seed]["findings"] += 1
         added, left_out = store.candidates_from(got, known, repo_edges, now=stamp)
@@ -256,7 +298,7 @@ def crawl(*, owner: str, repo_root: Path, runtime_root: Path, registry: Registry
                              report)
     report.cpa["rejected_items"] = sum(report.rejected.values())
 
-    merged = store.accumulate(previous, fresh, repo=repo, now=stamp)
+    merged = store.accumulate(previous, fresh, repo=repo, now=stamp, window=window)
     report.new_nodes = sorted(set(fresh[0]) - set(previous[0]))
     report.new_edges = sorted(set(fresh[1]) - set(previous[1]))
     report.candidates = {"nodes": len(merged[0]), "edges": len(merged[1])}

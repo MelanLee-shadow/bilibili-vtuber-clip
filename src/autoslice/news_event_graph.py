@@ -19,10 +19,12 @@ from typing import TypeVar
 
 from src.autoslice.knowledge_graph import (
     NODES_FILE, Edge, Graph, JsonValue, Node, Source, dump_graph, load_graph)
+from src.autoslice.crawl_window import CrawlWindow
 from src.autoslice.news_event_judge import Finding
 from src.autoslice.combined_knowledge_graph import load_combined as load_combined
 
 SOURCES_PER_ITEM = 5
+DATED_KINDS = ("event", "project")   # what is news has its own time (owner); people and groups need none
 RETAIN_DAYS = 120
 REPORT_FILE = "crawl_report.json"
 Candidates = tuple[dict[str, Node], dict[str, Edge]]
@@ -140,10 +142,15 @@ def merge(first: Candidates, second: Candidates) -> Candidates:
     return nodes, edges
 
 
-def accumulate(previous: Candidates, fresh: Candidates, *, repo: Graph, now: str) -> Candidates:
+def accumulate(previous: Candidates, fresh: Candidates, *, repo: Graph, now: str,
+               window: CrawlWindow | None = None) -> Candidates:
     """Previous candidates plus this run's.  An item whose newest source is older than RETAIN_DAYS drops out with the
-    edges that point at it, so a one-off search hit does not live forever."""
+    edges that point at it, so a one-off search hit does not live forever; so does an item whose own time as news
+    lies wholly outside `window` (nine months back, six ahead)."""
     nodes, edges = merge(previous, fresh)
+    if window is not None:
+        nodes = {k: n for k, n in nodes.items()
+                 if not n.valid or window.holds(n.valid.get("from"), n.valid.get("until"))}
     cutoff = (dt.datetime.fromisoformat(now.replace("Z", "+00:00")) - dt.timedelta(days=RETAIN_DAYS)).isoformat(
         timespec="seconds")
 
