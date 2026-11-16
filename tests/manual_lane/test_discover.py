@@ -26,17 +26,33 @@ CARD = json.loads('{"schema_version": "lidousha-selection-scorecard.v1", "status
                   '"start_cue": 2, "end_cue": 4}')
 
 
-def card(level=3):
-    """A valid scorecard whose score moves with one dimension (level 0-4; this one keeps the card admitted at every level)."""
+def card(level=3, *, floor=True):
+    """A valid scorecard whose score moves with one dimension (level 0-4; this one keeps the card admitted at every level).
+    With `floor` the three strongest dimensions are raised so every level clears min_effective_score (80 + 2.5 * level);
+    without it the card scores 60 + 2.5 * level, under the floor (the trial's own card scored 67.5)."""
     doc = json.loads(json.dumps(CARD))
+    if floor:
+        doc["dimensions"].update(lidousha_centrality=4, stance_intensity=4, audience_salience=3)
     doc["dimensions"]["persona_reversal"] = level
     doc["raw_score"] = doc["effective_score"] = sum(doc["dimensions"][k] * w for k, w in doc["weights"].items()) / 4
     return doc
 
 
-def entry(cid, segment, start, end, *, confidence=0.9, kind="talk", level=3):
+def entry(cid, segment, start, end, *, confidence=0.9, kind="talk", level=3, floor=True):
     return {"cid": cid, "candidate_id": cid, "kind": kind, "start_ms": start, "end_ms": end, "confidence": confidence,
-            "hook": cid, "selection_scorecard": card(level), "source": {"name": segment, "path": f"{ARCHIVE}/{segment}.flv"}}
+            "hook": cid, "selection_scorecard": card(level, floor=floor),
+            "source": {"name": segment, "path": f"{ARCHIVE}/{segment}.flv"}}
+
+
+def test_the_cap_is_a_ceiling_every_seat_needs_the_lowest_score():
+    """five talk candidates scored 61.75-79.25 and all five were made, the first five seats saw no score.
+ 公开规则：并不是说一定要塞满5条…只有得高分的才去做成切片."""
+    pool = [entry("high", "segA", 0, 500, level=4), *(entry(f"low{n}", "segB", n * 1000, n * 1000 + 500, level=4, floor=False)
+                                                       for n in range(4))]
+    seating = ds.seat_day(DATE, pool, built=[])
+    assert [e["cid"] for e in seating.seated] == ["high"] and seating.policy["free_seats"] == 5
+    assert {r["cid"]: r["reason"] for r in seating.rejected} == {f"low{n}": ds.BELOW_MIN_SCORE for n in range(4)}
+    assert "effective_score=70.0, lowest 75.0" in seating.rejected[0]["detail"]
 
 
 def test_clip_id_carries_the_recording_start_and_fits_the_package_slug():

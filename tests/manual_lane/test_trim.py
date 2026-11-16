@@ -472,7 +472,7 @@ def test_guard_a_topic_span_at_the_edge_or_leaving_too_little_is_still_vetoed():
 
 def test_prompt_asks_for_both_kinds():
     text = trim.prompt("钩子", "", [{"start_s": 0.0, "end_s": 1.0, "text": "a"}])
-    assert '"kind": "thanks" 或 "topic"' in text and "中途抽奖" in text
+    assert '"kind": "thanks"、"topic" 或 "nospeech"' in text and "中途抽奖" in text and "没有讲话的长段" in text
 
 
 def test_guard_unrelated_topics_longer_than_a_third_of_the_clip_are_not_an_insert():
@@ -480,3 +480,57 @@ def test_guard_unrelated_topics_longer_than_a_third_of_the_clip_are_not_an_inser
     passed, vetoed = guard([(2, 4)], topic=frozenset({2, 3, 4}))
     assert passed == [] and vetoed[0]["veto"] == "TOPIC_TOO_LONG"
     assert guard([(3, 3)], topic=frozenset({3}))[0] == [(3, 3)]
+
+
+# ----- a long stretch with no speech (her singing) ------------------------------------------------------------------
+def _cue_at(start, end, text="正题"):
+    return {"start_s": start, "end_s": end, "text": text}
+
+
+def _sung(did, start, end, clip_start_ms=10_000):
+    return {"id": did, "dropped": True, "current": f"唱{did}", "abs_start_ms": clip_start_ms + int(start * 1000),
+            "abs_end_ms": clip_start_ms + int(end * 1000)}
+
+
+def test_a_long_stretch_step_3_removed_as_no_speech_becomes_one_row_between_its_two_cues():
+    cues = [_cue_at(0, 3), _cue_at(3, 6), _cue_at(166, 170), _cue_at(171, 175), _cue_at(180, 182)]
+    doubts = [_sung("d002", 20, 26), _sung("d003", 90, 95), {"id": "d004", "current": "说话", "abs_start_ms": 10_000 + 3000,
+                                                               "abs_end_ms": 10_000 + 6000}]
+    rows = trim.silent_gaps(cues, doubts, 10_000)
+    assert len(rows) == 1 and rows[0][trim.GAP] is True
+    assert rows[0]["start_s"] == pytest.approx(6.7) and rows[0]["end_s"] == pytest.approx(165.76)
+    assert "160 秒没有字幕" in rows[0]["text"] and "唱d002／唱d003" in rows[0]["text"]
+    # cut, it takes out the stretch and keeps the two cues' own margins
+    table, spans = trim.with_marks(cues, rows)
+    assert spans == [(3, 3)]
+    assert trim.keep_windows(table, spans, 182.0) == [(0.0, 6.35), (165.88, 182.0)]
+
+
+def test_no_gap_row_for_a_short_stretch_or_one_with_nothing_removed_in_it():
+    cues = [_cue_at(0, 3), _cue_at(3, 6), _cue_at(20, 24), _cue_at(60, 64), _cue_at(70, 72)]
+    # 14 s with a sung part: too short; 36 s with nothing removed (silence, or a video with no speech): not shown
+    assert trim.silent_gaps(cues, [_sung("d1", 8, 12)], 10_000) == []
+    assert trim.silent_gaps(cues, [], 10_000) == []
+
+
+def test_guard_a_gap_row_needs_no_thanks_word_and_is_not_an_inserted_topic():
+    cues = [_cue_at(0, 3), _cue_at(3, 6), {**_cue_at(6.7, 165.76, "（这里 160 秒没有字幕）"), trim.GAP: True},
+            _cue_at(166, 170), _cue_at(171, 175), _cue_at(180, 182)]
+    passed, vetoed = trim.guard([(3, 3)], cues, thanks_words=["谢谢"], clip_len_s=182.0, min_keep_s=10.0,
+                                topic=frozenset({3}), gaps=frozenset({3}))
+    assert passed == [(3, 3)] and vetoed == []
+    # without the mark it is an unrelated topic of 159 s, far more than a third of the clip
+    assert trim.guard([(3, 3)], cues, thanks_words=["谢谢"], clip_len_s=182.0, min_keep_s=10.0,
+                      topic=frozenset({3}))[1][0]["veto"] == "TOPIC_TOO_LONG"
+    # still: not at the edges, and not leaving too little
+    assert trim.guard([(3, 3)], cues, thanks_words=["谢谢"], clip_len_s=182.0, min_keep_s=60.0,
+                      gaps=frozenset({3}))[1][0]["veto"] == "TOO_SHORT"
+
+
+def test_gap_rows_no_span_cuts_leave_the_table_and_the_spans_follow():
+    gap = {**_cue_at(10, 40, "（空）"), trim.GAP: True}
+    rows = [_cue_at(0, 3), _cue_at(3, 6), gap, _cue_at(41, 44), {**gap, "start_s": 50, "end_s": 80}, _cue_at(81, 84),
+            _cue_at(85, 88)]
+    kept, spans = trim.without_uncut_gaps(rows, [(5, 6)])
+    assert [r.get(trim.GAP, False) for r in kept] == [False, False, False, True, False, False]
+    assert spans == [(4, 5)]

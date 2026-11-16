@@ -203,7 +203,7 @@ def test_both_review_prompts_share_compilation_context_and_ordinary_bytes(tmp_pa
     ctx, _, _ = _package(tmp_path, monkeypatch, _review(verdict="PASS"), final=_srt([(0, 2, "测试")]), doubts=[])
     base_main, base_held = sp.review_prompt(ctx), sp.review_held_prompt(ctx, ["d1"])
     prompt_dir = Path(sp.__file__).resolve().parents[3] / "assets/manual_lane/prompts"
-    for name, expected in (("review.md", "86542cf6d9cddd414c24642c910ed5f067a5b4ad2e36e7f0e403ad90622f4098"),
+    for name, expected in (("review.md", "12b1f375c710e00cf48c2db858f69ae0fcaefd68d8c15e4963e46e18f0ff7cc6"),
                            ("review_held.md", "3297be8de6e8651240b4b7e08cc7df859bfc969da5b83731cb32950dd82e0213")):
         original = (prompt_dir / name).read_text().replace("{compilation_context}", "")
         assert hashlib.sha256(original.encode()).hexdigest() == expected
@@ -320,3 +320,17 @@ def test_title_cover_and_both_reviews_of_a_trim_clip_equal_those_of_an_ordinary_
             (rctx.clip_dir / "compilation.json").write_text(json.dumps(_trim_manifest(), ensure_ascii=False), encoding="utf-8")
         prompts[label] = (by_call["title"], by_call["cover-brief"], sp.review_prompt(rctx), sp.review_held_prompt(rctx, ["d1"]))
     assert all(a.encode() == b.encode() for a, b in zip(prompts["ordinary"], prompts["trim"], strict=True))
+
+
+def test_the_review_keeps_a_read_aloud_line_as_the_danmaku_wrote_it():
+    """step 3 wrote 「冲b币换电池」 from the danmaku 「那试试冲b币然后换电池吧」; the review changed it to 充."""
+    prompt = (Path(sp.__file__).resolve().parents[3] / "assets/manual_lane/prompts/review.md").read_text(encoding="utf-8")
+    assert "原记录的错字、谐音、emoji、梗写法都保留" in prompt
+
+
+def test_a_name_whose_referent_is_settled_is_not_held_for_its_spoken_form():
+    """the review held 「塞纳河」 (the table's name for SNH48; viewers answered 「依旧爱河tv」) because every
+    reader heard two syllables.  The one hold rule, shared by step 3 and both reviews, now says such a name is adopted."""
+    from src.autoslice.manual_lane import doubt_policy
+    assert "全称、简称还是近音都不改变句意" in doubt_policy.HOLD_RULE
+    assert "没有出处、各来源连读音都不一致的名字" in doubt_policy.HOLD_RULE

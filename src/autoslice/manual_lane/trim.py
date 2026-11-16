@@ -2,7 +2,9 @@
 
 Two kinds of run of consecutive final cues are cut (prompts/trim.md): a thanks nobody picks up (for a gift, an SC, or a
 name alone; kind "thanks"), and a stretch on a topic unrelated to the clip's main line that she leaves and comes back from
-(a lottery in the middle of a talk, sorting out the stream; kind "topic"; owner 中间无关的话题…最好还是剪掉).
+(a lottery in the middle of a talk, sorting out the stream; kind "topic"; owner 中间无关的话题…最好还是剪掉),
+and a long stretch with no subtitle at all because step 3 found no speech in it, mostly her singing (kind "nospeech";
+`silent_gaps` puts one row for it among the cues, so the model sees it and the same span machinery can cut it).
 Both are found by two independent model answers; a cue is cut only when both answers propose it, and only when `guard`
 lets the run through.  The
 kept intervals of the clip clock, the final cues moved onto the shortened clock and the source-recording pieces to cut
@@ -55,6 +57,11 @@ class OriginalDoubt(doubt_policy.FinalDoubt, total=False):
 TOPIC_MAX_SHARE = 1 / 3
 _ROUND_TOLERANCE_S = 0.0005   # windows are rounded to the millisecond; a cue edge may sit that far outside
 _SHIFT_TOLERANCE_S = 0.05     # a Y cut snapped into silence may leave a cue this far outside the cut
+# A stretch between two subtitles at least this long, holding sound step 3 removed as not speech (singing, humming), is
+# shown to the trim model as one row (a talk clip held 160 s of her singing with no subtitle; the model saw
+# only the two subtitles around it and could not cut it, and step 8 found no timing anchor in the middle of the clip).
+GAP_MIN_S = 20.0
+GAP = "gap"                      # the key that marks such a row
 _EVENT_KIND = {"sc": "SC", "gift": "礼物", "guard": "上舰", "礼物": "礼物", "上舰": "上舰"}   # the offline trial's names
 
 
@@ -71,7 +78,40 @@ def prompt(hook: str, events_text: str, cues: Sequence[TimedText], *, run: int =
     return text if run == 1 else text.rstrip("\n") + f"\n（第 {run} 遍）\n"
 
 
-KINDS = ("thanks", "topic")
+KINDS = ("thanks", "topic", "nospeech")
+
+
+def silent_gaps(cues: Sequence[subtitle_track.TrackCue], doubts: Sequence[OriginalDoubt], clip_start_ms: int
+                ) -> list[subtitle_track.TrackCue]:
+    """One row per stretch of at least GAP_MIN_S between two consecutive final cues in which step 3 removed what the
+    recognisers wrote as not speech (`dropped` doubts, timed by abs_start_ms / abs_end_ms).  The row lies inside the
+    stretch, far enough from both cues that a cut of it keeps the cues' own margins (`keep_windows`); its text says what
+    it is, for the model.  Marked with GAP: true."""
+    removed = [((int(d["abs_start_ms"]) - clip_start_ms) / 1000, (int(d["abs_end_ms"]) - clip_start_ms) / 1000,
+                " ".join(str(d.get("current") or "").split()))
+               for d in doubts if d.get("dropped") and type(d.get("abs_start_ms")) is int and type(d.get("abs_end_ms")) is int]
+    rows: list[subtitle_track.TrackCue] = []
+    for before, after in zip(cues, cues[1:]):
+        low, high = float(before["end_s"]), float(after["start_s"])
+        inside = [text for start, end, text in removed if low <= (start + end) / 2 <= high]
+        if high - low < GAP_MIN_S or not inside:
+            continue
+        heard = "／".join(t for t in inside if t)[:40]
+        rows.append(cast(subtitle_track.TrackCue, {
+            "start_s": round(low + 2 * compilation.TAIL_MARGIN_S, 3), "end_s": round(high - 2 * compilation.HEAD_MARGIN_S, 3),
+            "text": f"（这里 {high - low:.0f} 秒没有字幕：字幕那一步听过，判定这段声音不是讲话（多是唱歌、哼唱）而删去；"
+                    f"删去前识别器写的是「{heard}」）", GAP: True}))
+    return rows
+
+
+def without_uncut_gaps(rows: Sequence[subtitle_track.TrackCue], spans: Sequence[Span]
+                       ) -> tuple[list[subtitle_track.TrackCue], list[Span]]:
+    """`rows` without the GAP rows no span cuts, and `spans` renumbered onto what is left: a gap row that stays is not a
+    subtitle and must not reach the clip that is built."""
+    cut = {n for a, b in spans for n in range(a, b + 1)}
+    keep = [n for n, row in enumerate(rows, 1) if n in cut or not row.get(GAP)]
+    new = {old: i for i, old in enumerate(keep, 1)}
+    return [rows[n - 1] for n in keep], [(new[a], new[b]) for a, b in spans]
 
 
 def parse_answer(answer: object, n_cues: int) -> list[Span]:
@@ -156,11 +196,12 @@ def agreed(first: list[Span], second: list[Span]) -> list[Span]:
 # ----- the insurances ----------------------------------------------------------------------------------
 def guard(spans: Sequence[Span], cues: Sequence[TimedText], *,
           thanks_words: Sequence[str] | None, clip_len_s: float, min_keep_s: float,
-          topic: frozenset[int] = frozenset()) -> tuple[list[Span], list[Veto]]:
+          topic: frozenset[int] = frozenset(), gaps: frozenset[int] = frozenset()) -> tuple[list[Span], list[Veto]]:
     """(spans that pass, vetoed spans as `{'span', 'veto', 'detail'}`).  Per span, the first rule that hits vetoes it:
     EDGE (holds the first or last cue: head and tail belong to the boundary step), NO_THANKS (no cue of the span has a
-    thanks word; not asked of a span whose every cue both answers call an unrelated topic, `topic`).  Then TOPIC_TOO_LONG:
-    the topic spans that passed are vetoed when together they last more than TOPIC_MAX_SHARE of the clip.  Then TOO_SHORT: if the passed spans leave less than `min_keep_s` of clip, all of them are vetoed.
+    thanks word; not asked of a span whose every cue both answers call an unrelated topic, `topic`, or is a `silent_gaps`
+    row, `gaps`).  Then TOPIC_TOO_LONG: the topic spans that passed are vetoed when together they last more than
+    TOPIC_MAX_SHARE of the clip (a span holding a gap row is not an inserted topic: no speech is not a wrong main line).  Then TOO_SHORT: if the passed spans leave less than `min_keep_s` of clip, all of them are vetoed.
     Whether a thanks is picked up afterwards (an SC read out, an answer, a joke) is the model's judgment in
     prompts/trim.md, asked twice; no code rule second-guesses it.  `thanks_words=None`: the spans are the channel owner's
     own cut marks (not a model's guess), so NO_THANKS does not apply; EDGE and TOO_SHORT cannot be done mechanically
@@ -175,12 +216,12 @@ def guard(spans: Sequence[Span], cues: Sequence[TimedText], *,
         inside = texts[a - 1:b]
         if a == 1 or b == len(cues):
             vetoed.append({"span": (a, b), "veto": "EDGE", "detail": f"span {a}..{b} holds the first or last of {len(cues)} cues"})
-        elif (thanks_words is not None and not set(range(a, b + 1)) <= topic
+        elif (thanks_words is not None and not set(range(a, b + 1)) <= topic | gaps
               and not any(w in t for t in inside for w in words)):
             vetoed.append({"span": (a, b), "veto": "NO_THANKS", "detail": f"no cue of {a}..{b} holds {list(thanks_words)!r}"})
         else:
             passed.append((a, b))
-    topical = [span for span in passed if set(range(span[0], span[1] + 1)) <= topic]
+    topical = [span for span in passed if set(range(span[0], span[1] + 1)) <= topic and not set(range(span[0], span[1] + 1)) & gaps]
     topic_s = sum(float(cues[b - 1]["end_s"]) - float(cues[a - 1]["start_s"]) for a, b in topical)
     if topical and topic_s > TOPIC_MAX_SHARE * clip_len_s:
         detail = f"{topic_s:.1f}s of unrelated topic is more than {TOPIC_MAX_SHARE:.0%} of the {clip_len_s:.1f}s clip"

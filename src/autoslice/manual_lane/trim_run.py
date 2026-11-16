@@ -34,6 +34,7 @@ run); the other answers touch nothing.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import json
 import shutil
@@ -99,6 +100,7 @@ class TrimDecision(TypedDict):
     proposed: NotRequired[list[list[trim.Span]]]
     agreed: NotRequired[list[trim.Span]]
     topic_cues: NotRequired[list[int]]          # the cues both answers call an unrelated topic (not a thanks)
+    gap_cues: NotRequired[list[int]]            # the rows trim.silent_gaps put among the cues (no speech, mostly singing)
     passed: NotRequired[list[trim.Span]]
     vetoed: NotRequired[list[trim.Veto]]
     removed: NotRequired[list[RemovedRun]]
@@ -114,6 +116,7 @@ class _Material:
     bcut_cues: list[SrtCue]
     length_s: float
     owner_spans: list[trim.Span] = field(default_factory=list)      # the owner's marks among the cues above (empty: no marks)
+    gap_rows: list[subtitle_track.TrackCue] = field(default_factory=list)   # trim.silent_gaps rows among the cues above (all cut)
 
 
 def _decision_path(task: Path, cid: str) -> Path:
@@ -336,7 +339,7 @@ def _build(task: Path, ctx: Ctx, mat: _Material, passed: list[trim.Span], adapte
     edited = None
     if owner_decided(ctx):      # which of X's sentences the owner edited goes with each sentence Y keeps (Y's push has no baseline)
         own = subtitle_track.parse_blocks((ctx.clip_dir / "subs/final.srt").read_text(encoding="utf-8"))
-        origin = trim.kept_origin(own, owner_marks(ctx), passed)
+        origin = trim.kept_origin(own, [*owner_marks(ctx), *mat.gap_rows], passed)
         if len(origin) != len(final):
             raise _Failed(f"{len(final)} kept cues for {len(origin)} kept rows of the table")
         edited = owner_edits.carried(origin, owner_edits.owner_numbers(ctx.clip_dir / IMPORT_DIR, imported(ctx), own))
@@ -348,7 +351,7 @@ def _build(task: Path, ctx: Ctx, mat: _Material, passed: list[trim.Span], adapte
     cut_text = " ".join(" ".join(str(mat.final_cues[n - 1]["text"]).split()) for a, b in passed for n in range(a, b + 1))
     spans_text = "、".join(f"{a}" if a == b else f"{a}–{b}" for a, b in passed)
     why = ("是频道主标为删的句子，视频随字幕一起剪掉" if decision.get("source") == OWNER_MARKS
-           else "是与主线无关的话题段或没人接的致谢，两遍问答一致且过保险")
+           else "是与主线无关的话题段、没人接的致谢或没有讲话的长段（多是唱歌），两遍问答一致且过保险")
     done = supersede_candidate(
         task_dir=task, cid=cid, by=successor, authority=f"片中剪除（trim 命令）：{cid}", quote=cut_text[:QUOTE_CHARS],
         reason=f"片中剪除：第 {spans_text} 句{why}；剪掉后另建 {successor}，原片保留可回退")
@@ -403,6 +406,15 @@ def trim_clip(*, task: Path, cid: str, adapters_for: AdaptersFor, source_dir: st
                     f"cues {v['span'][0]}..{v['span'][1]} ({numbered[v['span'][0] - 1]['start_s']}-"
                     f"{numbered[v['span'][1] - 1]['end_s']} s) {v['veto']}: {v['detail']}" for v in vetoed))
         else:
+            # a long stretch step 3 found no speech in (her singing) is one row among the cues, so it can be cut
+            gaps = trim.silent_gaps(mat.final_cues, mat.doubts, clip["start_ms"])
+            final, gap_spans = trim.with_marks(mat.final_cues, gaps)
+            speaker, same = trim.with_marks(mat.speaker_cues, gaps)
+            if same != gap_spans:
+                raise _Failed("the no-speech stretches sit differently among subs/final.srt and speaker/speaker.srt")
+            numbered = [{"id": n, **c} for n, c in enumerate(final, 1)]
+            gap_numbers = frozenset(n for a, b in gap_spans for n in range(a, b + 1))
+            decision["gap_cues"] = sorted(gap_numbers)
             events = trim.events_text(_events(ctx, mat.length_s))
             prompts = [trim.prompt(clip["hook"], events, numbered, run=run) for run in (1, 2)]
             kinds = _ask_twice(ctx, task, prompts, len(numbered), decision)
@@ -410,11 +422,19 @@ def trim_clip(*, task: Path, cid: str, adapters_for: AdaptersFor, source_dir: st
             agreed = trim.agreed(*spans)
             decision["topic_cues"] = sorted(topic := trim.topic_cues(*kinds))
             passed, vetoed = trim.guard(agreed, numbered, thanks_words=rules("trim_thanks_words")["words"],
-                                        clip_len_s=mat.length_s, min_keep_s=gates.CLIP_MIN_SECONDS, topic=topic)
+                                        clip_len_s=mat.length_s, min_keep_s=gates.CLIP_MIN_SECONDS, topic=topic,
+                                        gaps=gap_numbers)
         decision["proposed"], decision["agreed"], decision["passed"], decision["vetoed"] = spans, agreed, passed, vetoed
         decision["removed"] = [{"span": [a, b], "cues": [{"n": n, "start_s": numbered[n - 1]["start_s"],
                                                           "end_s": numbered[n - 1]["end_s"], "text": numbered[n - 1]["text"]}
                                                          for n in range(a, b + 1)]} for a, b in passed]
+        if decision.get("gap_cues"):      # a gap row no span cuts leaves; a cut one goes out like an owner's mark
+            asked = passed
+            final, passed = trim.without_uncut_gaps(final, asked)
+            speaker, _ = trim.without_uncut_gaps(speaker, asked)
+            mat = dataclasses.replace(mat, final_cues=final, speaker_cues=speaker,
+                                      gap_rows=[row for row in final if row.get(trim.GAP)])
+
         if not passed:
             return _write_decision(task, cid, {**decision, "status": "NONE", "reason": (
                 "no span both answers proposed passed the guard" if agreed else "the two answers share no span to cut")})

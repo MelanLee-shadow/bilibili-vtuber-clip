@@ -5,7 +5,7 @@ recalls candidates from a recording's whole-recording subtitles (and its danmaku
 metric defines.  This module only (1) feeds it from a prepared recording and keeps its answer next to the inputs'
 fingerprints, and (2) seats the day's candidates the way the production selection does: hard Tier, then absolute score,
 then confidence (`selection_rank_key`); the candidate-level admission (`selection_scorecard_production_admission`); the
-lowest confidence; the quota of the recording date (`resolve_quota_grant`, the dated authority asset); the soft per-recording
+lowest confidence; the lowest score of every seat; the quota of the recording date (`resolve_quota_grant`, the dated authority asset); the soft per-recording
 limit that slack refills.  The numbers that are not read from those modules are the `discover` rules of lane_rules.json.
 A candidate that is not seated keeps the reason.  Every import of the old pipeline is in this file (import_boundary.json).
 """
@@ -41,6 +41,7 @@ Selector = Callable[..., tuple[list[Any], dict[str, Any]]]
 # why a candidate was not seated (the ledger's `reason`)
 NOT_TALK = "NOT_TALK"
 BELOW_MIN_CONFIDENCE = "BELOW_MIN_CONFIDENCE"
+BELOW_MIN_SCORE = "BELOW_MIN_SCORE"
 ADMISSION_HOLD = "ADMISSION_HOLD"
 OVERLAPS_SEATED = "OVERLAPS_SEATED"
 QUOTA_FULL = "QUOTA_FULL"
@@ -243,20 +244,25 @@ def _overlaps(entry: Mapping[str, Any], taken: Sequence[tuple[str, int, int]]) -
     return any(name == n and start < e and s < end for n, s, e in taken)
 
 
-def _admitted(pool: Sequence[Mapping[str, Any]], done: set[str], lowest: float,
+def _admitted(pool: Sequence[Mapping[str, Any]], done: set[str], lowest: float, min_score: float,
               reject: Callable[..., None]) -> list[Mapping[str, Any]]:
-    """The candidates that may take a seat at all: talk, confident enough, admitted by the production admission."""
+    """The candidates that may take a seat at all: talk, confident enough, scored high enough, admitted by the production
+ admission. The score floor holds for every seat, not only the extra ones: the day's cap is a ceiling, not a number
+ to fill (公开规则：并不是说一定要塞满5条…只有得高分的才去做成切片)."""
     eligible = []
     for entry in pool:
         if entry["cid"] in done:
             continue
         confidence = entry.get("confidence")
+        card = entry.get("selection_scorecard")
         if entry.get("kind") != "talk":
             reject(entry, NOT_TALK, f"kind={entry.get('kind')}: the song lane is not discover's")
         elif not isinstance(confidence, (int, float)) or confidence < lowest:
             reject(entry, BELOW_MIN_CONFIDENCE, f"confidence={confidence}, lowest {lowest}")
         elif (admission := selection_scorecard_production_admission(entry.get("selection_scorecard"))).get("status") != "ADMIT":
             reject(entry, ADMISSION_HOLD, f"{admission.get('reason_code')}: {admission.get('reason', '')}"[:200])
+        elif float(card["effective_score"]) < min_score:         # ADMIT means a valid card
+            reject(entry, BELOW_MIN_SCORE, f"effective_score={card['effective_score']}, lowest {min_score}")
         else:
             eligible.append(entry)
     return eligible
@@ -297,7 +303,8 @@ def seat_day(date: str, pool: Sequence[Mapping[str, Any]], built: Sequence[Mappi
             taken.append(_span(entry))
     owner_seats = len(seated)
     policy["owner_marked"] = owner_seats
-    ranked = sorted(_admitted([e for e in pool if e not in marked], done, float(cfg["min_confidence"]), reject),
+    ranked = sorted(_admitted([e for e in pool if e not in marked], done, float(cfg["min_confidence"]),
+                              float(cfg["min_effective_score"]), reject),
                     key=selection_rank_key)
 
     def extra_seat_ok(entry: Mapping[str, Any]) -> bool:

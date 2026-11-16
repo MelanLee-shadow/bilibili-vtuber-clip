@@ -22,7 +22,7 @@ from .lane_rules import rules
 from .layout import layout
 from .runner import Ctx, StepOutcome
 from .srt_text import format_srt, parse_srt
-from .step_io import REMOTE_FONTS, REMOTE_TOOLS, _fail, _local, _run_remote
+from .step_io import REMOTE_FONTS, REMOTE_LANE_FONTS, REMOTE_TOOLS, _fail, _local, _run_remote
 
 
 def _manuscript_intro(ctx: Ctx, manuscript: str) -> str | None:
@@ -81,7 +81,12 @@ def step5_burn(ctx: Ctx) -> StepOutcome:
     ctx.adapters.remote.put(_burned_lines(ctx), f"{rd}/burn/speaker.srt")
     ctx.adapters.remote.put(REMOTE_TOOLS / "render_ass.py", f"{rd}/tools/render_ass.py")
     ctx.adapters.remote.put(REMOTE_TOOLS / "prepend_intro.py", f"{rd}/tools/prepend_intro.py")
+    # libass finds a glyph the style's font lacks only through fontconfig, so the lane's fallback fonts (a monochrome
+    # emoji font: 🥺 is newer than the host's Symbola) join the host's fonts there, for this step only.
     body = (f"mkdir -p {rd}/burn {rd}/tools\n"
+            f"printf '%s\\n' '<?xml version=\"1.0\"?><fontconfig><include ignore_missing=\"yes\">/etc/fonts/fonts.conf</include>' "
+            f"'<dir>{REMOTE_LANE_FONTS}</dir><cachedir>{rd}/burn/fontcache</cachedir></fontconfig>' > {rd}/burn/fonts.conf\n"
+            f"export FONTCONFIG_FILE={rd}/burn/fonts.conf\n"
             f"{remote_python(f'{rd}/tools/render_ass.py {rd}/burn/speaker.srt {rd}/burn/final.ass {REMOTE_FONTS}')} || exit 11\n"
             f"ffmpeg -hide_banner -loglevel error -y -i {rd}/cut/cut.mp4 "
             f"-vf \"subtitles='{rd}/burn/final.ass':fontsdir='{REMOTE_FONTS}'\" "
@@ -92,7 +97,7 @@ def step5_burn(ctx: Ctx) -> StepOutcome:
     res = _run_remote(ctx, "s5-burn", body, timeout=3600)
     if res.rc == 11 and "GLYPH_MISSING" in res.stdout:
         return _fail("SUBTITLE_GLYPH_MISSING", "字幕里有主机上没有字体能画的字，烧出来会是方框；先在主机装上能画它的字体"
-                     "（单色字体，例如 apt 的 fonts-symbola；主机的 libass 不画彩色 emoji），再重跑第 5 步：" + res.stdout.split("GLYPH_MISSING", 1)[1][:300])
+                     "（单色字体放进 assets/manual_lane/fonts 随代码部署即可，第 5 步把它加进 fontconfig；主机的 libass 不画彩色 emoji），再重跑第 5 步：" + res.stdout.split("GLYPH_MISSING", 1)[1][:300])
     if res.rc != 0:
         return _fail(f"BURN_FAILED_RC{res.rc}", (res.stdout + res.stderr)[-400:])
     local_result = _local(ctx, "burn/intro_result.json")
