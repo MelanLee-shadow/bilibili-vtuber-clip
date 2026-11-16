@@ -283,3 +283,25 @@ def test_a_backfill_run_looks_up_as_many_names_as_its_limit(tmp_path, repo):
                   today=TODAY, at=STAMP, notes=[], videos=lambda name: searched.append(name) or [], limit=limit)
         assert len(searched) == limit
         (tmp_path / names.ORIGINS_FILE).unlink()
+
+
+def test_an_unusable_answer_still_leaves_the_name_dated_by_its_oldest_video_and_due_again():
+    rel = names.relations(_snapshot(_rel("鼠鼠", "甲")), None)[0]
+    video = {"title": "鼠鼠来了", "url": "https://www.bilibili.com/video/BVold/", "published_at": "2025-08-28T00:00:00Z",
+             "text": ""}
+    bad = json.dumps({"origins": [{"key": names.key(rel), "meaning": "某梗", "origin": "", "earliest": None,
+                                   "date_basis": "", "url": "https://made.up/"}]}, ensure_ascii=False)
+    origins: dict = {}
+    stats = names.lookup_origins([rel], origins, search=lambda q: [], ask_json=lambda p: bad, today=TODAY,
+                                 videos=lambda name: [video])
+    got = origins[names.key(rel)]
+    assert stats["judge_failed"] == 1 and got["meaning"] == "" and got["first_video_at"] == "2025-08-28"
+    assert names._due(rel, origins, TODAY + dt.timedelta(days=1), True), "CPA is asked again on the next run"
+    _, report = names.fold([rel], origins, Graph([], []), at=STAMP)
+    assert report["in_graph_now"][0]["earliest"] == "2025-08-28"
+    assert report["in_graph_now"][0]["earliest_source"] == "bilibili_search"
+    # a whole batch that fails is the same
+    origins2: dict = {}
+    names.lookup_origins([rel], origins2, search=lambda q: [], ask_json=lambda p: "nope", today=TODAY,
+                         videos=lambda name: [video])
+    assert origins2[names.key(rel)]["first_video_at"] == "2025-08-28"

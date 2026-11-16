@@ -270,6 +270,18 @@ def _due(rel: Relation, origins: dict[str, Origin], today: dt.date, probing: boo
     return (today - dt.date.fromisoformat(got["looked_at"])).days >= RELOOK_DAYS
 
 
+def _video_dated(prior: Origin | None, video: Video, today: dt.date) -> Origin:
+    """The name dated by its oldest Bilibili video although CPA's answer for it was unusable: what an earlier run
+    wrote is kept, and a name without a meaning stays due (looked at RELOOK_DAYS ago) so the next run asks again."""
+    out = Origin(meaning="", origin="", earliest=None, date_basis="", url=None,
+                 looked_at=(today - dt.timedelta(days=RELOOK_DAYS)).isoformat(), first_video_at=None,
+                 first_video_url=None, probed=True)
+    if prior is not None and prior["meaning"]:
+        out = prior.copy()
+    out["first_video_at"], out["first_video_url"], out["probed"] = video["published_at"][:10], video["url"], True
+    return out
+
+
 def lookup_origins(rels: Sequence[Relation], origins: dict[str, Origin], *,
                    search: Callable[[str], Sequence[Row]], ask_json: Callable[[str], str], today: dt.date,
                    videos: Callable[[str], Sequence[Video]] | None = None, limit: int = ORIGIN_LIMIT,
@@ -306,9 +318,11 @@ def lookup_origins(rels: Sequence[Relation], origins: dict[str, Origin], *,
         try:
             got, problems = parse_origins(ask_json(origin_prompt(today.isoformat(), batch)), batch, today.isoformat())
         except Exception as exc:  # noqa: BLE001 - the batch's names are asked again next run
-            stats["judge_failed"] += len(batch)
+            got, problems = {}, []
             notes.append(f"origin batch {start // ORIGIN_BATCH}: {type(exc).__name__}: {str(exc)[:200]}")
-            continue
+        for rel, _, seen in batch:  # a failed answer voids what CPA wrote, never the mechanical video date
+            if key(rel) not in got and seen:
+                origins[key(rel)] = _video_dated(origins.get(key(rel)), seen[0], today)
         origins.update(got)
         stats["judged"] += len(got)
         stats["judge_failed"] += len(batch) - len(got)
