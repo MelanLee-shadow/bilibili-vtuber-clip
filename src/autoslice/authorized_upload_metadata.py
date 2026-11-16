@@ -2,7 +2,7 @@
 
 Platform upper bounds (not verified rejection boundaries):
 * Tag count: repository readback reports/tag-suggestions-20260713/
-  tag_update_results_10.json:147-151, BV1EQNk6KErE. Source grade:
+  tag_update_results_10.json:147-151, BV1038304665. Source grade:
   "线上观察到已接受，未见拒收边界"; the row is SKIP_ALREADY, not an edit receipt.
 * Characters per tag: admin-supplied third-party submission descriptions
   (ucjz.com 投稿 API article, shankongmao.com, zhihu.com/p/687058405).

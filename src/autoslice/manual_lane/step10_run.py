@@ -106,7 +106,7 @@ class _Run:
             if "plan" in state["done"] or state.get("upload_started_at"):
                 stop(PACKAGE_CHANGED, f"{self.out} 里的上线进度是为另一个封存包建的（计划或上传已发出）：包已变，不能沿用，也不重建计划")
             state = {}
-        # decided once, kept: after a first publication, deciding again takes the clip for its own successor (BV1ZvWf6dEGZ, 11-15)
+        # decided once, kept: after a first publication, deciding again takes the clip for its own successor (BV1072685383, 11-15)
         if state.get("schema") == SCHEMA:
             route = Route(**{**state["route"], "flags": tuple(state["route"]["flags"])})
         else:

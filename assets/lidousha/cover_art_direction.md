@@ -8,13 +8,13 @@ layout.
 Public reference material (descriptive only):
 
 - version: `public-cover-art-direction.v1`
-- primary public examples: `https://www.bilibili.com/video/BV13Sac66Eji`,
-  `https://www.bilibili.com/video/BV1uKuC6hE9j`,
-  `https://www.bilibili.com/video/BV1GEYp6NEPJ`,
-  `https://www.bilibili.com/video/BV1g8Hp6qEGy`,
-  `https://www.bilibili.com/video/BV1PbHt6CEeJ`,
-  `https://www.bilibili.com/video/BV1RGY36zETk`,
-  `https://www.bilibili.com/video/BV1ScGN6cE47`
+- primary public examples: `https://www.bilibili.com/video/BV1015163193`,
+  `https://www.bilibili.com/video/BV1021661501`,
+  `https://www.bilibili.com/video/BV1015139200`,
+  `https://www.bilibili.com/video/BV1043942846`,
+  `https://www.bilibili.com/video/BV1081539005`,
+  `https://www.bilibili.com/video/BV1099812377`,
+  `https://www.bilibili.com/video/BV1083093943`
 - applies to: future ordinary single-host talk covers; the current story and
   source material choose the visual language and layout
 - limits: descriptive evidence only; no causal CTR evidence, no fixed style or

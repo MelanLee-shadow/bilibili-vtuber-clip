@@ -2,8 +2,8 @@
   "schema_version": "lidousha-psplive-roster-sources.v1",
   "sources": [
     {
-      "api_url": "https://api.bilibili.com/x/web-interface/view?bvid=BV1GTFseLESN",
-      "public_url": "https://www.bilibili.com/video/BV1GTFseLESN/",
+      "api_url": "https://api.bilibili.com/x/web-interface/view?bvid=BV1070546374",
+      "public_url": "https://www.bilibili.com/video/BV1070546374/",
       "owner_mid": 454673997,
       "owner_name": "psplive",
       "title_contains": "虚拟艺人团体psplive",
