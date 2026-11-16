@@ -1,11 +1,12 @@
 """`discover`: the recordings of a day become candidate clips (inventory -> subtitles -> selection -> clip states)."""
+import dataclasses
 import json
 import types
 
 import pytest
 
 from fakes import FakeDanmaku, FakeRemote
-from src.autoslice.manual_lane import discover as dv, discover_media as dm, discover_select as ds
+from src.autoslice.manual_lane import discover as dv, discover_media as dm, discover_select as ds, layout as layout_module
 from src.autoslice.manual_lane.adapters import Adapters, RemoteResult
 
 DATE = "2026-11-09"
@@ -233,7 +234,19 @@ def test_a_day_whose_danmaku_came_before_its_recordings_waits_for_them_and_a_lat
 
 
 
-def test_the_recorders_own_copy_is_fetched_first_and_read_before_the_archive(tmp_path):
+def test_without_a_recorder_host_nothing_is_fetched_and_old_copies_are_still_pruned(tmp_path):
+
+    assert not dm.layout().recordings_direct_host and "N100" not in dm.layout().danmaku_host
+    topology = json.loads(layout_module.TOPOLOGY_FILE.read_text(encoding="utf-8"))
+    assert dm.archive_room() == f"{topology['archive_root']}/{dm.layout().room_id}"   # the media host's own archive, not the recorder's
+    host = Host()
+    run(tmp_path, host)
+    copy = host.bodies["disc-direct-copy"]
+    assert "rsync" not in copy and "head -n -" in copy and "DIRECT_COPY_OK" in copy
+
+
+def test_the_recorders_own_copy_is_fetched_first_and_read_before_the_archive(tmp_path, monkeypatch):
+    monkeypatch.setattr(dm, "layout", lambda real=dm.layout(): dataclasses.replace(real, recordings_direct_host="recorder"))
     host = Host()
     report = run(tmp_path, host)
     assert [d["status"] for d in report.days] == [dv.COMPLETE] and not report.failures

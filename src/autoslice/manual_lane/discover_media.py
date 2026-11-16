@@ -1,6 +1,6 @@
 """`discover`, the media side: what the recordings of a day are, and each recording made ready for the selection.
 
-- the archive: the recorder's final archive on the media host, `<n100_archive_root>/<room id>/<YYYY-MM-DD>/` (the topology
+- the archive: the recorder's final archive on the media host, `<archive_root>/<room id>/<YYYY-MM-DD>/` (OCI3's own; the topology
   file `ops/recording/oci3-recording-topology.json` is the one place that names the root; docs/pipeline/10-source-recording.md).
   Only root can read it, so every listing, copy and read of a recording runs as root through `adapters.root_script`
   (`source_read` for the recording itself) and what it writes is handed back to the lane's user.
@@ -168,24 +168,25 @@ def copy_direct(remote: Remote, done: Sequence[str] = ()) -> dict[str, str] | No
     """Copy the recorder's newest days straight to the media host (layout `recordings_direct_host` / `_root`): of the
     newest `discover.auto_recent_dates` days, those not earlier than `auto_not_before` and not in `done` (the days
     discover has completed: nothing reads them again).  A day directory whose `.source` names another supplier is left
-    to that supplier.  `direct_keep_days` copies are kept.  None when it is not
-    configured; a failure is said and stops nothing: the days that are here, and the archive, are still read."""
+    to that supplier.  `direct_keep_days` copies are kept, also without a host (the media host's own recorder supplies
+    the days, ops/recording/oci3_lane_spool_copy.sh).  None when there is no direct root; a failure is said and stops
+    nothing: the days that are here, and the archive, are still read."""
     host, room = layout().recordings_direct_host, direct_room()
-    if not host or not room:
+    if not room:
         return None
     cfg = rules("discover")
     day = "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
     source = shlex.quote(f"{host}:{layout().room_id}/")
     skip = " ".join(shlex.quote(d) for d in done if is_date(d))
-    body = (f"mkdir -p {shlex.quote(room)} || exit 20\n"
-            f"days=$(rsync --list-only {source} | awk '{{print $NF}}' | grep -E '{day}' | sort | tail -n {int(cfg['auto_recent_dates'])}"
+    fetch = (f"days=$(rsync --list-only {source} | awk '{{print $NF}}' | grep -E '{day}' | sort | tail -n {int(cfg['auto_recent_dates'])}"
             f" | awk -v first={shlex.quote(str(cfg['auto_not_before']))} '$0 >= first') || exit 21\n"
             f"for skip in {skip}; do days=$(printf '%s\\n' $days | grep -vxF \"$skip\"); done\n"
             # a day has one source: one the media host's own recorder supplied (ops/recording/oci3_lane_spool_copy.sh
             # writes `.source`) is not also fetched from the recorder's host, whose files of the same names differ
             f"for d in $days; do mark={shlex.quote(room)}/\"$d\"/.source; "
             f"if [ -f \"$mark\" ] && [ \"$(cat \"$mark\")\" != host ]; then continue; fi; "
-            f"rsync -a --partial --chmod=Du+rwx,Fu+rw {source}\"$d\" {shlex.quote(room + '/')} || exit 22; echo host > \"$mark\"; done\n"
+            f"rsync -a --partial --chmod=Du+rwx,Fu+rw {source}\"$d\" {shlex.quote(room + '/')} || exit 22; echo host > \"$mark\"; done\n")
+    body = (f"mkdir -p {shlex.quote(room)} || exit 20\n" + (fetch if host else "days=\n") +
             f"ls {shlex.quote(room)} | grep -E '{day}' | sort | head -n -{int(cfg['direct_keep_days'])} | "
             f"while read -r d; do rm -rf {shlex.quote(room)}/\"$d\"; done\n"
             "echo DIRECT_COPY_OK $days\n")
@@ -234,9 +235,11 @@ def list_dates(remote: Remote) -> tuple[list[str], float, bool]:
 
 
 def inventory(remote: Remote, date: str) -> DayInventory:
-    """Every recording of the day: path, size, modification time, and its danmaku XML when there is one."""
+    """Every recording of the day: path, size, modification time, and its danmaku XML when there is one.  `.copy_pending`
+    (touched while the copy from the recorder's spool is behind, oci3_lane_spool_copy.sh) only counts as a write."""
     def listing(directory: str) -> str:
-        find = shlex.join(["find", directory, "-type", "f", "(", "-name", "*.flv", "-o", "-name", "*.xml", ")"])
+        find = shlex.join(["find", directory, "-type", "f", "(", "-name", "*.flv", "-o", "-name", "*.xml",
+                           "-o", "-name", ".copy_pending", ")"])
         return f"echo DIR; {find}" + r" -printf 'F\t%p\t%s\t%T@\n'"
 
     directory, direct = archive_dir(date), direct_room()

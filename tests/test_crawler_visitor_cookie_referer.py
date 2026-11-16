@@ -16,7 +16,7 @@ from src.autoslice.timely_term_crawler import BoundedHttpClient, CrawlError
 
 NOW = dt.datetime(2026, 10, 31, 1, 0, tzinfo=dt.timezone.utc)
 SPI = "https://api.bilibili.com/x/frontend/finger/spi"
-VIEW = "https://api.bilibili.com/x/web-interface/view?bvid=BV1uW421R79X"
+VIEW = "https://api.bilibili.com/x/web-interface/view?bvid=BV1073290328"
 COOKIE = "buvid3=B3TOKEN-infoc; buvid4=B4TOKEN=="
 SPI_OK = json.dumps({"code": 0, "data": {"b_3": "B3TOKEN-infoc", "b_4": "B4TOKEN=="}}).encode()
 VIEW_OK = json.dumps({"code": 0, "data": {"title": "VirtuaReal新成员加入！"}}).encode()

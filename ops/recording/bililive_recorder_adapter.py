@@ -5273,6 +5273,65 @@ def archived_recordings(state: dict[str, Any], archive_path: Path | None) -> set
         raise AdapterError("local archive receipt is unreadable") from exc
 
 
+def _finalize_and_record(args: argparse.Namespace, state: dict[str, Any], source: Path) -> dict[str, Any]:
+    relative = str(source.relative_to(args.record_root))
+    result = finalize_recording(
+        source,
+        ffmpeg_bin=args.ffmpeg,
+        ffprobe_bin=args.ffprobe,
+        existing_ledger=state["finalized"].get(relative),
+    )
+    state["finalized"][relative] = {
+        "source_size": source.stat().st_size,
+        "source_mtime_ns": source.stat().st_mtime_ns,
+        "target": str(source.with_suffix(".mp4")),
+        "target_sha256": result["target_sha256"],
+        "finalized_at": datetime.now(timezone.utc).isoformat(),
+    }
+    atomic_write_json(args.state_path, state, mode=0o600)
+    return result
+
+
+def _closed_segments_ready_while_live(args: argparse.Namespace, state: dict[str, Any]) -> list[Path]:
+    """Closed segments that can be finalized before the stream ends, oldest first.
+
+    Only a file with its own FileClosed whose size is on disk qualifies. A short
+    file may be a reconnect stub, which is classified against a successor that is
+    still open, so it waits for the end-of-stream pass like anything with an
+    existing disposition, a missing event or a size mismatch (that pass reports them).
+    """
+
+    closed_files = state.get("webhook_files")
+    if not isinstance(closed_files, dict):
+        return []
+    archived = archived_recordings(state, getattr(args, "archive_state_path", None))
+    dispositions = state.get("source_dispositions") or {}
+    ready = []
+    for source in discover_managed_flvs(
+        args.record_root,
+        room_id=args.room,
+        managed_since_epoch=float(state["managed_since_epoch"]),
+        explicit_relative_paths=closed_files.keys(),
+    ):
+        relative = str(source.relative_to(args.record_root))
+        evidence = closed_files.get(relative)
+        if (relative in archived or relative in dispositions or not isinstance(evidence, dict)
+                or evidence.get("status") != "CLOSED"):
+            continue
+        if relative in state["finalized"] and source.with_suffix(".mp4").is_file():
+            continue
+        try:
+            size, duration = int(evidence.get("file_size") or -1), float(evidence.get("duration") or 0)
+            if source.stat().st_size != size:
+                continue
+        except (OSError, TypeError, ValueError):
+            continue
+        if size < CONNECTION_STUB_MAX_SIZE_BYTES or duration < CONNECTION_STUB_MAX_DURATION_SECONDS:
+            continue
+        ready.append(source)
+    return ready
+
+
 def run_once(args: argparse.Namespace) -> int:
     now_epoch = time.time()
     state = load_or_initialize_state(
@@ -5390,8 +5449,30 @@ def run_once(args: argparse.Namespace) -> int:
             cookie_health=cookie_health,
         )
         atomic_write_json(args.status_path, status, mode=0o644)
+        # waiting for the end of the stream left every segment of a
+        # 2h20m stream on the local disk at once (free space 32.8G -> 9.1G after
+        # the burst of remuxes and cloud copies). A segment the recorder has
+        # already closed is handed over now, one per tick; everything the
+        # end-of-stream pass decides (stubs, gaps, errors) still waits for it.
+        for source in _closed_segments_ready_while_live(args, state)[:1]:
+            try:
+                finalized.append(_finalize_and_record(args, state, source))
+            except (AdapterError, OSError) as exc:
+                finalize_errors.append({"source": str(source), "error": str(exc)[:1200]})
+        if finalized or finalize_errors:
+            status = build_status(
+                room_id=args.room,
+                room=room,
+                now_epoch=time.time(),
+                record_root=args.record_root,
+                finalized=finalized,
+                finalize_errors=finalize_errors,
+                ffprobe_bin=args.ffprobe,
+                cookie_health=cookie_health,
+            )
+            atomic_write_json(args.status_path, status, mode=0o644)
         print(json.dumps(status, ensure_ascii=False))
-        return 0
+        return 1 if finalize_errors else 0
 
     if not status_continuous:
         state.pop("inactive_since_epoch", None)
@@ -5532,23 +5613,8 @@ def run_once(args: argparse.Namespace) -> int:
         atomic_write_json(args.status_path, in_progress, mode=0o644)
 
     for source in pending[: args.max_finalize]:
-        relative = str(source.relative_to(args.record_root))
         try:
-            result = finalize_recording(
-                source,
-                ffmpeg_bin=args.ffmpeg,
-                ffprobe_bin=args.ffprobe,
-                existing_ledger=state["finalized"].get(relative),
-            )
-            finalized.append(result)
-            state["finalized"][relative] = {
-                "source_size": source.stat().st_size,
-                "source_mtime_ns": source.stat().st_mtime_ns,
-                "target": str(source.with_suffix(".mp4")),
-                "target_sha256": result["target_sha256"],
-                "finalized_at": datetime.now(timezone.utc).isoformat(),
-            }
-            atomic_write_json(args.state_path, state, mode=0o600)
+            finalized.append(_finalize_and_record(args, state, source))
         except (AdapterError, OSError) as exc:
             finalize_errors.append({"source": str(source), "error": str(exc)[:1200]})
 

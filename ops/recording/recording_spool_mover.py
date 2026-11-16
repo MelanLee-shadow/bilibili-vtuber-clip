@@ -147,11 +147,17 @@ class UploadObservations:
             delay = min(300, delay * 2) if failed else 5
 
 
+# Below this much free space recording wins: segments are evicted even if the clip lane has not copied them.
+LANE_FLOOR_BYTES = 12 * 1024**3
+
+
 class Mover:
     def __init__(self, *, spool: Path, archive_root: Path, state_path: Path,
                  archive_path: Path, client: CD2Status, observations: UploadObservations,
-                 mount: Path = identity.CLOUD_MOUNT, backup_root: Path | None = None):
+                 mount: Path = identity.CLOUD_MOUNT, backup_root: Path | None = None,
+                 lane_root: Path | None = None, lane_floor: int = LANE_FLOOR_BYTES):
         self.spool, self.archive_root, self.mount = spool, archive_root, mount
+        self.lane_root, self.lane_floor = lane_root, lane_floor
 
 
         self.backup_root = backup_root
@@ -313,6 +319,31 @@ class Mover:
         place["proof"] = proof
         self.save()
 
+    def lane_holds(self, relative: str, row: dict[str, Any]) -> bool:
+        """True while the clip lane has not yet copied this segment's FLV/XML (oci3_lane_spool_copy.sh).
+
+ 公开规则：边录边传有个坏处是下播后才开始选片，原始录播文件已经不见了，还得重新下.
+ The lane selects after the stream ends, from its own copy; a segment evicted before it was copied
+ would have to be downloaded back from 115. A day the lane does not copy (no day directory: the copy
+ makes it as soon as the day's first recording appears) or takes from another source (`.source` not
+ "spool") does not hold; nor does anything once free space is below the floor."""
+        if self.lane_root is None:
+            return False
+        day = self.lane_root / Path(relative).parent
+        source = day / ".source"
+        if not day.is_dir() or (source.exists() and source.read_text(encoding="utf-8").strip() != "spool"):
+            return False
+        missing = [name for name, item in row["files"].items()
+                   if not item.get("deleted") and name.endswith((".flv", ".xml"))
+                   and not ((self.lane_root / name).is_file()
+                            and (self.lane_root / name).stat().st_size == item["size"])]
+        if missing and capacity(self.spool)["available_bytes"] < self.lane_floor:
+            append_event(self.events, {"event": "LANE_COPY_SKIPPED_LOW_SPACE", "relative": relative,
+                                       "missing": missing, "df": capacity(self.spool),
+                                       "checked_at_epoch": time.time()})
+            return False
+        return bool(missing)
+
     def evict(self, relative: str, row: dict[str, Any]) -> None:
         current = identity.read_json(self.state_path)
         if not identity.verified_segment(current, self.archive, relative):
@@ -331,6 +362,8 @@ class Mover:
                 item.get("deleted") or self.backup_proven(name, item)
                 for name, item in row["files"].items()):
             raise identity.ArchiveError("123 backup not verified; eviction deferred")
+        if self.lane_holds(relative, row):
+            raise identity.ArchiveError("clip lane has not copied this segment yet; eviction deferred")
         paths = [self.spool / name for name in row["files"]]
         if open_files(paths):
             raise identity.ArchiveError("local artifact is in use; eviction deferred")
@@ -473,6 +506,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--archive-state", type=Path, default=identity.ARCHIVE_STATE)
     parser.add_argument("--cd2-endpoint", default="http://127.0.0.1:19798")
     parser.add_argument("--cd2-token-file", type=Path, default=Path("/opt/bilive/recording/cd2-token"))
+    parser.add_argument("--lane-root", type=Path, default=None,
+                        help="clip lane copy of this room (oci3_lane_spool_copy.sh); evict only what it holds")
     return parser.parse_args(argv)
 
 
@@ -492,7 +527,7 @@ def main() -> int:
         mover = Mover(spool=args.spool, archive_root=identity.ARCHIVE_ROOT,
                       state_path=args.state_path, archive_path=args.archive_state,
                       client=client, observations=observations,
-                      backup_root=identity.BACKUP_ROOT)
+                      backup_root=identity.BACKUP_ROOT, lane_root=args.lane_root)
         last_capacity_check = 0.0
         while True:
             if time.time() - last_capacity_check >= 60:

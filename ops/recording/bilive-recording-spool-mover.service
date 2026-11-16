@@ -6,7 +6,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 UMask=0077
-ExecStart=/usr/bin/python3 -B /opt/bilive/ops/recording_spool_mover.py
+# --lane-root: keep a segment local until the clip lane has copied it (oci3_lane_spool_copy.sh, same room)
+ExecStart=/usr/bin/python3 -B /opt/bilive/ops/recording_spool_mover.py --lane-root /home/user/manual-work/recordings-direct/22966160
 Restart=on-failure
 RestartSec=30
 SyslogIdentifier=oci3-recording-spool

@@ -192,6 +192,19 @@ def test_the_thanks_slot_says_when_every_recogniser_heard_a_shorter_name_than_th
     assert pe.thanks_slot({'bcut': '谢谢我的手机的什么枪', 'jianying': '谢谢我手机的手机壳'}, '我听说我听说_Channel') == {}
 
 
+def test_the_thanks_stretch_says_when_every_recogniser_wrote_the_whole_name_after_thanks():
+    # 289470 (owner's final 「谢谢我听说我听说sc」): two runs in three wrote only 我听说, reading the 的 as the name's end
+    from src.autoslice.manual_lane import playbook_evidence as pe
+    wrote = {'bcut': '谢谢我的手机的什么枪', 'jianying': '谢谢我手机的手机壳', 'mai': ''}
+    assert pe.thanks_stretch(wrote, '我听说我听说_Channel') == {'thanks_stretch': {
+        'heard': {'bcut': '我的手机的什么枪', 'jianying': '我手机的手机壳'}, 'name_characters': 6}}
+    assert pe.thanks_stretch({'bcut': '谢谢我听说', 'jianying': '谢谢我听说的'}, '我听说我听说_Channel') == {}   # too short
+    assert pe.thanks_stretch({'bcut': '谢谢老莎的副驾', 'jianying': '谢谢老莎的副驾'}, '帅小沙OvO') == {}  # not the name's sound
+    assert pe.thanks_stretch({'bcut': '谢谢我的手机的什么枪'}, '我听说我听说_Channel') == {}          # one recogniser
+    assert pe.thanks_stretch({'bcut': '谢谢我的手机的什么枪还有那个', 'jianying': '谢谢我手机的手机壳'},
+                             '我听说我听说_Channel') == {}                                          # much longer: more was said
+
+
 def test_characters_no_other_recogniser_has_a_counterpart_for_are_listed():
     from src.autoslice.manual_lane import playbook_evidence as pe
     others = ['我也没看呀', '我也没看呀我也', '我也没看呀。']

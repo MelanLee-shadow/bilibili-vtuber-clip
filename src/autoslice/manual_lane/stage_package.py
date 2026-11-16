@@ -441,16 +441,16 @@ def step8_package(ctx: Ctx) -> StepOutcome:
     check = _fmr("check", "--package", str(package), "--tags-from", str(ctx.clip_dir / "tags/tags.json"), *revision_authority.fmr_args(ctx))
     check_log = pkg / "fmr_check.log"
     check_log.write_text(check.stdout + check.stderr, encoding="utf-8")
-    # 1 = the lane's findings (recorded below), other codes = refused; a crashed check exits 1 too, without results
+    # 1 = findings (recorded below), else refused; a crashed check exits 1 without results; a FAIL with no record (1084420, 11-15: A4) can't be attested
     if check.returncode not in (0, 1) or not (package / EVIDENCE_DIR / AUTO_CHECKS_NAME).is_file():
         return _fail("FMR_CHECK_REFUSED" if check.returncode not in (0, 1) else "FMR_CHECK_DID_NOT_FINISH",
                      (check.stdout + check.stderr)[-400:])
-    flags = _fmr_flags(check.stdout)
+    if not (package / f"{package.name}.record.json").is_file():
+        return _fail("FMR_CHECK_FAILED", "FAIL 没留下 record，复审后无法 attest：" + "；".join(f for f in _fmr_flags(check.stdout) if "FAIL" in f)[:600])
+    flags, findings = _fmr_flags(check.stdout), package / "findings.md"
     products = {"package": str(pkg / "final.mp4"), "member": str(member_path), "fmr_check": str(check_log),
-                "fmr_package": str(package), **revision_authority.record(ctx, pkg, guard_notes)}
-    findings = package / "findings.md"
-    if findings.exists():
-        products["fmr_findings"] = str(findings)
+                "fmr_package": str(package), **revision_authority.record(ctx, pkg, guard_notes),
+                **({"fmr_findings": str(findings)} if findings.exists() else {})}
     return StepOutcome(True, products=products,
                        note=f"FMR check rc={check.returncode}，记录 {len(flags)} 条 FLAG/FAIL（不拦）",
                        process=[f"成片包已组装：{title}",

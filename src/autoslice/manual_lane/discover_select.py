@@ -45,6 +45,9 @@ ADMISSION_HOLD = "ADMISSION_HOLD"
 OVERLAPS_SEATED = "OVERLAPS_SEATED"
 QUOTA_FULL = "QUOTA_FULL"
 EXTRA_SEAT_BELOW_SCORE = "EXTRA_SEAT_BELOW_SCORE"
+OWNER_MARK = "OWNER_MARK"                        # seated because the owner marked it
+OWNER_MARK_ALREADY_BUILT = "OWNER_MARK_ALREADY_BUILT"
+OWNER_MARK_NOT_TALK = "OWNER_MARK_NOT_TALK"
 
 
 class RecallCallError(RuntimeError):
@@ -106,14 +109,108 @@ def _entry(candidate: Any, source: dict[str, str | int], diagnostics: Mapping[st
             "text": "\n".join(x.text for x in candidate.cues)}
 
 
+OWNER_MARKS_FILE = "owner_marks.json"        # profiles/<id>/: the accounts whose marks in the danmaku are clip requests
+OWNER_MARK_NOT_COVERED = "OWNER_MARK_NOT_COVERED"
+
+
+def owner_mark_rules() -> dict[str, Any] | None:
+    """The channel's owner accounts and mark words, or None when the channel has none (the feature is off)."""
+    from .channel import profile
+
+    path = profile().manifest_path.parent / OWNER_MARKS_FILE
+    if not path.exists():
+        return None
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    mids, words = doc.get("owner_mids"), doc.get("mark_text_contains")
+    if (not isinstance(mids, list) or not mids or not all(isinstance(m, int) and m > 0 for m in mids)
+            or not isinstance(words, list) or not words or not all(isinstance(w, str) and w for w in words)
+            or not all(isinstance(doc.get(k), int) and doc[k] >= 0 for k in ("before_ms", "after_ms"))):
+        raise DiscoverError("OWNER_MARKS_INVALID", f"{path}: owner_mids, mark_text_contains, before_ms, after_ms")
+    return doc
+
+
+def owner_marks(xml: Path, marks_rules: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Danmaku an owner account sent with a mark word (「我在弹幕里标记了一处地点…我要自动流水线能切出这一块来」),
+    oldest first.  BililiveRecorder writes the sender's uid as the 7th field of `p`."""
+    if marks_rules is None or not xml.exists():
+        return []
+    from xml.etree import ElementTree
+
+    mids = {int(m) for m in marks_rules["owner_mids"]}
+    try:
+        root = ElementTree.fromstring(xml.read_bytes())
+    except ElementTree.ParseError:                  # the recall gets no hints from it either (recall_segment)
+        return []
+    marks = []
+    for node in root.iter("d"):
+        fields, text = (node.get("p") or "").split(","), (node.text or "").strip()
+        try:
+            at_ms, mid = round(float(fields[0]) * 1000), int(fields[6])
+        except (IndexError, ValueError):
+            continue
+        if mid in mids and any(word in text for word in marks_rules["mark_text_contains"]):
+            marks.append({"at_ms": at_ms, "text": text, "mid": mid})
+    return sorted(marks, key=lambda m: m["at_ms"])
+
+
+def _marked(entry: Mapping[str, Any], at_ms: int, after_ms: int) -> bool:
+    """A mark is sent while the moment is on or soon after it: the candidate holds it, or ended at most `after_ms` before."""
+    return int(entry["start_ms"]) <= at_ms <= int(entry["end_ms"]) + after_ms
+
+
+def _attach_owner_marks(doc: Recall, cues: Sequence[SourceCue] | None, xml: Path, directory: Path, *,
+                        ask: Callable[[str], str], selector: Selector | None) -> Recall:
+    """Tie every owner mark of the recording to a candidate of its pool.  A mark no recalled candidate holds gets a recall of
+    its own over the cues around it (`before_ms` before, `after_ms` after); one still not held is kept as not covered,
+    and seating reports it.  Written back next to the recall; read back while the marks are the same."""
+    marks_rules = owner_mark_rules()
+    marks = owner_marks(xml, marks_rules)
+    if doc.get("owner_marks", {}).get("marks") == marks:
+        return doc
+    pool = list(doc["input_pool"])
+    for entry in pool:
+        entry.pop("owner_mark", None)
+    tied = []
+    for mark in marks:
+        holders = [e for e in pool if _marked(e, mark["at_ms"], int(marks_rules["after_ms"]))] if marks_rules else []
+        if not holders and marks_rules:
+            if cues is None:
+                cues = _cues(directory)
+            lo, hi = mark["at_ms"] - int(marks_rules["before_ms"]), mark["at_ms"] + int(marks_rules["after_ms"])
+            near = [c for c in cues if c.source_end_ms > lo and c.source_start_ms < hi]
+            if near:
+                found, diagnostics = (selector or default_selector())(
+                    near, llm_call=ask, max_candidates=3, danmaku_hints=None, danmaku_xml=xml if xml.exists() else None)
+                known = {e["cid"] for e in pool}
+                for candidate in found:
+                    entry = _entry(candidate, doc["source"], diagnostics)
+                    if entry["cid"] not in known and _marked(entry, mark["at_ms"], int(marks_rules["after_ms"])):
+                        pool.append(entry)
+                        holders.append(entry)
+        if holders:                                  # the one holding the mark itself before one that ended just before it
+            best = min(holders, key=lambda e: (not int(e["start_ms"]) <= mark["at_ms"] <= int(e["end_ms"]),
+                                                abs(int(e["end_ms"]) - mark["at_ms"])))
+            best["owner_mark"] = dict(mark)
+        tied.append({**mark, "candidate_id": best["candidate_id"] if holders else None})
+    doc = Recall(**{**doc, "input_pool": pool})
+    doc["owner_marks"] = {"marks": marks, "tied": tied}  # type: ignore[typeddict-unknown-key]
+    write_json(directory / "recall.json", doc)
+    return doc
+
+
+def _cues(directory: Path) -> list[SourceCue]:
+    return [SourceCue(cue_id=str(c["id"]), source_start_ms=round(c["start_s"] * 1000), source_end_ms=round(c["end_s"] * 1000),
+                      text=c["text"]) for c in parse_srt((directory / "bcut.srt").read_text(encoding="utf-8"))]
+
+
 def recall_segment(prepared: Prepared, directory: Path, *, ask: Callable[[str], str], selector: Selector | None = None) -> Recall:
     """The candidates of one prepared recording (`ask` is the model call: prompt in, answer text out; it raises when the call
-    fails).  A recall made from the same inputs is read back, not made again; the answer is written next to them."""
-    if (kept := load_recall(directory, prepared)) is not None:
-        return kept
-    cues = [SourceCue(cue_id=str(c["id"]), source_start_ms=round(c["start_s"] * 1000), source_end_ms=round(c["end_s"] * 1000),
-                      text=c["text"]) for c in parse_srt((directory / "bcut.srt").read_text(encoding="utf-8"))]
+    fails).  A recall made from the same inputs is read back, not made again; the answer is written next to them.
+    The owner's marks are tied to candidates on top of either (`_attach_owner_marks`)."""
     xml = directory / "source.xml"
+    if (kept := load_recall(directory, prepared)) is not None:
+        return _attach_owner_marks(kept, None, xml, directory, ask=ask, selector=selector)
+    cues = _cues(directory)
     hints: str | None = None
     if xml.exists():
         try:
@@ -127,7 +224,7 @@ def recall_segment(prepared: Prepared, directory: Path, *, ask: Callable[[str], 
     pool = [_entry(c, source, diagnostics) for c in candidates]
     doc = Recall(schema=RECALL_SCHEMA, inputs=_inputs(prepared), source=source, input_pool=pool, diagnostics=diagnostics)
     write_json(directory / "recall.json", doc)
-    return doc
+    return _attach_owner_marks(doc, cues, xml, directory, ask=ask, selector=selector)
 
 
 @dataclass(frozen=True)
@@ -183,14 +280,29 @@ def seat_day(date: str, pool: Sequence[Mapping[str, Any]], built: Sequence[Mappi
         rejected.append({"cid": entry["cid"], "candidate_id": entry["candidate_id"], "segment": name, "start_ms": start,
                          "end_ms": end, "reason": reason, "detail": detail, "hook": str(entry.get("hook", ""))[:80]})
 
-    ranked = sorted(_admitted(pool, {str(b["cid"]) for b in built}, float(cfg["min_confidence"]), reject), key=selection_rank_key)
+    done = {str(b["cid"]) for b in built}
     taken = [(str(b["segment"]), int(b["start_ms"]), int(b["end_ms"])) for b in built]
     per_segment = Counter(str(b["segment"]) for b in built)
     seated: list[dict[str, Any]] = []
+    # The owner's marks first (「我要自动流水线能切出这一块来」): the marked candidate is made whatever its score,
+    # confidence or the day's quota; it does not take one of the quota's seats.  A clip already built over it is enough.
+    marked = [e for e in pool if e.get("owner_mark") and str(e["cid"]) not in done]
+    for entry in marked:
+        if _overlaps(entry, taken):
+            reject(entry, OWNER_MARK_ALREADY_BUILT, "a built or seated clip of the same recording already covers the mark")
+        elif entry.get("kind") != "talk":
+            reject(entry, OWNER_MARK_NOT_TALK, f"kind={entry.get('kind')}: marked, but the song lane is not discover's")
+        else:
+            seated.append(dict(entry, seat_reason=OWNER_MARK))
+            taken.append(_span(entry))
+    owner_seats = len(seated)
+    policy["owner_marked"] = owner_seats
+    ranked = sorted(_admitted([e for e in pool if e not in marked], done, float(cfg["min_confidence"]), reject),
+                    key=selection_rank_key)
 
     def extra_seat_ok(entry: Mapping[str, Any]) -> bool:
         gate = grant.extra_slot_min_score          # seats past base_talk_seats exist only where a dated authority made them
-        if gate is None or len(built) + len(seated) + 1 <= int(cfg["base_talk_seats"]):
+        if gate is None or len(built) + len(seated) - owner_seats + 1 <= int(cfg["base_talk_seats"]):
             return True
         card = entry.get("selection_scorecard")
         return bool(selection_scorecard_is_valid(card) and float(card["effective_score"]) >= gate)
@@ -204,17 +316,17 @@ def seat_day(date: str, pool: Sequence[Mapping[str, Any]], built: Sequence[Mappi
     for entry in ranked:
         if _overlaps(entry, taken):
             reject(entry, OVERLAPS_SEATED, "overlaps a seated or built candidate of the same recording")
-        elif len(seated) < slots and per_segment[_span(entry)[0]] < int(cfg["per_segment_soft_cap"]) and extra_seat_ok(entry):
+        elif len(seated) - owner_seats < slots and per_segment[_span(entry)[0]] < int(cfg["per_segment_soft_cap"]) and extra_seat_ok(entry):
             seat(entry)
         else:
             deferred.append(entry)
     for entry in deferred:                           # the per-recording limit is soft: slack is refilled in rank order
         if _overlaps(entry, taken):
             reject(entry, OVERLAPS_SEATED, "overlaps a seated or built candidate of the same recording")
-        elif len(seated) >= slots:
+        elif len(seated) - owner_seats >= slots:
             reject(entry, QUOTA_FULL, f"{grant.cap} seats on {date} ({grant.source}), {len(built)} already built")
         elif extra_seat_ok(entry):
             seat(entry)
         else:
-            reject(entry, EXTRA_SEAT_BELOW_SCORE, f"seat {len(built) + len(seated) + 1} needs effective_score >= {grant.extra_slot_min_score}")
+            reject(entry, EXTRA_SEAT_BELOW_SCORE, f"seat {len(built) + len(seated) - owner_seats + 1} needs effective_score >= {grant.extra_slot_min_score}")
     return Seating(seated=seated, rejected=rejected, policy=policy)

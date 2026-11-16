@@ -79,7 +79,7 @@ def _payloads(config, legacy):
                             "犬绒Mofu：https://space.bilibili.com/1125641408"
                         ),
                         "pubdate": published,
-                        "bvid": "BV1RM8BzxEWD",
+                        "bvid": "BV1040608418",
                     }
                 ]
             },
@@ -179,7 +179,7 @@ def test_registry_cli_retry_is_bounded_and_uses_full_bilibili_user_agent():
     assert "Chrome/" in client.calls[0][1]["User-Agent"]
 
 
-HAREI_BVID = "BV1uW421R79X"
+HAREI_BVID = "BV1073290328"
 HAREI_PUBDATE = int(dt.datetime(2024, 7, 11, tzinfo=dt.timezone.utc).timestamp())
 
 

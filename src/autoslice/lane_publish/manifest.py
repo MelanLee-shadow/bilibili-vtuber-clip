@@ -10,6 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from src.autoslice.unresolved_findings_gate import unresolved_findings_problem
+
 from . import authority
 from .common import GATE, REFUSED, Publish, Refused, bind, drift, now, read_json, write_json
 
@@ -20,18 +22,24 @@ ROUTE = "talk"       # the lane delivers talk clips; a song or a related-streame
 
 
 def _season() -> dict[str, Any]:
-    """The channel's collection for the lane's clips: the profile's `season_routes` asset, route `talk`."""
+    """The channel's collection for the lane's clips, route `talk`: the profile's `season_routes` asset; the default channel
+    without one has its routes where every other uploader reads them (clip_profile.season_ids); never another channel's."""
     import json
 
-    from src.autoslice.channel_profile import load_channel_profile
+    from src.autoslice.channel_profile import DEFAULT_CHANNEL_PROFILE_ID, load_channel_profile
 
     channel = load_channel_profile(Path(__file__).resolve().parents[3])
     try:
-        routes = json.loads(channel.asset_file("season_routes").read_text(encoding="utf-8"))["routes"]
-        block = routes[ROUTE]
-        return {"lane": ROUTE, "season_title": str(block["season_title"]), "season_id": int(block["season_id"]),
+        if "season_routes" in channel.asset_files or channel.profile_id != DEFAULT_CHANNEL_PROFILE_ID:
+            block = json.loads(channel.asset_file("season_routes").read_text(encoding="utf-8"))["routes"][ROUTE]
+            title = block["season_title"]
+        else:     # the first real run refused the default channel, whose collection is clip_profile's own route
+            from src.autoslice import clip_profile
+
+            block, title = clip_profile.season_ids()[ROUTE], clip_profile.SEASON_TITLES[ROUTE]
+        return {"lane": ROUTE, "season_title": str(title), "season_id": int(block["season_id"]),
                 "section_id": int(block["section_id"]), "source": f"profile:{channel.profile_id}"}
-    except (KeyError, OSError, ValueError, TypeError) as exc:
+    except (Exception, SystemExit) as exc:   # no route, a malformed asset, or (public build) no AUTOSLICE_SEASON_IDS
         raise Refused(REFUSED, f"频道 {channel.profile_id} 的 profile 没有给谈话切片的合集（season_routes 资产的 routes.{ROUTE}，"
                       f"要 season_title、season_id、section_id）：{type(exc).__name__}: {exc}") from exc
 
@@ -51,6 +59,8 @@ def make(*, video: Path, cover: Path, package_audit: Path, title: str, tags: str
     seal = read_json(package / "review_manifest.json", "封存清单")
     record_path = package / f"{name}.record.json"
     record = read_json(record_path, "record.json")
+    if doubt := unresolved_findings_problem(record):
+        raise Refused(GATE, doubt)
     sealed_title = (package / f"{name}.title.txt").read_text(encoding="utf-8").rstrip("\n")
     if title != sealed_title:
         raise Refused(GATE, f"要上的标题「{title}」不是包里封存的标题「{sealed_title}」")
@@ -95,6 +105,11 @@ def problems(doc: dict[str, Any]) -> list[str]:
         found.append(f"清单 schema 是 {doc.get('schema_version')!r}，不是 {SCHEMA}")
     if not isinstance(doc.get("season"), dict) or not doc["season"].get("section_id"):
         found.append("清单没有合集")
+
+
+    record = (attestation.get("record") or {}).get("path")
+    if record and not found and (doubt := unresolved_findings_problem(read_json(Path(record), "record.json"))):
+        found.append(doubt)
     return found
 
 

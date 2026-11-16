@@ -25,7 +25,10 @@ BVID = re.compile(r'"?bvid"?: String\("(BV[0-9A-Za-z]{10})"\)')     # biliup's d
 
 
 def _fetch(url: str) -> dict[str, Any]:
+    """One public read, with the upload account's login cookie: from a server, Bilibili answers an anonymous read with HTTP
+    412 (the first real run: the BV was posted, the read-back was refused).  The cookie goes in the header only."""
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Referer": "https://www.bilibili.com/"})
+    request.add_unredirected_header("Cookie", BiliSession(cookie_path=Config.load().cookies).cookie_header)
     with urllib.request.urlopen(request, timeout=30) as response:
         return json.loads(response.read().decode("utf-8"))
 

@@ -726,6 +726,7 @@ def _find_anchors(
     *,
     intro_offset_ms: int,
     anchor_uniqueness: str = ANCHOR_UNIQUENESS_POLICY,
+    masked_writings: Sequence[str] = (),
 ) -> list[_Anchor]:
     legacy = anchor_uniqueness == LEGACY_ANCHOR_UNIQUENESS_POLICY
     final_occurrences = Counter(cue.normalized_text for cue in final_cues) if legacy else None
@@ -829,26 +830,12 @@ def _find_anchors(
     if _coverage(anchors, timeline_end_ms)["status"] == "PASS":
         return sorted(anchors, key=lambda anchor: anchor.witness_start_ms)
 
-    final_pairs = [
-        group
-        for group in _eligible_composite_groups(final_cues, require_unique_text=legacy)
-        if not any(cue.index in used_final for cue in group)
-    ]
-    witness_pairs = [
-        group
-        for group in _eligible_composite_groups(witness_cues, require_unique_text=legacy)
-        if not any(cue.index in used_witness for cue in group)
-    ]
-    final_singles = [
-        (cue,)
-        for cue in eligible_final
-        if cue.index not in used_final
-    ]
-    witness_singles = [
-        (cue,)
-        for cue in eligible_witness
-        if cue.index not in used_witness
-    ]
+    final_pairs = [group for group in _eligible_composite_groups(final_cues, require_unique_text=legacy)
+                   if not any(cue.index in used_final for cue in group)]
+    witness_pairs = [group for group in _eligible_composite_groups(witness_cues, require_unique_text=legacy)
+                     if not any(cue.index in used_witness for cue in group)]
+    final_singles = [(cue,) for cue in eligible_final if cue.index not in used_final]
+    witness_singles = [(cue,) for cue in eligible_witness if cue.index not in used_witness]
     final_groups = final_singles + final_pairs
     witness_groups = witness_singles + witness_pairs
     composite_candidates: list[_Anchor] = []
@@ -879,6 +866,10 @@ def _find_anchors(
                     resolution=resolution,
                 )
             )
+    if masked_writings and not legacy:      # names written in Latin letters (subtitle_audio_masked)
+        from src.autoslice import subtitle_audio_masked
+        composite_candidates += subtitle_audio_masked.anchors(
+            final_groups, final_cues, witness_cues, used_witness, masked_writings, intro_offset_ms)
 
     selected: list[_Anchor] = []
     selected_final = set(used_final)
@@ -958,6 +949,7 @@ def check_subtitle_audio_correspondence(
     intro_offset_ms: int = 0,
     assess_text: bool = False,
     anchor_uniqueness: str = ANCHOR_UNIQUENESS_POLICY,
+    masked_writings: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Return an evidence receipt for subtitle/witness timing correspondence.
 
@@ -1005,11 +997,14 @@ def check_subtitle_audio_correspondence(
         intro_offset_ms=intro_offset_ms,
     )
 
+    from src.autoslice.subtitle_audio_masked import normalized as masked_normalized, policy as masked_policy
+    masked = () if legacy_uniqueness else masked_normalized(masked_writings)
     anchors = _find_anchors(
         final_cues,
         witness_cues,
         intro_offset_ms=intro_offset_ms,
         anchor_uniqueness=anchor_uniqueness,
+        masked_writings=masked,
     )
     timeline_end_ms = max(
         max(cue.end_ms for cue in witness_cues),
@@ -1168,6 +1163,7 @@ def check_subtitle_audio_correspondence(
                     "anchor_repeat_resolution": ANCHOR_REPEAT_RESOLUTION,
                 }
             ),
+            **masked_policy(masked),
         },
         "anchor_coverage": coverage,
         "anchors": anchor_rows,
