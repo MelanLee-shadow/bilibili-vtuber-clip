@@ -57,7 +57,10 @@ def offline_imports(monkeypatch, tmp_path):
     monkeypatch.setattr(subprocess, "Popen", forbidden)
 
     # Permit source/package data, never private home/config/key files.
-    allowed = (ROOT, Path(sys.prefix).resolve(), Path(sys.base_prefix).resolve(), tmp_path)
+    # /System/Library/CoreServices: macOS's read-only OS version plist, which the stdlib (platform, via zoneinfo)
+    # reads on import there; it is not a home/config/key file.
+    allowed = (ROOT, Path(sys.prefix).resolve(), Path(sys.base_prefix).resolve(), tmp_path,
+               Path("/System/Library/CoreServices"))
 
     def guarded_open(original):
         def open_file(file, *args, **kwargs):
