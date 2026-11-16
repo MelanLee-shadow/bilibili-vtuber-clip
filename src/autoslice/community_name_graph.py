@@ -27,7 +27,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict
 
+from src.autoslice.community_name_crawler import _normalized_rows, _search_rows
 from src.autoslice.knowledge_graph import Edge, Graph, JsonValue, Node, Source
+from src.autoslice.timely_term_crawler import BoundedHttpClient
 from src.autoslice.news_event_judge import Row
 
 SNAPSHOT_SCHEMA = "vtuber-slice.community-names.v1"   # = community_name_crawler.SNAPSHOT_SCHEMA (test pins it)
@@ -244,6 +246,21 @@ def parse_origins(raw: str, items: Sequence[Item], today: str) -> tuple[dict[str
     return out, problems
 
 
+def probe_videos(client: BoundedHttpClient, *, endpoint: str, max_results: int, query: str, mixin_key: str,
+                 now: dt.datetime) -> list[Video]:
+    """Bilibili video search for one name (totalrank, first page, any age), with the community-name crawler's own
+    search and filter (title, description or tags must carry the name), oldest first.  The crawler's search stays
+    member-anchored and windowed; this one dates a name."""
+    raw, _ = _search_rows(client, endpoint=endpoint, query=query, order="totalrank", page=1,
+                          max_results=max_results, mixin_key=mixin_key, signed_at=now)
+    # An answer without a result list raises (CrawlError): seen for 鼠鼠, which has 43 videos, so it is a failed
+    # search (asked again next run), not "no videos".
+    rows = _normalized_rows(raw, member={"canonical": query, "official_surfaces": [], "aliases": []}, now=now,
+                            lookback_days=100 * 366)
+    return sorted((Video(title=str(r["title"]), url=str(r["url"]), published_at=str(r["published_at"]),
+                         text=str(r["description"])[:160]) for r in rows), key=lambda v: v["published_at"])
+
+
 def _due(rel: Relation, origins: dict[str, Origin], today: dt.date, probing: bool) -> bool:
     got = origins.get(key(rel))
     if got is None or (probing and not got["probed"]):
@@ -299,8 +316,12 @@ def lookup_origins(rels: Sequence[Relation], origins: dict[str, Origin], *,
     return stats
 
 
-def _space(rel: Relation) -> str:
-    return f"https://space.bilibili.com/{rel['entity_id'].split(':', 1)[-1]}"
+def _space(rel: Relation) -> tuple[str, str]:
+    """Where the person is: the official space for a Bilibili uid, else the crawler's own entry (kind, ref)."""
+    kind, _, mid = rel["entity_id"].partition(":")
+    if kind == "bilibili" and mid.isdigit():
+        return "official", f"https://space.bilibili.com/{mid}"
+    return "crawler", f"community_names.json#{rel['entity_id']}"
 
 
 def _person(graph: Graph, rel: Relation, at: str) -> tuple[str, str, Node | None]:
@@ -312,7 +333,7 @@ def _person(graph: Graph, rel: Relation, at: str) -> tuple[str, str, Node | None
             if len(same) == 1:
                 return same[0].id, same[0].kind, None
     node = Node(id=f"person:{rel['canonical']}", kind="person", names={"display": rel["canonical"]}, aliases=(),
-                summary="", status="candidate", sources=(Source(kind="official", ref=_space(rel), at=at),))
+                summary="", status="candidate", sources=(Source(kind=_space(rel)[0], ref=_space(rel)[1], at=at),))
     return node.id, node.kind, node
 
 
@@ -356,7 +377,7 @@ def _fold(rels: Iterable[Relation], origins: dict[str, Origin], known: Graph, at
             (got["first_video_at"] if got else None, "bilibili_search", got["first_video_url"] if got else None),
             (rel["video_at"], "crawler_evidence", rel["video_url"])) if d]
         earliest, basis, earliest_ref = min(dated, key=lambda d: d[0]) if dated else (None, None, None)
-        ref = earliest_ref or rel["video_url"] or (got["url"] if got else None) or _space(rel)
+        ref = earliest_ref or rel["video_url"] or (got["url"] if got else None) or _space(rel)[1]
         meaning = got["meaning"] if got else ""
         summary = "；".join(p for p in (meaning, f"来源：{got['origin']}" if got and got["origin"] else "") if p)
         nodes[node_id] = Node(id=node_id, kind=kind, names={"display": rel["surface"]}, aliases=(), summary=summary,

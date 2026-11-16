@@ -237,13 +237,36 @@ def test_probe_videos_keeps_only_videos_that_carry_the_name_oldest_first():
     class Client:
         def fetch(self, url, headers=None):
             assert "order=totalrank" in url
-            rows = [{"bvid": "BV1066531596", "pubdate": 1767225600, "title": "<em>海獭</em>冲击合集", "tag": ""},
-                    {"bvid": "BV1037391611", "pubdate": 1735689600, "title": "海獭冲击！", "description": ""},
-                    {"bvid": "BV1068764364", "pubdate": 1704067200, "title": "海獭日常", "tag": "无关"},
-                    {"bvid": "BV1066549112", "pubdate": 4102444800, "title": "海獭冲击 未来"}]
+            rows = [{"bvid": "BV1066531596", "aid": 7, "mid": 1, "pubdate": 1767225600, "title": "<em>海獭</em>冲击合集", "tag": ""},
+                    {"bvid": "BV1037391611", "aid": 7, "mid": 1, "pubdate": 1735689600, "title": "海獭冲击！", "description": ""},
+                    {"bvid": "BV1068764364", "aid": 7, "mid": 1, "pubdate": 1704067200, "title": "海獭日常", "tag": "无关"},
+                    {"bvid": "BV1066549112", "aid": 7, "mid": 1, "pubdate": 4102444800, "title": "海獭冲击 未来"}]
             return Response(json.dumps({"code": 0, "data": {"result": rows}}))
 
-    got = community_name_crawler.probe_videos(Client(), endpoint="https://api.bilibili.com/x/s", max_results=50,
+    got = names.probe_videos(Client(), endpoint="https://api.bilibili.com/x/s", max_results=50,
                                               query="海獭冲击", mixin_key="k" * 32, now=NOW)
     assert [v["url"][-13:-1] for v in got] == ["BV1037391611", "BV1066531596"]
     assert got[0]["published_at"].startswith("2025-01-01") and got[1]["title"] == "海獭冲击合集"
+
+
+def test_an_answer_without_results_is_a_failed_search_not_no_videos():
+    class Client:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def fetch(self, url, headers=None):
+            return type("R", (), {"stale": False, "body": json.dumps(self.payload)})()
+
+    probe = names.probe_videos
+    kw = dict(endpoint="https://api.bilibili.com/x/s", max_results=50, query="鼠鼠", mixin_key="k" * 32, now=NOW)
+    with pytest.raises(community_name_crawler.CrawlError, match="invalid result"):
+        probe(Client({"code": 0, "data": {"numResults": 0}}), **kw)
+    with pytest.raises(community_name_crawler.CrawlError, match="code -412"):
+        probe(Client({"code": -412}), **kw)
+
+
+def test_a_person_without_a_bilibili_uid_is_sourced_by_the_crawler_entry():
+    rel = names.relations(_snapshot(_rel("某某", "无名氏") | {"entity_id": "psplive:surface:abc"}), None)[0]
+    (nodes, _), _ = names.fold([rel], {}, Graph([], []), at=STAMP)
+    person = nodes["person:无名氏"]
+    assert (person.sources[0].kind, person.sources[0].ref) == ("crawler", "community_names.json#psplive:surface:abc")

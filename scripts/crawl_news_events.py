@@ -22,7 +22,7 @@ if str(ROOT) not in sys.path:
 
 from src.autoslice import community_name_graph
 from src.autoslice.community_comment_discovery import fetch_wbi_mixin_key
-from src.autoslice.community_name_crawler import load_config as load_name_sources, probe_videos
+from src.autoslice.community_name_crawler import load_config as load_name_sources
 from src.autoslice.timely_term_crawler import BoundedHttpClient, HttpCache
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.cpa_model_ladder import TOP_CPA_MODEL, cpa_call_timeout_seconds
@@ -115,8 +115,9 @@ class NameVideos:
         if wait > 0:
             time.sleep(wait)
         try:
-            return probe_videos(self.client, endpoint=self.endpoint, max_results=self.max_results, query=name,
-                                mixin_key=self.key, now=self.now)
+            return community_name_graph.probe_videos(self.client, endpoint=self.endpoint,
+                                                     max_results=self.max_results, query=name,
+                                                     mixin_key=self.key, now=self.now)
         finally:
             self.last = time.monotonic()
 
