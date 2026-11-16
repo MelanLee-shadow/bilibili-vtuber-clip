@@ -249,7 +249,8 @@ def crawl(*, owner: str, repo_root: Path, runtime_root: Path, registry: Registry
           max_seeds: int = MAX_SEEDS, clock: Callable[[], float] = time.monotonic,
           notes: Sequence[str] = (), clip_names: Sequence[str] = (),
           community: names.Community | None = None,
-          name_videos: Callable[[str], Sequence[names.Video]] | None = None) -> Report:
+          name_videos: Callable[[str], Sequence[names.Video]] | None = None,
+          origin_limit: int = names.ORIGIN_LIMIT) -> Report:
     """One run.  Returns the report that was written next to the graph; raises NewsEventError on failure."""
     stamp = now.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     window = CrawlWindow.around(now.date())
@@ -308,7 +309,8 @@ def crawl(*, owner: str, repo_root: Path, runtime_root: Path, registry: Registry
         folded, report.community = names.run(
             community, known, search=search.search if clock() < search.deadline else None,
             ask_json=lambda prompt: _call_json(llm_call, prompt), today=now.date(), at=stamp,
-            notes=name_notes, owner=owner, videos=name_videos if clock() < search.deadline else None)
+            notes=name_notes, owner=owner, videos=name_videos if clock() < search.deadline else None,
+            limit=origin_limit)
         for line in name_notes:
             report.error(line)
         fresh = store.merge(fresh, folded)

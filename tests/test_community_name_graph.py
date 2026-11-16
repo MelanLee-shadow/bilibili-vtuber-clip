@@ -270,3 +270,16 @@ def test_a_person_without_a_bilibili_uid_is_sourced_by_the_crawler_entry():
     (nodes, _), _ = names.fold([rel], {}, Graph([], []), at=STAMP)
     person = nodes["person:无名氏"]
     assert (person.sources[0].kind, person.sources[0].ref) == ("crawler", "community_names.json#psplive:surface:abc")
+
+
+def test_a_backfill_run_looks_up_as_many_names_as_its_limit(tmp_path, repo):
+    names_path = tmp_path / "community_names.json"
+    names_path.write_text(json.dumps(_snapshot(*[_rel(f"别人{i}", "甲", mid="5") for i in range(5)]), ensure_ascii=False),
+                          "utf-8")
+    community = names.load(names_path, None, tmp_path / names.ORIGINS_FILE, [])
+    for limit in (2, 5):
+        searched: list[str] = []
+        names.run(community, load_graph(repo), search=lambda q: [], ask_json=lambda p: '{"origins": []}',
+                  today=TODAY, at=STAMP, notes=[], videos=lambda name: searched.append(name) or [], limit=limit)
+        assert len(searched) == limit
+        (tmp_path / names.ORIGINS_FILE).unlink()

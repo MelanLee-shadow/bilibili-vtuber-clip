@@ -396,7 +396,8 @@ def _fold(rels: Iterable[Relation], origins: dict[str, Origin], known: Graph, at
 
 def run(community: Community, known: Graph, *, search: Callable[[str], Sequence[Row]] | None,
         ask_json: Callable[[str], str], today: dt.date, at: str, notes: list[str], owner: str | None = None,
-        videos: Callable[[str], Sequence[Video]] | None = None) -> tuple[Folded, dict[str, JsonValue]]:
+        videos: Callable[[str], Sequence[Video]] | None = None, limit: int = ORIGIN_LIMIT,
+        ) -> tuple[Folded, dict[str, JsonValue]]:
     """Look up origins (when `search` is given: the run still has time), keep them, and fold the names into candidates.
     An unreadable origins file is left as it is (not overwritten) and this run folds without origins."""
     try:
@@ -409,7 +410,7 @@ def run(community: Community, known: Graph, *, search: Callable[[str], Sequence[
         _, _, new = _fold(community.relations, {}, known, at)
         ordered = sorted((r for r in community.relations if key(r) in new), key=lambda r: r["canonical"] != owner)
         counts = lookup_origins(ordered, origins, search=search, ask_json=ask_json, today=today, videos=videos,
-                                notes=notes)
+                                limit=limit, notes=notes)
         stats = {k: v for k, v in counts.items()}
         if keep:
             save_origins(community.origins_path, origins)

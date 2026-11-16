@@ -58,6 +58,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="state/community_name_state.json: the earliest video of each name")
     parser.add_argument("--community-cache", type=Path, default=None,
                         help="HTTP cache for the Bilibili search that dates the names (default: <base>/cache/community-name-origins)")
+    parser.add_argument("--origin-limit", type=int, default=community_name_graph.ORIGIN_LIMIT,
+                        help="community names whose meaning/origin/earliest date are looked up this run (a backfill sets it high)")
     parser.add_argument("--max-seeds", type=int, default=MAX_SEEDS)
     parser.add_argument("--max-runtime-seconds", type=int, default=3600)
     parser.add_argument("--now", help="pin an ISO timestamp")
@@ -92,14 +94,14 @@ class NameVideos:
     """Bilibili video search for one community name, paced like the community-name crawler (its sources config:
     hosts, request cap, interval); the public WBI signing key is fetched once, on first use."""
 
-    def __init__(self, cache_dir: Path, now: dt.datetime) -> None:
+    def __init__(self, cache_dir: Path, now: dt.datetime, limit: int) -> None:
         config = load_name_sources(PROFILE.asset_file("community_name_sources"))
         self.endpoint, self.nav = str(config["search_endpoint"]), str(config["wbi_nav_endpoint"])
         self.max_results, self.interval = int(config["max_results"]), float(config["request_interval_seconds"])
         self.now = now
         self.client = BoundedHttpClient(
             allowed_hosts=frozenset(str(item).lower() for item in config["source_hosts"]),
-            max_requests=community_name_graph.ORIGIN_LIMIT + 1, max_response_bytes=512 * 1024, timeout_seconds=15,
+            max_requests=limit + 1, max_response_bytes=512 * 1024, timeout_seconds=15,
             cache=HttpCache(cache_dir, max_body_bytes=512 * 1024, max_entries=256, max_total_bytes=64 * 1024 * 1024),
             cache_ttl=dt.timedelta(hours=18), stale_if_error=dt.timedelta(days=7), now=now)
         self.key: str | None = None
@@ -146,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
     if community is not None:
         try:
             name_videos = NameVideos(args.community_cache or args.write_root.parent.parent / "cache/community-name-origins",
-                                     now)
+                                     now, args.origin_limit)
         except Exception as exc:  # noqa: BLE001 - the names are still folded and looked up on the web, without dates
             notes.append(f"bilibili name search unavailable: {type(exc).__name__}: {str(exc)[:200]}")
     try:
@@ -171,6 +173,7 @@ def main(argv: list[str] | None = None) -> int:
             clip_names=clip_seed_names(_clip_references(args.clip_references, notes)),
             community=community,
             name_videos=name_videos,
+            origin_limit=args.origin_limit,
         )
     except NewsEventError as exc:
         print(f"news-event crawler failed: {exc}", file=sys.stderr)
