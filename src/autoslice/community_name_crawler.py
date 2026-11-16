@@ -424,6 +424,48 @@ def _search_rows(
     return [dict(row) for row in rows if isinstance(row, Mapping)], not response.stale
 
 
+def probe_videos(
+    client: BoundedHttpClient,
+    *,
+    endpoint: str,
+    max_results: int,
+    query: str,
+    mixin_key: str,
+    now: dt.datetime,
+) -> list[dict[str, str]]:
+    """Bilibili video search for one name (order totalrank, first page, any age): the videos whose title,
+    description or tags contain it, oldest first.  community_name_graph dates a name with it; the crawler's own
+    search stays member-anchored and windowed."""
+    raw_rows, _ = _search_rows(
+        client,
+        endpoint=endpoint,
+        query=query,
+        order="totalrank",
+        page=1,
+        max_results=max_results,
+        mixin_key=mixin_key,
+        signed_at=now,
+    )
+    key = _match_key(query)
+    found: list[dict[str, str]] = []
+    for row in raw_rows:
+        bvid = str(row.get("bvid") or "")
+        try:
+            published_at = dt.datetime.fromtimestamp(int(row.get("pubdate") or 0), dt.timezone.utc)
+        except (OSError, OverflowError, TypeError, ValueError):
+            continue
+        if not _BVID_RX.fullmatch(bvid) or published_at > now.astimezone(dt.timezone.utc):
+            continue
+        title = _plain_text(row.get("title"), limit=180)
+        description = _plain_text(row.get("description"), limit=320)
+        tags = _plain_text(row.get("tag"), limit=160)
+        if not key or key not in _match_key(" ".join((title, description, tags))):
+            continue
+        found.append({"title": title, "url": f"https://www.bilibili.com/video/{bvid}/",
+                      "published_at": _iso(published_at), "text": description[:160]})
+    return sorted(found, key=lambda video: video["published_at"])
+
+
 def _normalized_rows(
     rows: list[dict[str, Any]],
     *,

@@ -20,6 +20,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol
 
+from src.autoslice import community_name_graph as names
 from src.autoslice import news_event_graph as store
 from src.autoslice.crawl_window import CrawlWindow
 from src.autoslice import news_event_judge as judge
@@ -64,6 +65,7 @@ class Report:
     left_out: int = 0
     candidates: dict[str, int] = field(default_factory=dict)
     previous_discarded: str | None = None
+    community: dict[str, JsonValue] | None = None
 
     def error(self, text: str) -> None:
         if len(self.errors) < MAX_ERRORS_LISTED:
@@ -77,13 +79,15 @@ class Report:
             "candidates": {k: v for k, v in self.candidates.items()}}
         names: list[JsonValue] = [s.name for s in self.seeds]
         origins: dict[str, JsonValue] = {k: v for k, v in Counter(s.origin for s in self.seeds).items()}
-        return counts | {
+        doc: dict[str, JsonValue] = counts | {
             "schema_version": REPORT_SCHEMA, "generated_at": self.generated_at, "owner": self.owner,
             "inputs": {k: v for k, v in self.inputs.items()}, "errors": [e for e in self.errors],
             "seeds": {"count": len(self.seeds), "by_origin": origins, "names": names},
             "findings": {"new_nodes": [n for n in self.new_nodes], "new_edges": [e for e in self.new_edges],
                          "left_out_id_collision": self.left_out},
             "previous_discarded": self.previous_discarded}
+        doc["community"] = self.community
+        return doc
 
 
 class NewsEventError(RuntimeError):
@@ -243,7 +247,9 @@ def _date_undated(report: Report, previous: store.Candidates, llm_call: Callable
 def crawl(*, owner: str, repo_root: Path, runtime_root: Path, registry: Registry | None,
           dynamics: Dynamics | None, search: RouterSearch, llm_call: Callable[[str], str], now: dt.datetime,
           max_seeds: int = MAX_SEEDS, clock: Callable[[], float] = time.monotonic,
-          notes: Sequence[str] = (), clip_names: Sequence[str] = ()) -> Report:
+          notes: Sequence[str] = (), clip_names: Sequence[str] = (),
+          community: names.Community | None = None,
+          name_videos: Callable[[str], Sequence[names.Video]] | None = None) -> Report:
     """One run.  Returns the report that was written next to the graph; raises NewsEventError on failure."""
     stamp = now.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     window = CrawlWindow.around(now.date())
@@ -297,6 +303,15 @@ def crawl(*, owner: str, repo_root: Path, runtime_root: Path, registry: Registry
                              f"({report.cpa['judge_failed']} failed, {report.cpa['judge_attempted']} attempted)",
                              report)
     report.cpa["rejected_items"] = sum(report.rejected.values())
+    if community is not None:  # the community-name crawler's names, deduped against this graph (owner)
+        name_notes: list[str] = []
+        folded, report.community = names.run(
+            community, known, search=search.search if clock() < search.deadline else None,
+            ask_json=lambda prompt: _call_json(llm_call, prompt), today=now.date(), at=stamp,
+            notes=name_notes, owner=owner, videos=name_videos if clock() < search.deadline else None)
+        for line in name_notes:
+            report.error(line)
+        fresh = store.merge(fresh, folded)
 
     merged = store.accumulate(previous, fresh, repo=repo, now=stamp, window=window)
     report.new_nodes = sorted(set(fresh[0]) - set(previous[0]))

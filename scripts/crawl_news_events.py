@@ -20,6 +20,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.autoslice import community_name_graph
+from src.autoslice.community_comment_discovery import fetch_wbi_mixin_key
+from src.autoslice.community_name_crawler import load_config as load_name_sources, probe_videos
+from src.autoslice.timely_term_crawler import BoundedHttpClient, HttpCache
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.cpa_model_ladder import TOP_CPA_MODEL, cpa_call_timeout_seconds
 from src.autoslice.llm_client import LlmConfig, build_llm_call
@@ -48,6 +52,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--write-root", type=Path, required=True, help="runtime graph root (knowledge/ below it)")
     parser.add_argument("--clip-references", type=Path, default=None,
                         help="what the clips looked up (default: the lane's reference seeds file, references.seeds_path)")
+    parser.add_argument("--community-names", type=Path, default=None,
+                        help="state/community_names.json: fold its names into the graph (deduped against it)")
+    parser.add_argument("--community-state", type=Path, default=None,
+                        help="state/community_name_state.json: the earliest video of each name")
+    parser.add_argument("--community-cache", type=Path, default=None,
+                        help="HTTP cache for the Bilibili search that dates the names (default: <base>/cache/community-name-origins)")
     parser.add_argument("--max-seeds", type=int, default=MAX_SEEDS)
     parser.add_argument("--max-runtime-seconds", type=int, default=3600)
     parser.add_argument("--now", help="pin an ISO timestamp")
@@ -78,6 +88,39 @@ def _load_snapshot(path: Path, validate, label: str, notes: list[str]):  # noqa:
         return None
 
 
+class NameVideos:
+    """Bilibili video search for one community name, paced like the community-name crawler (its sources config:
+    hosts, request cap, interval); the public WBI signing key is fetched once, on first use."""
+
+    def __init__(self, cache_dir: Path, now: dt.datetime) -> None:
+        config = load_name_sources(PROFILE.asset_file("community_name_sources"))
+        self.endpoint, self.nav = str(config["search_endpoint"]), str(config["wbi_nav_endpoint"])
+        self.max_results, self.interval = int(config["max_results"]), float(config["request_interval_seconds"])
+        self.now = now
+        self.client = BoundedHttpClient(
+            allowed_hosts=frozenset(str(item).lower() for item in config["source_hosts"]),
+            max_requests=community_name_graph.ORIGIN_LIMIT + 1, max_response_bytes=512 * 1024, timeout_seconds=15,
+            cache=HttpCache(cache_dir, max_body_bytes=512 * 1024, max_entries=256, max_total_bytes=64 * 1024 * 1024),
+            cache_ttl=dt.timedelta(hours=18), stale_if_error=dt.timedelta(days=7), now=now)
+        self.key: str | None = None
+        self.last = 0.0
+
+    def __call__(self, name: str) -> list:  # noqa: ANN204
+        if self.key is None:
+            self.key, fresh = fetch_wbi_mixin_key(self.client, endpoint=self.nav)
+            if not fresh:
+                self.key = None
+                raise RuntimeError("Bilibili WBI bootstrap used a stale fallback")
+        wait = self.interval - (time.monotonic() - self.last)
+        if wait > 0:
+            time.sleep(wait)
+        try:
+            return probe_videos(self.client, endpoint=self.endpoint, max_results=self.max_results, query=name,
+                                mixin_key=self.key, now=self.now)
+        finally:
+            self.last = time.monotonic()
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     now = (
@@ -91,6 +134,20 @@ def main(argv: list[str] | None = None) -> int:
     notes: list[str] = []
     registry = _load_snapshot(args.registry, lambda raw: validate_registry(raw, as_of=None), "registry", notes)
     dynamics = _load_snapshot(args.dynamics, validate_dynamics_snapshot, "dynamics", notes)
+    community = None
+    if args.community_names is not None:
+        try:
+            community = community_name_graph.load(args.community_names, args.community_state,
+                                                  args.write_root.parent / community_name_graph.ORIGINS_FILE, notes)
+        except (OSError, ValueError) as exc:  # the news part still runs; the log says the names were not folded
+            notes.append(f"community names unavailable: {type(exc).__name__}: {str(exc)[:200]}")
+    name_videos = None
+    if community is not None:
+        try:
+            name_videos = NameVideos(args.community_cache or args.write_root.parent.parent / "cache/community-name-origins",
+                                     now)
+        except Exception as exc:  # noqa: BLE001 - the names are still folded and looked up on the web, without dates
+            notes.append(f"bilibili name search unavailable: {type(exc).__name__}: {str(exc)[:200]}")
     try:
         llm_call = build_llm_call(
             LlmConfig(
@@ -111,6 +168,8 @@ def main(argv: list[str] | None = None) -> int:
             max_seeds=args.max_seeds,
             notes=notes,
             clip_names=clip_seed_names(_clip_references(args.clip_references, notes)),
+            community=community,
+            name_videos=name_videos,
         )
     except NewsEventError as exc:
         print(f"news-event crawler failed: {exc}", file=sys.stderr)
