@@ -26,6 +26,7 @@ def test_the_default_channel_has_its_draws_and_the_views_order_them():
     points = {d["key"]: d["points"] for d in asset["draws"]}
     assert set(points) == {"collab", "relation", "new_look", "yuri", "mishap", "sajiao"}, "her own CP is relation (no cp)"
     assert {d["key"] for d in asset["draws"] if d.get("must_cut")} == {"collab", "sajiao"}
+    assert {d["key"] for d in asset["draws"] if d.get("takes_seat")} == {"sajiao"}     # 「撒娇也算进 5 条」
     assert min(points.values()) >= 0 and asset["audience_points_per_level"] > 0      # a draw is never a penalty
 
 
@@ -45,18 +46,34 @@ def test_past_the_gate_the_content_points_order_the_seats_not_the_effective_scor
     assert [e["cid"] for e in ds.seat_day(DATE, [strong, drawn], built=[]).seated] == ["drawn", "strong"]
 
 
-def test_must_cut_draws_take_no_seat_and_need_only_the_basic_quality_gate():
-    """11-14 replay: 「变矮求抱抱」 (sajiao, effective 65.75) is a clip 维护者 wants made; only the basic gate holds it back."""
+def test_must_cut_draws_need_only_the_basic_quality_gate_and_a_collab_takes_no_seat():
+    """11-14 replay: 「变矮求抱抱」 (sajiao, effective 65.75) is a clip 公开规则wants made; only the basic gate holds it back.
+ 公开规则：撒娇也算进 5 条: with the five seats all built, the collab is still made, the sajiao clip is not."""
     built = [{"cid": f"b{n}", "segment": "segZ", "start_ms": n * 1000, "end_ms": n * 1000 + 500} for n in range(5)]
     cute, guest = _drawn("cute", "segA", 0, 500, ["sajiao"], level=4, floor=False), _drawn("guest", "segB", 0, 500, ["collab"])
+    both = _drawn("both", "segF", 0, 500, ["collab", "sajiao"], level=4, floor=False)        # a collab: no seat
     unsure = _drawn("unsure", "segC", 0, 500, ["sajiao"], confidence=0.1)
     plain_low = entry("plain_low", "segE", 0, 500, level=4, floor=False)
     other = entry("other", "segD", 0, 500, level=4)
-    seating = ds.seat_day(DATE, [cute, guest, unsure, plain_low, other], built=built)   # the day's five seats are all built
-    assert {e["cid"]: e["seat_reason"] for e in seating.seated} == {"guest": ds.MUST_CUT, "cute": ds.MUST_CUT}
-    assert seating.policy["must_cut"] == 2
+    seating = ds.seat_day(DATE, [cute, guest, both, unsure, plain_low, other], built=built)
+    assert {e["cid"]: e["seat_reason"] for e in seating.seated} == {"guest": ds.MUST_CUT, "both": ds.MUST_CUT}
+    assert seating.policy["must_cut"] == 2 and seating.policy["must_cut_seated"] == 0
     assert {r["cid"]: r["reason"] for r in seating.rejected} == {
-        "unsure": ds.BELOW_MIN_CONFIDENCE, "plain_low": ds.BELOW_MIN_SCORE, "other": ds.QUOTA_FULL}
+        "cute": ds.QUOTA_FULL, "unsure": ds.BELOW_MIN_CONFIDENCE, "plain_low": ds.BELOW_MIN_SCORE, "other": ds.QUOTA_FULL}
+    assert cd.takes_seat(cute) and not cd.takes_seat(both) and not cd.takes_seat(guest) and not cd.takes_seat(other)
+
+
+def test_sajiao_clips_take_seats_first_and_the_best_content_points_win_when_they_outnumber_them():
+    """The 11-15 replay had four sajiao clips (effective 58-62.5) besides the day's four: they now share the five seats.
+    Sajiao goes ahead of higher-scored ordinary candidates; past five, the content points (draws + audience) pick."""
+    cute = [_drawn(f"cute{n}", f"seg{n}", 0, 500, ["sajiao"], level=n % 5, floor=False) for n in range(6)]
+    strong = entry("strong", "segX", 0, 500, level=4)
+    seating = ds.seat_day(DATE, [strong, *cute], built=[])
+    assert [e["cid"] for e in seating.seated] == ["cute4", "cute3", "cute2", "cute1", "cute0"]
+    assert all(e["seat_reason"] == ds.MUST_CUT for e in seating.seated) and seating.policy["must_cut_seated"] == 5
+    assert {r["cid"]: r["reason"] for r in seating.rejected} == {"cute5": ds.QUOTA_FULL, "strong": ds.QUOTA_FULL}
+    two = ds.seat_day(DATE, [strong, cute[0], cute[1]], built=[])
+    assert [e["cid"] for e in two.seated] == ["cute1", "cute0", "strong"]          # they go first, the rest still fill
 
 
 def test_a_must_cut_candidate_over_a_built_clip_is_not_made_twice():

@@ -332,15 +332,30 @@ def seat_day(date: str, pool: Sequence[Mapping[str, Any]], built: Sequence[Mappi
                               float(cfg["min_effective_score"]), reject),
                     key=_rank)
 
-    for entry in [e for e in ranked if core_draws.must_cut(e)]:
+
+
+    seated_cut = [e for e in ranked if core_draws.must_cut(e)]
+    for entry in seated_cut:
         ranked.remove(entry)
+    for entry in [e for e in seated_cut if not core_draws.takes_seat(e)]:
         if _overlaps(entry, taken):
             reject(entry, OVERLAPS_SEATED, "overlaps a seated or built candidate of the same recording")
         else:
             seated.append(dict(entry, seat_reason=MUST_CUT, must_cut=core_draws.must_cut(entry)))
             taken.append(_span(entry))
-    owner_seats = len(seated)                       # marks and must-cut draws take no seat of the day's quota
+    owner_seats = len(seated)                       # marks and seat-free must-cut draws take no seat of the day's quota
     policy["must_cut"] = owner_seats - policy["owner_marked"]
+    for entry in [e for e in seated_cut if core_draws.takes_seat(e)]:      # already in rank order: content points first
+        if _overlaps(entry, taken):
+            reject(entry, OVERLAPS_SEATED, "overlaps a seated or built candidate of the same recording")
+        elif len(seated) - owner_seats >= slots:
+            reject(entry, QUOTA_FULL, f"must-cut {core_draws.must_cut(entry)} takes a seat: {grant.cap} seats on {date} "
+                                      f"({grant.source}), {len(built)} already built")
+        else:
+            seated.append(dict(entry, seat_reason=MUST_CUT, must_cut=core_draws.must_cut(entry)))
+            taken.append(_span(entry))
+            per_segment[_span(entry)[0]] += 1
+    policy["must_cut_seated"] = len(seated) - owner_seats
 
     def extra_seat_ok(entry: Mapping[str, Any]) -> bool:
         gate = grant.extra_slot_min_score          # seats past base_talk_seats exist only where a dated authority made them
