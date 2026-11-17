@@ -39,8 +39,11 @@ def load() -> dict[str, Any] | None:
     if (doc.get("schema") != SCHEMA or not isinstance(doc.get("version"), str) or not isinstance(draws, list) or not draws
             or not all(isinstance(d, dict) and isinstance(d.get("key"), str) and isinstance(d.get("points"), (int, float))
                        and isinstance(d.get("definition"), str) and isinstance(d.get("name"), str) for d in draws)
-            or len({d["key"] for d in draws}) != len(draws) or not isinstance(doc.get("max_points"), (int, float))):
-        raise DrawsError(f"{path}: schema {SCHEMA}, version, max_points, draws[{{key, name, definition, points}}] with distinct keys")
+            or len({d["key"] for d in draws}) != len(draws) or not isinstance(doc.get("max_points"), (int, float))
+            or not all(isinstance(d.get("must_cut", False), bool) for d in draws)
+            or not isinstance(doc.get("audience_points_per_level", 0), (int, float))):
+        raise DrawsError(f"{path}: schema {SCHEMA}, version, max_points, optional audience_points_per_level, "
+                         f"draws[{{key, name, definition, points, must_cut?}}] with distinct keys")
     return doc
 
 
@@ -55,9 +58,34 @@ def points(entry: Mapping[str, Any], asset: Mapping[str, Any] | None = None) -> 
     return round(min(float(asset["max_points"]), sum(table.get(key, 0.0) for key in label.get("draws", []))), 2)
 
 
-def prompt(entries: Sequence[Mapping[str, Any]], asset: Mapping[str, Any]) -> str:
+def content(entry: Mapping[str, Any], asset: Mapping[str, Any] | None = None) -> float:
+    """What orders the candidates that passed the quality gate (公开规则：质量是要先达到基础的…然后我们再排除
+ 看点分): the draw points plus the scorecard's audience-interest level times the asset's points per level -- the
+ only one of the seven dimensions the views of the published clips reward. 0 when the channel has no draws asset."""
+    asset = load() if asset is None else asset
+    if asset is None:
+        return 0.0
+    card = entry.get("selection_scorecard")
+    dims = card.get("dimensions") if isinstance(card, Mapping) else None
+    level = dims.get("audience_salience", 0) if isinstance(dims, Mapping) else 0
+    per = float(asset.get("audience_points_per_level", 0))
+    return round(points(entry, asset) + per * float(level if isinstance(level, (int, float)) else 0), 2)
+
+
+def must_cut(entry: Mapping[str, Any], asset: Mapping[str, Any] | None = None) -> list[str]:
+    """The candidate's draws the channel makes whenever the quality gate passes (公开规则：联动肯定是必切
+ 「撒娇…一定要放」); empty when none, or the channel has no draws asset."""
+    asset = load() if asset is None else asset
+    label = entry.get("core_draws")
+    if asset is None or not isinstance(label, Mapping):
+        return []
+    keys = {d["key"] for d in asset["draws"] if d.get("must_cut")}
+    return [k for k in label.get("draws", []) if k in keys]
+
+
+def prompt(entries: Sequence[Mapping[str, Any]], asset: Mapping[str, Any], text_limit: int = TEXT_LIMIT) -> str:
     lines = [f"- {d['key']}（{d['name']}）：{d['definition']}" for d in asset["draws"]]
-    items = [{"id": e["candidate_id"], "hook": str(e.get("hook", "")), "text": str(e.get("text", ""))[:TEXT_LIMIT]} for e in entries]
+    items = [{"id": e["candidate_id"], "hook": str(e.get("hook", "")), "text": str(e.get("text", ""))[:text_limit]} for e in entries]
     return (
         "下面是一场直播里召回的切片候选（每条给了选片理由和字幕）。请判断每条的主线落在哪些看点上。\n"
         "只算主线：片子大部分在讲它、或它就是片子的笑点/落点；只顺带提一句、或只出现一个名字的不算。一条可以没有看点，也可以有几个。\n"

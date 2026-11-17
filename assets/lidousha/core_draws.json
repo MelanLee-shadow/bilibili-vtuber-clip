@@ -1,90 +1,100 @@
 {
   "schema": "core-draws.v1",
-  "version": "2026-11-16",
+  "version": "2026-11-17",
   "points_per_doubling": 10,
   "max_points": 12,
-  "max_points_source": "看点叠得再多，播放也不再按加法涨：人工标签下主线有 1 个看点的片播放中位 864，2 个 1124，3 个以上 1128。11-10～11-16 回放时一条有效分 59.5 的片靠三类看点加了 16 分过线，所以总和封顶 12（约等于分最高的单项）。",
-  "note": "看点分＝流水线的模型（第 2 步召回用的同一个）把片子主线标成这类看点时，播放量（按发布月份对齐）是没有这类看点时的几倍，每翻一倍 10 分；倍数先按把握收缩（乘 t²/(1+t²)），把握小的看点分少；只有 6 条片的 new_look 封顶 10 分。只算主线落在上面的看点，顺带一提不算。",
+  "max_points_source": "看点叠得再多，播放也不再按加法涨：人工标签下主线有 1 个看点的片播放中位 864，2 个 1124，3 个以上 1128，所以看点分总和封顶 12（约等于分最高的单项）。",
+  "audience_points_per_level": 2.3,
+  "audience_fit": {
+    "dimension": "audience_salience",
+    "multiplier_per_level": 1.2,
+    "t": 2.6,
+    "note": "七维里只有受众兴趣对播放有作用（和看点一起拟合时每档 ×1.20）；其余六维（围绕本人、观点强度、关系互动、人设反差、落点、路人自足）每档 ×0.89–×1.08，都不显著，不给分，只当质量门"
+  },
+  "ordering": "公开规则：质量问题和这个内容问题要分开来。质量是要先达到基础的…然后我们再排除看点分。七维和 Tier 只当质量门（Tier 3 排在最后）；过门的候选按内容分＝看点分（封顶 max_points）＋受众兴趣档位×audience_points_per_level 排，同分再看有效分。",
+  "must_cut_source": "公开规则：联动肯定是必切「撒娇是我想要的片段，这个一定要放」。标为 must_cut 的看点：候选过了质量门就入座，不占每天的席位（同频道主标记，只是标记不看质量门）。",
+  "note": "看点分＝流水线的模型（第 2 步召回用的同一个）把片子主线标成这类看点时，播放量（按发布月份对齐、同时控制受众兴趣）是没有这类看点时的几倍，每翻一倍 10 分；倍数先按把握收缩（乘 t²/(1+t²)），样本少于 15 条的再乘 n/15 并标 data_insufficient。只算主线落在上面的看点，顺带一提不算。",
   "fit": {
-    "data": "投稿账号 2026-06-01 起发布、到 2026-11-16 满 7 天的李豆沙谈话片 171 条（歌切 20 条另算，其他频道的片不算）",
-    "labels": "用本文件的定义和 core_draws.prompt，同一个模型（gpt-6.1-sol，effort medium）读每条的标题和简介标看点；同时我人工标了一遍作对照",
-    "model": "log(播放) ~ 六类看点 + 发布月份",
-    "r2_month_only": 0.06,
-    "r2_model_labels": 0.26,
-    "r2_hand_labels": 0.29,
+    "data": "投稿账号 2026-06-01 起发布、到 2026-11-16 满 7 天的李豆沙谈话片 171 条（歌切另算，其他频道的片不算）",
+    "labels": "用本文件的定义和 core_draws.prompt，同一个模型（gpt-6.1-sol，effort medium）读每条的标题和简介标看点；受众兴趣档位由同一模型按七维定义读标题和简介打（seven-dims.csv）",
+    "model": "log(播放) ~ 六类看点 + 受众兴趣档位 + 发布月份",
+    "r2_month_only": 0.057,
+    "r2_draws": 0.289,
+    "r2_draws_audience": 0.317,
     "agreement_with_hand_labels_kappa": {
-      "relation": 0.61,
-      "yuri": 0.68,
-      "cp": 0.6,
-      "sajiao": 0.48,
-      "mishap": 0.41,
-      "new_look": 0.79
+      "collab": 0.65,
+      "relation": 0.27,
+      "yuri": 0.62,
+      "mishap": 0.51,
+      "sajiao": 0.59,
+      "new_look": 0.87
     },
-    "holdout": "模型标签：用 9 月 15 日前的 124 条拟合、预测之后的 47 条，与本月相对播放的秩相关 0.26；预测前三分之一的片播放是本月中位的 1.29 倍，其余 0.92 倍",
-    "fitted_at": "2026-11-16",
+    "kappa_note": "relation 低是因为我的人工标签把“她磕谁”也算进 CP/关系，新定义不算",
+    "holdout": "用 9 月 15 日前的片拟合、预测之后的 47 条：与本月相对播放的秩相关 0.47（上一版看点 0.26；现行排法＝七维总分＋上一版看点分 0.29）；预测前三分之一的片播放是本月中位的 1.51 倍，其余 0.84 倍",
+    "fitted_at": "2026-11-17",
     "evidence": "reports/selection-draws-20261116/"
   },
   "draws": [
     {
+      "key": "collab",
+      "name": "联动同场",
+      "definition": "同事或嘉宾和她在同一场直播里（连麦、同屏、一起玩游戏、线下），两人当场的互动是主线；只是聊起不在场的人不算",
+      "points": 9.4,
+      "multiplier": 2.03,
+      "t": 3.3,
+      "n": 19,
+      "must_cut": true
+    },
+    {
       "key": "relation",
-      "name": "同事/熟人关系（含联动、他人 reaction）",
-      "definition": "主线是她和点名的具体同事或熟人（礼墨Sumi、南町、安晚awa、星汐Seki、伊索尔、露医生、雾深、奈奈莉娅、花礼等）之间的事：联动同场、互相拆台、被同事看 reaction、聊她和某同事的关系；只提一句名字不算",
-      "multiplier": 2.27,
-      "t": 5.2,
-      "n": 36,
-      "hand_label_multiplier": 2.01,
-      "points": 11.4
+      "name": "同事/熟人关系（含她本人的 CP）",
+      "definition": "主线是她和点名的具体同事或熟人（礼墨Sumi、南町、安晚awa、星汐Seki、伊索尔、露医生、雾深、奈奈莉娅、花礼等）之间的事，但对方不在场：聊她和某同事的关系、她本人和别人的 CP（多为她和礼墨Sumi）、吃醋、被同事看 reaction、互相拆台；只提一句名字不算；她磕作品里或别人之间的 CP 不算",
+      "points": 11.6,
+      "multiplier": 2.48,
+      "t": 4.3,
+      "n": 14,
+      "data_insufficient": true
     },
     {
       "key": "new_look",
       "name": "3D/新衣/新表情展示",
       "definition": "新 3D、新衣装、新表情包、Face Check 这类形象事件本身是看点",
-      "multiplier": 2.68,
-      "t": 3.1,
-      "n": 6,
-      "hand_label_multiplier": 2.1,
-      "points": 10.0
+      "points": 4.8,
+      "multiplier": 2.24,
+      "t": 2.8,
+      "n": 7,
+      "data_insufficient": true
     },
     {
       "key": "yuri",
       "name": "百合/侄女/直不直",
       "definition": "她自己的百合爱好、侄女人设、直不直、谁 1 谁 0 的表态是主线",
-      "multiplier": 1.59,
-      "t": 3.3,
-      "n": 41,
-      "hand_label_multiplier": 1.39,
-      "points": 6.1
+      "points": 1.7,
+      "multiplier": 1.22,
+      "t": 1.2,
+      "n": 39
     },
     {
       "key": "mishap",
       "name": "社死/事故/自爆",
       "definition": "她本人当场出糗、穿帮、被抓包、自爆：直播腔带进现实被嫌弃、偷进舰长群被骂快滚、3D 打歌服没召唤出来、毛被乌鸦叼走、承认买弹幕吃回扣",
-      "multiplier": 1.62,
-      "t": 2.6,
-      "n": 20,
-      "hand_label_multiplier": 2.38,
-      "points": 6.0
+      "points": 8.1,
+      "multiplier": 1.87,
+      "t": 3.1,
+      "n": 15
     },
     {
       "key": "sajiao",
       "name": "撒娇/黏人/gachi",
       "definition": "她撒娇、卖萌、求哄、黏着观众或求上舰是主线",
-      "multiplier": 1.26,
-      "t": 0.9,
-      "n": 9,
-      "hand_label_multiplier": 1.55,
-      "points": 1.5
-    },
-    {
-      "key": "cp",
-      "name": "CP/磕糖/吃醋",
-      "definition": "她磕谁和谁、被磕、吃醋、关系暧昧拉扯是主线（角色或真人都算）",
-      "multiplier": 0.99,
-      "t": -0.1,
-      "n": 29,
-      "hand_label_multiplier": 1.29,
-      "points": 0.0
+      "points": 1.8,
+      "multiplier": 1.44,
+      "t": 1.3,
+      "n": 8,
+      "data_insufficient": true,
+      "must_cut": true
     }
   ],
-  "not_draws": "作品/游戏话题（人工标 ×0.80）、日常/童年经历（×0.77）、和 kmx 的一般弹幕互动（×0.86）在数据里没有加播放，也没有显著减少（置信区间都跨过 1），所以不是看点、不加不扣；联动同场除了“同事关系”之外没有额外作用（×0.94），归在 relation。cp 在模型标签下 ×0.99（人工标 ×1.29，置信区间跨过 1），现在 0 分，仍然标出来供下次重拟合。"
+  "not_draws": "作品/游戏话题、日常/童年经历、和 kmx 的一般弹幕互动在数据里没有加播放，也没有显著减少，所以不是看点、不加不扣。她磕作品里或别人之间的 CP 不是看点（公开规则：CP指的不是说她看什么CP，而是说她本身和别人的CP…通常就是李豆沙和礼墨Sumi的CP），她本人的 CP 归 relation。",
+  "other_fans_caveat": "公开规则：同事熟人关系的高播放可能来自他台粉丝被引来看。collab、relation 的倍数里含这部分；按 clip_performance 记录的评论者粉丝牌拆开本人观众后再重拟合（src/autoslice/clip_performance.py）。"
 }
