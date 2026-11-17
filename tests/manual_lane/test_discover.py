@@ -58,7 +58,7 @@ def test_the_cap_is_a_ceiling_every_seat_needs_the_lowest_score():
     seating = ds.seat_day(DATE, pool, built=[])
     assert [e["cid"] for e in seating.seated] == ["high"] and seating.policy["free_seats"] == 5
     assert {r["cid"]: r["reason"] for r in seating.rejected} == {f"low{n}": ds.BELOW_MIN_SCORE for n in range(4)}
-    assert "score=70.0 (effective_score=70.0 + core draws 0.0), lowest 75.0" in seating.rejected[0]["detail"]
+    assert "effective_score=70.0, lowest 75.0 (content points" in seating.rejected[0]["detail"]
 
 
 def test_clip_id_carries_the_recording_start_and_fits_the_package_slug():

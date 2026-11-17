@@ -48,6 +48,7 @@ OVERLAPS_SEATED = "OVERLAPS_SEATED"
 QUOTA_FULL = "QUOTA_FULL"
 EXTRA_SEAT_BELOW_SCORE = "EXTRA_SEAT_BELOW_SCORE"
 OWNER_MARK = "OWNER_MARK"                        # seated because the owner marked it
+MUST_CUT = "MUST_CUT"                            # seated past the quality gate: a must-cut core draw (collab, sajiao)
 OWNER_MARK_ALREADY_BUILT = "OWNER_MARK_ALREADY_BUILT"
 OWNER_MARK_NOT_TALK = "OWNER_MARK_NOT_TALK"
 
@@ -253,23 +254,26 @@ def _overlaps(entry: Mapping[str, Any], taken: Sequence[tuple[str, int, int]]) -
     return any(name == n and start < e and s < end for n, s, e in taken)
 
 
-def score(entry: Mapping[str, Any]) -> float:
-    """The seating score: the scorecard's effective score plus the points of the candidate's core draws (the channel's
- draws asset, fitted on the views of its published clips; 公开规则：按照播放量来解释各个要素)."""
-    return round(float(entry["selection_scorecard"]["effective_score"]) + core_draws.points(entry), 2)
+def quality(entry: Mapping[str, Any]) -> float:
+    """The quality gate's number: the scorecard's effective score (公开规则：质量问题和这个内容问题要分开来。
+ 质量是要先达到基础的). The draws never lift a candidate over it."""
+    return float(entry["selection_scorecard"]["effective_score"])
 
 
-def _rank(entry: Mapping[str, Any]) -> tuple[float, float, float, str]:
-    """Hard Tier first, then the seating score, then confidence (the order of `selection_rank_key`, on `score`)."""
+def _rank(entry: Mapping[str, Any]) -> tuple[bool, float, float, float, str]:
+    """Among the candidates past the quality gate: Tier 3 (unreadable / generic) last, then the content points (core draws
+    + audience interest, fitted on the channel's views), then the effective score, then confidence."""
     tier, _, confidence, cid = selection_rank_key(entry)
-    return tier, -score(entry), confidence, cid
+    return tier >= 3, -core_draws.content(entry), -quality(entry), confidence, cid
 
 
 def _admitted(pool: Sequence[Mapping[str, Any]], done: set[str], lowest: float, min_score: float,
               reject: Callable[..., None]) -> list[Mapping[str, Any]]:
-    """The candidates that may take a seat at all: talk, confident enough, scored high enough, admitted by the production
- admission. The score floor holds for every seat, not only the extra ones: the day's cap is a ceiling, not a number
- to fill (公开规则：并不是说一定要塞满5条…只有得高分的才去做成切片)."""
+    """The candidates that may take a seat at all. The basic quality gate -- talk, confident enough, admitted by the
+ production admission (watchable, distinctive, producible, with cue evidence) -- holds for every candidate (公开规则
+ 「质量是要先达到基础的，要不然的话根本没有办法做」). A seat of the day's quota also needs the effective
+ score floor: the cap is a ceiling, not a number to fill (公开规则：只有得高分的才去做成切片). A must-cut draw
+ (collab, sajiao: 「撒娇是我想要的片段，这个一定要放」) needs only the basic gate, and takes no seat."""
     eligible = []
     for entry in pool:
         if entry["cid"] in done:
@@ -282,9 +286,9 @@ def _admitted(pool: Sequence[Mapping[str, Any]], done: set[str], lowest: float, 
             reject(entry, BELOW_MIN_CONFIDENCE, f"confidence={confidence}, lowest {lowest}")
         elif (admission := selection_scorecard_production_admission(entry.get("selection_scorecard"))).get("status") != "ADMIT":
             reject(entry, ADMISSION_HOLD, f"{admission.get('reason_code')}: {admission.get('reason', '')}"[:200])
-        elif score(entry) < min_score:                           # ADMIT means a valid card
-            reject(entry, BELOW_MIN_SCORE, f"score={score(entry)} (effective_score={card['effective_score']} + core draws "
-                                           f"{core_draws.points(entry)}), lowest {min_score}")
+        elif quality(entry) < min_score and not core_draws.must_cut(entry):   # ADMIT means a valid card
+            reject(entry, BELOW_MIN_SCORE, f"effective_score={card['effective_score']}, lowest {min_score} "
+                                           f"(content points {core_draws.content(entry)} do not count)")
         else:
             eligible.append(entry)
     return eligible
@@ -323,17 +327,26 @@ def seat_day(date: str, pool: Sequence[Mapping[str, Any]], built: Sequence[Mappi
         else:
             seated.append(dict(entry, seat_reason=OWNER_MARK))
             taken.append(_span(entry))
-    owner_seats = len(seated)
-    policy["owner_marked"] = owner_seats
+    policy["owner_marked"] = len(seated)
     ranked = sorted(_admitted([e for e in pool if e not in marked], done, float(cfg["min_confidence"]),
                               float(cfg["min_effective_score"]), reject),
                     key=_rank)
+
+    for entry in [e for e in ranked if core_draws.must_cut(e)]:
+        ranked.remove(entry)
+        if _overlaps(entry, taken):
+            reject(entry, OVERLAPS_SEATED, "overlaps a seated or built candidate of the same recording")
+        else:
+            seated.append(dict(entry, seat_reason=MUST_CUT, must_cut=core_draws.must_cut(entry)))
+            taken.append(_span(entry))
+    owner_seats = len(seated)                       # marks and must-cut draws take no seat of the day's quota
+    policy["must_cut"] = owner_seats - policy["owner_marked"]
 
     def extra_seat_ok(entry: Mapping[str, Any]) -> bool:
         gate = grant.extra_slot_min_score          # seats past base_talk_seats exist only where a dated authority made them
         if gate is None or len(built) + len(seated) - owner_seats + 1 <= int(cfg["base_talk_seats"]):
             return True
-        return bool(selection_scorecard_is_valid(entry.get("selection_scorecard")) and score(entry) >= gate)
+        return bool(selection_scorecard_is_valid(entry.get("selection_scorecard")) and quality(entry) >= gate)
 
     def seat(entry: Mapping[str, Any]) -> None:
         seated.append(dict(entry))
