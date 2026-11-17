@@ -40,10 +40,11 @@ def load() -> dict[str, Any] | None:
             or not all(isinstance(d, dict) and isinstance(d.get("key"), str) and isinstance(d.get("points"), (int, float))
                        and isinstance(d.get("definition"), str) and isinstance(d.get("name"), str) for d in draws)
             or len({d["key"] for d in draws}) != len(draws) or not isinstance(doc.get("max_points"), (int, float))
-            or not all(isinstance(d.get("must_cut", False), bool) for d in draws)
+            or not all(isinstance(d.get("must_cut", False), bool) and isinstance(d.get("takes_seat", False), bool)
+                       for d in draws)
             or not isinstance(doc.get("audience_points_per_level", 0), (int, float))):
         raise DrawsError(f"{path}: schema {SCHEMA}, version, max_points, optional audience_points_per_level, "
-                         f"draws[{{key, name, definition, points, must_cut?}}] with distinct keys")
+                         f"draws[{{key, name, definition, points, must_cut?, takes_seat?}}] with distinct keys")
     return doc
 
 
@@ -81,6 +82,17 @@ def must_cut(entry: Mapping[str, Any], asset: Mapping[str, Any] | None = None) -
         return []
     keys = {d["key"] for d in asset["draws"] if d.get("must_cut")}
     return [k for k in label.get("draws", []) if k in keys]
+
+
+def takes_seat(entry: Mapping[str, Any], asset: Mapping[str, Any] | None = None) -> bool:
+    """Whether a must-cut candidate takes one of the day's seats (公开规则：撒娇也算进 5 条): yes when every
+ must-cut draw on it is marked `takes_seat`; a candidate with any seat-free must-cut draw (a collab) takes none."""
+    asset = load() if asset is None else asset
+    keys = must_cut(entry, asset)
+    if asset is None or not keys:
+        return False
+    seat = {d["key"] for d in asset["draws"] if d.get("takes_seat")}
+    return all(k in seat for k in keys)
 
 
 def prompt(entries: Sequence[Mapping[str, Any]], asset: Mapping[str, Any], text_limit: int = TEXT_LIMIT) -> str:
