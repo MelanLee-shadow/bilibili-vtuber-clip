@@ -17,7 +17,9 @@ Publishing unattended has one switch on the media host, the one the old publicat
 the upload makes clips up to the sealed package and sends nothing; the round after the marker is removed uploads them.
 A person running `run --upload` on a clip they looked at is not this switch's business.
 
-4. The media of clips that are online is reclaimed (`reclaim`; lane_rules `auto`).
+4. At most one song attempt (song_day.py): the day's song is made up to a prepared package for review, never uploaded here.
+
+5. The media of clips that are online is reclaimed (`reclaim`; lane_rules `auto`).
 
 The ledger `<task>/auto/ledger.json` keeps, per clip, how often it was run and where it last stopped.  Two rounds never run
 at once (the second leaves at once; the timer's next tick takes over).
@@ -199,8 +201,9 @@ def reclaim(task: Path, ledger: dict[str, Any], remote: Remote, *, now: float) -
 
 
 def auto_round(task: Path, *, discover_days: Callable[[], dict[str, Any]], run_clips: Callable[[list[str]], int],
-               upload: bool, remote: Remote | None = None, now: float | None = None) -> dict[str, Any]:
-    """One round; returns what it did ({discover, ran, stuck, finished} or {status: BUSY})."""
+               upload: bool, remote: Remote | None = None, now: float | None = None,
+               run_songs: Callable[[], list[dict[str, Any]]] | None = None) -> dict[str, Any]:
+    """One round; returns what it did ({discover, ran, stuck, finished, songs} or {status: BUSY})."""
     (task / "auto").mkdir(parents=True, exist_ok=True)
     with (task / "auto" / ".lock").open("w") as lock:
         try:
@@ -213,6 +216,7 @@ def auto_round(task: Path, *, discover_days: Callable[[], dict[str, Any]], run_c
         code = run_clips(run) if run else 0
         waiting = _record(task, ledger, run)
         done = [cid for cid in run if finished(ClipState.load(task / "state" / f"{cid}.json"), upload=upload)]
+        songs = run_songs() if run_songs is not None else []
         reclaimed = reclaim(task, ledger, remote, now=time.time() if now is None else now) if remote is not None else []
         return {"status": "ROUND_DONE", "discover": found, "ran": run, "finished": done, "stuck": stuck, "run_exit_code": code,
-                "reclaimed": reclaimed, "waiting_provider": waiting}
+                "reclaimed": reclaimed, "waiting_provider": waiting, "songs": songs}

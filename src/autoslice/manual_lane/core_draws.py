@@ -42,8 +42,9 @@ def load() -> dict[str, Any] | None:
             or len({d["key"] for d in draws}) != len(draws) or not isinstance(doc.get("max_points"), (int, float))
             or not all(isinstance(d.get("must_cut", False), bool) and isinstance(d.get("takes_seat", False), bool)
                        for d in draws)
-            or not isinstance(doc.get("audience_points_per_level", 0), (int, float))):
-        raise DrawsError(f"{path}: schema {SCHEMA}, version, max_points, optional audience_points_per_level, "
+            or not isinstance(doc.get("audience_points_per_level", 0), (int, float))
+            or not isinstance(doc.get("min_content", 0), (int, float))):
+        raise DrawsError(f"{path}: schema {SCHEMA}, version, max_points, optional audience_points_per_level and min_content, "
                          f"draws[{{key, name, definition, points, must_cut?, takes_seat?}}] with distinct keys")
     return doc
 
@@ -71,6 +72,14 @@ def content(entry: Mapping[str, Any], asset: Mapping[str, Any] | None = None) ->
     level = dims.get("audience_salience", 0) if isinstance(dims, Mapping) else 0
     per = float(asset.get("audience_points_per_level", 0))
     return round(points(entry, asset) + per * float(level if isinstance(level, (int, float)) else 0), 2)
+
+
+def floor(asset: Mapping[str, Any] | None = None) -> float | None:
+    """The content points a seat of the day's quota needs (公开规则：基础质量…决定了能不能看，而看点决定了好不好看
+ …看点是一个单独的分吧; 「只有得高分的才去做成切片」): the asset's `min_content`, fitted on the same views;
+ None when the channel has no draws asset (no content score, so no floor)."""
+    asset = load() if asset is None else asset
+    return None if asset is None or "min_content" not in asset else float(asset["min_content"])
 
 
 def must_cut(entry: Mapping[str, Any], asset: Mapping[str, Any] | None = None) -> list[str]:

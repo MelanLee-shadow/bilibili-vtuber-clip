@@ -30,12 +30,20 @@ def test_the_default_channel_has_its_draws_and_the_views_order_them():
     assert min(points.values()) >= 0 and asset["audience_points_per_level"] > 0      # a draw is never a penalty
 
 
-def test_the_draws_never_lift_a_candidate_over_the_quality_gate():
-    """Before a 70 card on relation sat (70 + 11.4 >= 75); quality comes first now."""
-    plain, colleague = entry("plain", "segA", 0, 500, level=4, floor=False), _drawn("colleague", "segB", 0, 500, ["relation"],
-                                                                                 level=4, floor=False)
-    seating = ds.seat_day(DATE, [plain, colleague], built=[])
-    assert seating.seated == [] and {r["reason"] for r in seating.rejected} == {ds.BELOW_MIN_SCORE}
+def test_the_quality_gate_only_passes_or_fails_and_the_seat_needs_the_content_floor():
+    """公开规则：基础质量…决定了能不能看，而看点决定了好不好看: an admitted card scoring 70 (under the old 75 floor)
+ on relation takes a seat; an 86.25 card with no draw and audience interest 2 (4.6 points) does not."""
+    least = cd.floor()
+    drawn = _drawn("drawn", "segB", 0, 500, ["relation"], level=4, floor=False)
+    plain = entry("plain", "segA", 0, 500, level=4)
+    plain_card = plain["selection_scorecard"]
+    plain_card["dimensions"].update(audience_salience=2)
+    plain_card["raw_score"] = plain_card["effective_score"] = sum(plain_card["dimensions"][k] * w for k, w in plain_card["weights"].items()) / 4
+    assert least == 6 and cd.content(drawn) >= least > cd.content(plain) and ds.quality(plain) > 75 > ds.quality(drawn)
+    seating = ds.seat_day(DATE, [plain, drawn], built=[])
+    assert [e["cid"] for e in seating.seated] == ["drawn"]
+    assert [(r["cid"], r["reason"]) for r in seating.rejected] == [("plain", ds.BELOW_MIN_CONTENT)]
+    assert "effective_score 86.25 does not count" in seating.rejected[0]["detail"]
 
 
 def test_past_the_gate_the_content_points_order_the_seats_not_the_effective_score():
@@ -59,7 +67,7 @@ def test_must_cut_draws_need_only_the_basic_quality_gate_and_a_collab_takes_no_s
     assert {e["cid"]: e["seat_reason"] for e in seating.seated} == {"guest": ds.MUST_CUT, "both": ds.MUST_CUT}
     assert seating.policy["must_cut"] == 2 and seating.policy["must_cut_seated"] == 0
     assert {r["cid"]: r["reason"] for r in seating.rejected} == {
-        "cute": ds.QUOTA_FULL, "unsure": ds.BELOW_MIN_CONFIDENCE, "plain_low": ds.BELOW_MIN_SCORE, "other": ds.QUOTA_FULL}
+        "cute": ds.QUOTA_FULL, "unsure": ds.BELOW_MIN_CONFIDENCE, "plain_low": ds.BELOW_MIN_CONTENT, "other": ds.QUOTA_FULL}
     assert cd.takes_seat(cute) and not cd.takes_seat(both) and not cd.takes_seat(guest) and not cd.takes_seat(other)
 
 
@@ -85,7 +93,8 @@ def test_a_must_cut_candidate_over_a_built_clip_is_not_made_twice():
 def test_stacked_draws_stop_at_the_cap():
     clip = _drawn("stacked", "segA", 0, 500, ["mishap", "new_look", "relation"], level=0, floor=False)
     assert cd.points(clip) == cd.load()["max_points"] == 12
-    assert [r["reason"] for r in ds.seat_day(DATE, [clip], built=[]).rejected] == [ds.BELOW_MIN_SCORE]
+    assert cd.content(clip) == 12 + 2 * cd.load()["audience_points_per_level"]      # the card's audience interest is level 2
+    assert [e["cid"] for e in ds.seat_day(DATE, [clip], built=[]).seated] == ["stacked"]     # its effective 60 does not count
 
 
 def test_the_pool_is_labelled_in_one_call_and_a_kept_label_is_not_asked_again():

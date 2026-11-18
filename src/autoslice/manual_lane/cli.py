@@ -272,8 +272,17 @@ def cmd_auto(args: argparse.Namespace) -> int:
         return run_many(cids, lambda cid, progress: _run_clip_cid(one, task, cid, progress),
                         log_dir=task / "run-logs", errors=RUN_ERRORS)
 
+    from . import song_day
+    from .discover import load_ledger
+
+    def run_songs() -> list[dict[str, object]]:
+        if not song_day.enabled():
+            return []
+        remote = _adapters_for(args.on_media_host)(f"{layout().work_root}/songs").remote
+        return song_day.song_round(task, days=load_ledger(task)["days"], attempt=song_day.remote_attempt(task, remote))
+
     result = auto_round(task, discover_days=discover_days, run_clips=run_clips, upload=upload,
-                        remote=_adapters_for(args.on_media_host)(f"{layout().work_root}/discover").remote)
+                        remote=_adapters_for(args.on_media_host)(f"{layout().work_root}/discover").remote, run_songs=run_songs)
     print(json.dumps({**result, "publication": publication}, ensure_ascii=False))
     return 0
 
@@ -282,7 +291,9 @@ def cmd_status(args: argparse.Namespace) -> int:
     if args.cid is None:         # no clip named: the discovery ledger
         from .discover import ledger_lines
 
-        print("\n".join(ledger_lines(Path(args.task_dir))))
+        from .song_day import ledger_lines as song_lines
+
+        print("\n".join(ledger_lines(Path(args.task_dir)) + song_lines(Path(args.task_dir))))
         for path in sorted((Path(args.task_dir) / "state").glob("*.json")):      # the clips of the task, by id
             state = ClipState.load(path)
             if state.data["clip"].get("status") == "SUPERSEDED":
