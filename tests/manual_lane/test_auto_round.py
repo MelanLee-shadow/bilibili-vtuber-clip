@@ -246,3 +246,81 @@ def test_a_stuck_clip_is_run_once_more_when_another_version_is_deployed(tmp_path
     assert round_(tmp_path, run)[1] == [["bad"]]                       # the new version may hold the fix
     assert json.loads(ar.ledger_path(tmp_path).read_text())["clips"]["bad"]["stopped"] == {
         "step": "package", "reason": "FMR_CHECK_FAILED", "times": 1, "version": "v2"}
+
+
+def _days(tmp_path, statuses):
+    from src.autoslice.manual_lane import discover
+
+    path = discover.ledger_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"schema": discover.LEDGER_SCHEMA, "days": {d: {"status": s} for d, s in statuses.items()}}))
+
+
+def test_a_days_recordings_are_released_once_its_clips_are_online_or_kept_back(tmp_path):
+
+    for cid, date, steps in (("on", "2026-11-15", {"upload": {"status": "DONE"}}),
+                             ("held", "2026-11-15", {"review": {"status": "DONE"}}),
+                             ("making", "2026-11-16", {"review": {"status": "DONE"}})):
+        state = clip(tmp_path, cid, steps)
+        state.data["clip"]["recording_date"] = date
+        state.save()
+    (tmp_path / "clips/on/upload").mkdir(parents=True)
+    (tmp_path / "clips/on/upload/online.json").write_text("{}")
+    (tmp_path / "clips/held/upload/HOLD").parent.mkdir(parents=True)
+    (tmp_path / "clips/held/upload/HOLD").write_text("kept")
+    days = {"2026-11-15": {"status": "COMPLETE"}, "2026-11-16": {"status": "COMPLETE"},
+            "2026-11-17": {"status": "NO_CONTENT"}, "2026-11-18": {"status": "PARTIAL"}}
+    assert ar.recordings_released(tmp_path, days, ar._states(tmp_path)) == ["2026-11-15", "2026-11-17"]
+
+
+def test_a_released_days_videos_go_only_once_115_has_them_and_the_spool_let_go(tmp_path, monkeypatch):
+    import shutil
+    import subprocess
+
+    import pytest
+
+    from fakes import FakeRemote
+    from src.autoslice.manual_lane import discover_media
+    from src.autoslice.manual_lane.adapters import RemoteResult
+
+    if b"GNU" not in subprocess.run(["stat", "--version"], capture_output=True).stdout or not shutil.which("fuser"):
+        pytest.skip("needs GNU stat and fuser (the media host)")
+    date = "2026-11-15"
+    direct, arch, spool = (tmp_path / name / "room" for name in ("direct", "archive", "spool"))
+    for root in (direct, arch, spool):
+        (root / date).mkdir(parents=True)
+    big = b"0" * 2_000_000
+    (direct / date / "done.flv").write_bytes(big)
+    (arch / date / "done.flv").write_bytes(big)
+    (direct / date / "done.xml").write_bytes(b"<x/>")
+    (direct / date / "short.flv").write_bytes(big)            # 115 has only part of it
+    (arch / date / "short.flv").write_bytes(big[:-1])
+    (direct / date / "held.flv").write_bytes(big)             # the mover still holds it (not proven on both drives)
+    (arch / date / "held.flv").write_bytes(big)
+    (spool / date / "held.flv").write_bytes(big)
+    (direct / date / "stub.flv").write_bytes(b"0" * 100)        # a reconnect stub 115 never gets
+    _days(tmp_path, {date: "COMPLETE"})
+    topology = tmp_path / "topology.json"
+    topology.write_text(json.dumps({"spool_root": str(tmp_path / "spool")}))
+    monkeypatch.setattr(ar, "TOPOLOGY_FILE", topology)
+    monkeypatch.setattr(ar, "layout", lambda: type("L", (), {"room_id": "room"})())
+    monkeypatch.setattr(discover_media, "direct_room", lambda: str(direct))
+    monkeypatch.setattr(discover_media, "archive_dir", lambda d: f"{arch}/{d}")
+    monkeypatch.setattr(ar, "root_script", lambda cmd, env: cmd + "\n")
+
+    def host(name, body, remote):
+        done = subprocess.run(["bash", "-c", body], capture_output=True, text=True)
+        return RemoteResult(done.returncode, done.stdout, done.stderr)
+    ledger = {"clips": {}}
+    first = ar.reclaim_recordings(tmp_path, ledger, FakeRemote(on_script=host))
+    assert first[0]["deleted"] == ["done.flv"] and date not in ledger.get("recordings_reclaimed", {})
+    from src.autoslice.manual_lane import discover
+    assert discover.load_ledger(tmp_path)["days"][date]["recordings_reclaimed"]     # marked before anything went
+    assert sorted(p.name for p in (direct / date).iterdir()) == ["done.xml", "held.flv", "short.flv", "stub.flv"]
+    (spool / date / "held.flv").unlink()                       # proven on 115 and 123: the mover let go
+    (arch / date / "short.flv").write_bytes(big)
+    second = ar.reclaim_recordings(tmp_path, ledger, FakeRemote(on_script=host))
+    assert sorted(second[0]["deleted"]) == ["held.flv", "short.flv"]
+    assert date in ledger["recordings_reclaimed"]
+    assert sorted(p.name for p in (direct / date).iterdir()) == ["done.xml", "stub.flv"]
+    assert ar.reclaim_recordings(tmp_path, ledger, FakeRemote(on_script=host)) == []

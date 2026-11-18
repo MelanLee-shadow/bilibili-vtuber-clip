@@ -254,6 +254,17 @@ def test_a_day_whose_danmaku_came_before_its_recordings_waits_for_them_and_a_lat
 
 
 
+def test_a_finished_day_whose_recordings_were_reclaimed_is_not_rediscovered(tmp_path):
+    # deleting 11-15/11-16's videos after their clips went out made them look changed: rediscovered as NO_CONTENT
+    shell = [next(iter(SEGMENTS))]
+    assert [d["status"] for d in run(tmp_path, Host()).days] == [dv.COMPLETE]
+    assert run(tmp_path, Host(arrived=shell)).days                     # unmarked, fewer recordings reopen the day
+    assert [d["status"] for d in run(tmp_path, Host()).days] == [dv.COMPLETE]
+    dv.mark_recordings_reclaimed(tmp_path / "task", DATE)
+    assert not run(tmp_path, Host(arrived=shell)).days
+    assert dv.load_ledger(tmp_path / "task")["days"][DATE]["status"] == dv.COMPLETE
+
+
 def test_without_a_recorder_host_nothing_is_fetched_and_old_copies_are_still_pruned(tmp_path):
 
     assert not dm.layout().recordings_direct_host and "N100" not in dm.layout().danmaku_host

@@ -96,6 +96,19 @@ def _one_discover_at_a_time(task: Path) -> Iterator[None]:
         yield
 
 
+def mark_recordings_reclaimed(task: Path, date: str) -> None:
+    """Before the lane deletes a finished day's recordings (auto_run.reclaim_recordings): the day stays finished, so
+    their going is not taken for a changed day (11-15 and 11-16 were rediscovered as NO_CONTENT)."""
+    with _one_discover_at_a_time(task):
+        ledger = load_ledger(task)
+        day = ledger["days"].get(date, {})
+        if day.get("status") not in FINISHED:
+            raise StateError(f"{date} is not a finished day")
+        if not day.get("recordings_reclaimed"):
+            day["recordings_reclaimed"] = utc_now()
+            write_json(ledger_path(task), ledger)
+
+
 def resolve_session(task: Path, date: str) -> tuple[SessionConfig, dict[str, str]]:
     """The day's session config (written as `<day dir>/session.json`) and where its people came from."""
     from src.autoslice.channel_profile import load_channel_profile
@@ -267,8 +280,10 @@ def discover(*, task: Path, adapters: Adapters, dates: Sequence[str] | None = No
                 report.failures.append({"date": date, "segment": "", "code": NO_ARCHIVE_DIR, "detail": "no such date directory in the archive"})
                 continue
             before = ledger["days"].get(date, {})
-            if not dates and before.get("status") in FINISHED and inv.same_recordings(before.get("segments", [])):
-                continue                             # finished with exactly these recordings; a recording that came later reopens it
+            if not dates and before.get("status") in FINISHED and (before.get("recordings_reclaimed")
+                                                                   or inv.same_recordings(before.get("segments", []))):
+                continue                             # finished with exactly these recordings (a recording that came later
+                                                     # reopens it), or finished and its recordings deleted (mark_recordings_reclaimed)
             settled = inv.settled(float(cfg["settle_minutes"]), float(cfg["lone_danmaku_hours"]))
             if not dates and not settled:
                 report.deferred.append({"date": date, "reason": "RECORDING_MAY_BE_IN_PROGRESS" if inv.segments else "NO_RECORDINGS_YET"})
