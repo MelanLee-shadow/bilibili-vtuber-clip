@@ -3,9 +3,10 @@
 The selection logic is the old pipeline's and is called, not rewritten: `select_semantic_session_candidates_covered`
 recalls candidates from a recording's whole-recording subtitles (and its danmaku), each with the scorecard the
 metric defines.  This module only (1) feeds it from a prepared recording and keeps its answer next to the inputs'
-fingerprints, and (2) seats the day's candidates the way the production selection does: hard Tier, then absolute score,
-then confidence (`selection_rank_key`), the score raised by the channel's core draws (`core_draws`); the candidate-level admission (`selection_scorecard_production_admission`); the
-lowest confidence; the lowest score of every seat; the quota of the recording date (`resolve_quota_grant`, the dated authority asset); the soft per-recording
+fingerprints, and (2) seats the day's candidates:
+the basic quality gate (talk, the lowest confidence, the candidate-level admission
+`selection_scorecard_production_admission`), pass or fail; past it, the content points of the channel's core draws
+(`core_draws`) order the seats and every seat needs the asset's content floor; the quota of the recording date (`resolve_quota_grant`, the dated authority asset); the soft per-recording
 limit that slack refills.  The numbers that are not read from those modules are the `discover` rules of lane_rules.json.
 A candidate that is not seated keeps the reason.  Every import of the old pipeline is in this file (import_boundary.json).
 """
@@ -42,7 +43,7 @@ Selector = Callable[..., tuple[list[Any], dict[str, Any]]]
 # why a candidate was not seated (the ledger's `reason`)
 NOT_TALK = "NOT_TALK"
 BELOW_MIN_CONFIDENCE = "BELOW_MIN_CONFIDENCE"
-BELOW_MIN_SCORE = "BELOW_MIN_SCORE"
+BELOW_MIN_CONTENT = "BELOW_MIN_CONTENT"
 ADMISSION_HOLD = "ADMISSION_HOLD"
 OVERLAPS_SEATED = "OVERLAPS_SEATED"
 QUOTA_FULL = "QUOTA_FULL"
@@ -255,8 +256,8 @@ def _overlaps(entry: Mapping[str, Any], taken: Sequence[tuple[str, int, int]]) -
 
 
 def quality(entry: Mapping[str, Any]) -> float:
-    """The quality gate's number: the scorecard's effective score (公开规则：质量问题和这个内容问题要分开来。
- 质量是要先达到基础的). The draws never lift a candidate over it."""
+    """The scorecard's effective score: only a tie-break among equal content points and the gate of a dated extra seat.
+ It is not the quality gate (公开规则：基础质量…决定了能不能看: the gate passes or fails, see `_admitted`)."""
     return float(entry["selection_scorecard"]["effective_score"])
 
 
@@ -267,28 +268,28 @@ def _rank(entry: Mapping[str, Any]) -> tuple[bool, float, float, float, str]:
     return tier >= 3, -core_draws.content(entry), -quality(entry), confidence, cid
 
 
-def _admitted(pool: Sequence[Mapping[str, Any]], done: set[str], lowest: float, min_score: float,
+def _admitted(pool: Sequence[Mapping[str, Any]], done: set[str], lowest: float,
               reject: Callable[..., None]) -> list[Mapping[str, Any]]:
-    """The candidates that may take a seat at all. The basic quality gate -- talk, confident enough, admitted by the
- production admission (watchable, distinctive, producible, with cue evidence) -- holds for every candidate (公开规则
- 「质量是要先达到基础的，要不然的话根本没有办法做」). A seat of the day's quota also needs the effective
- score floor: the cap is a ceiling, not a number to fill (公开规则：只有得高分的才去做成切片). A must-cut draw
- (collab, sajiao: 「撒娇是我想要的片段，这个一定要放」) needs only the basic gate, and takes no seat."""
-    eligible = []
+    """The candidates that may take a seat at all. The basic quality gate decides only whether a clip can be watched --
+ talk, confident enough, admitted by the production admission (watchable, distinctive, producible, with cue evidence)
+ -- and passes or fails; it gives no points (公开规则：基础质量一定得先过关之后，我们再看看点好不好看。看点是一个
+ 单独的分吧). A seat of the day's quota then needs the content floor of the channel's draws asset: the cap is a
+ ceiling, not a number to fill (公开规则：只有得高分的才去做成切片). A must-cut draw (collab, sajiao:
+ 「撒娇是我想要的片段，这个一定要放」) needs only the basic gate."""
+    eligible, least = [], core_draws.floor()
     for entry in pool:
         if entry["cid"] in done:
             continue
         confidence = entry.get("confidence")
-        card = entry.get("selection_scorecard")
         if entry.get("kind") != "talk":
             reject(entry, NOT_TALK, f"kind={entry.get('kind')}: the song lane is not discover's")
         elif not isinstance(confidence, (int, float)) or confidence < lowest:
             reject(entry, BELOW_MIN_CONFIDENCE, f"confidence={confidence}, lowest {lowest}")
         elif (admission := selection_scorecard_production_admission(entry.get("selection_scorecard"))).get("status") != "ADMIT":
             reject(entry, ADMISSION_HOLD, f"{admission.get('reason_code')}: {admission.get('reason', '')}"[:200])
-        elif quality(entry) < min_score and not core_draws.must_cut(entry):   # ADMIT means a valid card
-            reject(entry, BELOW_MIN_SCORE, f"effective_score={card['effective_score']}, lowest {min_score} "
-                                           f"(content points {core_draws.content(entry)} do not count)")
+        elif least is not None and core_draws.content(entry) < least and not core_draws.must_cut(entry):
+            reject(entry, BELOW_MIN_CONTENT, f"content points {core_draws.content(entry)}, lowest {least} "
+                                             f"(effective_score {quality(entry)} does not count)")
         else:
             eligible.append(entry)
     return eligible
@@ -328,9 +329,7 @@ def seat_day(date: str, pool: Sequence[Mapping[str, Any]], built: Sequence[Mappi
             seated.append(dict(entry, seat_reason=OWNER_MARK))
             taken.append(_span(entry))
     policy["owner_marked"] = len(seated)
-    ranked = sorted(_admitted([e for e in pool if e not in marked], done, float(cfg["min_confidence"]),
-                              float(cfg["min_effective_score"]), reject),
-                    key=_rank)
+    ranked = sorted(_admitted([e for e in pool if e not in marked], done, float(cfg["min_confidence"]), reject), key=_rank)
 
 
 

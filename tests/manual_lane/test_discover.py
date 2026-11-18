@@ -50,15 +50,13 @@ def entry(cid, segment, start, end, *, confidence=0.9, kind="talk", level=3, flo
             "source": {"name": segment, "path": f"{ARCHIVE}/{segment}.flv"}}
 
 
-def test_the_cap_is_a_ceiling_every_seat_needs_the_lowest_score():
-    """five talk candidates scored 61.75-79.25 and all five were made, the first five seats saw no score.
- 公开规则：并不是说一定要塞满5条…只有得高分的才去做成切片."""
+def test_without_a_draws_asset_the_effective_score_is_no_floor():
+    """维护者: the basic quality gate passes or fails; the floor is on the content points, which a channel
+    without a draws asset does not have (before 11-18 every seat needed effective score 75)."""
     pool = [entry("high", "segA", 0, 500, level=4), *(entry(f"low{n}", "segB", n * 1000, n * 1000 + 500, level=4, floor=False)
                                                        for n in range(4))]
     seating = ds.seat_day(DATE, pool, built=[])
-    assert [e["cid"] for e in seating.seated] == ["high"] and seating.policy["free_seats"] == 5
-    assert {r["cid"]: r["reason"] for r in seating.rejected} == {f"low{n}": ds.BELOW_MIN_SCORE for n in range(4)}
-    assert "effective_score=70.0, lowest 75.0 (content points" in seating.rejected[0]["detail"]
+    assert [e["cid"] for e in seating.seated][0] == "high" and len(seating.seated) == 5 and seating.rejected == []
 
 
 def test_clip_id_carries_the_recording_start_and_fits_the_package_slug():
