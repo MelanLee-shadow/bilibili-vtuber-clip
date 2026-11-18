@@ -155,9 +155,6 @@ class UploadObservations:
             delay = min(300, delay * 2) if failed else 5
 
 
-# Below this much free space recording wins: segments are evicted even if the clip lane has not copied them.
-LANE_FLOOR_BYTES = 12 * 1024**3
-
 # A copied file CD2 no longer tracks (Finished missed, task gone) or whose task
 # has not moved for this long is uploaded again: proof stays a fresh Finished.
 REUPLOAD_GRACE_SECONDS = 30 * 60
@@ -169,9 +166,9 @@ class Mover:
     def __init__(self, *, spool: Path, archive_root: Path, state_path: Path,
                  archive_path: Path, client: CD2Status, observations: UploadObservations,
                  mount: Path = identity.CLOUD_MOUNT, backup_root: Path | None = None,
-                 lane_root: Path | None = None, lane_floor: int = LANE_FLOOR_BYTES):
+                 lane_root: Path | None = None):
         self.spool, self.archive_root, self.mount = spool, archive_root, mount
-        self.lane_root, self.lane_floor = lane_root, lane_floor
+        self.lane_root = lane_root
 
 
         self.backup_root = backup_root
@@ -412,6 +409,19 @@ class Mover:
         place["proof"] = proof
         self.save()
 
+    def archive_upload_in_flight(self, state: dict[str, Any]) -> bool:
+        """A finalized segment is on its way to 115: copied and not proven yet, or not copied yet.
+
+        A segment that has not been copied and is failing (its row carries an error) does not hold
+        123 back, so one broken segment cannot keep every other one on the local disk."""
+        for relative in state.get("finalized", {}):
+            row = self.archive["segments"].get(relative) or {}
+            if row.get("phase") == "verified":
+                continue
+            if any(item.get("copy_complete") for item in (row.get("files") or {}).values()) or not row.get("error"):
+                return True
+        return False
+
     def verify_each(self, placements: list[tuple[dict[str, Any], dict[str, Any] | None]]) -> None:
         """Verify every placement; one unfinished copy does not hold back the rest.
 
@@ -427,30 +437,36 @@ class Mover:
         if failed is not None:
             raise failed
 
-    def lane_holds(self, relative: str, row: dict[str, Any]) -> bool:
-        """True while the clip lane has not yet copied this segment's FLV/XML (oci3_lane_spool_copy.sh).
+    def lane_wants(self, relative: str, row: dict[str, Any]) -> set[str]:
+        """The FLV/XML of this segment the clip lane still lacks (oci3_lane_spool_copy.sh).
 
- 公开规则：边录边传有个坏处是下播后才开始选片，原始录播文件已经不见了，还得重新下.
- The lane selects after the stream ends, from its own copy; a segment evicted before it was copied
- would have to be downloaded back from 115. A day the lane does not copy (no day directory: the copy
- makes it as soon as the day's first recording appears) or takes from another source (`.source` not
- "spool") does not hold; nor does anything once free space is below the floor."""
+ 公开规则：边录边传有个坏处是下播后才开始选片，原始录播文件已经不见了，还得重新下;
+ 「为什么一份文件要占这么多」— the host keeps one copy of a recording. While the
+ stream is live the copy waits, and eviction hands these files to the lane by renaming them
+ (same disk, no second copy) instead of deleting them. A day the lane does not copy (no day
+ directory) or takes from another source (`.source` not "spool") wants nothing."""
         if self.lane_root is None:
-            return False
+            return set()
         day = self.lane_root / Path(relative).parent
         source = day / ".source"
         if not day.is_dir() or (source.exists() and source.read_text(encoding="utf-8").strip() != "spool"):
-            return False
-        missing = [name for name, item in row["files"].items()
-                   if not item.get("deleted") and name.endswith((".flv", ".xml"))
-                   and not ((self.lane_root / name).is_file()
-                            and (self.lane_root / name).stat().st_size == item["size"])]
-        if missing and capacity(self.spool)["available_bytes"] < self.lane_floor:
-            append_event(self.events, {"event": "LANE_COPY_SKIPPED_LOW_SPACE", "relative": relative,
-                                       "missing": missing, "df": capacity(self.spool),
-                                       "checked_at_epoch": time.time()})
-            return False
-        return bool(missing)
+            return set()
+        return {name for name, item in row["files"].items()
+                if not item.get("deleted") and name.endswith((".flv", ".xml"))
+                and not ((self.lane_root / name).is_file()
+                         and (self.lane_root / name).stat().st_size == item["size"])}
+
+    def hand_to_lane(self, path: Path, name: str) -> None:
+        """Rename the sealed file into the lane's day directory, owned like that directory."""
+        assert self.lane_root is not None
+        target = self.lane_root / name
+        if target.is_symlink() or (target.exists() and not target.is_file()):
+            raise identity.ArchiveError("lane path is not a regular file")
+        owner = target.parent.stat()
+        os.replace(path, target)
+        os.chown(target, owner.st_uid, owner.st_gid)
+        os.chmod(target, 0o644)
+        identity.fsync_dir(target.parent)
 
     def evict(self, relative: str, row: dict[str, Any]) -> None:
         current = identity.read_json(self.state_path)
@@ -470,8 +486,7 @@ class Mover:
                 item.get("deleted") or self.backup_proven(name, item)
                 for name, item in row["files"].items()):
             raise identity.ArchiveError("123 backup not verified; eviction deferred")
-        if self.lane_holds(relative, row):
-            raise identity.ArchiveError("clip lane has not copied this segment yet; eviction deferred")
+        wanted = self.lane_wants(relative, row)
         paths = [self.spool / name for name in row["files"]]
         if open_files(paths):
             raise identity.ArchiveError("local artifact is in use; eviction deferred")
@@ -510,12 +525,17 @@ class Mover:
                                            "size": item["size"], "sha256": item["sha256"],
                                            "proof": item["proof"]})
                 self.save()
-                path.unlink()
+                if name in wanted:
+                    self.hand_to_lane(path, name)
+                    item["handed_to_lane"] = True
+                else:
+                    path.unlink()
                 identity.fsync_dir(path.parent)
             elif not item.get("delete_authorized"):
                 raise identity.ArchiveError("local file missing without deletion authorization")
             item["deleted"] = True
-            append_event(self.events, {"event": "LOCAL_DELETED", "path": str(path),
+            append_event(self.events, {"event": "LOCAL_HANDED_TO_LANE" if item.get("handed_to_lane") else "LOCAL_DELETED",
+                                       "path": str(path),
                                        "size": item["size"], "sha256": item["sha256"],
                                        "df": capacity(self.spool), "checked_at_epoch": time.time()})
             self.save()
@@ -549,15 +569,6 @@ class Mover:
                         item = row["files"][name]
                         if not item.get("copy_complete"):
                             self.copy_file(name, item)
-                # Copy the 123 backups before any verification: neither upload
-                # waits for the other. Files already evicted (before the
-                # backup existed) cannot be copied and are not required.
-                if self.backup_root is not None:
-                    for name in live:
-                        item = row["files"][name]
-                        place = self.backup_place(name, item)
-                        if not place.get("copy_complete"):
-                            self.copy_file(name, item, place, self.backup_root)
                 if row["phase"] != "verified":
                     # Verification needs authenticated CD2 evidence; copying
                     # each sealed artifact does not. One file CD2 has not
@@ -569,6 +580,16 @@ class Mover:
                     rechecked = True
                 else:
                     rechecked = False
+
+
+
+
+                if self.backup_root is not None and not self.archive_upload_in_flight(state):
+                    for name in live:
+                        item = row["files"][name]
+                        place = self.backup_place(name, item)
+                        if not place.get("copy_complete"):
+                            self.copy_file(name, item, place, self.backup_root)
                 # 123 is checked before any 115 re-check, so waiting for the
                 # backup upload does not re-read the 115 copies on each retry.
                 # A backup proven once stays proven; 115 stays the archive of
@@ -611,7 +632,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--cd2-endpoint", default="http://127.0.0.1:19798")
     parser.add_argument("--cd2-token-file", type=Path, default=Path("/opt/bilive/recording/cd2-token"))
     parser.add_argument("--lane-root", type=Path, default=None,
-                        help="clip lane copy of this room (oci3_lane_spool_copy.sh); evict only what it holds")
+                        help="clip lane copy of this room (oci3_lane_spool_copy.sh); what it lacks is handed to it on eviction")
     return parser.parse_args(argv)
 
 

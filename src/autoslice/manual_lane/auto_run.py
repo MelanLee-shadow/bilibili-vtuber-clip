@@ -19,7 +19,8 @@ A person running `run --upload` on a clip they looked at is not this switch's bu
 
 4. At most one song attempt (song_day.py): the day's song is made up to a prepared package for review, never uploaded here.
 
-5. The media of clips that are online is reclaimed (`reclaim`; lane_rules `auto`).
+5. The media of clips that are online is reclaimed (`reclaim`; lane_rules `auto`), and so are a day's recordings once
+   its clips are all online or kept back and 115 has the recordings (`reclaim_recordings`).
 
 The ledger `<task>/auto/ledger.json` keeps, per clip, how often it was run and where it last stopped.  Two rounds never run
 at once (the second leaves at once; the timer's next tick takes over).
@@ -35,11 +36,12 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from .adapters import Remote
+from .adapters import Remote, root_script
 from .discover_media import write_json
 from .lane_rules import rules
+from .layout import TOPOLOGY_FILE, layout
 from .stages import STEPS
-from .state import ClipState, utc_now
+from .state import ClipState, StateError, utc_now
 from .step10_check import HOLD_FILE
 from .step10_run import WAITING_LIVE, WAITING_LOCK, WAITING_QUOTA
 
@@ -158,6 +160,81 @@ def _delete_media(directory: Path, least: int) -> int:
     return gone
 
 
+def _states(task: Path) -> dict[str, ClipState]:
+    return {p.stem: ClipState.load(p) for p in sorted((task / "state").glob("*.json"))} if (task / "state").is_dir() else {}
+
+
+def _online_of(task: Path, states: dict[str, ClipState], cid: str, seen: frozenset[str] = frozenset()) -> Path | None:
+    """The clip's online receipt, following a supersession (trim, revise) to the clip that replaced it; None if not online."""
+    state = states.get(cid)
+    if state is None or cid in seen:
+        return None
+    if (after := state.data["clip"].get("superseded_by")):
+        return _online_of(task, states, str(after), seen | {cid})
+    online = task / "clips" / cid / "upload" / "online.json"
+    return online if state.step("upload").get("status") == "DONE" and online.is_file() else None
+
+
+def recordings_released(task: Path, days: dict[str, Any], states: dict[str, ClipState]) -> list[str]:
+    """The recorded days the lane is done with: discovery finished the day, and every clip cut from it is online (or
+    replaced by one that is) or kept back (`upload/HOLD`; if it is released later it reads the recording from 115)."""
+    from .discover import FINISHED
+
+    open_days = {str(state.data["clip"].get("recording_date")) for cid, state in states.items()
+                 if state.data["clip"].get("status") != "SUPERSEDED" and _online_of(task, states, cid) is None
+                 and not (task / "clips" / cid / HOLD_FILE).is_file()}
+    return sorted(d for d, day in days.items() if day.get("status") in FINISHED and d not in open_days)
+
+
+def reclaim_recordings(task: Path, ledger: dict[str, Any], remote: Remote) -> list[dict[str, Any]]:
+    """公开规则：旧录像我说过了，切片发出去后AND上传到网盘后就可以删掉. For each day the lane is done with
+ (`recordings_released`), the lane's copy of each video (layout `recordings_direct_root`) is deleted when 115 has a
+ file of the same name and size (the archive, layout `archive_room_dir`) and the recorder's spool no longer holds it
+ (the spool mover lets go of a segment only after 115 and 123 both reported it finished). Chat files stay (small, and
+ a released clip may still read them). A day is noted in the ledger once nothing large of it is left."""
+    from .discover import load_ledger as discover_ledger
+    from .discover import mark_recordings_reclaimed
+    from .discover_media import archive_dir, direct_room
+
+    room = direct_room()
+    if room is None:
+        return []
+    spool = f"{json.loads(TOPOLOGY_FILE.read_text(encoding='utf-8'))['spool_root']}/{layout().room_id}"
+    least = int(rules("auto")["media_min_bytes"])
+    reclaimed = ledger.setdefault("recordings_reclaimed", {})
+    done = []
+    for date in recordings_released(task, discover_ledger(task)["days"], _states(task)):
+        if date in reclaimed:
+            continue
+        try:
+            mark_recordings_reclaimed(task, date)
+        except StateError as exc:                    # a discover is running, or the day reopened: next round
+            done.append({"date": date, "what": "recordings", "status": "DEFERRED", "detail": str(exc)})
+            continue
+        day, arch, held = (shlex.quote(path) for path in (f"{room}/{date}", archive_dir(date), f"{spool}/{date}"))
+        command = (f"[ -d {day} ] || {{ echo RECLAIM_DONE; exit 0; }}; left=0; "
+                   f"for f in {day}/*.flv; do [ -f \"$f\" ] || continue; n=$(basename \"$f\"); s=$(stat -c %s \"$f\"); "
+                   f"a=$(timeout 120 stat -c %s {arch}/\"$n\" 2>/dev/null || echo MISSING); "
+                   f"if [ ! -e {held}/\"$n\" ] && [ \"$a\" = \"$s\" ] && ! fuser -s \"$f\" 2>/dev/null; then rm -f \"$f\" && echo DELETED $n $s; "
+                   f"else echo KEPT $n $s $a; [ \"$s\" -ge {least} ] && left=1; fi; done; "
+                   "[ $left = 0 ] && echo RECLAIM_DONE; echo RECLAIM_OK")
+        result = remote.run_script(name=f"auto-reclaim-recordings-{date}", timeout=1800,
+                                   body=root_script(command.replace("'", "'\\''"), env=()))
+        lines = result.stdout.splitlines()
+        if result.rc != 0 or not {"RECLAIM_OK", "RECLAIM_DONE"} & set(lines):
+            done.append({"date": date, "what": "recordings", "status": "FAILED", "detail": (result.stdout + result.stderr)[-300:]})
+            continue
+        entry = {"date": date, "what": "recordings", "deleted": [line.split()[1] for line in lines if line.startswith("DELETED ")],
+                 "kept": [line.split(maxsplit=1)[1] for line in lines if line.startswith("KEPT ")]}
+        if "RECLAIM_DONE" in lines:
+            reclaimed[date] = {"at": utc_now(), "deleted": entry["deleted"]}
+        if entry["deleted"] or "RECLAIM_DONE" in lines:
+            done.append(entry)
+    if done:
+        write_json(ledger_path(task), ledger)
+    return done
+
+
 def reclaim(task: Path, ledger: dict[str, Any], remote: Remote, *, now: float) -> list[dict[str, Any]]:
     """The media of clips that are online (lane_rules `auto`): the intermediates at once, the package's video after
     `final_keep_days`.  A clip superseded (trim, revise) by one that is online counts as online with it: nothing will
@@ -165,16 +242,10 @@ def reclaim(task: Path, ledger: dict[str, Any], remote: Remote, *, now: float) -
     was done is noted in the ledger, once."""
     cfg = rules("auto")
     least, keep_s = int(cfg["media_min_bytes"]), float(cfg["final_keep_days"]) * 86400
-    states = {p.stem: ClipState.load(p) for p in sorted((task / "state").glob("*.json"))} if (task / "state").is_dir() else {}
+    states = _states(task)
 
-    def online_of(cid: str, seen: frozenset[str] = frozenset()) -> Path | None:
-        state = states.get(cid)
-        if state is None or cid in seen:
-            return None
-        if (after := state.data["clip"].get("superseded_by")):
-            return online_of(str(after), seen | {cid})
-        online = task / "clips" / cid / "upload" / "online.json"
-        return online if state.step("upload").get("status") == "DONE" and online.is_file() else None
+    def online_of(cid: str) -> Path | None:
+        return _online_of(task, states, cid)
 
     done = []
     for state in states.values():
@@ -218,5 +289,6 @@ def auto_round(task: Path, *, discover_days: Callable[[], dict[str, Any]], run_c
         done = [cid for cid in run if finished(ClipState.load(task / "state" / f"{cid}.json"), upload=upload)]
         songs = run_songs() if run_songs is not None else []
         reclaimed = reclaim(task, ledger, remote, now=time.time() if now is None else now) if remote is not None else []
+        reclaimed += reclaim_recordings(task, ledger, remote) if remote is not None else []
         return {"status": "ROUND_DONE", "discover": found, "ran": run, "finished": done, "stuck": stuck, "run_exit_code": code,
                 "reclaimed": reclaimed, "waiting_provider": waiting, "songs": songs}
