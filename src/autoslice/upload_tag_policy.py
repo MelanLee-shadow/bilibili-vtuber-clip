@@ -13,6 +13,8 @@ from src.autoslice.channel_profile import ChannelProfile, load_channel_profile
 
 UPLOAD_TAG_POLICY_SCHEMA = "vtuber-slice.upload-tag-policy.v2"
 REPO_ROOT = Path(__file__).resolve().parents[2]
+# Circle-wide term rules every channel's policy gets after its own (U430: 「标签也可以加上嗦面」 is the genre's way).
+CIRCLE_TERMS = REPO_ROOT / "assets" / "manual_lane" / "upload_tag_circle_terms.json"
 
 
 class UploadTagPolicyError(ValueError):
@@ -115,6 +117,10 @@ def load_upload_tag_policy(path: Path) -> UploadTagPolicy:
         )
 
     rules = _parse_term_rules(root.get("term_rules"), label="term_rules")
+    if CIRCLE_TERMS.is_file():
+        circle = _mapping(json.loads(CIRCLE_TERMS.read_text(encoding="utf-8")), label="circle term rules")
+        _strict_keys(circle, label="circle term rules", required={"term_rules"})
+        rules = (*rules, *_parse_term_rules(circle.get("term_rules"), label="circle term_rules"))
     important_content_ips = _parse_term_rules(
         root.get("important_content_ips"), label="important_content_ips"
     )

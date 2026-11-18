@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, NotRequired, TypedDict, Unpack, cast
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, Unpack, cast
 
 if TYPE_CHECKING:
     from .srt_text import SrtCue
@@ -24,6 +24,7 @@ LABEL_ANCHOR_TOLERANCE_S = 0.5   # ASR timing may move a little when the cut mov
 
 class DedupeResult(TypedDict, total=False):
     decision: str | None
+    videos: list[dict[str, Any]]
 
 
 class CutProbe(TypedDict, total=False):
@@ -63,6 +64,7 @@ class VerdictEvidence(TypedDict, total=False):
     enablement_evidence: str | None
     intro_id: str
     intro_offset_ms: str | int | float | None
+    covering: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -88,6 +90,45 @@ def dedupe_gate(result: DedupeResult) -> Verdict:
     if decision == "FULL_DUPLICATE":
         return Verdict.failed("DEDUPE_FULL_DUPLICATE", "an external clip fully covers this interval")
     return Verdict.passed(decision=decision)
+
+
+
+
+NEW_ARC_SECONDS = 30.0
+NEW_ARC_SENTENCES = 3
+
+
+def covering_clip(result: DedupeResult) -> dict[str, Any] | None:
+    """The other uploader's clip that already covers this one, from the duplicate checker's receipt, or None: one part of one
+    clip in which all but fewer than NEW_ARC_SENTENCES of our sentences, and less than NEW_ARC_SECONDS of them, are found.
+    Our own uploads (excluded) and recordings (LONG_VIDEO_NOT_A_CLIP: never compared) are not in the running."""
+    best: dict[str, Any] | None = None
+    for item in result.get("videos") or []:
+        if item.get("excluded"):
+            continue
+        for part in item.get("parts") or []:
+            total, covered = part.get("total_sentences"), part.get("covered_sentences")
+            if not isinstance(total, int) or not isinstance(covered, int) or total < NEW_ARC_SENTENCES:
+                continue
+            new_seconds = float(part.get("unmatched_seconds") or 0)
+            if total - covered >= NEW_ARC_SENTENCES or new_seconds >= NEW_ARC_SECONDS:
+                continue
+            if best is None or covered / total > best["covered_sentences"] / best["total_sentences"]:
+                best = {"bvid": item.get("bvid"), "title": item.get("title"), "uploader": item.get("uploader"),
+                        "published_at": item.get("published_at"), "duration_seconds": item.get("duration_seconds"),
+                        "covered_sentences": covered, "total_sentences": total, "new_seconds": round(new_seconds, 2)}
+    return best
+
+
+def coverage_gate(result: DedupeResult) -> Verdict:
+    """20-selection §2b: a window another uploader has already clipped is made only with something new - a more complete arc.
+    Same-room audio that lines up sentence by sentence leaves neither another angle nor another payoff, so the arc is the test."""
+    found = covering_clip(result)
+    if found is None:
+        return Verdict.passed()
+    return Verdict.failed("COVERED_BY_EXTERNAL_CLIP",
+                          f"{found['bvid']}「{found['title']}」（{found['uploader']}）已有本段 {found['covered_sentences']}/"
+                          f"{found['total_sentences']} 句，我方只多 {found['new_seconds']} 秒：没有新意不做", covering=found)
 
 
 # ----- stage 1 ------------------------------------------------------------------------------

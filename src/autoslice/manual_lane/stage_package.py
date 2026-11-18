@@ -35,6 +35,7 @@ from .srt_text import SrtCue
 from .review_owner import cue_number as _cue_number
 from .review_owner import subtitle_edits as _subtitle_edits
 from .state import bcut_source_zero_ms
+from .step7_tags import review_tags
 from .step_io import _cache_cpa_answer, _cpa_cache_path, _effort_of, _record_cpa_files, _write_atomic
 from .stage_impl import _ask_cpa, _cpa_ok, _fail, _json_from_text, _log, _render, linked_session, parse_srt
 
@@ -545,8 +546,7 @@ def _review_materials(ctx: Ctx) -> tuple[str, str, str]:
         "## 封面字（title/candidates.json）\n" + cover_text,
         "## 选中封面既有 CPA 图像判读（cover/cand/choose.json；本次文字复审未独立看图）\n" + image_review,
         "## 简介\n" + (pkg / "description.txt").read_text(encoding="utf-8"),
-        "## 标签\n" + json.dumps(json.loads((pkg / "tags.json").read_text(encoding="utf-8")).get("final_tags"),
-                                ensure_ascii=False),
+        "## 标签\n" + review_tags(json.loads((pkg / "tags.json").read_text(encoding="utf-8"))),
         "## 字幕疑点（final_cues 是最终字幕里的序号）\n" + json.dumps(_review_doubts(doubts, numbers), ensure_ascii=False,
                                                                 indent=1),
         "## 最终字幕（序号 时间 " + ("[说话人] " if linked else "") + "文字）\n" + _track_lines(track, speakers=linked),

@@ -39,6 +39,13 @@ def _as_root(command: str, owned_dir: str, *, recursive: bool = True) -> str:
     return root_script(command.replace("'", "'\\''"), env=(), owned=owned_dir, recursive=recursive)
 
 
+def _input_seek(at_s: float) -> list[str]:
+    """The input-side seek to `at_s`, none at the very start: `-ss 0` on a joined FLV (the trim and compilation sources,
+    written with a keyframe index) drops the first ~0.6 s of audio and aresample's first_pts=0 fills it with silence —
+    1677890_trim  lost 「那个切」 at its head that way."""
+    return ["-ss", f"{at_s:.3f}"] if at_s > 0 else []
+
+
 def source_cut_script(source: str, *, start_s: float, duration_s: float, output: str, fade: str | None = None) -> str:
     """The script that cuts `duration_s` seconds from `start_s` of the recording `source` into `output`: coarse input
     seek, then exact seek on the output side, constant 60 fps, the audio clock gap-filled; `fade` is an extra audio
@@ -50,7 +57,7 @@ def source_cut_script(source: str, *, start_s: float, duration_s: float, output:
     coarse = max(0.0, start_s - PREROLL_S)
     lead = start_s - coarse
     audio = AUDIO_FILTER + (f",asetpts=PTS-{lead:.6f}/TB,{fade},asetpts=PTS+{lead:.6f}/TB" if fade else "")
-    argv = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{coarse:.3f}", "-i", source,
+    argv = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", *_input_seek(coarse), "-i", source,
             "-ss", f"{lead:.3f}", "-map", "0:v:0", "-map", "0:a:0", *VIDEO_ENCODE, "-af", audio,
             *AUDIO_ENCODE, "-t", f"{duration_s:.3f}", "-movflags", "+faststart", output]
     return _as_root(shlex.join(argv), str(PurePosixPath(output).parent))
@@ -63,7 +70,7 @@ def source_audio_probe_script(source: str, windows: Mapping[str, tuple[float, fl
     windows' result."""
     commands = []
     for name, (start, end) in windows.items():
-        argv = ["ffmpeg", "-hide_banner", "-nostdin", "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", source,
+        argv = ["ffmpeg", "-hide_banner", "-nostdin", *_input_seek(start), "-t", f"{end - start:.3f}", "-i", source,
                 "-vn", "-af", audio_filter, "-f", "null", "-"]
         commands.append(f"{shlex.join(argv)} 2> {shlex.quote(f'{log_dir}/snap-{name}.log')}")
     return _as_root("; ".join(commands), log_dir)

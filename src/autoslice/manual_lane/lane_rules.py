@@ -193,6 +193,8 @@ class DiscoverRules(_RuleMetadata, total=False):
     stub_max_bytes: int
     settle_minutes: int
     lone_danmaku_hours: int
+    broadcast_day_start_hour: int
+    stream_gap_minutes: int
     direct_keep_days: int
     auto_not_before: str
     auto_recent_dates: int

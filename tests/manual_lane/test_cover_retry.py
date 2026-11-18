@@ -93,8 +93,9 @@ def test_shortening_preserves_paid_calls_from_the_failed_render(tmp_path):
     out = si.step6_title_cover(ctx)
     assert out.ok, (out.reason, out.note)
     ids = [str(call.get("call_id")) for call in out.cpa]
-    assert sum(call.startswith("cover-image-") for call in ids) == 4       # 2 paid in the failed attempt + 2 in the shortened one
-    assert sum(call.startswith("cover-judge-") for call in ids) == 6
+    # the failed attempt drew its one picture (no free candidate rendered); the shortened one's screenshot passes: no more
+    assert sum(call.startswith("cover-image-") for call in ids) == 1
+    assert sum(call.startswith("cover-judge-") for call in ids) == 3      # screenshot + sticker, then the screenshot
     paid = [i for i, line in enumerate(out.process) if line.startswith("封面路线 ") and "付费调用" in line]
-    assert len(paid) == 6
-    assert paid[2] < next(i for i, line in enumerate(out.process) if "封面文字缩短" in line) < paid[3]
+    assert len(paid) == 3
+    assert paid[1] < next(i for i, line in enumerate(out.process) if "封面文字缩短" in line) < paid[2]

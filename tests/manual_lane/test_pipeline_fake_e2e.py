@@ -62,10 +62,10 @@ class ScriptedCpa:
                 "response_text": answer, "stderr_tail": ""}
 
 
-def _remote():
+def _remote(dedupe=None):
     def script(name, body, remote):
         if name == "s0-dedupe":
-            remote.files[f"{RD}/dedup/result.json"] = json.dumps({"decision": "UNKNOWN", "block_upload": False}).encode()
+            remote.files[f"{RD}/dedup/result.json"] = json.dumps(dedupe or {"decision": "UNKNOWN", "block_upload": False}).encode()
         elif name == "s2-cut":
             remote.files[f"{RD}/cut/probe.json"] = json.dumps({
                 "format": {"duration": "70.000"},
@@ -134,3 +134,30 @@ def test_steps_1_to_9_run_in_order_on_fakes_and_step_10_stays_behind_the_switch(
     again = run_clip(ctx, STEPS)
     assert again.passed == [] and again.stopped_at is None and len(again.reused) == 10
     assert [c for c in cpa.calls if not c.startswith("adjudicate")] == ["boundary", *UNDERSTANDING_CALLS, "title", "title-judge-r0-1", "title-judge-r0-2", "cover-brief", "cover-emote", "review"]   # nothing re-asked
+
+
+def _covering(total, covered, unmatched_seconds, **video):
+    return {"decision": "UNKNOWN", "block_upload": False, "videos": [{
+        "bvid": "BV1other", "title": "【李豆沙】别人的切片", "uploader": "别人", "published_at": "2026-10-24T15:00:00+00:00",
+        "duration_seconds": 300.0, "decision": "UNKNOWN", **video,
+        "parts": [{"decision": "UNKNOWN", "total_sentences": total, "covered_sentences": covered,
+                   "unmatched_seconds": unmatched_seconds}]}]}
+
+
+def test_step_0_stops_a_window_another_uploader_already_clipped_without_anything_new(tmp_path):
+    """20-selection §2b (U432; 花礼 11-18: BV1017808426 had 28 of our 29 sentences): covered and nothing new -> not made."""
+    ctx = make_ctx(tmp_path, remote=_remote(_covering(29, 28, 2.6)), cpa=ScriptedCpa({
+        "boundary": json.dumps({"verdict": "ACCEPT", "start_cue": 6, "end_cue": 40, "reason": "完整"})}))
+    report = run_clip(ctx, STEPS)
+    assert report.stopped_at == 0 and report.reason == "COVERED_BY_EXTERNAL_CLIP"
+    assert "BV1other" in (ctx.clip_dir / "PROCESS.md").read_text(encoding="utf-8")
+
+
+def test_a_window_with_a_more_complete_arc_or_only_our_own_upload_goes_on(tmp_path):
+    for n, dedupe in enumerate((_covering(29, 26, 12.0),          # 3 sentences they do not have: a more complete arc
+                                _covering(29, 28, 31.0),          # 30 s they do not have
+                                _covering(29, 29, 0.0, excluded=True))):   # our own earlier upload
+        ctx = make_ctx(tmp_path / str(n), remote=_remote(dedupe), cpa=ScriptedCpa({
+            "boundary": json.dumps({"verdict": "ACCEPT", "start_cue": 6, "end_cue": 40, "reason": "完整"})}))
+        report = run_clip(ctx, [s for s in STEPS if s.number in (1, 0)])
+        assert report.stopped_at is None, (n, report.reason)

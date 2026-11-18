@@ -161,7 +161,7 @@ def remote_attempt(task: Path, remote: Remote) -> Callable[[str, Mapping[str, An
 
 def ledger_lines(task: Path) -> list[str]:
     ledger = load(task)
-    lines = [f"歌切已暂停：{PAUSED}"] if PAUSED else []
+    lines = ["歌切已暂停（song_day.PAUSED 写着原因；置空即恢复）"] if PAUSED else []    # goldfish 5: the quote read as a stray remark
     for date in sorted(ledger["days"]):
         day = ledger["days"][date]
         last = (day.get("attempts") or [{}])[-1]

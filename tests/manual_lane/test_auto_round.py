@@ -285,11 +285,16 @@ def test_a_released_days_videos_go_only_once_115_has_them_and_the_spool_let_go(t
 
     if b"GNU" not in subprocess.run(["stat", "--version"], capture_output=True).stdout or not shutil.which("fuser"):
         pytest.skip("needs GNU stat and fuser (the media host)")
-    date = "2026-11-15"
+    date, after = "2026-11-15", "2026-11-16"
     direct, arch, spool = (tmp_path / name / "room" for name in ("direct", "archive", "spool"))
     for root in (direct, arch, spool):
         (root / date).mkdir(parents=True)
+        (root / after).mkdir(parents=True)
     big = b"0" * 2_000_000
+    (direct / after / "late.flv").write_bytes(big)            # U429: the stream ran past midnight, its file is the day's too
+    (arch / after / "late.flv").write_bytes(big)
+    (direct / date / "early.flv").write_bytes(big)            # the small hours of the day before: another day's, not touched
+    (arch / date / "early.flv").write_bytes(big)
     (direct / date / "done.flv").write_bytes(big)
     (arch / date / "done.flv").write_bytes(big)
     (direct / date / "done.xml").write_bytes(b"<x/>")
@@ -300,6 +305,11 @@ def test_a_released_days_videos_go_only_once_115_has_them_and_the_spool_let_go(t
     (spool / date / "held.flv").write_bytes(big)
     (direct / date / "stub.flv").write_bytes(b"0" * 100)        # a reconnect stub 115 never gets
     _days(tmp_path, {date: "COMPLETE"})
+    from src.autoslice.manual_lane import discover
+    doc = json.loads(discover.ledger_path(tmp_path).read_text())
+    doc["days"][date]["segments"] = [{"path": str(direct / day / f"{n}.flv")} for day, n in
+                                     ((date, "done"), (date, "short"), (date, "held"), (date, "stub"), (after, "late"))]
+    discover.ledger_path(tmp_path).write_text(json.dumps(doc))
     topology = tmp_path / "topology.json"
     topology.write_text(json.dumps({"spool_root": str(tmp_path / "spool")}))
     monkeypatch.setattr(ar, "TOPOLOGY_FILE", topology)
@@ -313,14 +323,14 @@ def test_a_released_days_videos_go_only_once_115_has_them_and_the_spool_let_go(t
         return RemoteResult(done.returncode, done.stdout, done.stderr)
     ledger = {"clips": {}}
     first = ar.reclaim_recordings(tmp_path, ledger, FakeRemote(on_script=host))
-    assert first[0]["deleted"] == ["done.flv"] and date not in ledger.get("recordings_reclaimed", {})
-    from src.autoslice.manual_lane import discover
+    assert first[0]["deleted"] == ["done.flv", "late.flv"] and date not in ledger.get("recordings_reclaimed", {})
     assert discover.load_ledger(tmp_path)["days"][date]["recordings_reclaimed"]     # marked before anything went
-    assert sorted(p.name for p in (direct / date).iterdir()) == ["done.xml", "held.flv", "short.flv", "stub.flv"]
+    assert sorted(p.name for p in (direct / date).iterdir()) == ["done.xml", "early.flv", "held.flv", "short.flv", "stub.flv"]
     (spool / date / "held.flv").unlink()                       # proven on 115 and 123: the mover let go
     (arch / date / "short.flv").write_bytes(big)
     second = ar.reclaim_recordings(tmp_path, ledger, FakeRemote(on_script=host))
     assert sorted(second[0]["deleted"]) == ["held.flv", "short.flv"]
     assert date in ledger["recordings_reclaimed"]
-    assert sorted(p.name for p in (direct / date).iterdir()) == ["done.xml", "stub.flv"]
+    assert sorted(p.name for p in (direct / date).iterdir()) == ["done.xml", "early.flv", "stub.flv"]
+    assert not list((direct / after).iterdir())
     assert ar.reclaim_recordings(tmp_path, ledger, FakeRemote(on_script=host)) == []

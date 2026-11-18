@@ -266,10 +266,10 @@ def discover(*, task: Path, adapters: Adapters, dates: Sequence[str] | None = No
         completed = [d for d, day in ledger["days"].items() if day.get("status") == COMPLETE]
         if (copied := copy_direct(remote, completed)) is not None and copied["status"] != "OK":
             report.failures.append({"date": "", "segment": "", "code": "DIRECT_COPY_FAILED", "detail": copied["detail"]})
+        known, _now, recorded = list_dates(remote)
         if dates:
             wanted = list(dict.fromkeys(dates))
         else:
-            known, _now, recorded = list_dates(remote)
             if not recorded:
                 report.deferred.append({"date": "", "reason": "NO_RECORDINGS_YET", "detail": f"{archive_room()} does not exist yet: nothing has been recorded for this room"})
             recent = [d for d in known if d >= str(cfg["auto_not_before"])][-int(cfg["auto_recent_dates"]):]
@@ -277,7 +277,7 @@ def discover(*, task: Path, adapters: Adapters, dates: Sequence[str] | None = No
         for date in wanted:
             inv = inventory(remote, date)
             if not inv.exists:
-                report.failures.append({"date": date, "segment": "", "code": NO_ARCHIVE_DIR, "detail": "no such date directory in the archive"})
+                report.failures.append({"date": date, "segment": "", "code": NO_ARCHIVE_DIR, "detail": "no recording of this broadcast day and no such date directory in the archive"})
                 continue
             before = ledger["days"].get(date, {})
             if not dates and before.get("status") in FINISHED and (before.get("recordings_reclaimed")

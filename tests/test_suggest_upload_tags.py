@@ -501,3 +501,9 @@ def test_normal_entity_sidecar_requires_current_srt_binding(tmp_path, drift):
     assert candidates == []
     assert receipt["status"] == "UNAVAILABLE"
     assert any("unbound" in warning or "srt-hash-drift" in warning for warning in warnings)
+
+
+def test_a_crying_title_written_the_circle_way_gets_the_sumian_tag():
+    hits = st.scan_proper_nouns("【花礼】千舰长嗦😭，我就是努力过来的", "谢谢大家\n")
+    assert any(h.tag == "嗦面" for h in hits)
+    assert not any(h.tag == "嗦面" for h in st.scan_proper_nouns("【花礼】我就是努力过来的", "谢谢大家\n"))

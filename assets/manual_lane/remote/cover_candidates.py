@@ -38,6 +38,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # the sibling modules uploaded with this tool
 import cover_background as background
+import cover_band as band
 import cover_clock as clock
 import cover_fast_text as fast_text
 import cover_face_crop as crop_mod
@@ -265,6 +266,8 @@ def measured_face(job, route, spec, host_src, out_dir, renderer):
     face = host_src.get("face") or host_face(job, src, out_dir, name=f"locate-{route}")
     if face is None:
         return None, f"看图没有在源图里找到{crop_mod.HOST}的脸"
+    if kind == "picture" and spec.get("band"):  # the screenshot lowered for its text (cover_band): the same picture, shrunk
+        return band.moved(frame_face(face, spec["band"]["crop_before"]), spec["band"]["scale"]), "源图定位 × 整幅换算 × 缩小下移"
     if kind == "picture":                      # screenshot / scene: the picture fills the canvas
         return frame_face(face, spec["crop"]), "源图定位 × 整幅换算"
     layer = next(s for s in reversed(spec["stickers"]) if s["src"] == src and s.get("crop") == crop)
@@ -996,6 +999,7 @@ class Run:
             row["expected_guest_count"] = self.expected_people - 1
         started = time.monotonic()
         clock.route(route)
+        original = json.loads(json.dumps(spec))       # before the text plan: the banded retry starts from it
         with clock.phase("layout"):
             style, ink = self.text_ink(spec)         # size line 1 before rendering, from where the face really sits
             row["background"] = background.choose(self.renderer, spec, style, route, job)   # pastel routes only (None: a frame)
@@ -1008,6 +1012,11 @@ class Run:
                                                            recent_style_ids=job.get("recent_style_ids") or (),
                                                            content_sha256=job.get("content_sha256"))
         except SystemExit as exc:
+            banded = route == "screenshot" and band.banded_spec(original, text_fit.need_face_top(
+                ink, len(spec["lines"]), self.rules, self.rules["punch_floor_px"]), os.path.join(out, "frame-band.png"))
+            if banded:                     # 字放不下先换版式 (70-cover): the picture lowered for its text, not dropped
+                return self.render_row(route, banded, note + "；字放不下：整幅截图缩小放下方，上方同画面虚化出字区",
+                                       main_emote, host_ref, band.moved_any(guest_measured, banded["band"]["scale"]))
             row.update(status="RENDER_FAILED", failure=f"RENDER_REFUSED: {exc}")
             return row
         path = os.path.join(self.images, f"{route}.png")
@@ -1051,7 +1060,8 @@ class Run:
                 "stroke": rec[-1].get("stroke"), "style_selection": selection,
                 "host_side": self.host_side if composed and guest_measured else ("right" if self.host_right else "left"),
                 "composition": ("peers_equal" if composed and guest_measured else
-                                "layers" if composed else "picture")}
+                                "layers" if composed else "picture_band" if spec.get("band") else "picture"),
+                "band": spec.get("band")}
 
 
 def main(argv):
