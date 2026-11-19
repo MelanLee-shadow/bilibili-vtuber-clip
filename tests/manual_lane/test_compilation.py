@@ -283,11 +283,11 @@ def test_danmaku_of_each_recording_lands_on_the_joined_clock(tmp_path):
            "rec-b": "<i>" + _d(12.5, "B内") + _d(500.0, "B外") + _d(15.0, "B内2") + "</i>"}
     adapters, _remote, _cpa = _adapters(tmp_path, [_answer((2, 5, 8), (1, 12, 14))], xml_by_stem=xml)
     result = _run_compile(tmp_path, adapters)
-    text = (tmp_path / "task/clips/comp/danmaku/source.xml").read_text(encoding="utf-8")
+    text = (tmp_path / "task/clips/comp/danmaku/recording.xml").read_text(encoding="utf-8")
     rows = re.findall(r'<d p="([\d.]+),[^"]*">([^<]*)</d>', text)
     # rec-b piece starts at 11.88 on its recording, 0 on the joined clock; rec-a piece starts at 32.88 -> 11.482
     assert [(round(float(t), 3), s) for t, s in rows] == [(0.62, "B内"), (3.12, "B内2"), (12.102, "A内"), (15.602, "A后")]
-    assert result.manifest is not None and (tmp_path / "task/clips/comp/danmaku/source.xml").exists()
+    assert result.manifest is not None and (tmp_path / "task/clips/comp/danmaku/recording.xml").exists()
     assert "A间" not in text and "B外" not in text                  # sent between the pieces / far from any of them
 
 
@@ -295,7 +295,7 @@ def test_danmaku_just_before_the_first_piece_and_after_the_last_keeps_its_place_
     xml = {"rec-b": "<i>" + _d(11.0, "前") + "</i>", "rec-a": "<i>" + _d(41.8, "后") + "</i>"}
     adapters, _remote, _cpa = _adapters(tmp_path, [_answer((2, 5, 8), (1, 12, 14))], xml_by_stem=xml)
     _run_compile(tmp_path, adapters)
-    text = (tmp_path / "task/clips/comp/danmaku/source.xml").read_text(encoding="utf-8")
+    text = (tmp_path / "task/clips/comp/danmaku/recording.xml").read_text(encoding="utf-8")
     rows = re.findall(r'<d p="(-?[\d.]+),[^"]*">([^<]*)</d>', text)
     assert [(round(float(t), 3), s) for t, s in rows] == [(-0.88, "前"), (20.402, "后")]
 

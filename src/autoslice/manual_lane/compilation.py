@@ -450,7 +450,9 @@ def remap_danmaku(manifest: Manifest, xml_by_recording: Mapping[str, str],
     """One XML on the joined clock from each recording's own.  A comment belongs to the piece whose recording interval
     holds its send time; a comment sent shortly before the first piece or after the last one (the windows step 3 reads:
     up to 90 s before, 30 s after) keeps its place outside the joined clock.  Anything else is left out: before a middle
-    piece it would land inside the previous piece's cues.  `session_before` is the live session's chat on the first
+    piece it would land inside the previous piece's cues -- but an SC, gift or guard sent in a stretch cut out between
+    two pieces of one recording is placed just before the next piece, on its clock: she reads those long after they
+    were sent (11-18: 1086800_trim's SC sent in the cut-out stretch was read in the next piece).  `session_before` is the live session's chat on the first
     recording's clock (session_events.load): what lies before the first piece comes from it, so a recording's file
     boundary does not cut the lookup, and SC/gifts/guards reach back to the start of the broadcast."""
     from .evidence_attach import DANMAKU_AFTER_S, DANMAKU_BEFORE_S
@@ -458,10 +460,15 @@ def remap_danmaku(manifest: Manifest, xml_by_recording: Mapping[str, str],
     pieces = manifest["pieces"]
     rows: list[tuple[float, str]] = []
 
-    def mapped(recording: str, sent: float, before: float) -> float | None:
+    def mapped(recording: str, sent: float, before: float, typed: bool = False) -> float | None:
         for piece in pieces:
             if piece["recording"] == recording and piece["source_start_ms"] / 1000 <= sent <= piece["source_end_ms"] / 1000:
                 return piece["compiled_start_ms"] / 1000 + sent - piece["source_start_ms"] / 1000
+        if typed:
+            for prev, nxt in zip(pieces, pieces[1:]):
+                if (prev["recording"] == nxt["recording"] == recording
+                        and prev["source_end_ms"] / 1000 < sent < nxt["source_start_ms"] / 1000):
+                    return nxt["compiled_start_ms"] / 1000 + sent - nxt["source_start_ms"] / 1000
         first, last = pieces[0], pieces[-1]
         if (session_before is None and first["recording"] == recording
                 and first["source_start_ms"] / 1000 - before <= sent < first["source_start_ms"] / 1000):
@@ -479,7 +486,7 @@ def remap_danmaku(manifest: Manifest, xml_by_recording: Mapping[str, str],
             if at is not None:
                 rows.append((at, f'<d p="{at:.3f},{rest}">{match.group(2)}</d>'))
         for event in recorder_events(xml.encode("utf-8")):
-            at = mapped(recording, event["t_s"], event_lookback_s(event["type"]))
+            at = mapped(recording, event["t_s"], event_lookback_s(event["type"]), typed=True)
             if at is not None:
                 rows.append((at, event_xml(event, at)))
     if session_before is not None:
@@ -517,24 +524,36 @@ def _remote_exists(remote: Remote, path: str) -> bool:
     return remote.run_script(name="compile-exists", body=f"test -s {shlex.quote(path)}\n", timeout=60).rc == 0
 
 
-def _write_danmaku(clip_dir: Path, manifest: Manifest, recordings: Sequence[RecordingInput], recording_date: str,
-                   adapters: Adapters, source_dir: str) -> None:
-    """Danmaku of every recording on the joined clock, where step 3 reads its cached XML (kept if already there)."""
-    danmaku_local = clip_dir / "danmaku" / "source.xml"
-    if danmaku_local.exists():
-        return
+JOINED_DANMAKU = "danmaku/recording.xml"     # where step 3 (step3_evidence.danmaku_timeline) reads a clip's chat
+JOINED_UNKNOWN = "danmaku/unknown-segments.json"
+
+
+def joined_danmaku(manifest: Manifest, adapter: object, recording_date: str, source_dir: str | None = None
+                   ) -> tuple[str, list[session_events.UnknownSegment]]:
+    """(the joined clip's chat as one XML on its own clock, unknown segments): each piece's recording's chat, with the
+    live session's chat before the first piece (remap_danmaku).  `source_dir` defaults to the directory the manifest
+    says the recordings are in."""
     from .chat_archive import session_chat
 
-    source, directory = session_chat(adapters.danmaku, recording_date, source_dir)
-    xml = {r.name: source.fetch(f"{directory}/{Path(r.name).stem}.xml").decode(
-        "utf-8", errors="replace") for r in recordings if any(p["recording"] == r.name for p in manifest["pieces"])}
-    first_name = manifest["pieces"][0]["recording"]
-    session_rows, unknown = session_events.load(source, directory, Path(first_name).stem, xml[first_name].encode("utf-8"))
+    names = list(dict.fromkeys(p["recording"] for p in manifest["pieces"]))
+    where = source_dir or next(r["path"] for r in manifest["recordings"] if r["name"] == names[0]).rsplit("/", 1)[0]
+    source, directory = session_chat(adapter, recording_date, where)
+    xml = {name: source.fetch(f"{directory}/{Path(name).stem}.xml").decode("utf-8", errors="replace") for name in names}
+    session_rows, unknown = session_events.load(source, directory, Path(names[0]).stem, xml[names[0]].encode("utf-8"))
+    return remap_danmaku(manifest, xml, session_rows), unknown
+
+
+def _write_danmaku(clip_dir: Path, manifest: Manifest, recording_date: str, adapters: Adapters, source_dir: str) -> None:
+    """The joined chat where step 3 reads its cached XML (kept if already there); a segment that could not be read is
+    unknown, not empty: it is named beside it."""
+    danmaku_local = clip_dir / JOINED_DANMAKU
+    if danmaku_local.exists():
+        return
+    text, unknown = joined_danmaku(manifest, adapters.danmaku, recording_date, source_dir)
     danmaku_local.parent.mkdir(parents=True, exist_ok=True)
-    danmaku_local.write_text(remap_danmaku(manifest, xml, session_rows), encoding="utf-8")
-    if unknown:   # a segment that could not be read is unknown, not empty: say which
-        (danmaku_local.parent / "unknown-segments.json").write_text(
-            json.dumps(unknown, ensure_ascii=False, indent=2), encoding="utf-8")
+    danmaku_local.write_text(text, encoding="utf-8")
+    if unknown:
+        (clip_dir / JOINED_UNKNOWN).write_text(json.dumps(unknown, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _write_entry(work: Path, cid: str, virtual_path: str, manifest: Manifest, virtual_cues: Sequence[SrtCue]
@@ -619,7 +638,7 @@ def compile_session(*, task: Path, cid: str, theme: str, session: SessionConfig,
         raise CompilationError("COMPILATION_ASR_EMPTY", f"{bcut_local} has no cues")
 
     # 4. danmaku of every recording on the joined clock, where step 3 reads its cached XML
-    _write_danmaku(clip_dir, manifest, recordings, session.recording_date, adapters, source_dir)
+    _write_danmaku(clip_dir, manifest, session.recording_date, adapters, source_dir)
 
     # 5. one input_pool entry: the existing `init` and `run` take it as an ordinary candidate
     entry_file, first, last = _write_entry(work, cid, virtual_path, manifest, virtual_cues)
@@ -677,8 +696,8 @@ def compile_pieces(*, task: Path, cid: str, recording: RecordingInput, recording
     bcut_local = work / "virtual.bcut.srt"
     bcut_local.write_text(format_srt(bcut_cues), encoding="utf-8")
     virtual_cues = parse_srt(bcut_local.read_text(encoding="utf-8"))
-    # no danmaku is fetched: the successor takes its decided subtitles by import and reads none (and the archive host
-    # is not reachable from every place this runs)
+    # no danmaku is fetched here (the archive host is not reachable from every place this runs): step 3 builds the
+    # joined chat from the manifest when it first reads it (step3_evidence.danmaku_timeline)
     entry_file, first, last = _write_entry(work, cid, virtual_path, manifest, virtual_cues)
     return CompileResult(True, "", hook=manifest["hook"], selection_file=entry_file, bcut_srt=bcut_local,
                          manifest=manifest, first_cue=first, last_cue=last)

@@ -346,3 +346,61 @@ def test_compilation_takes_what_precedes_the_first_piece_from_the_whole_session(
     assert unknown == []
     xml = compilation.remap_danmaku(manifest, {'r.flv': own.decode()}, rows_)
     assert '谢谢你的陪伴' in xml and '上一段尾巴' in xml and '本段早先弹幕' in xml
+
+
+class ArchiveOnly:
+    """The archive: the recordings' own chat files, nothing for a file made on the media host."""
+    def __init__(self, files):
+        self.files = files
+        self.calls = []
+
+    def fetch(self, path):
+        self.calls.append(path)
+        name = path.rsplit('/', 1)[-1]
+        if name not in self.files:
+            raise FileNotFoundError(f'cat: {path}: No such file or directory')
+        return self.files[name]
+
+    def names(self, _):
+        return list(self.files)
+
+
+def test_a_joined_clip_reads_its_pieces_chat_on_its_own_clock(tmp_path, monkeypatch):
+    # 11-18: every trim clip's chat lookup asked the archive for compilation-<cid>.xml, which no recorder wrote; the
+    # agent then read the SC off the picture (1086800_trim: 南町 read as 南酮)
+    from src.autoslice.manual_lane import compilation
+    cpa = AgentCpa(rows('结果'), tools=[{'tool': 'danmaku', 'start': -3000, 'end': 30}])
+    ctx = context(tmp_path, monkeypatch, cpa)
+    own = segment_xml('2026-11-04T21:00:00.5+08:00',
+                      '<sc ts="90" user="点歌的人">陪主包唱南町歌</sc><d p="105,1,1">段一里的弹幕</d>'
+                      '<d p="120,1,1">剪掉那段的弹幕</d><d p="140,1,1">段二里的弹幕</d>')
+    ctx.adapters.danmaku = ArchiveOnly({'r.xml': own, 'earlier.xml': EARLIER})
+    ctx.state.data['clip'].update(source_name='compilation-clip.flv', start_ms=0, end_ms=30000)
+    manifest = {'schema': compilation.MANIFEST_SCHEMA, 'cid': 'clip', 'virtual_source': 'compilation-clip.flv',
+                'recordings': [{'segment': 1, 'name': 'r.flv', 'path': '/nowhere/r.flv'}],
+                'pieces': [{'index': 0, 'segment': 1, 'recording': 'r.flv', 'source_start_ms': 100000,
+                            'source_end_ms': 110000, 'compiled_start_ms': 0, 'compiled_end_ms': 10000},
+                           {'index': 1, 'segment': 1, 'recording': 'r.flv', 'source_start_ms': 130000,
+                            'source_end_ms': 150000, 'compiled_start_ms': 10000, 'compiled_end_ms': 30000}]}
+    (ctx.clip_dir / compilation.MANIFEST_FILE).write_text(json.dumps(manifest), encoding='utf-8')
+    assert step._step3_body(ctx).ok
+    [result] = results(ctx, 'danmaku')
+    assert isinstance(result, list), result
+    got = {(r['text'], r['t_s']) for r in result}
+    assert {('陪主包唱南町歌', -10.0), ('段一里的弹幕', 5.0), ('段二里的弹幕', 20.0), ('谢谢你的陪伴', -935.2)} <= got
+    assert all(r['text'] != '剪掉那段的弹幕' for r in result)         # sent in the cut-out stretch
+    assert not any('compilation-' in c for c in ctx.adapters.danmaku.calls)
+    assert json.loads((ctx.clip_dir / 'danmaku/lines.json').read_text(encoding='utf-8'))   # step 3's chat product
+
+
+def test_an_imported_push_still_writes_the_clip_s_chat_for_the_later_steps(tmp_path, monkeypatch):
+    # 11-18: a trim clip takes its subtitles by import and never looked the chat up; step 6's chat pool was empty
+    from src.autoslice.manual_lane import writing_canon
+    from src.autoslice.manual_lane.name_consistency import danmaku_pool
+    from src.autoslice.manual_lane.runner import StepOutcome
+    ctx = paid_context(tmp_path, monkeypatch, AgentCpa(rows('结果')), {})
+    ctx.state.data['imported'] = {'verbatim': False}
+    monkeypatch.setattr(step, '_step3_decided', lambda _ctx: StepOutcome(ok=True))
+    monkeypatch.setattr(writing_canon, 'settle_step3', lambda _ctx, outcome, verbatim: outcome)
+    assert step.step3_subtitles(ctx).ok
+    assert '普通弹幕' in danmaku_pool(ctx.clip_dir)

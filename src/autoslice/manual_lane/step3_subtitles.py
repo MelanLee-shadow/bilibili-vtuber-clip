@@ -20,6 +20,7 @@ from . import (
     lane_lines,
     name_consistency,
     parallel,
+    read_aloud_copy,
     variant_c,
     work_lookup,
     writing_canon,
@@ -83,7 +84,24 @@ def step3_subtitles(ctx: Ctx) -> StepOutcome:
     """Step 3 for every adjudication mode, then the words of subs/final.srt written in the table's canonical form
     (writing_canon: an imported push too; a verbatim push takes over its source clip's verdicts)."""
     rec = imported(ctx)
-    return writing_canon.settle_step3(ctx, _step3_decided(ctx), verbatim=bool(rec and rec.get("verbatim")))
+    outcome = _step3_decided(ctx)
+    if outcome.ok:
+        _chat_product(ctx, outcome.process)
+    if outcome.ok and not rec:      # an imported push is its own authority
+        read_aloud_copy.settle(ctx.clip_dir, outcome.process)
+    return writing_canon.settle_step3(ctx, outcome, verbatim=bool(rec and rec.get("verbatim")))
+
+
+def _chat_product(ctx: Ctx, process: list[str]) -> None:
+    """danmaku/lines.json, the clip's chat on its clock, whichever way step 3 decided: the later steps read it (step 6's
+    chat pool, trim_run's events).  An imported push never looked the chat up (11-18: no trim clip had it)."""
+    if (ctx.clip_dir / "danmaku/lines.json").exists():
+        return
+    clip = ctx.state.data["clip"]
+    try:
+        _danmaku_lines(ctx, (clip["end_ms"] - clip["start_ms"]) / 1000)
+    except (OSError, RuntimeError, ValueError) as exc:     # unknown, not empty: the later steps see no file
+        process.append(f"- 本片弹幕读取失败，后面各步没有弹幕可用（{type(exc).__name__}: {str(exc)[:160]}）")
 
 
 def _step3_decided(ctx: Ctx) -> StepOutcome:
