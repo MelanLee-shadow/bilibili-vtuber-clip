@@ -54,6 +54,19 @@ def test_compilation_preserves_each_event_type_and_its_clock(tmp_path):
     assert "too_old" not in remapped
 
 
+def test_an_sc_sent_in_a_cut_out_stretch_is_read_in_the_next_piece():
+    # 11-18 1086800_trim: the SC was sent 0.45 s after the first piece ends and read in the second
+    xml = '<i><sc ts="1222.11" user="u">陪主包唱南町歌</sc><d p="1225,1,25,1">剪掉那段的弹幕</d></i>'
+    manifest = {"pieces": [{"recording": "r.flv", "source_start_ms": 1086800, "source_end_ms": 1221660,
+                            "compiled_start_ms": 0},
+                           {"recording": "r.flv", "source_start_ms": 1232815, "source_end_ms": 1253010,
+                            "compiled_start_ms": 134867}]}
+    remapped = compilation.remap_danmaku(manifest, {"r.flv": xml})
+    [sc] = recorder_events(remapped.encode())
+    assert sc["text"] == "陪主包唱南町歌" and round(sc["t_s"], 3) == 124.162   # before the second piece starts
+    assert "剪掉那段的弹幕" not in remapped                                       # an ordinary comment stays out
+
+
 @pytest.mark.parametrize("payload", [b'<i><sc ts="NaN" user="x">x</sc></i>',
                                      b'<i><gift ts="0" user="x"/></i>', b'<i>'])
 def test_invalid_recorder_inputs_are_not_silently_dropped(payload):

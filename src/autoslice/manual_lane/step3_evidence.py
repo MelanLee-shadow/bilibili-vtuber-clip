@@ -374,14 +374,22 @@ def danmaku_timeline(ctx: Ctx, cut_len: float) -> tuple[list[evidence_attach.Dan
     the one recording file the cut was taken from (session_events): ordinary comments keep their 90 s/30 s window,
     and SC, gifts and guards reach back to the start of the broadcast, because the streamer reads missed ones long
     after they were sent.  Read-only archive input."""
+    from . import compilation
+
     clip = _clip(ctx)
-    source, directory = session_chat(ctx.adapters.danmaku, clip["recording_date"], clip.get("source_dir"))
-    stem = Path(clip["source_name"]).stem
-    local_xml = _local(ctx, "danmaku/recording.xml")
-    if not local_xml.exists():
-        local_xml.write_bytes(source.fetch(f"{directory}/{stem}.xml"))
-    session, unknown = session_events.load(source, directory, stem, local_xml.read_bytes(),
-                                           _local(ctx, "danmaku/session.json"))
+    local_xml = _local(ctx, compilation.JOINED_DANMAKU)
+    manifest = compilation.load_manifest(ctx.clip_dir)
+    if manifest is not None:
+        # a joined clip (a compilation, a trim): its source is a file made here and has no chat in any archive; its
+        # chat is each piece's recording's, on the joined clock (11-18: every trim clip's chat lookup failed)
+        session, unknown = _joined_chat(ctx, manifest, local_xml, clip["recording_date"])
+    else:
+        source, directory = session_chat(ctx.adapters.danmaku, clip["recording_date"], clip.get("source_dir"))
+        stem = Path(clip["source_name"]).stem
+        if not local_xml.exists():
+            local_xml.write_bytes(source.fetch(f"{directory}/{stem}.xml"))
+        session, unknown = session_events.load(source, directory, stem, local_xml.read_bytes(),
+                                               _local(ctx, "danmaku/session.json"))
     start = clip["start_ms"] / 1000
     rows: list[evidence_attach.Danmaku] = []
     for event in session:
@@ -394,6 +402,21 @@ def danmaku_timeline(ctx: Ctx, cut_len: float) -> tuple[list[evidence_attach.Dan
             rows.append({**event, "t_s": round(t, 2)})
     _local(ctx, "danmaku/lines.json").write_text(json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
     return rows, unknown
+
+
+def _joined_chat(ctx: Ctx, manifest, local_xml: Path, recording_date: str
+                 ) -> tuple[list[evidence_attach.Danmaku], list[session_events.UnknownSegment]]:
+    """A joined clip's chat on its own clock (compilation.joined_danmaku), cached only when every segment was read."""
+    from . import compilation
+
+    unknown_file = ctx.clip_dir / compilation.JOINED_UNKNOWN
+    if local_xml.exists():
+        unknown = json.loads(unknown_file.read_text(encoding="utf-8")) if unknown_file.exists() else []
+        return session_events.segment_rows(local_xml.read_bytes()), unknown
+    text, unknown = compilation.joined_danmaku(manifest, ctx.adapters.danmaku, recording_date)
+    if not unknown:
+        local_xml.write_text(text, encoding="utf-8")
+    return session_events.segment_rows(text.encode("utf-8")), unknown
 
 
 def _danmaku_lines(ctx: Ctx, cut_len: float) -> list[evidence_attach.Danmaku]:
