@@ -113,7 +113,7 @@ def _identity_still_template(report: Report) -> None:
         report.ok("profile.json 的 identity 都已改成本频道的内容")
 
 
-_IDENTITY_ASSETS = ("glossary", "persona", "title_style", "cover_identity_prompt")
+_IDENTITY_ASSETS = ("glossary", "persona", "cover_identity_prompt")   # title_style.md runs as the template (SETUP §3; goldfish 5)
 
 
 def _assets_still_template(report: Report) -> None:
@@ -145,6 +145,34 @@ def _assets_still_template(report: Report) -> None:
         return
     if default.profile_id != profile.profile_id and mine.get("host") == theirs.get("host"):
         report.problem("subtitle_burn_style.json 的 host 和示例频道的主播样式一样：换成本频道自己的颜色（第 5 步烧进成片）")
+    contrast = outline_contrast(str(mine.get("host") or ""))
+    if contrast is not None and contrast < OUTLINE_MIN_CONTRAST:
+        report.problem(f"subtitle_burn_style.json 的 host 描边和字色对比只有 {contrast:.1f}（至少 {OUTLINE_MIN_CONTRAST}）："
+                       "代表色当描边看不清时改用形象的主色（如眼睛颜色）")
+
+
+
+
+
+OUTLINE_MIN_CONTRAST = 2.0
+
+
+def _luminance(ass_colour: str) -> float:
+    bgr = int(ass_colour.strip().removeprefix("&H")[-6:], 16)
+    def lin(c: int) -> float:
+        v = c / 255
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+    return 0.2126 * lin(bgr & 0xFF) + 0.7152 * lin((bgr >> 8) & 0xFF) + 0.0722 * lin(bgr >> 16)
+
+
+def outline_contrast(style: str) -> float | None:
+    """Contrast of an ASS style's fill (field 3) against its outline (field 5); None when the fields are not colours."""
+    fields = style.split(",")
+    try:
+        a, b = sorted((_luminance(fields[2]), _luminance(fields[4])))
+    except (IndexError, ValueError):
+        return None
+    return (b + 0.05) / (a + 0.05)
 
 
 def _channel_tree_digest() -> tuple[list[str], str] | None:

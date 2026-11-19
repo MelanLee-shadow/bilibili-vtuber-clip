@@ -49,6 +49,18 @@ def session(config: Config) -> BiliSession:
 SESSION: Callable[[Config], BiliSession] = session
 
 
+NAV = "https://api.bilibili.com/x/web-interface/nav"
+
+
+def account_mid(config: Config) -> int:
+    """The upload account's own uid, as the login answers it: our own earlier uploads are not other people's clips."""
+    data = SESSION(config).get(NAV).get("data") or {}
+    mid = data.get("mid")
+    if not data.get("isLogin") or type(mid) is not int or mid <= 0:
+        raise Refused(REFUSED, "上传账号的登录态读不出 uid（nav 没有登录）：先 biliup login")
+    return mid
+
+
 def public_view(bvid: str) -> dict[str, Any] | None:
     """The public page's data (title, aid, cid, pages, ...), or None while it is not public (under review, or gone)."""
     payload = FETCH(VIEW.format(bvid=bvid))

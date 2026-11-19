@@ -34,11 +34,15 @@ def test_cut_seeks_before_input_then_exactly_in_its_relative_clock(tmp_path, sta
     body = next(body for name, body in remote.scripts if name == "s2-cut")
     args = shlex.split(next(cmd for cmd in root_commands(body) if cmd.startswith("ffmpeg ")))
     seeks = [i for i, arg in enumerate(args) if arg == "-ss"]
-    assert len(seeks) == 2
-    assert seeks[0] < args.index("-i") < seeks[1] < args.index("-t")
-    assert float(args[seeks[0] + 1]) == input_seek
-    assert float(args[seeks[1] + 1]) == exact_seek
-    assert float(args[seeks[0] + 1]) + float(args[seeks[1] + 1]) == start_ms / 1000
+    if input_seek == 0:                    # no input-side seek at the very start (it mutes a joined FLV's head)
+        assert len(seeks) == 1 and args.index("-i") < seeks[0] < args.index("-t")
+        coarse = 0.0
+    else:
+        assert len(seeks) == 2 and seeks[0] < args.index("-i") < seeks[1] < args.index("-t")
+        coarse = float(args[seeks[0] + 1])
+    assert coarse == input_seek
+    assert float(args[seeks[-1] + 1]) == exact_seek
+    assert coarse + float(args[seeks[-1] + 1]) == start_ms / 1000
     assert args[args.index("-t") + 1] == "2.690"
     assert args[args.index("-af") + 1] == "aresample=async=1:first_pts=0"
     assert "sudo -n chown" in body             # what the root cut wrote goes back to the lane's user

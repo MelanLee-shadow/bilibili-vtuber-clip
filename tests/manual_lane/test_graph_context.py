@@ -297,3 +297,24 @@ def test_news_is_placed_against_the_clip_day_over_is_said_over_and_far_off_is_le
     assert "七天乐" in after and "本片录制时已结束" in after
     assert "旧大会" not in after and "老联盟" in after
     assert "旧大会" in gc.background(graph, [MEMBER]).block(), "no clip day: nothing is filtered"
+
+
+# ----- circle-wide terms every channel reads (U430/U431: 嗦面) ------------------------------------------------------
+def test_shared_circle_terms_join_every_channel_graph_and_never_collide():
+    from src.autoslice.knowledge_graph import load_graph
+    shared = load_graph(gc.SHARED_ROOT)
+    assert "term:嗦面" in shared.nodes and all(n.kind == "term" for n in shared.nodes.values())
+    for nodes in sorted((gc.REPO_ROOT / "assets").glob("*/knowledge/nodes.jsonl")):
+        root = nodes.parent.parent
+        if root == gc.SHARED_ROOT:
+            continue
+        combined = gc.load_layers([gc.SHARED_ROOT, root])     # raises on a duplicate id or a dangling edge
+        assert "term:嗦面" in combined.nodes, root
+
+
+def test_chat_brings_in_circle_terms_but_not_the_people_it_names(repo, tmp_path):
+    context = gc.read(_ctx(tmp_path), ["谢谢大家一直陪着我"], chat=["长嗦😭", "乙乙来了"])
+    named = [m["id"] for m in context.record()["mentioned"]]
+    assert "term:嗦面" in named and MEMBER.id not in named
+    assert "嗦面" in context.block()
+    assert not [m for m in gc.read(_ctx(tmp_path / "b"), ["谢谢大家一直陪着我"]).record()["mentioned"] if m["id"] == "term:嗦面"]

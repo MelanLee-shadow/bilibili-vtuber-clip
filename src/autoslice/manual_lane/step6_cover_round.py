@@ -78,6 +78,17 @@ class Cover:
     failures: list[dict[str, object]] = field(default_factory=list)
     emote_pick: dict[str, JsonValue] = field(default_factory=dict)
     log: RedoLog = field(default_factory=RedoLog)
+    stages: list[list[str]] = field(default_factory=list)          # the stages actually made (cover_stages), in order
+    thumbs: dict[str, ThumbVerdict] = field(default_factory=dict)   # thumbnail verdicts by candidate id (each read once)
+
+    def __post_init__(self) -> None:
+        if not self.stages:
+            self.stages.append(list(self.routes))
+
+    def thumb(self, cid: str, cover_lines: Sequence[str], identity: str) -> ThumbVerdict:
+        if cid not in self.thumbs:
+            self.thumbs[cid] = _thumb(self.ctx, cid, rules("cover")["thumb_width_px"], cover_lines, identity, self.calls)
+        return self.thumbs[cid]
 
     def emote_job(self, cover_lines: Sequence[str]) -> dict:
         emote, pick, made = pick_emote(self.ctx, self.plan, cover_lines)
@@ -139,7 +150,7 @@ class Cover:
                      if route in cover_redo.DRAWN and words[route]}
             job = dict(self.job, **moved)
             self.process.append(
-                f"封面重做 第 {number - 1}/{self.budget.limit} 次（没有合格候选，{'、'.join(routes)} 被素材类否决）："
+                f"封面重做 第 {1 + sum(1 for r in log.rounds if r.get('redone'))}/{self.budget.limit} 次（没有合格候选，{'、'.join(routes)} 被素材类否决）："
                 + "；".join(f"{route} {texts[route]}" for route in routes)
                 + (f"；换帧 {frame_t}s" if moved else "；没有换帧")
                 + "；生成类路线用新的工作目录重新生成，贴纸与场景有判官原话的，原话带进提示")
@@ -186,15 +197,27 @@ class Picked:
     flag: dict[str, object] | None
 
 
+def pick_free(cv: Cover, cover_lines: Sequence[str], identity: str) -> Picked | None:
+    """The free stage's choice: the best-ranked eligible free candidate whose thumbnail passes, or None (then one picture
+    is generated, cover_stages).  An eligible candidate whose thumbnail fails does not end the free stage."""
+    ranked = rank(cv.log.rows, repeats=lambda r: bool(r.get("repeat")), target_px=round(rules("cover")["face_target_frac"] * 1080))
+    for position, row in enumerate(ranked):
+        if cv.thumb(row["id"], cover_lines, identity)["status"] != "FAIL":
+            lead = f"免费候选排名第 {position + 1} 的 {row['id']}" if position else f"免费候选中总分最高的 {row['id']}"
+            skipped = f"；前 {position} 名缩略图未过" if position else ""
+            return Picked(row["id"], f"{lead}（{row['score']['total']} 分）缩略图{cv.thumbs[row['id']]['status']}{skipped}",
+                          {r["id"]: cv.thumbs[r["id"]] for r in ranked[:position + 1]}, None, None)
+    return None
+
+
 def pick_cover(cv: Cover, cover_lines: Sequence[str], title: str, identity: str) -> Picked | CoverRenderResult:
     """The eligible candidate whose thumbnail passes, else the fallback: CPA's look among the candidates not vetoed on their
     material, else (all of them are) the one with the fewest vetoes, flagged."""
     ctx, rows, calls, process = cv.ctx, cv.log.rows, cv.calls, cv.process
-    width = rules("cover")["thumb_width_px"]
     ranked = rank(rows, repeats=lambda r: bool(r.get("repeat")), target_px=round(rules("cover")["face_target_frac"] * 1080))
     if ranked:
-        chosen, why, thumbs = choose_checked(ranked, lambda cid: _thumb(ctx, cid, width, cover_lines, identity, calls))
-        return Picked(chosen, why, thumbs, None, None)
+        chosen, why, thumbs = choose_checked(ranked, lambda cid: cv.thumb(cid, cover_lines, identity))
+        return Picked(chosen, why, {**cv.thumbs, **thumbs}, None, None)
     from .step6_cover_fallback import choose_vetoed
     clean, rendered = cover_redo.fallback_pool(rows)
     if not rendered:
@@ -205,7 +228,7 @@ def pick_cover(cv: Cover, cover_lines: Sequence[str], title: str, identity: str)
         flag = cover_redo.material_flag(best)
         process.extend([vetoed, cover_redo.flag_line(flag)])
         return Picked(best["id"], f"所有候选都被素材类否决，取否决项最少的 {best['id']}（{len(cover_redo.vetoes_of(best))} 项）",
-                       {best["id"]: _thumb(ctx, best["id"], width, cover_lines, identity, calls)}, None, flag)
+                       {**cv.thumbs, best["id"]: cv.thumb(best["id"], cover_lines, identity)}, None, flag)
     try:
         fallback = choose_vetoed(ctx, clean, title=title, lines=list(cover_lines), model=CPA_JUDGE_MODEL, frame=cv.frame_remote)
     except (RuntimeError, OSError, ValueError, KeyError) as exc:
@@ -216,7 +239,7 @@ def pick_cover(cv: Cover, cover_lines: Sequence[str], title: str, identity: str)
     calls.extend(cover_candidate_calls({"calls": fallback["calls"]}))
     process.append(vetoed + f"；CPA 看图选择 {chosen}：{fallback['choice']['reason']}")
     return Picked(chosen, f"全部候选被代码否决，CPA 看图选择 {fallback['choice']['reason']}",
-                   {chosen: _thumb(ctx, chosen, width, cover_lines, identity, calls)}, fallback, None)
+                   {**cv.thumbs, chosen: cv.thumb(chosen, cover_lines, identity)}, fallback, None)
 
 
 def record_cover(cv: Cover, picked: Picked, cover_lines: Sequence[str], boxes: Mapping[str, list[list[int]]] | None,
@@ -246,7 +269,7 @@ def record_cover(cv: Cover, picked: Picked, cover_lines: Sequence[str], boxes: M
         "infeasible_routes": first["infeasible"], "tool_failures": cv.failures,
         "vetoed": [{"id": r["id"], "vetoes": r["score"].get("vetoes") or []} for r in rows if r["score"]["status"] != "ELIGIBLE"],
         "recent": plan["recent"], "participants": plan["participants"],
-        "cover_lines": list(cover_lines), "stages": [cv.routes], "emote_pick": cv.emote_pick, "timing": timing,
+        "cover_lines": list(cover_lines), "stages": cv.stages, "emote_pick": cv.emote_pick, "timing": timing,
         "rounds": cv.log.rounds, "redo": {"limit": cv.budget.limit, "used": cv.budget.used},
         "material_flag": picked.flag,
         "model_calls": [{"call": c.get("call_id"), "kind": c.get("kind"), "model": c.get("model"), "elapsed_s": c.get("elapsed_s")}
@@ -297,8 +320,8 @@ def _cover_summary_lines(cv: Cover, rows: Sequence[CoverCandidate], winner: Cove
                          f"C{r['score']['C']} V{r['score']['V']}；脸 {r.get('face_px')}px/{r.get('face_status')}）"
                          if r["score"]["status"] == "ELIGIBLE" else "淘汰 " + "、".join(r["score"].get("vetoes") or []))
         for r in rows)]
-    if len(cv.log.rounds) > 1:
-        out.append(f"封面重做共 {len(cv.log.rounds) - 1} 次（上限 {cv.budget.limit}，与封面字缩短共用）；各轮：" + "；".join(
+    if redos := sum(1 for rec in cv.log.rounds if rec.get("redone")):
+        out.append(f"封面重做共 {redos} 次（上限 {cv.budget.limit}，与封面字缩短共用）；各轮：" + "；".join(
             f"第 {rec['round']} 轮（帧 {rec['frame_t']}s）" + "、".join(
                 f"{c['id']} " + ("合格" if cast("dict[str, object]", c["score"])["status"] == "ELIGIBLE" else "淘汰")
                 for c in cast("list[dict[str, object]]", rec["candidates"])) for rec in cv.log.rounds))

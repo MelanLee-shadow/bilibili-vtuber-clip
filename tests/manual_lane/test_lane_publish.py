@@ -51,7 +51,7 @@ class FakeBili:
         flags = dict(zip(argv[5::2], argv[6::2]))
         bvid = f"BV1test{len(self.runs):05d}"
         cid = self._cid()
-        self.archives[bvid] = {"aid": 7000 + len(self.runs), "bvid": bvid, "title": flags["--title"], "desc": flags["--desc"],
+        self.archives[bvid] = {"aid": 7000 + len(self.runs), "bvid": bvid, "title": flags["--title"], "desc": "https://live.bilibili.com/\n" + flags["--desc"],   # Bilibili puts the source ahead
                                "tag": flags["--tag"], "cover": "https://upload/first.png", "copyright": 2, "tid": 27,
                                "videos": [{"cid": cid, "filename": "n1", "title": flags["--title"]}]}
         self._publish(bvid)
@@ -145,7 +145,7 @@ def package(root: Path, *, video: bytes = b"video-1", cover: bytes = PNG, title:
         (pkg / file).write_bytes(data)
         item[key], item[f"{key}_sha256"] = file, _sha(pkg / file)
     (pkg / f"{name}.title.txt").write_text(title + "\n", encoding="utf-8")
-    (pkg / f"{name}.description.txt").write_text("简介第一行\n第二行\n", encoding="utf-8")
+    (pkg / f"{name}.description.txt").write_text("https://live.bilibili.com/\n简介第一行\n第二行\n", encoding="utf-8")
     (pkg / "review_manifest.json").write_text(json.dumps({"schema_version": "finished-media-review-package.v1",
                                                           "candidate_id": name, "date": "2026-11-14", "items": [item]}))
     return pkg
@@ -181,7 +181,9 @@ def test_a_first_publication_is_one_bv_in_the_collection_with_a_receipt_the_lane
     chain = receipt_chain.resolve(rows[0]["publication_reconciliation"]["authority"])
     assert chain.first_receipt == first.receipt_path(tmp_path / "upload1/authorized-upload-manifest.json")
     assert receipt_chain.used_packages(chain)[0]["package_root"] == str(pkg)
-    assert receipt_chain.first_manifest_meta(chain.first_receipt) == (("虚拟主播", "切片"), "简介第一行\n第二行")
+    assert receipt_chain.first_manifest_meta(chain.first_receipt) == (("虚拟主播", "切片"), "https://live.bilibili.com/\n简介第一行\n第二行")
+    # the source line Bilibili puts ahead is not sent too: the page shows it once (11-15 to 11-18 it showed twice)
+    assert host.archives[receipt["bvid"]]["desc"] == "https://live.bilibili.com/\n简介第一行\n第二行"
 
 
 def test_the_channels_repair_authority_builder_takes_this_tools_receipt(host, tmp_path, capsys):
@@ -454,7 +456,7 @@ def test_a_bv_the_older_upload_tool_registered_is_repaired_in_the_same_one_regis
                                        "candidate_id": name, "recording_date": "2026-11-14", "bvid": bvid, "aid": aid,
                                        "cid": cid, "title": TITLE, "authority": row_authority,
                                        "reconciled_at": "2026-11-14T00:00:00Z"}}]}, ensure_ascii=False))
-    host.archives[bvid] = {"aid": aid, "bvid": bvid, "title": TITLE, "desc": "简介第一行\n第二行", "tag": "虚拟主播,切片",
+    host.archives[bvid] = {"aid": aid, "bvid": bvid, "title": TITLE, "desc": "https://live.bilibili.com/\n简介第一行\n第二行", "tag": "虚拟主播,切片",
                            "cover": "https://upload/old.png", "copyright": 2, "tid": 27,
                            "videos": [{"cid": cid, "filename": "n1", "title": TITLE}]}
     host._publish(bvid)

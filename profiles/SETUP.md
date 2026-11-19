@@ -44,7 +44,7 @@ rsync -a --exclude=.venv --exclude=.git ./ <主机>:<autoslice_base>/current/rep
 .venv/bin/python scripts/init_channel_profile.py <id> --display-name <主播名> --room <直播间号>
 ```
 
-它从模板建好 `assets/<id>/` 和 `profiles/<id>/` 下的三个文件，做完所有机械替换，并清掉模板里的示例词条。
+它从模板建好 `assets/<id>/` 和 `profiles/<id>/` 下的三个文件，替换能机械替换的部分（`prompt_name`、`cover_identity` 的占位仍要手填，preflight 会查）。
 `assets/<id>/` 里写着「（待填」的字段是还没填的说明，不是值。然后逐项填写：
 
 1. `profiles/<id>/profile.json`：主播的名字和自称、说话人标签、标题前缀、封面身份描述、资产清单。
@@ -54,7 +54,7 @@ rsync -a --exclude=.venv --exclude=.git ./ <主机>:<autoslice_base>/current/rep
    `tools.cover_regenerator` 指向早先流水线的一个脚本，不在这一版里：校验输出的 `missing_runtime_paths` 列出它是预期的，做片不需要它。
 2. `profiles/<id>/manual_lane.json`：第 1、2 节的那些根，以及录像位置（第 4 节）。`_` 开头的键是说明。
 3. `profiles/<id>/manual_lane_channel.json`：流水线提示词里关于这个频道的几句话，每个字段在文件里有说明，
-   写法可对照 `profiles/lidousha/manual_lane_channel.json`。拿不准的留空，不要编。
+   写法可对照 `profiles/lidousha/manual_lane_channel.json`。拿不准的留空，不要编；粉丝名、自称以直播里实际说的为准，第一条片后对照字幕改。
 4. `assets/<id>/`：词表、人设、标题风格、封面身份等。模板文件开头是“问频道主人”的清单；其中的示例频道例子换成自己的或删掉。
    - `title_style.md` 里的「## 标题」「## 封面文案」两节会原样进提示词，节标题必须保留。还没有自己手定的标题时，
      这个文件保持模板原样就能跑；【主播名】是写法说明里的占位，不用逐个替换。
@@ -67,7 +67,8 @@ rsync -a --exclude=.venv --exclude=.git ./ <主机>:<autoslice_base>/current/rep
      `assets/<id>/title_editorial_method.json`。改了原文就重新生成：
      `AUTOSLICE_PROFILE=<id> .venv/bin/python scripts/build_title_editorial_method.py`。
    - `subtitle_burn_style.json`：烧进成片的字幕样式，`host` 是主播的话、`guest` 是别人的话（ASS Style 的值，颜色写法
-     `&HAABBGGRR`）。换成自己频道的颜色（比如取主播形象的主色做描边），不要沿用别的频道的主播颜色；没有这个文件第 5 步会停下。
+     `&HAABBGGRR`）。换成自己频道的颜色，不要沿用别的频道的主播颜色；没有这个文件第 5 步会停下。主播描边先用她的代表色
+     （应援色），代表色当描边看不清（比如白色）就取形象的主色，如眼睛颜色；开工检查要求字色和描边的对比至少 2。
    - `proper_nouns.json`（名字表）和 `mishearing_pairs.json`（误听对照）：第 3 步写字幕时查名字用。`init_channel_profile`
      已建好，名字表里只有主播一行；同圈主播、常提到的作品和人照那一行的格式往下加，加完运行
      `AUTOSLICE_PROFILE=<id> .venv/bin/python -m src.autoslice.manual_lane.mishearing` 重新生成误听对照。
@@ -76,7 +77,7 @@ rsync -a --exclude=.venv --exclude=.git ./ <主机>:<autoslice_base>/current/rep
 
 填 `profile.json` 时：`host_speaker_label` / `guest_speaker_label` 是字幕里主播和其他人的说话人标签（主播的通常就是主播名）；
 `speaker_identity_aliases` 是固定的名单：人工标注或导入的说话人记录里，写着这些名字的句子算主播说的（通常是主播名和 profile id）；`cover_identity` 的每一项都不能是空串，没有内容就写“（暂无）”。
-模板里标着“真例”“示例”的条目是示例频道的，换成自己的或删掉。校验输出里 `census_clues_status: ABSENT` 是正常的（可选的选片线索文件）。
+校验输出里 `census_clues_status: ABSENT` 是正常的（可选的选片线索文件）。
 
 用 `AUTOSLICE_PROFILE=<id>` 选频道（进程启动时读取）。检查：
 

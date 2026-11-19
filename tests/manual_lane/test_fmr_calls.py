@@ -197,3 +197,12 @@ def test_attest_refusal_stops_step9(tmp_path, monkeypatch):
     assert sp.step8_package(ctx).ok
     out = sp.step9_review(ctx)
     assert out.reason == "FMR_ATTEST_REFUSED" and out.note.startswith("复审放行")   # #55: not a review hold
+
+
+def test_a_witness_the_recogniser_did_not_give_is_told_apart_from_a_rejected_one():
+    # 11-18: bcut failed with no reason; A4 still fails (no attest), but as waiting for the recogniser
+    from src.autoslice.finished_media_review.checks import a4_failure_code
+
+    assert a4_failure_code("FINAL_SUBTITLE_AUDIO_BCUT_FAILED: AsrError: bcut task failed: ") == "FMR_A4_AUDIO_WITNESS_UNAVAILABLE"
+    assert a4_failure_code("FINAL_SUBTITLE_AUDIO_CORRESPONDENCE_FAILED: cue 3") == "FMR_A4_AUDIO_WITNESS_REJECTED"
+    assert a4_failure_code("FINAL_SUBTITLE_AUDIO_EXTRACTION_FAILED: ffmpeg") == "FMR_A4_AUDIO_WITNESS_REJECTED"

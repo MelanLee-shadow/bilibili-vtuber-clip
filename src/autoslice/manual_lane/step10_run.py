@@ -50,6 +50,8 @@ ATTEMPT_UNRESOLVED, RESUMING_TOOL = "UPLOAD_ATTEMPT_UNRESOLVED", "lane_publish.p
 PACKAGE_CHANGED = "UPLOAD_PACKAGE_CHANGED"
 READBACK_MISMATCH = "UPLOAD_READBACK_MISMATCH"
 NOT_ON_HOST = "UPLOAD_PACKAGE_NOT_ON_MEDIA_HOST"
+DUPLICATE = "UPLOAD_EXTERNAL_FULL_DUPLICATE"
+RECHECK_UNREADY = "UPLOAD_RECHECK_UNREADY"
 
 _sleep = time.sleep         # a test replaces these two
 _epoch = time.time
@@ -207,6 +209,41 @@ class _Run:
         stop(WAITING_LOCK, f"上传工具的共用锁一直被别的上传或修复占着：已等 {self.rules.max_polls} 次、间隔 {self.rules.poll_interval_s:g} 秒；"
              "没有发出任何上传，下次 run 再试")
 
+    def _recheck(self, job: commands.Job) -> None:
+        """Before a first publication: the clip's step-0 duplicate package again, now with the final subtitles (other people's
+        clips keep coming after step 0: 花礼 11-18's 千舰嗦面 had seven within an hour).  Only a complete duplicate stops the
+        upload (H62); what was found is kept in the upload state for the record."""
+        if "recheck" in self.state["done"]:
+            return
+        from .gates import covering_clip
+        from .srt_text import parse_srt
+
+        work = self.out / "dedup-final"
+        work.mkdir(parents=True, exist_ok=True)
+        try:
+            base = read_json(self.ctx.clip_dir / "dedup" / "package.json")
+            srt = job.package_file(".srt").read_text(encoding="utf-8")
+            intro = job.package_file(".intro-receipt.json")
+            main_ms = read_json(intro).get("main_duration_ms_before") if intro.is_file() else None
+        except (OSError, ValueError) as exc:
+            stop(RECHECK_UNREADY, f"上传前复查缺输入（第 0 步的查重包或成片字幕）：{type(exc).__name__}: {exc!s:.200}")
+        (work / "final.srt").write_text(srt, encoding="utf-8")
+        last = max((c["end_s"] for c in parse_srt(srt)), default=0.0)
+        duration = main_ms / 1000 if isinstance(main_ms, (int, float)) else max(float(base["duration_seconds"]), last)
+        doc = {**base, "srt": "final.srt", "subtitle_stage": "final", "duration_seconds": round(max(duration, last), 3)}
+        (work / "package.json").write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        self._cmd("recheck", commands.recheck(job, work / "package.json", work / "result.json"), "dedup-final.log", accept=(0, 3))
+        result = read_json(work / "result.json")
+        self.state["recheck"] = {"decision": result.get("decision"), "block_upload": result.get("block_upload"),
+                                 "videos": [{k: v.get(k) for k in ("bvid", "title", "decision")} for v in result.get("videos", [])
+                                            if not v.get("excluded")],
+                                 "covering": covering_clip(result)}
+        self._save()
+        if result.get("block_upload"):
+            full = [v for v in result.get("videos", []) if v.get("decision") == "FULL_DUPLICATE"]
+            stop(DUPLICATE, "上传前复查：他人切片完整包含本片（H62 拦）：" + "；".join(f"{v.get('bvid')}「{v.get('title')}」" for v in full))
+        self._mark("recheck")
+
     def _upload(self) -> None:
         job, state = self.job, self.state
         if "upload" not in state["done"]:
@@ -219,6 +256,7 @@ class _Run:
                 if state.get("upload_started_at") and not resumes and LOCK_BUSY not in (tail(self.out / "upload.log") or ""):
                     stop(ATTEMPT_UNRESOLVED, f"上一次 run 在 {state['upload_started_at']} 发出了上传命令，没有留下完成回执：不重发，"
                          "以上传工具的 ledger 为准查清后处理")
+                self._recheck(job)
                 rc, words = self._send(job)
                 if rc == 7 and resumes:
                     stop(WAITING_LIVE, f"已投出、还没公开（多半在审核）：{words[-300:]}；下次 run 再发同一条 upload，从账本里的 BV 接着核对")

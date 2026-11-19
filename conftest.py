@@ -20,6 +20,25 @@ if str(ROOT) not in sys.path:
 os.environ.pop("AUTOSLICE_PROFILE", None)
 
 
+def _grouped_by_directory(args: list[str]) -> list[str]:
+    """命令行上的测试路径按所在目录归拢（目录首次出现的先后不变，组内顺序不变）。
+
+    pytest 9：同一目录的文件被别的目录的文件隔开时（a/x.py b/y.py a/z.py），后一组
+    a/z.py 拿不到 a/conftest.py 的夹具——包括 autouse 的隔离夹具（例如
+    tests/manual_lane/conftest.py 的“不写主机共享资产”“不真等限流”）。测试因此
+    走生产默认路径：轻则假失败，重则碰到真东西。CI 的定向清单常是这种顺序。"""
+    groups: dict[str, list[str]] = {}
+    for arg in args:
+        path = Path(arg.split("::", 1)[0])
+        key = str(path if path.is_dir() else path.parent)
+        groups.setdefault(key, []).append(arg)
+    return [arg for group in groups.values() for arg in group]
+
+
+def pytest_configure(config):
+    config.args[:] = _grouped_by_directory(list(config.args))
+
+
 @pytest.fixture(autouse=True)
 def _hermetic_autoslice_base(monkeypatch):
     """磁盘密闭：默认清掉 ambient AUTOSLICE_BASE。

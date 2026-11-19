@@ -33,7 +33,7 @@ import json
 import shlex
 import time
 from collections.abc import Callable, Sequence
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .adapters import Remote, root_script
@@ -86,7 +86,7 @@ def stopped_at(state: ClipState) -> tuple[str, str] | None:
 
 # what a stopped step's note says when the stop is the surroundings' and not the clip's: the code was redeployed under
 # the running round (the tools refuse to mix two versions), a free recogniser turned the request away for its rate
-OUTSIDE_STOPS = ("RUNTIME_VERSION_CHANGED_WITHIN_TASK", "RATE_LIMITED")
+OUTSIDE_STOPS = ("RUNTIME_VERSION_CHANGED_WITHIN_TASK", "RATE_LIMITED", "AUDIO_WITNESS_UNAVAILABLE")      # the last: step 8, bcut gave no witness
 
 
 def provider_failed(state: ClipState, step: str) -> bool:
@@ -188,9 +188,10 @@ def recordings_released(task: Path, days: dict[str, Any], states: dict[str, Clip
 
 def reclaim_recordings(task: Path, ledger: dict[str, Any], remote: Remote) -> list[dict[str, Any]]:
     """公开规则：旧录像我说过了，切片发出去后AND上传到网盘后就可以删掉. For each day the lane is done with
- (`recordings_released`), the lane's copy of each video (layout `recordings_direct_root`) is deleted when 115 has a
- file of the same name and size (the archive, layout `archive_room_dir`) and the recorder's spool no longer holds it
- (the spool mover lets go of a segment only after 115 and 123 both reported it finished). Chat files stay (small, and
+ (`recordings_released`), the lane's copy of each of the day's videos (its ledger segments, a broadcast day's own files:
+ `discover_media.broadcast_days`, U429; not its calendar directory, which may hold the small hours of the day before) is
+ deleted when 115 has a file of the same name and size (the archive, layout `archive_room_dir`) and the recorder's spool
+ no longer holds it (the spool mover lets go of a segment only after 115 and 123 both reported it finished). Chat files stay (small, and
  a released clip may still read them). A day is noted in the ledger once nothing large of it is left."""
     from .discover import load_ledger as discover_ledger
     from .discover import mark_recordings_reclaimed
@@ -203,7 +204,8 @@ def reclaim_recordings(task: Path, ledger: dict[str, Any], remote: Remote) -> li
     least = int(rules("auto")["media_min_bytes"])
     reclaimed = ledger.setdefault("recordings_reclaimed", {})
     done = []
-    for date in recordings_released(task, discover_ledger(task)["days"], _states(task)):
+    days = discover_ledger(task)["days"]
+    for date in recordings_released(task, days, _states(task)):
         if date in reclaimed:
             continue
         try:
@@ -211,13 +213,16 @@ def reclaim_recordings(task: Path, ledger: dict[str, Any], remote: Remote) -> li
         except StateError as exc:                    # a discover is running, or the day reopened: next round
             done.append({"date": date, "what": "recordings", "status": "DEFERRED", "detail": str(exc)})
             continue
-        day, arch, held = (shlex.quote(path) for path in (f"{room}/{date}", archive_dir(date), f"{spool}/{date}"))
-        command = (f"[ -d {day} ] || {{ echo RECLAIM_DONE; exit 0; }}; left=0; "
-                   f"for f in {day}/*.flv; do [ -f \"$f\" ] || continue; n=$(basename \"$f\"); s=$(stat -c %s \"$f\"); "
-                   f"a=$(timeout 120 stat -c %s {arch}/\"$n\" 2>/dev/null || echo MISSING); "
-                   f"if [ ! -e {held}/\"$n\" ] && [ \"$a\" = \"$s\" ] && ! fuser -s \"$f\" 2>/dev/null; then rm -f \"$f\" && echo DELETED $n $s; "
-                   f"else echo KEPT $n $s $a; [ \"$s\" -ge {least} ] && left=1; fi; done; "
-                   "[ $left = 0 ] && echo RECLAIM_DONE; echo RECLAIM_OK")
+        own = [PurePosixPath(str(s["path"])) for s in days[date].get("segments", [])
+               if str(s.get("path", "")).startswith(room + "/") and str(s["path"]).endswith(".flv")]
+        checks = "".join(
+            f"f={shlex.quote(str(path))}; a={shlex.quote(archive_dir(path.parent.name) + '/' + path.name)}; "
+            f"h={shlex.quote(f'{spool}/{path.parent.name}/{path.name}')}; "
+            "if [ -f \"$f\" ]; then n=$(basename \"$f\"); s=$(stat -c %s \"$f\"); "
+            "as=$(timeout 120 stat -c %s \"$a\" 2>/dev/null || echo MISSING); "
+            "if [ ! -e \"$h\" ] && [ \"$as\" = \"$s\" ] && ! fuser -s \"$f\" 2>/dev/null; then rm -f \"$f\" && echo DELETED $n $s; "
+            f"else echo KEPT $n $s $as; [ \"$s\" -ge {least} ] && left=1; fi; fi; " for path in own)
+        command = f"left=0; {checks}[ $left = 0 ] && echo RECLAIM_DONE; echo RECLAIM_OK"
         result = remote.run_script(name=f"auto-reclaim-recordings-{date}", timeout=1800,
                                    body=root_script(command.replace("'", "'\\''"), env=()))
         lines = result.stdout.splitlines()

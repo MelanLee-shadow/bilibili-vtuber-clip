@@ -1,8 +1,9 @@
 """TASK-10 problem 2 and TASK-11 item 4: step 6's cover candidates (70-cover: screenshot, emote, cutout, ai_sticker
 or ai_scene), all with the same cover lines, scored with the repo's choose_cover rules
-(title_cover_candidates.score_candidate) on CPA's per-candidate vision reasons.  Since the cover-subject brief every
-feasible route is made at once and compared together (no cheapest-first stages that end at the first passing one; the old
-tests of those stages now say that).  Every paid image and vision request is recorded.  Ordinary path:
+(title_cover_candidates.score_candidate) on CPA's per-candidate vision reasons.  11-18 the free candidates come first
+again (U138 「每个封面出3-4个候选也太奢侈了吧」; requirements §6 封面先用免费候选，不合格才出1张AI图): the screenshot and
+the emote are made together; only when neither passes is ONE picture generated (11-10..11-18 every route was made at
+once and a sticker outscored passing screenshots).  Every paid image and vision request is recorded.  Ordinary path:
 step6_title_cover on the fake remote."""
 
 from __future__ import annotations
@@ -61,35 +62,26 @@ def _ctx(tmp_path, *, rows=None, answers=(), renders=None, clip="clip", drop_ver
     return ctx, remote
 
 
-def _stages(remote):
-    """The routes of each step-6 cover run, in order (job.json as uploaded before each run)."""
-    return [json.loads(body)["routes"] for body in remote.job_uploads]
+def _stages(ctx):
+    """The stages step 6 made, in order (choose.json)."""
+    return json.loads((ctx.clip_dir / "cover/cand/choose.json").read_text(encoding="utf-8"))["stages"]
 
 
-def _track_jobs(remote):
-    remote.job_uploads = []
-    put = remote.put
-
-    def tracking_put(local, remote_path):
-        put(local, remote_path)
-        if remote_path.endswith("/cover/job.json"):
-            remote.job_uploads.append(remote.files[remote_path].decode("utf-8"))
-    remote.put = tracking_put
+def _paid(out):
+    return sum(str(c.get("call_id")).startswith("cover-image-") for c in out.cpa)
 
 
-def test_every_route_is_made_in_one_go_and_the_best_eligible_candidate_is_chosen(tmp_path):
-    # was: "generates a picture only when the free candidates fail" (staged, stopped at the first passing stage).  Now the
-    # screenshot (small face, vetoed), the cut-out and the sticker are all made and scored together; the cut-out wins on C
+def test_a_picture_is_generated_only_when_no_free_candidate_passes(tmp_path):
+    # the screenshot's face is too small (vetoed) and no emote fits: ONE picture.  The two are equals (the fake ledger):
+    # the cut-out, which stands both real people the same size; no sticker is drawn
     ctx, remote = _ctx(tmp_path)
-    _track_jobs(remote)
     out = si.step6_title_cover(ctx)
     assert out.ok, (out.reason, out.note)
-    assert _stages(remote) == [["screenshot", "emote", "cutout", "ai_sticker"]]       # one stage: every route
+    assert _stages(ctx) == [["screenshot", "emote"], ["cutout"]]
     route = json.loads((ctx.clip_dir / "title/candidates.json").read_text(encoding="utf-8"))["cover_route"]
     scores = {c["id"]: c["score"] for c in route["candidates"]}
-    assert set(scores) == {"screenshot", "cutout", "ai_sticker"}
+    assert set(scores) == {"screenshot", "cutout"}
     assert scores["screenshot"]["status"] == "VETO" and "MAIN_FACE_BELOW_25_PERCENT" in scores["screenshot"]["vetoes"]
-    assert scores["cutout"]["status"] == scores["ai_sticker"]["status"] == "ELIGIBLE"
     assert route["chosen"]["id"] == "cutout"
     assert route["image_generation_used"] is True and route["image_gen_model"] == "gpt-image-2.5"
     assert (ctx.clip_dir / "cover/cover.png").read_bytes() == b"png-cutout"
@@ -97,35 +89,37 @@ def test_every_route_is_made_in_one_go_and_the_best_eligible_candidate_is_chosen
     assert job["lines"] == ["她破防了", "怎么搞"]                      # one set of lines for every candidate
     assert job["host_box"] == [1256, 298, 1755, 909] and job["guest_box"] == [35, 178, 710, 910]
     ids = [str(c.get("call_id")) for c in out.cpa]                     # every paid request is recorded
-    assert sum(i.startswith("cover-image-") for i in ids) == 2 and sum(i.startswith("cover-judge-") for i in ids) == 3
+    assert _paid(out) == 1 and sum(i.startswith("cover-judge-") for i in ids) == 2
     assert "cover-brief" in ids and "cover-emote" in ids
+    assert not any(name.startswith("s6-cover-job-ai") for name, _ in remote.scripts)
     assert any("不可行或没做出的路线" in line and "emote" in line for line in out.process)
+    assert any("出一张 AI 图（cutout）" in line for line in out.process)
 
 
-def test_a_passing_screenshot_does_not_stop_the_other_routes(tmp_path):
-    # was: "a passing screenshot costs no picture".  The routes are made together, so the generated ones are made (and
-    # paid for) too; the screenshot still wins on the realism axis C
-    ctx, remote = _ctx(tmp_path, rows=[("screenshot", cover_verdict()), ("cutout", cover_verdict()),
+def test_a_passing_screenshot_costs_no_picture_even_when_a_drawn_one_would_score_higher(tmp_path):
+    # 110840 / 509230 (11-16, 11-18): the screenshot passed with 9-10 points and lost to a 11-13 point sticker.  Now the
+    # passing free candidate ends the search: no picture is generated at all
+    ctx, remote = _ctx(tmp_path, rows=[("screenshot", cover_verdict(hook=1)), ("cutout", cover_verdict()),
                                        ("ai_sticker", cover_verdict())])
-    _track_jobs(remote)
     out = si.step6_title_cover(ctx)
     assert out.ok, (out.reason, out.note)
-    assert _stages(remote) == [["screenshot", "emote", "cutout", "ai_sticker"]]
+    assert _stages(ctx) == [["screenshot", "emote"]]
     route = json.loads((ctx.clip_dir / "title/candidates.json").read_text(encoding="utf-8"))["cover_route"]
     assert route["chosen"]["id"] == "screenshot" and route["image_generation_used"] is False
-    assert sum(str(c.get("call_id")).startswith("cover-image-") for c in out.cpa) == 2
+    assert _paid(out) == 0
+    assert not any(name.startswith(("s6-cover-job-ai", "s6-cover-job-cutout")) for name, _ in remote.scripts)
+    assert any("不出 AI 图" in line for line in out.process)
 
 
-def test_two_vetoed_routes_still_leave_the_third_to_be_chosen(tmp_path):
-    # was: "a second picture is drawn only when the first one fails too" (staged)
+def test_the_one_drawn_picture_is_chosen_when_the_free_ones_are_vetoed(tmp_path):
     small = (1380, 470, 1600, 650)
-    ctx, remote = _ctx(tmp_path, rows=[("screenshot", cover_verdict(face=small)), ("cutout", cover_verdict(face=small)),
+    ctx, remote = _ctx(tmp_path, rows=[("screenshot", cover_verdict(face=small)), ("cutout", cover_verdict()),
                                        ("ai_sticker", cover_verdict())])
     out = si.step6_title_cover(ctx)
     assert out.ok, (out.reason, out.note)
     route = json.loads((ctx.clip_dir / "title/candidates.json").read_text(encoding="utf-8"))["cover_route"]
-    assert route["chosen"]["id"] == "ai_sticker"
-    assert sum(str(c.get("call_id")).startswith("cover-image-") for c in out.cpa) == 2
+    assert route["chosen"]["id"] == "cutout"
+    assert _paid(out) == 1
 
 
 def test_all_vetoed_rendered_candidates_go_to_cpa_choice(tmp_path):

@@ -28,7 +28,7 @@ from zoneinfo import ZoneInfo
 from src.autoslice.acoustic_pinyin import text_pinyin_tokens
 from src.autoslice.bilibili_wbi import signed_params
 from src.autoslice.community_comment_discovery import fetch_wbi_mixin_key
-from src.autoslice.timely_term_crawler import BILIBILI_USER_AGENT, BoundedHttpClient, CrawlError
+from src.autoslice.timely_term_crawler import BILIBILI_USER_AGENT, WHOLE_RANGE, BoundedHttpClient, CrawlError
 
 Json: TypeAlias = 'None | bool | int | float | str | list[Json] | dict[str, Json]'
 JsonMap: TypeAlias = dict[str, Json]
@@ -42,6 +42,8 @@ SENTENCE_CHARACTER_COVERAGE = 0.8
 FULL_CHARACTER_COVERAGE = 0.9
 MIN_INFORMATIVE_CHARACTERS = 6
 MAX_SUBSTITUTION_RUN = 2
+# A video this long is a stream recording or a day's compilation, not a clip of the moment: not transcribed, never "covers".
+LONGEST_CLIP_SECONDS = 1800.0
 
 
 def duration_evidence(own_duration: float, external_duration: float) -> JsonMap:
@@ -79,7 +81,7 @@ class PublicAudioASR:
             client = BoundedHttpClient(allowed_hosts=frozenset({'bilivideo.com', 'bilivideo.cn', 'bilibili.com'}),
                                        max_requests=1, max_response_bytes=32 * 1024 * 1024,
                                        timeout_seconds=60, now=api.now)
-            response = client.fetch(url, headers={'User-Agent': BILIBILI_USER_AGENT,
+            response = client.fetch(url, headers={'User-Agent': BILIBILI_USER_AGENT, 'Range': WHOLE_RANGE,
                                                   'Referer': f'https://www.bilibili.com/video/{bvid}/'})
             sound = response.body
             if response.stale or not sound:
@@ -464,10 +466,15 @@ def compare(own: tuple[Cue, ...], own_duration: float, external: list[Cue], exte
     return replace(result, reason='CAPTION_DIFFERENCE_OR_BOUNDARY_UNCERTAINTY')
 
 
+NAME_QUERY_PAGES = 3    # the host's bare name, newest first: other people's clips of a stream rarely carry its date
+
+
 def queries(package: Package) -> list[str]:
+    """The host's bare name first (four clips of 花礼's 千舰嗦面 were public before the check, none dated, and
+    the dated queries found none), then the dated and guest queries, then the package's topic terms."""
     host, *guests = package.participants
     day = package.recording_date.strftime('%Y%m%d')
-    result = [' '.join([host[0], *(g[0] for g in guests), day])]
+    result = [host[0], ' '.join([host[0], *(g[0] for g in guests), day])]
     for group in guests:
         result.extend(f'{host[0]} {alias}' for alias in group)
     result.extend((f'{host[0]} {day}', f'{host[0]} {package.recording_date:%m.%d}'))
@@ -506,9 +513,9 @@ class PublicBilibili:
                 raise CrawlError('STALE_WBI_BOOTSTRAP')
         return self.get(API + endpoint + '?' + urllib.parse.urlencode(signed_params(params, mixin_key=self.mixin, signed_at=self.now)))
 
-    def search(self, query: str) -> list[JsonMap]:
+    def search(self, query: str, page: int = 1) -> list[JsonMap]:
         params: JsonMap = {
-            'search_type': 'video', 'keyword': query, 'page': 1, 'page_size': 20,
+            'search_type': 'video', 'keyword': query, 'page': page, 'page_size': 20,
             'order': 'pubdate', 'platform': 'pc', 'web_location': 1430654,
         }
         self.search_attempts = []
@@ -599,6 +606,15 @@ class PublicBilibili:
         return cues
 
 
+def broadcast_day_start(day: dt.date) -> float:
+    """When the recording's broadcast day began (U429: 04:00 Beijing, the lane's discover rule): nothing of its streams was
+    public before then."""
+    from src.autoslice.manual_lane.lane_rules import rules
+
+    hour = int(rules('discover')['broadcast_day_start_hour'])
+    return dt.datetime.combine(day, dt.time(hour), ZoneInfo('Asia/Shanghai')).timestamp()
+
+
 def same_session(package: Package, metadata: JsonMap) -> bool:
     text = str(metadata.get('title', '')) + ' ' + str(metadata.get('desc', ''))
     normalized = key(text)
@@ -628,19 +644,31 @@ def check(package: Package, api: PublicBilibili, *, max_videos: int = 20,
           audio_asr: PublicAudioASR | None = None) -> JsonMap:
     if not 1 <= max_videos <= 50:
         raise ValueError('max_videos must be 1..50')
-    earliest = dt.datetime.combine(package.recording_date, dt.time(), ZoneInfo('Asia/Shanghai')).timestamp()
+    earliest = broadcast_day_start(package.recording_date)
     discovered: dict[str, JsonMap] = {}
     searches: list[Json] = []
+    host_keys = [key(alias) for alias in package.participants[0] if key(alias)]
+    off_topic = 0
     for query in queries(package):
-        try:
-            rows = api.search(query)
-            searches.append({'query': query, 'count': len(rows), 'attempts': api.search_attempts})
+        pages = NAME_QUERY_PAGES if query == package.participants[0][0] else 1
+        for page in range(1, pages + 1):
+            try:
+                rows = api.search(query, page)
+                searches.append({'query': query, 'page': page, 'count': len(rows), 'attempts': api.search_attempts})
+            except (OSError, ValueError, CrawlError) as exc:
+                searches.append({'query': query, 'page': page, 'error': str(exc), 'attempts': api.search_attempts})
+                break
             for row in rows:
                 bvid = str(row.get('bvid', ''))
-                if _BVID.fullmatch(bvid) and number(row.get('pubdate')) >= earliest:
-                    discovered.setdefault(bvid, row)
-        except (OSError, ValueError, CrawlError) as exc:
-            searches.append({'query': query, 'error': str(exc), 'attempts': api.search_attempts})
+                if not _BVID.fullmatch(bvid) or number(row.get('pubdate')) < earliest:
+                    continue
+                # Search matches words apart (「花礼 20261118」 brought 朱一龙工作室): a clip of this host names her.
+                if not any(k in key(plain(str(row.get('title', '')))) for k in host_keys):
+                    off_topic += bvid not in discovered
+                    continue
+                discovered.setdefault(bvid, row)
+            if len(rows) < 20 or not rows or number(rows[-1].get('pubdate')) < earliest:
+                break
     videos: list[Json] = []
     decisions: list[str] = []
     for bvid, row in list(discovered.items())[:max_videos]:
@@ -704,6 +732,11 @@ def check(package: Package, api: PublicBilibili, *, max_videos: int = 20,
                 decisions.append('HAS_EXTRA')
                 videos.append(item)
                 continue
+            if number(item.get('duration_seconds')) > LONGEST_CLIP_SECONDS:
+                item['reason'] = 'LONG_VIDEO_NOT_A_CLIP'
+                decisions.append('UNKNOWN')
+                videos.append(item)
+                continue
             pages = metadata.get('pages')
             if not isinstance(pages, list) or not pages:
                 raise ValueError('video pages unavailable')
@@ -752,7 +785,7 @@ def check(package: Package, api: PublicBilibili, *, max_videos: int = 20,
         'decision': decision, 'block_upload': decision == 'FULL_DUPLICATE' and package.subtitle_stage == 'final',
         'reason': 'SINGLE_EXTERNAL_CLIP_PROVES_FULL_COVERAGE' if decision == 'FULL_DUPLICATE' else ('EXTRA_PROVEN_AGAINST_EACH_INSPECTED_CLIP' if decision == 'HAS_EXTRA' else 'SEARCH_OR_PUBLIC_SUBTITLE_OR_ALIGNMENT_INCOMPLETE'),
         'search_status': 'UNKNOWN' if any('error' in obj(s, 'search') for s in searches) else 'SUCCESS',
-        'searches': searches, 'videos': videos, 'discovered_videos': len(discovered),
+        'searches': searches, 'videos': videos, 'discovered_videos': len(discovered), 'off_topic_results': off_topic,
         'videos_truncated': len(discovered) > max_videos,
         'scope': 'bounded public search; not an exhaustive inventory or upload authorization',
     }

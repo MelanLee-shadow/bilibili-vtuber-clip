@@ -94,3 +94,15 @@ def test_focused_and_main_review_share_facts_and_insert_literal_evidence_last(tm
             assert text in prompt
         assert 'UNSELECTED' not in prompt
     assert '"d731"' in focused and '只处置' in focused and '不重新全片找错' in focused
+
+
+def test_review_sees_why_each_content_tag_was_chosen(tmp_path, monkeypatch):
+    ctx, _, _ = _ctx(tmp_path, monkeypatch)
+    tags = sp._pkg(ctx) / "tags.json"
+    data = json.loads(tags.read_text(encoding="utf-8"))
+    data["final_tags"] = [*data.get("final_tags", []), "养"]
+    data["content_tags"] = [{"tag": "养", "why": "反复撒娇：“你不可以攻击李李的呀”"}, {"tag": "落选", "why": "没进最终标签"}]
+    tags.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    prompt = sp.review_prompt(ctx)
+    assert "- 养：反复撒娇：“你不可以攻击李李的呀”" in prompt and "理由和字幕对不上才删" in prompt
+    assert "落选" not in prompt
