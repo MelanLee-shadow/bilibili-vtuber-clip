@@ -24,7 +24,7 @@ def test_a_file_separated_from_its_directory_on_the_command_line_still_gets_that
     probe = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
          # whole files: a node id as the first path does not show it
-         "tests/manual_lane/test_fmr_calls.py", "tests/test_upload_tag_policy.py",
+         "tests/manual_lane/test_conftest_probe_peer.py", "tests/test_pytest_arg_grouping_separator.py",
          "tests/manual_lane/test_conftest_reaches_every_file.py"],
         cwd=ROOT, capture_output=True, text=True, timeout=300)
     assert probe.returncode == 0, probe.stdout[-2000:]
