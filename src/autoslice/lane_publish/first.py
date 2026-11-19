@@ -16,6 +16,7 @@ from typing import Any
 from . import bili, manifest, registry
 from .common import FAILED, GATE, NOT_PUBLIC, QUOTA, REFUSED, Config, Publish, Refused, bind, now, read_json, sha256, write_json
 from .authority import FIRST_SCHEMA
+from src.autoslice.upload_description import EXPECTED_SOURCE
 
 SLEEP = time.sleep
 CLOCK = time.monotonic          # a test replaces these two
@@ -36,11 +37,19 @@ def wait_public(bvid: str, *, wait_s: float, poll_s: float) -> dict[str, Any] | 
         SLEEP(poll_s)
 
 
+def submitted_description(description: str) -> str:
+    """What a first submission sends.  The package carries the description as the public page shows it, whose first line
+    is the source Bilibili itself puts ahead of a reposted archive's description on submission; sent along, it showed
+    twice (11-15 to 11-18 first publications through this tool).  An edit sends the stored form as it is."""
+    head = EXPECTED_SOURCE + "\n"
+    return description[len(head):] if description.startswith(head) else description
+
+
 def _post(config: Config, doc: dict[str, Any], manifest_path: Path, digest: str) -> str:
     registry.ledger_add("dispatched", manifest=str(manifest_path), manifest_sha256=digest, candidate_id=doc["candidate_id"])
     log = manifest_path.parent / "biliup-upload.log"
     rc, bvid, quota = bili.upload(config, video=Path(doc["video"]["path"]), cover=Path(doc["cover"]["path"]), title=doc["title"],
-                                  tags=list(doc["tags"]), desc=doc["description"], log=log)
+                                  tags=list(doc["tags"]), desc=submitted_description(doc["description"]), log=log)
     if bvid is None:
         registry.ledger_add("not_posted", manifest_sha256=digest, rc=rc, quota=quota)
         if quota:

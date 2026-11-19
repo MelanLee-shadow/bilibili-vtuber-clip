@@ -131,3 +131,25 @@ def test_the_audio_check_of_step_8_finds_the_silent_stretch_the_old_cut_made(tmp
     assert [x["number"] for x in lines] == [2]                    # 3 has sound from 10 s on, 4 is under a second, 1 is before
     missing = subprocess.run([sys.executable, "-I", str(tool), str(tmp_path / "none.mp4"), "-80", "0.8"], capture_output=True, text=True)
     assert missing.returncode != 0 and "ffmpeg rc=" in missing.stderr
+
+
+def test_a_cut_from_the_start_of_a_joined_flv_keeps_its_first_words(tmp_path):
+    """A joined source as compilation.build_media writes it (FLV with a keyframe index, video copied, audio a little after
+    0) cut from 0, as a trim's step 2 does: the head is the source's own sound, not 0.6 s of silence (1677890_trim lost
+    「那个切」 so,)."""
+    piece = tmp_path / "p0.mp4"
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+                    "aevalsrc='0.3*sin(2*PI*440*t)':s=48000:d=6", "-f", "lavfi", "-i",
+                    "color=c=black:s=160x90:r=60:d=6", "-c:v", "libx264", "-g", "120", "-pix_fmt", "yuv420p",
+                    "-c:a", "aac", "-shortest", str(piece)], check=True, capture_output=True)
+    joined = tmp_path / "joined.flv"
+    (tmp_path / "concat.txt").write_text(f"file '{piece}'\nduration 6.000\nfile '{piece}'\nduration 6.000\n")
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i",
+                    str(tmp_path / "concat.txt"), "-c:v", "copy", "-c:a", "aac", "-f", "flv", "-flvflags",
+                    "add_keyframe_index", str(joined)], check=True, capture_output=True)
+    out = tmp_path / "cut.mp4"
+    script = source_read.source_cut_script(str(joined), start_s=0.0, duration_s=3.0, output=str(out))
+    assert _NoSudoRemote(scripts_dir=str(tmp_path / "scripts")).run_script(name="cut0", body=script, timeout=300).rc == 0
+    samples = _pcm(out)
+    body = _rms(samples, 1.0, 2.0)
+    assert min(_rms(samples, t, t + 0.1) for t in (0.05, 0.2, 0.4, 0.6)) > 0.5 * body

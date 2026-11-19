@@ -100,7 +100,7 @@ def test_tools_on_the_media_host_are_started_for_the_active_channel():
     clip got the example channel's tags and its cover tools looked for the example channel's host)."""
     from src.autoslice.manual_lane import adapters
 
-    assert adapters.remote_python("tool.py").startswith(f"AUTOSLICE_PROFILE={channel.PROFILE_ID} ")
+    assert adapters.remote_python("tool.py").startswith(f"AUTOSLICE_PROFILE={channel.PROFILE_ID} AUTOSLICE_BASE={adapters._LAYOUT.autoslice_base} ")
     assert adapters.PROFILE_ENV in adapters.root_script(adapters.remote_python("tool.py"), env=["cpa"])
 
 

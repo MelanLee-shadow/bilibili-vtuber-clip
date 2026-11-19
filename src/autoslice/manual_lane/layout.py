@@ -160,6 +160,8 @@ def load_layout(environ: Mapping[str, str] | None = None, *, path: Path | None =
     assets = f"{strings['work_root']}/{ASSETS_DIR}"
     strings["intro_dir"] = str(env.get(ENV_PREFIX + "INTRO_DIR") or doc.get("intro_dir") or f"{assets}/{INTRO_SUBDIR}")
     strings["cover_font"] = str(env.get(ENV_PREFIX + "COVER_FONT") or doc.get("cover_font") or f"{assets}/{COVER_FONT_FILE}")
+    if not strings["cover_font"].startswith("/"):        # a font shipped in the repo, as deployed on the media host
+        strings["cover_font"] = f"{strings['autoslice_base']}/current/repo/{strings['cover_font']}"
     pacing = {k: _value(doc, k, env, section="free_asr") for k in _FREE_ASR}
     skill_scripts = Path(os.path.expanduser(strings["cover_skill_scripts"]))
     if not skill_scripts.is_absolute():

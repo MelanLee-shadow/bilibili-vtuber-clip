@@ -112,7 +112,7 @@ class Host:
     def __init__(self, now=2_000_000_000.0, written=1_000_000_000.0, arrived=None):
         self.now, self.written, self.asr_calls, self.failing = now, written, [], set()
         self.arrived = set(SEGMENTS) if arrived is None else set(arrived)        # the recordings in the archive; danmaku always is
-        self.copy_rc, self.bodies, self.listing = 0, {}, None
+        self.copy_rc, self.bodies, self.listing, self.extra = 0, {}, None, ""
 
     def __call__(self, name, body, remote):
         self.bodies[name] = body
@@ -125,7 +125,7 @@ class Host:
         if name.startswith("disc-inv-"):
             rows = "".join((f"F\t{ARCHIVE}/{seg}.flv\t{size}\t{self.written}\n" if seg in self.arrived else "")
                            + f"F\t{ARCHIVE}/{seg}.xml\t10\t{self.written}\n" for seg, size in SEGMENTS.items())
-            return RemoteResult(0, f"NOW {self.now}\nDIR\n{rows}", "")
+            return RemoteResult(0, f"NOW {self.now}\nDIR\t{DATE}\n{rows}{self.extra}", "")
         segment = name.split("-", 2)[2]
         rd = f"{dm.layout().session_root(DATE)}/discover/{segment}"
         if name.startswith("disc-audio-"):
@@ -239,6 +239,16 @@ def test_a_named_day_takes_its_finished_recordings_and_leaves_the_one_still_bein
     assert {"date": DATE, "segment": last, "reason": "RECORDING_MAY_BE_IN_PROGRESS"} in report.deferred
     paths = [s["path"] for s in dv.load_ledger(tmp_path / "task")["days"][DATE]["segments"]]
     assert report.days and paths and not any(p.endswith(f"{last}.flv") for p in paths)
+
+    # goldfish 5: the recorder's next file went into the next calendar directory.  It is the same broadcast day (U429:
+    # started before 04:00), so the file before it is closed and it is the one that may still be growing
+    after = f"{dm.archive_dir('2026-11-10')}/22966160_20261110-00-00-03"
+    recording.extra = f"F\t{after}.flv\t700000000\t{recording.written}\n"
+    deferred = [d.get("segment") for d in run(tmp_path, recording, dates=[DATE]).deferred]
+    assert last not in deferred and "22966160_20261110-00-00-03" in deferred
+    assert run(tmp_path / "a", Host(now=1_000_000_600.0, written=1_000_000_000.0)).deferred and not run(tmp_path / "b", recording).days
+    recording.extra += f"F\t{dm.archive_dir('2026-11-10')}/22966160_20261110-20-00-00.flv\t700000000\t{recording.written}\n"
+    assert run(tmp_path / "c", recording).days                         # the next broadcast day's stream began: this one is over
 
 
 def test_a_day_whose_danmaku_came_before_its_recordings_waits_for_them_and_a_late_recording_reopens_it(tmp_path):

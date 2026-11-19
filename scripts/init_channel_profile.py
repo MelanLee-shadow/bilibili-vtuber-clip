@@ -34,6 +34,7 @@ if str(ROOT) not in sys.path:
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _SCOPED = re.compile(r'("(?:schema_version|profile_id)":\s*")(?:REPLACE_ME|lidousha)(?:（[^"]*）)?')   # names scoped to the channel
 _TODO = re.compile(r"REPLACE_ME[-（]?")                # every other placeholder is a field the owner still has to fill
+OPEN_COVER_FONT = "ZCOOLKuaiLe-Regular.ttf"
 _EXAMPLE_ROWS = {"timely_term_seeds.json": "terms", "timely_term_sources.json": "entity_watches"}    # rows read as real terms
 
 
@@ -134,6 +135,11 @@ def init_profile(
     )
     for name in ("manual_lane.json", "manual_lane_channel.json"):      # the clip pipeline's two files beside the manifest
         shutil.copyfile(repo_root / "profiles/_template" / name, manifest_dst.parent / name)
+    if (assets_dst / "fonts" / OPEN_COVER_FONT).is_file():     # the shipped open font, not the unshipped default (goldfish 5)
+        lane = manifest_dst.parent / "manual_lane.json"
+        lane_doc = json.loads(lane.read_text(encoding="utf-8"))
+        lane_doc["cover_font"] = f"assets/{profile_id}/fonts/{OPEN_COVER_FONT}"
+        lane.write_text(json.dumps(lane_doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     from src.autoslice.profile_manifest_history import archive_manifest
     archive_manifest(repo_root, manifest_dst)
     name_tables = _seed_name_tables(repo_root, profile_id, doc)
@@ -170,7 +176,7 @@ def init_profile(
         "next_steps": [
             "按 profiles/SETUP.md 第 3 节逐项填：profiles/<id>/ 下的 profile.json、manual_lane.json、manual_lane_channel.json，和 assets/<id>/",
             "profile.json 里还要手改的键：identity.prompt_name（没给 --prompt-name 时）、speaker_identity_aliases（说话人记录里代表主播的名字）、cover_identity 九键、titles 里的歌切前缀",
-            "层 1 身份四件套按模板内问题清单问频道主人后填写：glossary.txt / persona.md / title_style.md / cover_identity_prompt.txt",
+            "层 1 身份文件按模板内问题清单问频道主人后填写：glossary.txt / persona.md / cover_identity_prompt.txt（title_style.md 可先保持模板）",
             "profile.json 的 identity（display_name/room_id/cover_identity 九键）按真实频道改——封面外貌事实务必先抽真实直播帧取证；每次改完运行 scripts/archive_channel_profile.py",
             "外貌事实三处必须同步：profile.json cover_identity + persona.md + cover_identity_prompt.txt",
             "标题方法在 assets/<id>/title_method/（通用写法）；改了就运行 scripts/build_title_editorial_method.py 重新生成 title_editorial_method.json",

@@ -79,13 +79,23 @@ def _q(value: object) -> str:
 
 def _tool(job: Job, tool: Sequence[str], args: Sequence[object], redirect: str) -> str:
     script, *lead = tool
-    cmd = (f"cd {_q(REMOTE_REPO)} && env {PROFILE_ENV} AUTOSLICE_BASE={_q(layout().autoslice_base)} "
+    cmd = (f"cd {_q(REMOTE_REPO)} && env {PROFILE_ENV} "
            f"{shlex.join([REMOTE_PY, '-B', f'scripts/{script}', *lead, *map(str, args)])} {redirect}")
     return root_script(cmd.replace("'", "'\\''"), env=(), owned=str(job.out), recursive=True)
 
 
 def _log(job: Job, name: str) -> str:
     return f"> {_q(job.out / name)} 2>&1"
+
+
+def recheck(job: Job, package: Path, result: Path) -> str:
+    """90-publish 发布准入: the external duplicate check once more right before a first publication, on the final subtitles, with
+    this host's upload account as our own uploader; its exit 3 is a complete duplicate (blocked)."""
+    work = package.parent
+    return (f"mkdir -p {_q(work / 'evidence')} {_q(work / 'audio')}\n"
+            + _tool(job, ("check_external_duplicate_clips.py",),
+                    ["--package", package, "--output", result, "--evidence-dir", work / "evidence", "--audio-work-dir",
+                     work / "audio", "--upload-account", "required"], _log(job, "dedup-final.log")))
 
 
 def audit(job: Job) -> str:

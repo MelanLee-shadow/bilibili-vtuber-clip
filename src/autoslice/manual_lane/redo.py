@@ -11,7 +11,9 @@ transitive closure), so the next `run` makes them again; nothing is run here and
    compilation or the successor of `trim`), builds that source again from the plan the manifest records
    (`compilation.rebuild_media`) and replaces the old file; this is the only way the joined file is made again;
 3. copies the state file to clips/<cid>/redo/ with the UTC time in its name, forgets the steps, and drops the review's own
-   state keys (review, rewind, revisions) when the closure holds the review;
+   state keys (review, rewind, revisions) when the closure holds the review, and the review's tag choice (reviewed_tags)
+   when it also holds the tags: those tags are made again, and step 7 would otherwise apply to them what an earlier review
+   chose on other materials (11-18: a recut clip lost 「养」 again, removed by the review before the cut was redone);
 4. deletes the files the forgotten steps recorded as products (inside the clip directory, never under import/ or
    import_cover/), and for the package step the directories it builds by "reuse when present" (pkg, fmr, fmr_source).
 
@@ -20,7 +22,7 @@ steps keep a file they find (step 8's local copy of the cut), so a file left fro
 one.  With the records and the recorded products gone, the clip is where a clip is before it runs these steps, and `run`
 then produces them under the same rules as for a new clip.  Not step products, so kept as they are: the imported
 subtitles and cover (state `imported`, `imported_cover` and their directories), the labels, the review's objections
-(`dissent`), the reviewed tags, the clip block and the session.  The imported cover is written to cover/cover.png again by
+(`dissent`), the reviewed tags when the tags are not made again, the clip block and the session.  The imported cover is written to cover/cover.png again by
 step 6 from import_cover/.
 """
 
@@ -130,7 +132,7 @@ def redo_clip(*, task: Path, cid: str, start: str, adapters_for: AdaptersFor) ->
     for key in cleared:
         state.data["steps"].pop(key)
     if "review" in keys:
-        for name in REVIEW_STATE_KEYS:
+        for name in (*REVIEW_STATE_KEYS, *(("reviewed_tags",) if "tags" in keys else ())):
             cast("MutableMapping[str, JsonValue]", state.data).pop(name, None)
     state.save()
     with (clip_dir / "PROCESS.md").open("a", encoding="utf-8") as fh:

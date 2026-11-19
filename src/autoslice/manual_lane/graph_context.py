@@ -20,7 +20,7 @@ from urllib.parse import urlparse
 
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.knowledge_graph import EDGES_FILE, NODES_FILE, Edge, Graph, Node, Source, load_graph
-from src.autoslice.combined_knowledge_graph import load_combined
+from src.autoslice.combined_knowledge_graph import load_layers
 from src.autoslice.crawl_window import CrawlWindow
 
 from .lane_rules import rules
@@ -91,11 +91,16 @@ def _why(what: str, exc: Exception) -> str:
     return f"{what}：{type(exc).__name__}: {str(exc)[:200]}"
 
 
+SHARED_ROOT = REPO_ROOT / "assets" / "manual_lane"   # circle-wide terms every channel reads (U430: 嗦面 is the genre's word)
+
+
 def load(ctx: Ctx) -> GraphContext:
-    """The repository graph plus the runtime candidates fetched from the media host (no lines yet); never raises."""
+    """The shared circle terms and the channel's graph plus the runtime candidates fetched from the media host (no lines
+    yet); never raises."""
     try:
         repo_root = load_channel_profile(REPO_ROOT).asset_root
-        repo = load_graph(repo_root)
+        load_graph(repo_root)                       # the channel's own graph must read on its own
+        repo = load_layers([SHARED_ROOT, repo_root])
     except Exception as exc:  # noqa: BLE001 - the step is never blocked by the graph
         return GraphContext(NONE, _why("仓库图读不到", exc))
     with tempfile.TemporaryDirectory(prefix="graph-context-") as tmp:
@@ -105,7 +110,7 @@ def load(ctx: Ctx) -> GraphContext:
         except Exception as exc:  # noqa: BLE001 - no runtime directory, or the host cannot be reached
             return GraphContext(REPO_ONLY, _why("运行时候选图读不到", exc), repo)
         try:
-            return GraphContext(COMBINED, "", load_combined(repo_root, Path(tmp)))
+            return GraphContext(COMBINED, "", load_layers([SHARED_ROOT, repo_root, Path(tmp)]))
         except Exception as exc:  # noqa: BLE001 - candidate files that do not parse or do not fit the repository graph
             return GraphContext(REPO_ONLY, _why("运行时候选图损坏", exc), repo)
 
@@ -213,12 +218,17 @@ def clip_day(ctx: Ctx) -> dt.date | None:
     return dt.date.fromisoformat(str(day)) if day else None
 
 
-def read(ctx: Ctx, texts: Iterable[str]) -> GraphContext:
-    """Load the graph, find the entities `texts` name and build their background (no lines when it cannot be read)."""
+def read(ctx: Ctx, texts: Iterable[str], chat: Iterable[str] = ()) -> GraphContext:
+    """Load the graph, find the entities `texts` name and build their background (no lines when it cannot be read).
+    `chat` (the clip's danmaku) brings in circle terms only: viewers name what they see (「嗦面」 when the host cries,
+    U430), while the people they name are not the clip's subject."""
     loaded = load(ctx)
     if loaded.graph is None:
         return loaded
-    built = background(loaded.graph, mentions(loaded.graph, texts), clip_day(ctx))
+    named = mentions(loaded.graph, texts)
+    seen = {n.id for n in named}
+    named += [n for n in mentions(loaded.graph, chat) if n.kind == "term" and n.id not in seen]
+    built = background(loaded.graph, named, clip_day(ctx))
     return replace(loaded, mentioned=built.mentioned, lines=built.lines)
 
 

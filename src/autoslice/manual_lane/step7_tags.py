@@ -98,3 +98,10 @@ def step7_tags(ctx: Ctx) -> StepOutcome:
                        process=[f"标签（CPA 判定，直接采用）：{'、'.join(str(t) for t in final)}",
                                 f"标签工具在 OCI3 内部调用 CPA 文本（content_review_status="
                                 f"{tags.get('content_review_status')}；工具不报告次数，未计入 cpa 记录）"])
+
+
+def review_tags(tags: dict[str, object]) -> str:
+    """Final tags plus step 7's reason for each content tag: 「养」 (cute, clingy clips) was lost to a reader of the bare word."""
+    final = tags.get("final_tags") if isinstance(tags.get("final_tags"), list) else []
+    why = [f"- {r['tag']}：{r['why']}" for r in tags.get("content_tags") or [] if isinstance(r, dict) and r.get("why") and r.get("tag") in final]
+    return "\n".join([json.dumps(final, ensure_ascii=False)] + (["内容标签按频道的标签规则选，下面是选它的理由（有的是圈内词，意思以理由为准）；理由和字幕对不上才删："] + why if why else []))

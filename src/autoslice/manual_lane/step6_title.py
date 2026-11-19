@@ -32,6 +32,7 @@ from . import (
     writing_canon,
 )
 from .cover_redo import RetryBudget
+from .name_consistency import danmaku_pool
 from .runner import Ctx, StepOutcome
 from .config import participant_names, placeholder_as_person, unknown_participant
 from .speaker_v8 import GUEST_LABEL, HOST
@@ -334,7 +335,7 @@ def _title_rounds(ctx: Ctx, names: Sequence[str], cpa_calls: list[CpaEvent]
         understanding["merged"]["main_line"] = retitle["main_line"]
         understanding["merged"]["punchline"] = retitle["punchline"]
     formal = title_names.canonical_names(title_authority.subtitle_text(track), names)
-    graph = graph_context.read(ctx, [title_authority.subtitle_text(track)])
+    graph = graph_context.read(ctx, [title_authority.subtitle_text(track)], chat=danmaku_pool(ctx.clip_dir))
     circle = circle_context.gather(ctx, understanding["merged"], lines, cpa_calls, graph)
     circle_block = "\n\n".join(filter(None, [graph.block(), circle_context.block(circle)]))   # graph first, then the web
     mainline = "\n\n".join(filter(None, [title_understanding.mainline_block(understanding, formal.prompt_text()),

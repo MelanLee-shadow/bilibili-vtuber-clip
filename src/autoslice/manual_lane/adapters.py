@@ -30,7 +30,9 @@ _LAYOUT = layout()                    # the one runtime layout (profiles/<id>/ma
 REMOTE_HOST = _LAYOUT.remote_host
 REMOTE_REPO = _LAYOUT.remote_repo     # read-only: existing tools only
 REMOTE_PY = _LAYOUT.remote_py
-PROFILE_ENV = "AUTOSLICE_PROFILE=" + shlex.quote(channel.PROFILE_ID)     # the active channel, for every tool run on the media host
+# the active channel and the lane's own state root, for every tool run on the media host (goldfish 5: a tool left at the
+# default base read the production publication registry under another channel's profile)
+PROFILE_ENV = f"AUTOSLICE_PROFILE={shlex.quote(channel.PROFILE_ID)} AUTOSLICE_BASE={shlex.quote(_LAYOUT.autoslice_base)}"
 CPA_JUDGE_MODEL = "gpt-6.1-sol"
 CPA_JUDGE_EFFORT = "medium"
 # How many attempts one answer gets, read by both layers that make an answer: cpa_text.py gets this number as --tries

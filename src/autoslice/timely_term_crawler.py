@@ -530,6 +530,9 @@ def _validate_referer(referer: str) -> None:
         raise CrawlError("unsafe Referer header")
 
 
+WHOLE_RANGE = "bytes=0-"
+
+
 class BoundedHttpClient:
     def __init__(
         self,
@@ -583,9 +586,15 @@ class BoundedHttpClient:
     def _validated_extra_headers(self, headers: dict[str, str] | None) -> dict[str, str]:
         if not headers:
             return {}
-        if set(headers) - {"User-Agent", "Referer"}:
+        if set(headers) - {"User-Agent", "Referer", "Range"}:
             raise CrawlError("unsupported request header")
         result: dict[str, str] = {}
+        if "Range" in headers:
+            # Only the whole resource from its start: Bilibili's media CDN answers a download without a Range header with
+            # HTTP 567 (every public audio fallback of the duplicate check); the byte budget still applies.
+            if headers["Range"] != WHOLE_RANGE:
+                raise CrawlError("unsupported Range header")
+            result["Range"] = WHOLE_RANGE
         user_agent = headers.get("User-Agent")
         if user_agent:
             if "\n" in user_agent or "\r" in user_agent or len(user_agent) > 256:

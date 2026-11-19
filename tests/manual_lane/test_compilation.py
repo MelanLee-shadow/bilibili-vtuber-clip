@@ -564,6 +564,6 @@ def test_the_fade_extends_the_audio_filter_and_the_cut_arguments_are_the_first_c
     first, second = _piece_commands(2)
     for command, fine_start in ((first, "1.000"), (second, "21.000")):         # the preroll is 30 s: both seek exactly from 0
         words = shlex.split(command)
-        assert words[words.index("-i") - 1] == "0.000" and words[words.index("-i") + 1] == f"{SOURCES}/rec-a.flv"
+        assert "-ss" not in words[:words.index("-i")] and words[words.index("-i") + 1] == f"{SOURCES}/rec-a.flv"
         assert words[words.index("-i") + 3] == fine_start and words[words.index("-t") + 1] == "10.000"
         assert words.index("-af") < words.index("-c:a") and words[-1].endswith(".mp4") and "-vf" not in words

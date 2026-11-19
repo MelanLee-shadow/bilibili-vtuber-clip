@@ -452,11 +452,22 @@ def cover_repeats(row: CoverCandidate, plan: CoverPlan) -> bool:
 
 
 def cover_stages(plan: CoverPlan) -> list[list[str]]:
-    """The routes of step 6's cover, all in one stage: every feasible route is made at once and compared together (70-cover:
-    no more cheapest-first stages that end at the first passing one).  The emote is
-    always listed: its job asks the model whether a main emote fits the line, and records why not when none does."""
-    second = "ai_scene" if (plan.get("brief") or {}).get("scene_needed") else "ai_sticker"
-    return [["screenshot", "emote", "cutout", second]]
+    """The cover's two stages, cheapest first (公开规则11-02, U138: 「每个封面出3-4个候选也太奢侈了吧」; requirements §6:
+ 封面先用免费候选，不合格才出1张AI图; 11-14 U341: 片中有经典动作优先截它).
+
+ 1. the pictures that cost no image generation: the live screenshot and the official emote (vision readings only);
+ 2. only when none of them is eligible with a thumbnail that passes: ONE generated picture -- the scene when the story
+ needs one; else, when two equals share the frame (U158: 两人地位同等，最好两个人同样大小), the cut-out, which
+ stands both real people the same size (a sticker could do that only with a cut-out generated for its guest:
+ two pictures); else the chibi sticker (eligible on 29 of 35 lane clips 11-09..11-18, the cut-out on 16 of 42),
+ its guest, if any, the frame's own crop.
+
+ A free candidate that passes ends the search: a generated picture never outscores it, whatever the score terms say
+ (the score only orders the candidates inside a stage). The emote is always listed: its job asks the model whether
+ a main emote fits the line, and records why not when none does."""
+    equals = bool((plan.get("peers") or {}).get("peers"))
+    paid = "ai_scene" if (plan.get("brief") or {}).get("scene_needed") else "cutout" if equals else "ai_sticker"
+    return [["screenshot", "emote"], [paid]]
 
 
 def _scored_rows(result_rows: Sequence[CoverCandidate], plan: CoverPlan
@@ -570,15 +581,16 @@ def _render_cover(ctx: Ctx, cues: Sequence[SrtCue], cover_lines: Sequence[str],
                   keep: Sequence[Sequence[int]] | None = None, plan: CoverPlan | None = None,
                   boxes: Mapping[str, list[list[int]]] | None = None, title: str = "", names: Sequence[str] = (),
                   frame_s: float | None = None, budget: RetryBudget | None = None) -> CoverRenderResult:
-    """Make every feasible route at once, score them on the measured face, rank them together and choose the first whose
-    180 px thumbnail passes.  When nothing is eligible and a route failed on its material, the routes are made again
-    (cover_redo: another frame, a new generation with the reviewer's words) within `budget`, before the vetoed-candidates
-    fallback.  Relations of the brief: routes together (cover_run.run_all), measured face (cover_pick.face_view), crop and
+    """Make the free routes at once (cover_stages: screenshot, emote), score them on the measured face and choose the first
+    eligible one whose 180 px thumbnail passes; only when none does, make ONE generated picture and choose among all of
+    them.  When nothing is eligible and a route failed on its material, it is made again (cover_redo: a free route on
+    another frame; the generated picture drawn again with the reviewer's words: a wrong picture replaced, not a second
+    candidate) within `budget`, before the vetoed-candidates fallback.  Relations of the brief: routes together (cover_run.run_all), measured face (cover_pick.face_view), crop and
     text fit (the media-host tool), emote by sense (cover_emote_pick), thumbnail (cover_thumb), same-batch variety
     (cover_repeats in the ranking)."""
     from src.autoslice.cover_profile_assets import profile_asset_text
 
-    from .step6_cover_round import Cover, pick_cover, record_cover      # that module imports this one: after this one is loaded
+    from .step6_cover_round import Cover, pick_cover, pick_free, record_cover      # that module imports this one: after this one is loaded
     started = time.monotonic()
     clip = _clip(ctx)
     rd = ctx.remote_dir
@@ -591,7 +603,8 @@ def _render_cover(ctx: Ctx, cues: Sequence[SrtCue], cover_lines: Sequence[str],
     local_spec = _local(ctx, "cover/spec.json")
     local_spec.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")
     identity = profile_asset_text("cover_identity_prompt").strip()   # the repo cover identity, one definition
-    routes = cover_stages(plan)[0]
+    free, paid = cover_stages(plan)
+    routes = [*free, *paid]
     job = _cover_job(ctx, cover_lines, plan, boxes, title, names, identity, routes)
     job["on_action"] = on_action({"route": "screenshot"}, plan, t)     # a face hidden by the move is no reason to drop it
     local_job = _local(ctx, "cover/job.json")
@@ -599,7 +612,7 @@ def _render_cover(ctx: Ctx, cues: Sequence[SrtCue], cover_lines: Sequence[str],
     for local, remote in ((local_spec, "cover/spec.json"), (local_job, "cover/job.json"), (COVER_RENDERER, "cover/render_cover.py"),
                           (COVER_REDRAW, "cover/redraw_background.py"), (COVER_STYLES, "cover/styles.json"),
                           (COVER_ROTATION, "cover/cover_style_rotation.py"), (COVER_CANDIDATES_TOOL, "cover/cover_candidates.py"),
-                          *((REMOTE_TOOLS / m, f"cover/{m}") for m in ("pick_frame.py", "cover_face_crop.py", "cover_text_fit.py", "cover_layout.py", "cover_clock.py", "cover_fast_text.py", "cover_background.py"))):
+                          *((REMOTE_TOOLS / m, f"cover/{m}") for m in ("pick_frame.py", "cover_face_crop.py", "cover_text_fit.py", "cover_layout.py", "cover_clock.py", "cover_fast_text.py", "cover_background.py", "cover_band.py"))):
         ctx.adapters.remote.put(local, f"{rd}/{remote}")
     prep = _run_remote(ctx, "s6-cover-frame",
                        f"mkdir -p {rd}/cover/fonts {rd}/cover/cand\ncp {COVER_FONT_REMOTE} {rd}/cover/fonts/{Path(COVER_FONT_REMOTE).name}\n"
@@ -607,22 +620,38 @@ def _render_cover(ctx: Ctx, cues: Sequence[SrtCue], cover_lines: Sequence[str],
                        timeout=600)
     if prep.rc != 0:
         return CoverRenderResult(False, reason=f"COVER_RENDER_FAILED_RC{prep.rc}", note=(prep.stdout + prep.stderr)[-400:])
-    cv = Cover(ctx=ctx, job=job, spec=spec, plan=plan, routes=list(routes), times=_frame_times(_cover_frame_time(cues, cover_lines, cut_len), cut_len),
+    cv = Cover(ctx=ctx, job=job, spec=spec, plan=plan, routes=list(free), times=_frame_times(_cover_frame_time(cues, cover_lines, cut_len), cut_len),
                 budget=budget or RetryBudget(COVER_RETRIES), frame_remote=f"{rd}/cover/frame.png")
-    runs, raw, infeasible = cv.make(job, routes, {"emote": partial(cv.emote_job, cover_lines)})
-    if not any(r.get("status") == "RENDERED" for r in raw):
-        failed = next((r for r in runs if r.rc == TEXT_TOO_LONG_RC), next((r for r in runs if r.rc), None))
-        if failed is not None:
-            return CoverRenderResult(False, reason=f"COVER_RENDER_FAILED_RC{failed.rc}", note=failed.note, cpa=cv.calls, process=cv.process)
-        if cv.failures:
-            return CoverRenderResult(False, reason="COVER_TOOL_FAILED", note=str(cv.failures[0]["tail"]), cpa=cv.calls, process=cv.process)
-    cv.log.add_round(1, t, routes, cv.score(raw, t), raw, infeasible=infeasible)
-    cv.redo()
+    thumb_s = 0.0
+    _runs, raw, infeasible = cv.make(job, free, {"emote": partial(cv.emote_job, cover_lines)})
+    cv.log.add_round(1, t, free, cv.score(raw, t), raw, infeasible=infeasible, stage="free")
+    cv.redo()                       # a free route vetoed on its material: another frame (no generation)
     thumb_started = time.monotonic()
-    picked = pick_cover(cv, cover_lines, title, identity)
-    if isinstance(picked, CoverRenderResult):
-        return picked
-    thumb_s = time.monotonic() - thumb_started
+    picked = pick_free(cv, cover_lines, identity)
+    thumb_s += time.monotonic() - thumb_started
+    if picked is None:              # no free candidate passes: one generated picture (U138)
+        cv.routes = routes
+        cv.stages.append(list(paid))
+        cv.process.append(f"免费候选（{'、'.join(free)}）没有合格且缩略图过关的：出一张 AI 图（{paid[0]}）")
+        _runs, raw_paid, infeasible_paid = cv.make(job, paid, {})
+        cv.log.add_round(len(cv.log.rounds) + 1, t, paid, cv.score(raw_paid, t), raw_paid, infeasible=infeasible_paid,
+                         stage="paid")
+        cv.redo()                   # the one picture came out wrong (not the person, not the source): drawn again, same budget
+        raw = [*cv.log.raw]
+        if not any(r.get("status") == "RENDERED" for r in raw):
+            runs = cv.runs
+            failed = next((r for r in runs if r.rc == TEXT_TOO_LONG_RC), next((r for r in runs if r.rc), None))
+            if failed is not None:
+                return CoverRenderResult(False, reason=f"COVER_RENDER_FAILED_RC{failed.rc}", note=failed.note, cpa=cv.calls, process=cv.process)
+            if cv.failures:
+                return CoverRenderResult(False, reason="COVER_TOOL_FAILED", note=str(cv.failures[0]["tail"]), cpa=cv.calls, process=cv.process)
+        thumb_started = time.monotonic()
+        picked = pick_cover(cv, cover_lines, title, identity)
+        if isinstance(picked, CoverRenderResult):
+            return picked
+        thumb_s += time.monotonic() - thumb_started
+    else:
+        cv.process.append(f"免费候选 {picked.chosen} 合格且缩略图过关：不出 AI 图（U138：不合格才出 1 张）")
     return record_cover(cv, picked, cover_lines, boxes, frame_s=frame_s, thumb_s=thumb_s, started=started)
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import datetime as dt
 import json
 from pathlib import Path
@@ -23,6 +24,9 @@ def main() -> int:
     parser.add_argument('--max-requests', type=int, default=100)
     parser.add_argument('--audio-work-dir', type=Path, help='Temporary public audio directory; audio is deleted after transcription')
     parser.add_argument('--no-audio-asr', action='store_true', help='Disable the default bcut-first public audio fallback')
+    parser.add_argument('--upload-account', choices=('required', 'if-configured'),
+                        help="Add this host's upload account (lane_publish.json, its login) to own_uploader_mids; "
+                             "if-configured skips it on a host without an uploader")
     args = parser.parse_args()
     if not 1 <= args.max_requests <= 200:
         parser.error('--max-requests must be 1..200')
@@ -32,7 +36,13 @@ def main() -> int:
     audio = None if args.no_audio_asr else PublicAudioASR(
         work_dir=args.audio_work_dir,
         evidence_dir=args.evidence_dir / 'audio-asr' if args.evidence_dir else None)
-    result = check(load_package(args.package), PublicBilibili(client, now=now, evidence_dir=args.evidence_dir),
+    package = load_package(args.package)
+    if args.upload_account:
+        from src.autoslice.lane_publish import bili
+        from src.autoslice.lane_publish.common import Config, base
+    if args.upload_account == 'required' or (args.upload_account and (base() / 'lane_publish.json').is_file()):
+        package = replace(package, own_uploader_mids=tuple(dict.fromkeys((*package.own_uploader_mids, bili.account_mid(Config.load())))))
+    result = check(package, PublicBilibili(client, now=now, evidence_dir=args.evidence_dir),
                    max_videos=args.max_videos, audio_asr=audio)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')

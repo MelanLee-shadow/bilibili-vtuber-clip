@@ -166,7 +166,8 @@ def step0_dedupe(ctx: Ctx) -> StepOutcome:
     body = (f"mkdir -p {rd}/dedup/evidence {rd}/dedup/audio\ncd {REMOTE_REPO}\n"
             f"PYTHONDONTWRITEBYTECODE=1 {PROFILE_ENV} {REMOTE_PY} -B scripts/check_external_duplicate_clips.py "
             f"--package {rd}/dedup/package.json --output {rd}/dedup/result.json "
-            f"--evidence-dir {rd}/dedup/evidence --audio-work-dir {rd}/dedup/audio > {rd}/dedup/run.log 2>&1\n"
+            f"--evidence-dir {rd}/dedup/evidence --audio-work-dir {rd}/dedup/audio --upload-account if-configured "
+            f"> {rd}/dedup/run.log 2>&1\n"
             "echo rc=$?\n")
     res = _run_remote(ctx, "s0-dedupe", body)
     # Exit 3 is the checker's own "block" signal; the decision in result.json is what counts.
@@ -180,8 +181,14 @@ def step0_dedupe(ctx: Ctx) -> StepOutcome:
     if not verdict.ok:
         return StepOutcome(False, reason=verdict.reason_code, products={}, note=verdict.detail,
                            process=["外片查重：完全重复，按 H62 不传"])
+    covered = gates.coverage_gate(result)
+    found = [f"{v.get('bvid')}「{v.get('title')}」" for v in result.get("videos", []) if not v.get("excluded")]
+    seen = f"同场他人视频 {len(found)} 条" + (f"：{'；'.join(found[:8])}" if found else "")
+    if not covered.ok:
+        return StepOutcome(False, reason=covered.reason_code, products=products, note=covered.detail,
+                           process=[seen, f"已被覆盖、没有新意（20-selection §2b）：{covered.detail}"])
     return StepOutcome(True, products=products, note=f"查重结论 {verdict.evidence.get('decision')}",
-                       process=[f"查重结论 {verdict.evidence.get('decision')}（H62：只有完全重复才拦）"])
+                       process=[seen, f"查重结论 {verdict.evidence.get('decision')}（H62：只有完全重复才拦；没有被覆盖到没新意）"])
 
 
 # ----- step 2: cut (ffmpeg on OCI3; tool-output sanity only) --------------------------------

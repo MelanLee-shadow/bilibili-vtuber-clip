@@ -4,6 +4,10 @@
   file `ops/recording/oci3-recording-topology.json` is the one place that names the root; docs/pipeline/10-source-recording.md).
   Only root can read it, so every listing, copy and read of a recording runs as root through `adapters.root_script`
   (`source_read` for the recording itself) and what it writes is handed back to the lane's user.
+- the day: a broadcast day D runs from D 04:00 to D+1 04:00 Beijing time (维护者, U429), and a recording
+  belongs to the day its stream started; `broadcast_days` is the one definition (selection, reclaim and the reclaimed-day
+  skip all read the ledger days it makes).  The recorder's own directories are calendar days, so a day is read from the
+  directories before, of and after it.
 - `inventory`: every `.flv` of a day with its size and modification time and whether the same-name `.xml` (danmaku) is
   there; a file under `stub_max_bytes` is the empty shell of a stream's first moment and is not prepared.
 - `prepare`: the recording's audio track (a host CPU job: the `host_encode` gate), its whole-recording BCUT subtitles
@@ -20,6 +24,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import re
 import shlex
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -39,6 +44,8 @@ if TYPE_CHECKING:
 PREPARED_SCHEMA = "manual-lane.discover-prepared.v1"
 AUDIO_TIMEOUT_S = 2400            # a 30-minute segment takes minutes; the manual run's own bound
 NO_SPEECH = "NO_SPEECH"            # a recording nobody speaks in (the few seconds before or after a stream): done, not failed
+BEIJING = dt.timezone(dt.timedelta(hours=8))     # the recorder names its files and day directories in Beijing time
+_STARTED = re.compile(r"_(\d{4})(\d{2})(\d{2})-(\d{2})-(\d{2})-(\d{2})$")
 
 
 class DiscoverError(StateError):
@@ -105,19 +112,22 @@ class DayInventory:
     segments: tuple[Segment, ...]
     newest: float = 0.0         # when a file of the day (recording or danmaku) was last written
     lone_danmaku: tuple[float, ...] = ()        # when each danmaku file that has no recording next to it was written
+    later: bool = False         # a recording started after the day's last one: the recorder moved on, that file is closed
+    next_day: bool = False      # a recording of a later broadcast day exists: this day's streams are over
 
     def settled(self, minutes: float, lone_danmaku_hours: float) -> bool:
         """Nothing of the day was written in the last `minutes`, and no danmaku file is still waiting for its recording:
         the recorder uploads a recording after its danmaku, hours later for a long one; a recording that has not come
         `lone_danmaku_hours` after its danmaku was written is not coming.  By the host's clock."""
         waiting = any(self.now - written <= lone_danmaku_hours * 3600 for written in self.lone_danmaku)
-        return bool(self.segments) and not waiting and self.now - self.newest > minutes * 60
+        return bool(self.segments) and not waiting and (self.next_day or self.now - self.newest > minutes * 60)
 
     def finished(self, minutes: float) -> tuple[DayInventory, tuple[Segment, ...]]:
         """The day without the recording the recorder may still be writing: a recording is finished when a later one
         of the day exists or nothing of it was written in the last `minutes` (goldfish 4 had to copy the finished
-        files elsewhere to keep a named day's growing last file out).  Returns the day and what was held back."""
-        if not self.segments:
+        files elsewhere to keep a named day's growing last file out; goldfish 5 waited an hour on a file closed at
+        midnight, its successor in the next directory).  Returns the day and what was held back."""
+        if not self.segments or self.later:
             return self, ()
         last = self.segments[-1]
         written = max(float(last.mtime), float(last.xml_mtime or 0.0))
@@ -138,6 +148,37 @@ def is_date(text: str) -> bool:
         return len(text) == 10 and dt.date.fromisoformat(text).isoformat() == text
     except ValueError:
         return False
+
+
+def started_at(name: str) -> float:
+    """When recording `name` (a file stem) started: the recorder names it `<room>_YYYYMMDD-HH-MM-SS`, Beijing time."""
+    match = _STARTED.search(name)
+    if not match:
+        raise DiscoverError("RECORDING_NAME_WITHOUT_START", f"{name!r} does not end in _YYYYMMDD-HH-MM-SS: its day cannot be told")
+    y, mo, d, h, mi, s = map(int, match.groups())
+    return dt.datetime(y, mo, d, h, mi, s, tzinfo=BEIJING).timestamp()
+
+
+def broadcast_days(recordings: Mapping[str, tuple[float, float]]) -> dict[str, str]:
+    """The broadcast day of each recording (stem -> (started, last written), epoch seconds).  维护者 (U429): a
+    stream started before 04:00 Beijing belongs to the day before, one started at or after 04:00 to that day.  A
+    recording that starts within `stream_gap_minutes` of the previous one's last write continues its stream (the recorder
+    cuts a stream into 30-minute files): a stream running past 04:00 stays whole on the day it started."""
+    cfg = rules("discover")
+    gap, shift = float(cfg["stream_gap_minutes"]) * 60, dt.timedelta(hours=int(cfg["broadcast_day_start_hour"]))
+    days: dict[str, str] = {}
+    stream = last = None
+    for name in sorted(recordings, key=lambda n: (recordings[n][0], n)):
+        started, written = recordings[name]
+        if stream is None or last is None or started - last > gap:
+            stream = started
+        days[name] = (dt.datetime.fromtimestamp(stream, BEIJING) - shift).date().isoformat()
+        last = written if last is None else max(last, written)
+    return days
+
+
+def neighbour(date: str, days: int) -> str:
+    return (dt.date.fromisoformat(date) + dt.timedelta(days=days)).isoformat()
 
 
 def _fingerprint(*parts: object) -> str:
@@ -216,9 +257,11 @@ def _now(stdout: str) -> float:
 
 
 def list_dates(remote: Remote) -> tuple[list[str], float, bool]:
-    """The date directories of the room in the archive (oldest first), the host's clock, and whether the room has a
-    directory at all.  A recordings root that is not there is a wrong setting and stops; a room with no directory yet
-    under an existing root has simply not been recorded."""
+    """The broadcast days of the room (oldest first), the host's clock, and whether the room has a directory at all.  The
+    recorder's date directories are listed, and the recordings of the newest few are read to tell their broadcast days
+    (`broadcast_days`): a directory holding only the small hours of the day before is not a day of its own, a stream
+    that started after midnight makes the day before one.  A recordings root that is not there is a wrong setting and
+    stops; a room with no directory yet under an existing root has simply not been recorded."""
     room = archive_room()
     root = os.path.dirname(room)
     find = (f"if [ ! -d {shlex.quote(root)} ]; then echo NO_ARCHIVE_ROOT; elif [ -d {shlex.quote(room)} ]; then " + shlex.join(
@@ -227,43 +270,73 @@ def list_dates(remote: Remote) -> tuple[list[str], float, bool]:
     if direct:           # the days copied straight from the recorder count too (the archive may not have the day yet)
         find += f"; if [ -d {shlex.quote(direct)} ]; then " + shlex.join(
             ['find', direct, '-mindepth', '1', '-maxdepth', '1', '-type', 'd']) + r" -printf 'D\t%f\n'; fi"
+    newest = int(rules("discover")["auto_recent_dates"]) + 2
+    for base in (room, direct) if direct else (room,):     # the recordings of the newest directories: their broadcast days
+        find += (f"; if [ -d {shlex.quote(base)} ]; then ls -1 {shlex.quote(base)} | grep -E '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}$' | "
+                 f"sort | tail -n {newest} | while read -r d; do find {shlex.quote(base)}/\"$d\" -maxdepth 1 -type f -name '*.flv' "
+                 r"-printf 'R\t%h\t%f\t%T@\n'; done; fi")
     out = _need_ok(_as_root(remote, "disc-dates", f"echo NOW $(date +%s); {find}", timeout=300), "ARCHIVE_LISTING_FAILED").stdout
     if "NO_ARCHIVE_ROOT" in out.splitlines():
         raise DiscoverError("ARCHIVE_ROOT_MISSING", f"{root} does not exist on the media host (manual_lane.json archive_root)")
-    dates = sorted({line.split("\t", 1)[1] for line in out.splitlines() if line.startswith("D\t")})
-    return [d for d in dates if is_date(d)], _now(out), "NO_ROOM_DIR" not in out.splitlines()
+    dirs = {line.split("\t", 1)[1] for line in out.splitlines() if line.startswith("D\t")}
+    recordings, read = {}, set()
+    for line in out.splitlines():
+        if line.startswith("R\t"):
+            _tag, directory, name, mtime = line.split("\t")
+            stem = PurePosixPath(name).stem
+            recordings[stem] = (started_at(stem), float(mtime))
+            read.add(PurePosixPath(directory).name)
+    dates = (dirs - read) | set(broadcast_days(recordings).values())   # a directory whose recordings were read counts by them
+    return sorted(d for d in dates if is_date(d)), _now(out), "NO_ROOM_DIR" not in out.splitlines()
 
 
 def inventory(remote: Remote, date: str) -> DayInventory:
-    """Every recording of the day: path, size, modification time, and its danmaku XML when there is one.  `.copy_pending`
-    (touched while the copy from the recorder's spool is behind, oci3_lane_spool_copy.sh) only counts as a write."""
-    def listing(directory: str) -> str:
-        find = shlex.join(["find", directory, "-type", "f", "(", "-name", "*.flv", "-o", "-name", "*.xml",
+    """Every recording of the broadcast day `date` (`broadcast_days`): path, size, modification time, and its danmaku XML
+    when there is one, read from the recorder's directories of the day before, the day and the day after (the day
+    before only to see whether its stream ran on into this day's directory).  `.copy_pending` (touched while the copy
+    from the recorder's spool is behind, oci3_lane_spool_copy.sh) in the day's own two directories only counts as a write."""
+    def listing(directory: str, day: str) -> str:
+        find = shlex.join(["find", directory, "-maxdepth", "1", "-type", "f", "(", "-name", "*.flv", "-o", "-name", "*.xml",
                            "-o", "-name", ".copy_pending", ")"])
-        return f"echo DIR; {find}" + r" -printf 'F\t%p\t%s\t%T@\n'"
+        return f"printf 'DIR\\t%s\\n' {day}; {find}" + r" -printf 'F\t%p\t%s\t%T@\n'"
 
-    directory, direct = archive_dir(date), direct_room()
-    command = f"if [ -d {shlex.quote(directory)} ]; then {listing(directory)}; fi"
-    if direct:           # the day as the recorder itself has it, when it was copied here: read it from there
-        command = f"if [ -d {shlex.quote(direct + '/' + date)} ]; then {listing(direct + '/' + date)}; el{command}"
-    command = "echo NOW $(date +%s); " + command
-    out = _need_ok(_as_root(remote, f"disc-inv-{date}", command, timeout=600), "ARCHIVE_LISTING_FAILED").stdout
+    direct, parts = direct_room(), []
+    for day in (neighbour(date, -1), date, neighbour(date, 1)):
+        directory = archive_dir(day)
+        part = f"if [ -d {shlex.quote(directory)} ]; then {listing(directory, day)}; fi"
+        if direct:       # the day as the recorder itself has it, when it was copied here: read it from there
+            part = f"if [ -d {shlex.quote(direct + '/' + day)} ]; then {listing(direct + '/' + day, day)}; el{part}"
+        parts.append(part)
+    out = _need_ok(_as_root(remote, f"disc-inv-{date}", "echo NOW $(date +%s); " + "; ".join(parts), timeout=600),
+                   "ARCHIVE_LISTING_FAILED").stdout
     files: dict[str, tuple[int, str]] = {}
     for line in out.splitlines():
         if line.startswith("F\t"):
             _tag, path, size, mtime = line.split("\t")
             files[path] = (int(size), mtime)
+    flv = {p for p in files if p.endswith(".flv")}
+    lone = {p for p in files if p.endswith(".xml") and str(PurePosixPath(p).with_suffix(".flv")) not in files}
+    written = {PurePosixPath(p).stem: max(float(m) for q, (_s, m) in files.items()
+                                          if PurePosixPath(q).with_suffix("") == PurePosixPath(p).with_suffix(""))
+               for p in flv | lone}
+    started = {stem: started_at(stem) for stem in written}
+    day_of = broadcast_days({stem: (started[stem], written[stem]) for stem in written})
     limit = int(rules("discover")["stub_max_bytes"])
     segments = []
-    for path in sorted(p for p in files if p.endswith(".flv")):
+    for path in sorted((p for p in flv if day_of[PurePosixPath(p).stem] == date), key=lambda p: started[PurePosixPath(p).stem]):
         size, mtime = files[path]
         xml = files.get(str(PurePosixPath(path).with_suffix(".xml")))
         segments.append(Segment(date=date, path=path, size=size, mtime=mtime, xml_size=xml[0] if xml else None,
                                 xml_mtime=xml[1] if xml else None, stub=size < limit))
-    lone = tuple(float(mtime) for path, (_size, mtime) in files.items()
-                 if path.endswith(".xml") and str(PurePosixPath(path).with_suffix(".flv")) not in files)
-    return DayInventory(date=date, now=_now(out), exists="DIR" in out.splitlines(), segments=tuple(segments),
-                        newest=max((float(mtime) for _size, mtime in files.values()), default=0.0), lone_danmaku=lone)
+    own_dirs = {PurePosixPath(p).parent.name for p in files} & {date, neighbour(date, 1)}
+    newest = [written[stem] for stem, day in day_of.items() if day == date]
+    newest += [float(m) for p, (_s, m) in files.items() if p.endswith(".copy_pending") and PurePosixPath(p).parent.name in own_dirs]
+    last = started[PurePosixPath(segments[-1].path).stem] if segments else None
+    return DayInventory(date=date, now=_now(out), exists=f"DIR\t{date}" in out.splitlines() or bool(segments),
+                        segments=tuple(segments), newest=max(newest, default=0.0),
+                        lone_danmaku=tuple(written[PurePosixPath(p).stem] for p in lone if day_of[PurePosixPath(p).stem] == date),
+                        later=last is not None and any(s > last for s in started.values()),
+                        next_day=any(day > date for day in day_of.values()))
 
 
 def remote_dir_of(segment: Segment) -> str:

@@ -245,6 +245,15 @@ def _latin_names() -> list[str]:
     return sorted({run for row in rows for run in re.findall(r"[A-Za-z][A-Za-z0-9]+", str(row.get("canonical") or ""))})
 
 
+A4_PROVIDER_FAILED = "FINAL_SUBTITLE_AUDIO_BCUT_FAILED"     # the recogniser gave no witness (final_subtitle_audio_gate)
+
+
+def a4_failure_code(error: str) -> str:
+    """A4 fails either way (no witness, no attest); a witness the recogniser did not give is told apart from one that
+    contradicts the subtitles, so a lane can wait for the recogniser (11-18: bcut failed with no reason on a revision)."""
+    return "FMR_A4_AUDIO_WITNESS_UNAVAILABLE" if A4_PROVIDER_FAILED in error else "FMR_A4_AUDIO_WITNESS_REJECTED"
+
+
 def a4_audio_witness(ctx: Context) -> dict[str, Any]:
     """BCUT witness via the existing library; disagreement cues go to nominations.json for the reviewer."""
     from src.autoslice.final_subtitle_audio_gate import (
@@ -272,7 +281,7 @@ def a4_audio_witness(ctx: Context) -> dict[str, Any]:
         validate_final_subtitle_audio_check(
             record, ctx.files["srt"], ctx.files["video"], ctx.root, candidate_id=ctx.cid)
     except (FinalSubtitleAudioGateError, ValueError, OSError) as exc:
-        return row("A4", FAIL, ["FMR_A4_AUDIO_WITNESS_REJECTED"], error=str(exc)[:400])
+        return row("A4", FAIL, [a4_failure_code(str(exc))], error=str(exc)[:400])
     evidence = record["subtitle_audio_correspondence"]
     ctx.record["subtitle_audio_correspondence"] = evidence
     ctx.record.setdefault("artifact_hashes", {}).update(record["artifact_hashes"])
