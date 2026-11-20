@@ -112,6 +112,14 @@ def _step3_decided(ctx: Ctx) -> StepOutcome:
     rec = imported(ctx)
     if rec:
         return _step3_import(ctx, rec)
+    from . import compilation
+
+    manifest = compilation.load_manifest(ctx.clip_dir)
+    if manifest is not None and manifest.get("kind") == compilation.KIND_TRIM:
+
+
+        return _fail("TRIM_WITHOUT_ORIGINAL_SUBTITLES",
+                     "片中剪除的片要用原片定好的字幕（导入）；这条没有，不在剪过的片上重做字幕")
     adjudicate_mode()  # validate legacy mode even though unanchored single-speaker uses the agent
     if not linked_session(ctx.session) and not reviewer_label_rows(ctx.state.data.get('reviewer_labels')):
         return _step3_body(ctx)   # per-call audio receipts, aggregate ledger read after the batch

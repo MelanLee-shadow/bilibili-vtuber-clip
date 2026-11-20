@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.knowledge_graph import NODES_FILE, load_graph
 
 from . import channel
 from . import (
@@ -281,7 +282,18 @@ def _principle_section(heading: str, what: str) -> str:
 
 
 def _pronoun_rule() -> str:
-    return _principle_section("## 六、代词与指代对象一致", "pronoun")
+    """The channel's pronoun section, then the people whose pronoun the channel knowledge graph records (accepted
+    nodes with `pronoun`): one fact for every writer of the subtitles (agent, adjudication, review)."""
+    rule = _principle_section("## 六、代词与指代对象一致", "pronoun")
+    root = load_channel_profile(PKG_ROOT).asset_root
+    if not (root / NODES_FILE).is_file():
+        return rule
+    known = [n for n in load_graph(root).nodes.values() if n.status == "accepted" and n.pronoun]
+    if not known:
+        return rule
+    rows = "；".join(f"{n.names['display']}" + (f"（{'、'.join(n.aliases)}{'；' + n.summary if n.summary else ''}）"
+                                              if n.aliases or n.summary else "") + f"→{n.pronoun}" for n in known)
+    return f"{rule}\n- **知识图记了代词的人，指的是这位时按图写（优先于上面的默认）**：{rows}"
 
 
 # The principle sections that decide how the subtitle agent writes characters, taken from the active channel

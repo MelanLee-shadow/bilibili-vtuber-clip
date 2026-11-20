@@ -65,8 +65,8 @@ if TYPE_CHECKING:
 
 
 TITLE_MAX_REGEN = 2                              # regeneration rounds after the first candidate round
-TITLE_RULES = ("banned", "prefix", "on_stage_known", "named", "prefix_names", "swap", "punchline", "quotes",
-               "canonical_names", "publish_gate", "published_duplicate")
+TITLE_RULES = ("banned", "prefix", "on_stage_known", "named", "involved_named", "prefix_names", "swap", "punchline",
+               "quotes", "canonical_names", "publish_gate", "published_duplicate")
 
 
 class TitleChecks(TypedDict):
@@ -95,6 +95,7 @@ class TitleCandidate(TypedDict, total=False):
     title: str
     title_body: str
     on_stage: list[str]
+    involved: list[str]                        # the other people the main line is about, as the subtitles call them
     swap_check: SwapCheck | None
     punchline_person: str
     punchline: str
@@ -177,6 +178,10 @@ def title_checks(cand: TitleCandidate, names: Sequence[str], subtitles: str, *,
     not_named = [n for n in on_stage if n not in title]
     if not_named:
         failed["named"] = "标题未点名出场者：" + "、".join(not_named)
+    involved = [str(x).strip() for x in (cand.get("involved") or []) if str(x).strip()]
+    left_out = [n for n in dict.fromkeys(involved) if n not in HOST_NAMES and n not in title]
+    if left_out:      # skill section 1, bottom line 2 (the research's strongest title effect): name who the story involves
+        failed["involved_named"] = "标题未点名这段涉及的人：" + "、".join(left_out)
     partners = tuple(dict.fromkeys(n for n in on_stage if n not in HOST_NAMES))
     if (envelope_error or (envelope is None and partners)
             or (envelope is not None and set(envelope.partners) != set(partners))):

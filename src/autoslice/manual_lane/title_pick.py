@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, NotRequired, TypedDict
 
 from . import channel, text_overlap
 from .runner import Ctx
@@ -38,12 +38,18 @@ BAD_GRADE = "差"              # predicted 差 exactly, or any grade containing 
 WORST_GRADE = "尤其差"
 
 
+
+RESEARCH = {"named": "没点名这段涉及的人", "voice": "有编辑的评语、抬杠式反问，或半路换成第三人称；落点要是她自己的话",
+            "setup": "没看过这段的人只看标题看不出谁在干嘛"}
+
+
 class PickItem(TypedDict):
     """What is recorded on one ranked candidate."""
     rank: int                 # 1 = first of the round's ranked candidates (the filtered ones after the others)
     grade: str                # the grade the owner is predicted to give
     why: str
     editor_tail: bool
+    research_fail: NotRequired[list[str]]     # the RESEARCH items it fails (absent when none)
 
 
 class PickCall(TypedDict):
@@ -94,6 +100,12 @@ def editor_tail(body: str, subtitles: str) -> bool:
     covered = sum(1 for i in range(len(chars))
                   if (i >= 1 and chars[i - 1:i + 1] in pairs) or (i + 1 < len(chars) and chars[i:i + 2] in pairs))
     return covered / len(chars) < COVERAGE_MIN
+
+
+def research_fail(predicted: object) -> list[str]:
+    """The RESEARCH items a ranking answer says a candidate fails (an answer without `research` fails none)."""
+    got = predicted.get("research") if isinstance(predicted, dict) else None
+    return [key for key in RESEARCH if isinstance(got, dict) and got.get(key) is False]
 
 
 def is_bad_grade(grade: str) -> bool:
@@ -160,16 +172,21 @@ def rank_round(ctx: Ctx, call_id: str, basis: PickBasis, *, titles: Sequence[str
                          call=PickCall(call_id=call_id, fell_back=True, reason=reason or "no answer", first="",
                                        first_grade="", filtered=0))
     order = normalized_order(answer["order"], n)
-    order = [k for k in order if not tails[k]] + [k for k in order if tails[k]]
     predicted = {p["index"]: p for p in answer["predicted"]}
+    fails = {k: research_fail(predicted[k]) for k in range(n)}
+    order = [k for k in order if not fails[k]] + [k for k in order if fails[k]]      # what the research measured first
+    order = [k for k in order if not tails[k]] + [k for k in order if tails[k]]
     items = {ranked_ids[k]: PickItem(rank=place, grade=str(predicted[k]["grade"]).strip(), why=str(predicted[k]["why"]),
                                      editor_tail=tails[k])
              for place, k in enumerate(order, 1)}
+    for k, failed in fails.items():
+        if failed:
+            items[ranked_ids[k]]["research_fail"] = failed
     first = ranked_ids[order[0]]
     return RoundPick(order=[*(ranked_ids[k] for k in order), *rest], items=items,
                      call=PickCall(call_id=call_id, fell_back=False, reason="", first=titles[first],
                                    first_grade=items[first]["grade"], filtered=sum(tails)),
-                     top_is_bad=is_bad_grade(items[first]["grade"]))
+                     top_is_bad=is_bad_grade(items[first]["grade"]) or bool(fails[order[0]]))
 
 
 def process_line(call: PickCall, round_no: int) -> str:
@@ -182,4 +199,7 @@ def process_line(call: PickCall, round_no: int) -> str:
 
 def feedback_line(item: PickItem | None) -> str:
     """The line after a candidate in the rewrite feedback: what the owner is predicted to say of it."""
-    return f"按频道主的口味预测：{item['grade']} {item['why']}" if item else ""
+    if not item:
+        return ""
+    failed = "；调研量过的几项没过：" + "、".join(RESEARCH[k] for k in item["research_fail"]) if item.get("research_fail") else ""
+    return f"按频道主的口味预测：{item['grade']} {item['why']}{failed}"

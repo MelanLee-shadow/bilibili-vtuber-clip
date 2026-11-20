@@ -178,7 +178,7 @@ def test_step6_passes_compilation_facts_to_both_prompts_and_preserves_ordinary_b
         prompt_dir = Path(step6_title.__file__).resolve().parents[3] / "assets/manual_lane/prompts"
         old_title = (prompt_dir / "title.md").read_text().replace("{compilation_context}", "")
         old_cover = (prompt_dir / "cover_brief.md").read_text().replace("{compilation_context}", "")
-        assert hashlib.sha256(old_title.encode()).hexdigest() == "55281ca296d78a7982f35f75a3da236b4f947480bc1388aeaac4ff6561fc2500"
+        assert hashlib.sha256(old_title.encode()).hexdigest() == "08e11fe65b64c467e577e9830804fcff127cf0050c32317e06263a318c147e19"
         assert hashlib.sha256(old_cover.encode()).hexdigest() == "d8c28bd7f7d6aa6b2de38b08790b7f7d814d86cbd6e74c48e8db38663539bfd4"
         old_title, old_cover = channel.fill(old_title), channel.fill(old_cover)     # the channel's names come from the profile
         track, lines, _ = step6_title.title_inputs(ctx, names)
@@ -203,7 +203,7 @@ def test_both_review_prompts_share_compilation_context_and_ordinary_bytes(tmp_pa
     ctx, _, _ = _package(tmp_path, monkeypatch, _review(verdict="PASS"), final=_srt([(0, 2, "测试")]), doubts=[])
     base_main, base_held = sp.review_prompt(ctx), sp.review_held_prompt(ctx, ["d1"])
     prompt_dir = Path(sp.__file__).resolve().parents[3] / "assets/manual_lane/prompts"
-    for name, expected in (("review.md", "12b1f375c710e00cf48c2db858f69ae0fcaefd68d8c15e4963e46e18f0ff7cc6"),
+    for name, expected in (("review.md", "2c90d3892a9a93def2595f250b6380fb0ef2115083d441d2dd8b67f8c683db9b"),
                            ("review_held.md", "3297be8de6e8651240b4b7e08cc7df859bfc969da5b83731cb32950dd82e0213")):
         original = (prompt_dir / name).read_text().replace("{compilation_context}", "")
         assert hashlib.sha256(original.encode()).hexdigest() == expected

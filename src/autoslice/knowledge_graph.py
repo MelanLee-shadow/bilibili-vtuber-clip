@@ -3,7 +3,8 @@
 Files (UTF-8, one JSON object per line, sorted by id, fixed key order, final newline):
   assets/<profile>/knowledge/nodes.jsonl   assets/<profile>/knowledge/edges.jsonl
 Node keys: id "<kind>:<display name at creation>" (never renamed), kind, names, aliases,
-  summary (may be ""), status, sources, optional valid, optional subtitle.
+  summary (may be ""), status, sources, optional valid, optional subtitle, optional pronoun
+  (他 / 她 / 它: how captions refer to this entity; the pronoun rule lists the accepted ones).
   kind: person group project event term work character game community
   names: display (required) plus optional subtitle / official / tag = the spelling used for
     captions / the official account name / the upload tag. Different uses of one entity are
@@ -32,9 +33,10 @@ EDGE_TYPES = ("member_of", "founded", "participates_in", "fan_name_of", "charact
 STATUSES = ("accepted", "candidate", "retired")
 SOURCE_KINDS = ("owner", "official", "crawler", "search", "ledger")
 NAME_USES = ("display", "subtitle", "official", "tag")
-NODE_KEYS = ("id", "kind", "names", "aliases", "summary", "status", "sources", "valid", "subtitle")
+NODE_KEYS = ("id", "kind", "names", "aliases", "summary", "status", "sources", "valid", "subtitle", "pronoun")
+PRONOUNS = ("他", "她", "它")
 EDGE_KEYS = ("id", "type", "from", "to", "note", "status", "sources", "valid")
-NODE_OPTIONAL = ("valid", "subtitle")
+NODE_OPTIONAL = ("valid", "subtitle", "pronoun")
 EDGE_OPTIONAL = ("note", "valid")
 NODES_FILE = "knowledge/nodes.jsonl"
 EDGES_FILE = "knowledge/edges.jsonl"
@@ -62,6 +64,7 @@ class Node:
     sources: tuple[Source, ...]
     valid: dict[str, str | None] | None = None
     subtitle: dict[str, JsonValue] | None = None
+    pronoun: str | None = None
 
     def surfaces(self) -> tuple[str, ...]:
         return (*self.names.values(), *self.aliases)
@@ -197,7 +200,8 @@ def _node(line: str, where: str) -> Node:
         names={k: _text(v, where) for k, v in names.items()},
         aliases=tuple(_text(a, where) for a in aliases), summary=_text(raw["summary"], where, empty=True),
         status=_choice(raw["status"], STATUSES, where), sources=_sources(raw["sources"], where),
-        valid=_valid(raw.get("valid"), where), subtitle=subtitle)
+        valid=_valid(raw.get("valid"), where), subtitle=subtitle,
+        pronoun=_choice(raw["pronoun"], PRONOUNS, where) if "pronoun" in raw else None)
 
 
 def _edge(line: str, where: str) -> Edge:
@@ -268,7 +272,7 @@ def dump_graph(graph: Graph, profile_root: Path) -> None:
     node_text = "".join(_row(NODE_KEYS, NODE_OPTIONAL, {
         "id": n.id, "kind": n.kind, "names": _ordered(NAME_USES, dict(n.names)), "aliases": list(n.aliases),
         "summary": n.summary, "status": n.status, "sources": [_source_json(s) for s in n.sources],
-        "valid": _valid_json(n.valid), "subtitle": n.subtitle}) for n in graph.nodes.values())
+        "valid": _valid_json(n.valid), "subtitle": n.subtitle, "pronoun": n.pronoun}) for n in graph.nodes.values())
     edge_text = "".join(_row(EDGE_KEYS, EDGE_OPTIONAL, {
         "id": e.id, "type": e.type, "from": e.from_id, "to": e.to_id, "note": e.note, "status": e.status,
         "sources": [_source_json(s) for s in e.sources], "valid": _valid_json(e.valid)}) for e in graph.edges)

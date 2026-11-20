@@ -404,3 +404,16 @@ def test_an_imported_push_still_writes_the_clip_s_chat_for_the_later_steps(tmp_p
     monkeypatch.setattr(writing_canon, 'settle_step3', lambda _ctx, outcome, verbatim: outcome)
     assert step.step3_subtitles(ctx).ok
     assert '普通弹幕' in danmaku_pool(ctx.clip_dir)
+
+
+def test_a_trimmed_clip_without_the_original_s_subtitles_is_not_subtitled_again(tmp_path, monkeypatch):
+
+    from src.autoslice.manual_lane import compilation
+    cpa = AgentCpa(rows('结果'))
+    ctx = context(tmp_path, monkeypatch, cpa)
+    manifest = {'schema': compilation.MANIFEST_SCHEMA, 'cid': 'clip', 'kind': compilation.KIND_TRIM,
+                'recordings': [{'segment': 1, 'name': 'r.flv', 'path': '/nowhere/r.flv'}], 'pieces': []}
+    (ctx.clip_dir / compilation.MANIFEST_FILE).write_text(json.dumps(manifest), encoding='utf-8')
+    outcome = step.step3_subtitles(ctx)
+    assert not outcome.ok and outcome.reason == 'TRIM_WITHOUT_ORIGINAL_SUBTITLES'
+    assert not (ctx.clip_dir / 'subs/agent-trace.json').exists()          # no model was asked

@@ -60,7 +60,8 @@ def _newest(sources: Iterable[Source]) -> tuple[Source, ...]:
 def _merge_node(old: Node, new: Node) -> Node:
     return Node(id=old.id, kind=old.kind, names=old.names,
                 aliases=tuple(dict.fromkeys((*old.aliases, *new.aliases))), summary=new.summary or old.summary,
-                status="candidate", sources=_newest((*old.sources, *new.sources)), valid=new.valid or old.valid)
+                status="candidate", sources=_newest((*old.sources, *new.sources)), valid=new.valid or old.valid,
+                pronoun=old.pronoun)
 
 
 def _merge_edge(old: Edge, new: Edge) -> Edge:

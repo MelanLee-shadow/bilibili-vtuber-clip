@@ -15,9 +15,10 @@ Orchestration of the pure parts in trim.py.  For a plain clip X whose subtitles 
 `trim_clip` returns a dict whose `status` is one of
   TRIMMED    Y exists, X is SUPERSEDED by it                                          (final)
   NONE       nothing to cut: no span both answers proposed that passed the guard      (final)
-  FAILED     a call, an answer, the build of Y or one of its steps failed; X is untouched; the next run asks again.  What an
-             earlier failed run left of Y (its state file and clips/<Y>/) is moved aside, not deleted, to `….failed-<UTC>`
-             and the run goes on from the asking; decision.json says where it went in `retried_from`
+  FAILED     a call, an answer, the build of Y or one of its steps failed; X is untouched; the next run asks again.  What the
+             failed run left of Y (its state file and clips/<Y>/) is moved aside at once, not deleted, to `….failed-<UTC>`
+             (`left_aside` in decision.json): Y is never left as a clip the rounds would run on without X's subtitles.  A
+             leftover an older version left in place is moved at the next run (`retried_from`)
   NOT_READY  X's subtitles or speakers are not done
   SKIP_SUPERSEDED / SKIP_COMPILATION / SKIP_IMPORTED   X is not a plain clip with its own decided subtitles
              (an imported X whose push brought subs/cut.srt, the owner's 删 marks, is no SKIP_IMPORTED: see below)
@@ -93,6 +94,7 @@ class TrimDecision(TypedDict):
     hook: NotRequired[str]
     successor: NotRequired[str | None]
     retried_from: NotRequired[list[str]]
+    left_aside: NotRequired[list[str]]           # what a failed build left of the successor, moved aside at once
     answers: NotRequired[list[str]]
     calls: NotRequired[list[CpaEvent]]
     windows: NotRequired[list[tuple[float, float]]]
@@ -359,6 +361,21 @@ def _build(task: Path, ctx: Ctx, mat: _Material, passed: list[trim.Span], adapte
         raise _Failed(f"supersede failed: {done.reason} {done.detail}")
 
 
+def _failed(task: Path, cid: str, decision: TrimDecision, reason: str) -> TrimDecision:
+    """The FAILED answer.  What the build left of the successor is moved aside now, not at the next run: a state file
+    left in place is a clip to every later round, which ran it on as an ordinary clip and decided its subtitles again
+    on the cut media, without the original's (11-18: three clips; the original had gone on past the speaker step, so
+    no later trim run came to move it)."""
+    out: TrimDecision = {**decision, "status": "FAILED", "reason": reason}
+    try:
+        aside = _move_residue(task, f"{cid}{SUFFIX}")
+    except (_Failed, OSError) as exc:
+        aside, out["reason"] = [], f"{reason}; the leftover of {cid}{SUFFIX} was not moved aside: {exc}"
+    if aside:
+        out["left_aside"] = aside
+    return out
+
+
 def trim_clip(*, task: Path, cid: str, adapters_for: AdaptersFor, source_dir: str | None = None) -> TrimDecision:
     """Run the command for clip `cid` of `task`; see the module docstring.  `source_dir`: where X's recording is on the
     media host when X's state records no directory and it is not <X's work directory>/sources.  `adapters_for(remote_dir)`
@@ -440,9 +457,9 @@ def trim_clip(*, task: Path, cid: str, adapters_for: AdaptersFor, source_dir: st
                 "no span both answers proposed passed the guard" if agreed else "the two answers share no span to cut")})
         _build(task, ctx, mat, passed, adapters_for, decision, source_dir)
     except _Failed as exc:
-        return _write_decision(task, cid, {**decision, "status": "FAILED", "reason": str(exc)})
+        return _write_decision(task, cid, _failed(task, cid, decision, str(exc)))
     except (compilation.CompilationError, StateError, ValueError, RuntimeError, OSError) as exc:
-        return _write_decision(task, cid, {**decision, "status": "FAILED", "reason": f"{type(exc).__name__}: {exc}"})
+        return _write_decision(task, cid, _failed(task, cid, decision, f"{type(exc).__name__}: {exc}"))
     return _write_decision(task, cid, {**decision, "status": "TRIMMED", "reason": (
         f"cut {sum(b - a + 1 for a, b in passed)} cues{' (the owner marked)' if marks else ''}; "
         f"{decision['successor']} replaces {cid}")})

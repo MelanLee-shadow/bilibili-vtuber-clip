@@ -32,6 +32,8 @@ def test_section_is_loaded_from_active_profile_and_required(tmp_path, monkeypatc
     path = tmp_path / 'custom-principles.md'
     path.write_text('## 五、其他\n\n其他规则\n\n## 六、代词与指代对象一致\n\n- 本频道测试规则\n\n## 七、其他\n', encoding='utf-8')
     class Profile:
+        asset_root = tmp_path
+
         def asset_file(self, key):
             assert key == 'subtitle_correction_principles'
             return path
@@ -49,3 +51,39 @@ def test_adjudication_and_reviews_render_the_same_section():
     source = step_io._pronoun_rule()
     for prompt in ('subtitle_adjudicate.md', 'review.md', 'review_held.md', 'name_consistency.md'):
         assert source in step_io._render(prompt)
+
+
+def test_people_whose_pronoun_the_graph_records_join_the_rule(tmp_path, monkeypatch):
+    """维护者: her advisor is a man in the knowledge graph, so the subtitles write 他.  Any accepted node with
+    a pronoun reaches every writer of the subtitles through the one rule; a candidate node does not."""
+    import json
+
+    path = tmp_path / 'principles.md'
+    path.write_text('## 六、代词与指代对象一致\n\n- 身边人暂写默认\n\n## 七、其他\n', encoding='utf-8')
+    src = [{'kind': 'owner', 'ref': 'test', 'at': None}]
+    nodes = [{'id': 'person:新来的同学', 'kind': 'person', 'names': {'display': '新来的同学'}, 'aliases': ['同桌'],
+              'summary': '', 'status': 'accepted', 'sources': src, 'pronoun': '他'},
+             {'id': 'person:没核实的人', 'kind': 'person', 'names': {'display': '没核实的人'}, 'aliases': [],
+              'summary': '', 'status': 'candidate', 'sources': src, 'pronoun': '他'},
+             {'id': 'person:没记代词的人', 'kind': 'person', 'names': {'display': '没记代词的人'}, 'aliases': [],
+              'summary': '', 'status': 'accepted', 'sources': src}]
+    (tmp_path / 'knowledge').mkdir()
+    (tmp_path / 'knowledge/nodes.jsonl').write_text(''.join(json.dumps(n, ensure_ascii=False) + '\n' for n in nodes),
+                                                    encoding='utf-8')
+    (tmp_path / 'knowledge/edges.jsonl').write_text('', encoding='utf-8')
+
+    class Profile:
+        asset_root = tmp_path
+
+        def asset_file(self, _key):
+            return path
+
+    monkeypatch.setattr(step_io, 'load_channel_profile', lambda _root: Profile())
+    rule = step_io._pronoun_rule()
+    assert rule.startswith('## 六、代词与指代对象一致\n\n- 身边人暂写默认\n')
+    assert '新来的同学（同桌）→他' in rule and '没核实的人' not in rule and '没记代词的人' not in rule
+
+
+def test_the_channels_rule_names_her_advisor_as_he():
+    assert '李豆沙的导师' in step_io.PRONOUN_RULE and '→他' in step_io.PRONOUN_RULE.split('李豆沙的导师')[1][:60]
+    assert '小室→她' in step_io.PRONOUN_RULE

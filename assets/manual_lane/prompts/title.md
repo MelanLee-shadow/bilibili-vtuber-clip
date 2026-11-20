@@ -11,9 +11,11 @@
 你看到的是整片字幕，判断事实时以整片为准，不要因为局部看不到就判为编造。
 {compilation_context}
 ## 输出
-交付候选（个数见上面的发布硬门），并指出推荐的一个。每个候选写出：
+交付候选（个数见上面的发布硬门），并指出推荐的一个。各候选的点击理由或切入要不同；同一句原话换个剪法只算一条。每个候选写出：
+- click_reason：这条靠什么让人点（编辑方法第四节“找点击理由”里的哪一种，加一句具体说明）；
 - title_body：标题正文，不写频道前缀；脚本会根据 on_stage 生成前缀；
 - on_stage：本段出场的参与者正式名；
+- involved：这段主线涉及的其他人，用字幕里的叫法（同事、朋友、家人、{fans_name}；没有这个人这件事就讲不成才算，顺口提到的不算；没有就写空数组）。标题要写出他们的名字；
 - situation：这段属于哪种情况（单人杂谈、和别人互动、她看别人的内容、和 {fans_name} 互动、转述过去或设想、游戏……）；
 - punchline：笑点一句话；punchline_source：笑点来源（skill 列出的六类之一）；
 - punchline_person：{host}本人在这个笑点里的反应、态度或吐槽（换主播自检的依据）；
@@ -23,7 +25,7 @@
 再给 cover_lines：封面字 1–2 行（按编辑方法第五节）。第二行是笑点行，最多 {punch_max} 个字（要在安全区内放到 200px 以上）；第一行最多 {first_max} 个字；超过的会被判不合格。
 
 只输出一个 JSON 对象：
-{"candidates": [{"title_body": "不带频道前缀的标题正文", "on_stage": ["出场的参与者正式名"], "situation": "情况", "punchline": "笑点一句话", "punchline_source": "来源类别", "punchline_person": "{host}本人的反应", "why_click": "观众为什么会点进来", "rationale": "取舍理由", "swap_check": {"holds_with_other_host": false, "reason": "换主播后为什么不成立"}}], "recommended": 推荐候选的序号（从 0 起）, "cover_lines": ["第一行", "第二行"]}
+{"candidates": [{"title_body": "不带频道前缀的标题正文", "click_reason": "点击理由", "on_stage": ["出场的参与者正式名"], "involved": ["主线涉及的其他人"], "situation": "情况", "punchline": "笑点一句话", "punchline_source": "来源类别", "punchline_person": "{host}本人的反应", "why_click": "观众为什么会点进来", "rationale": "取舍理由", "swap_check": {"holds_with_other_host": false, "reason": "换主播后为什么不成立"}}], "recommended": 推荐候选的序号（从 0 起）, "cover_lines": ["第一行", "第二行"]}
 
 {feedback}
 

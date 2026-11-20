@@ -36,7 +36,9 @@ from .srt_text import _json_from_text
 from .step_io import _ask_cpa, _cpa_ok, _fail, _log, _render
 
 if TYPE_CHECKING:
+    from .stage_package import ReviewApplied
     from .state import CpaEvent
+    from .subtitle_track import TrackCue
 
 PURPOSE = "writing-canon"
 FILE = "subs/writing_canon.json"
@@ -460,3 +462,35 @@ def not_canonical(ctx: Ctx) -> str:
             if used[(place.split(" ")[0], *key)] > kept[key]:
                 left.append(f"{place}：{hit.written}（应为 {hit.canonical}）")
     return "；".join(left)[:600]
+
+
+# ----- step 9 ---------------------------------------------------------------------------------------------------
+def settle_edits(ctx: Ctx, edited: dict[int, TrackCue], track: Sequence[TrackCue], changed: ReviewApplied
+                 ) -> dict[int, TrackCue]:
+    """The review's new texts in the table's canonical writing, as step 3 left every sentence (one word, one written
+    form on every path).  A writing this clip already decided takes that verdict without a call, another is asked
+    once; the verdicts join subs/writing_canon.json.  An edit that only put a non-canonical writing back (a read-aloud
+    line copied from the chat record) is then no edit.  A failed call leaves the texts to step 8."""
+    numbers = [n for n, c in edited.items() if c["text"] != track[n - 1]["text"]]
+    units = [Unit(SUBTITLE, n, join_lines(str(edited[n]["text"]))) for n in numbers]
+    if not any(find(u.text) for u in units):
+        return edited
+    known = load(ctx.clip_dir)
+    try:
+        res = resolve(ctx, units, call_id=f"{PURPOSE}-review", known=known)
+    except WritingCanonFailed as exc:
+        changed["cpa"].extend(exc.cpa)
+        changed["skipped"].append(f"review texts not checked for canonical writing: {exc.detail}"[:160])
+        return edited
+    changed["cpa"].extend(res.cpa)
+    save(ctx.clip_dir, [*known, *res.conclusions])
+    out = dict(edited)
+    for n, unit, text in zip(numbers, units, res.texts, strict=True):
+        if text == unit.text:
+            continue
+        cue = cast("TrackCue", dict(edited[n], text=text))
+        if text == join_lines(str(track[n - 1]["text"])) and cue.get("speaker") == track[n - 1].get("speaker"):
+            out.pop(n)
+        else:
+            out[n] = cue
+    return out
