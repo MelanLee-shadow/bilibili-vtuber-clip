@@ -49,6 +49,38 @@ def test_boundary_and_dedup_share_source_clock_without_modifying_input(tmp_path,
     assert Path(clip["mac_bcut_srt"]).read_bytes() == before
 
 
+def _dedupe_ctx(tmp_path, remote):
+    cpa = FakeCpa([json.dumps({"verdict": "ACCEPT", "start_cue": 1, "end_cue": 3, "reason": "synthetic"})])
+    ctx = make_ctx(tmp_path, remote=remote, cpa=cpa, bcut_text=SRT)
+    ctx.state.data["clip"].update({"bcut_source_zero_ms": 223000, "start_cue": 1, "end_cue": 3})
+    assert step1_boundary(ctx).ok
+    return ctx
+
+
+def test_the_duplicate_check_runs_as_root_and_hands_its_files_back(tmp_path):
+    # 11-20: the checker reads the host's upload login (root's file) to know our own uploads; run as the lane's
+    # user it could not open it, and every clip of the night stopped at step 0
+    remote = FakeRemote(on_script=lambda n, b, r: RemoteResult(0, "", ""))
+    remote.files["/r/clip/dedup/result.json"] = json.dumps({"decision": "UNKNOWN"}).encode()
+    assert step0_dedupe(_dedupe_ctx(tmp_path, remote)).ok
+    [body] = [b for n, b in remote.scripts if n == "s0-dedupe"]
+    [as_root] = [line for line in body.splitlines() if "check_external_duplicate_clips.py" in line]
+    assert as_root.startswith("sudo -n bash -c '") and "--upload-account if-configured" in as_root
+    assert "sudo -n chown -R" in body and "/r/clip/dedup" in body and body.rstrip().endswith("exit $rc")
+
+
+def test_a_checker_that_fails_is_reported_with_its_own_log(tmp_path):
+    # before: the body ended in `echo rc=$?`, the failure read as success and the step died on the missing result
+    def crashed(name, body, remote):
+        if name == "s0-dedupe":
+            remote.files["/r/clip/dedup/run.log"] = "CookieSchemaError: cookie file is not readable JSON".encode()
+            return RemoteResult(1, "", "")
+        return RemoteResult(0, "", "")
+    outcome = step0_dedupe(_dedupe_ctx(tmp_path, FakeRemote(on_script=crashed)))
+    assert not outcome.ok and outcome.reason == "DEDUPE_TOOL_FAILED"
+    assert "cookie file is not readable" in outcome.note
+
+
 @pytest.mark.parametrize("origin,expected", [(None, 223500), (223000, 500)])
 def test_step8_member_points_to_original_with_correct_srt_relative_start(tmp_path, monkeypatch, origin, expected):
     ctx, _ = _prepared(tmp_path)
