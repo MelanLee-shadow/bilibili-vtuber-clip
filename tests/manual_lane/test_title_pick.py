@@ -239,3 +239,32 @@ def test_the_ranking_call_is_logged_among_the_cpa_calls_with_its_tier(tmp_path):
     _ctx, _cpa, picked = _run(tmp_path, [_answer(*map(_cand, BODIES))])
     rows = [c for c in picked[3] if c["call_id"].startswith("title-pick")]
     assert [(c["call_id"], c["effort"]) for c in rows] == [("title-pick-r0", "high")]
+
+
+def test_what_the_research_measured_goes_before_taste_and_a_failing_first_is_rewritten(tmp_path):
+    """维护者: the titles are judged by the channel's title research, not by how smoothly they read.  A candidate
+    the ranking says fails a research item (people named, voice, setup) goes behind those that fail none, whatever its
+    grade; when even the first fails one, the round is rewritten with the reason."""
+    answer = json.loads(pick_answer([1, 0, 2], {1: "很不错", 0: "还可以", 2: "一般"}))
+    answer["predicted"][1]["research"] = {"named": False, "voice": True, "setup": True}
+    ctx, cpa, picked = _run(tmp_path, [_answer(*map(_cand, BODIES))], pick=[json.dumps(answer, ensure_ascii=False)])
+    record = _record(ctx)
+    assert [c["pick"]["rank"] for c in record["candidates"]] == [1, 3, 2]          # 1 was first by taste, now last
+    assert record["candidates"][1]["pick"]["research_fail"] == ["named"]
+    assert "research_fail" not in record["candidates"][0]["pick"]
+    assert record["chosen"]["title"] == record["candidates"][0]["title"]
+    item = record["candidates"][1]["pick"]
+    assert "没点名这段涉及的人" in title_pick.feedback_line(item)
+    assert title_pick.research_fail({"research": {"setup": False, "voice": False}}) == ["voice", "setup"]
+    assert title_pick.research_fail({"grade": "x"}) == []
+
+
+def test_a_title_that_leaves_out_someone_the_story_involves_fails_the_self_check():
+    from src.autoslice.manual_lane import step6_title as s6
+
+    cand = {"title": "【李豆沙】《APEX》是我的，有什么问题吗", "on_stage": ["李豆沙"], "involved": ["小室", "李豆沙"],
+            "swap_check": {"holds_with_other_host": False}, "punchline_person": "嘴硬"}
+    checks = s6.title_checks(cand, ["李豆沙"], "1\n00:00:00,000 --> 00:00:01,000\n《APEX》是我的，有什么问题吗\n")
+    assert checks["failed"] == ["involved_named"] and checks["reasons"] == ["标题未点名这段涉及的人：小室"]
+    cand["title"] = "【李豆沙】想暴露小室的游戏库，结果《APEX》是我的，有什么问题吗"
+    assert s6.title_checks(cand, ["李豆沙"], "1\n00:00:00,000 --> 00:00:01,000\n《APEX》是我的，有什么问题吗\n")["ok"]

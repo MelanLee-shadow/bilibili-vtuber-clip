@@ -183,7 +183,7 @@ def test_a_non_formal_spelling_fails_the_self_check_and_the_reason_goes_back_to_
     first = record["candidates"][0]
     assert first["checks"]["failed"] == ["canonical_names"] and not first["checks"]["ok"]
     assert first["checks"]["reasons"] == ["名字写法不是正式写法：李豆莎 应写成 李豆沙"]
-    assert first["checks"]["score"] == len(si.TITLE_RULES) - 1 == 10
+    assert first["checks"]["score"] == len(si.TITLE_RULES) - 1
     assert "李豆莎 应写成 李豆沙" in cpa.title_prompts[1]
     assert record["chosen"]["title"] == "【李豆沙】李豆沙半分钟后真的破防了" and record["rounds"] == ["title", "title-regen-1"]
 

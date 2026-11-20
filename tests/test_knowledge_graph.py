@@ -234,3 +234,15 @@ def test_check_fails_when_graph_changes(tmp_path, monkeypatch, capsys):
 def test_seed_refuses_to_overwrite_existing_graph(capsys):
     assert builder.main(["seed"]) == 2
     assert "--force" in capsys.readouterr().err
+
+
+def test_a_pronoun_is_kept_through_load_and_dump_and_must_be_a_known_one(tmp_path):
+    root = _write(tmp_path, [dict(_node("person", "甲"), pronoun="他"), _node("person", "乙")], [])
+    graph = load_graph(root)
+    assert graph.nodes["person:甲"].pronoun == "他" and graph.nodes["person:乙"].pronoun is None
+    before = (root / "knowledge/nodes.jsonl").read_text(encoding="utf-8")
+    dump_graph(graph, root)
+    assert (root / "knowledge/nodes.jsonl").read_text(encoding="utf-8") == before
+    _write(tmp_path, [dict(_node("person", "甲"), pronoun="TA")], [])
+    with pytest.raises(GraphError):
+        load_graph(root)

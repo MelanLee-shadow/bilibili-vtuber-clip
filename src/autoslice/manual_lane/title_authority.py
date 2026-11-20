@@ -89,13 +89,18 @@ def corpus_titles(exclude_candidate: str | None = None) -> tuple[list[str], Sour
     return titles, source
 
 
+# How many candidates this lane's title call writes: many, each with its own click reason, then the checks and the
+# ranking keep the best (title skill section 4; the published title skills do the same: write ten, keep two).
+LANE_CANDIDATES = 8
+
+
 def gate_lines() -> str:
     """The hard gates step 6 and the upload path run (title_policy, channel_envelope), rendered from their code."""
     from src.autoslice import title_policy as tp
     from src.autoslice.channel_envelope import render_talk_title_prefix
 
     return "\n".join([
-        f"- 候选数：交付 {tp._TITLE_MAX_CANDIDATES} 个；少于 {tp._TITLE_MIN_CANDIDATES} 个不收（title_policy）。",
+        f"- 候选数：交付 {LANE_CANDIDATES} 个，点击理由或切入各不相同；少于 {tp._TITLE_MIN_CANDIDATES} 个不收。",
         f"- 长度：正文（前缀之后）不超过 {tp._TITLE_MAX_LEN} 字；整条含前缀不少于 {tp._TITLE_MIN_LEN} 字、"
         f"不超过 {tp._TITLE_PLATFORM_MAX_LEN} 字（title_policy.json）。",
         f"- 前缀（channel_envelope）：title_body 只写正文，on_stage 列实际出场者的名单正式名；脚本据此生成前缀，"

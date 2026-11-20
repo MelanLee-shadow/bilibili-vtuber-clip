@@ -13,6 +13,7 @@ from src.autoslice.manual_lane import normalize
 from src.autoslice.manual_lane import stage_impl as si
 from src.autoslice.manual_lane import stage_package as sp
 from src.autoslice.manual_lane import subtitle_track as st
+from src.autoslice.manual_lane import writing_canon as wc
 
 ROLE_TALK = [(0.0, 1.5, "李豆沙", "我们来聊聊攻受"), (1.6, 3.0, "雾深Girimi", "那你是一吗"),
              (3.1, 4.5, "李豆沙", "我当一还是零都行"), (4.6, 6.0, "李豆沙", "再等五分钟"),
@@ -108,3 +109,37 @@ def test_a_run_longer_than_a_line_is_broken_rather_than_stopping_the_clip():
     assert [p["text"] for p in nz.split_cue("谢谢SAVIOR-IN-THE-DARK的灯牌", 0.0, 3.5, audit)] == ["谢谢SAVIOR-IN-\nTHE-DARK的灯牌"]
     # a text that has a break under full protection keeps it: the name stays whole
     assert [p["text"] for p in nz.split_cue("今天谢谢小A同学送的大灯牌真的非常感谢", 0.0, 3.5, audit)][0].count("小A") == 1
+
+
+def _read_aloud_track(ctx):
+    track = [{"start_s": 0.0, "end_s": 1.5, "text": "开始有点嗑鸦豆沙了。嗑在哪呀？", "speaker": "李豆沙"},
+             {"start_s": 1.6, "end_s": 3.0, "text": "这之间的关联在哪", "speaker": "李豆沙"}]
+    st.write_track(ctx.clip_dir, track, speakers=True)
+    (ctx.clip_dir / "subs/doubts.json").write_text("[]", encoding="utf-8")
+    (ctx.clip_dir / "title").mkdir(parents=True, exist_ok=True)
+    (ctx.clip_dir / "title/title.txt").write_text("【李豆沙】标题\n", encoding="utf-8")
+    (ctx.clip_dir / "title/candidates.json").write_text('{"cover_lines": []}', encoding="utf-8")
+    wc.save(ctx.clip_dir, [{"where": wc.SUBTITLE, "cue": 1, "row": "嗑", "written": "磕", "canonical": "嗑",
+                            "verdict": "rewritten", "basis": "model", "why": "同一个词",
+                            "sentence": "开始有点嗑鸦豆沙了。嗑在哪呀？"}])
+
+
+def test_a_review_fix_that_copies_the_chat_record_keeps_the_tables_writing(tmp_path):
+    """The review copies a read-aloud line from the chat record, which wrote the word another way; step 3 already
+    decided that writing for this clip, so the fix is written canonically without a call and is no change, and
+    step 8's check finds nothing left (a clip stopped at WRITING_NOT_CANONICAL after its review)."""
+    ctx = make_ctx(tmp_path, remote=None, cpa=None)
+    _read_aloud_track(ctx)
+    applied = sp.apply_fixes(ctx, {"fixes": {"subtitles": [{"cue_id": 1, "text": "开始有点磕鸦豆沙了。嗑在哪呀？"}]}})
+    assert applied["subtitles"] == 0 and applied["cpa"] == []
+    assert _texts(ctx)[0] == "开始有点嗑鸦豆沙了。嗑在哪呀？"
+    assert wc.not_canonical(ctx) == ""
+
+
+def test_a_review_fix_with_other_changes_is_applied_in_the_tables_writing(tmp_path):
+    ctx = make_ctx(tmp_path, remote=None, cpa=None)
+    _read_aloud_track(ctx)
+    applied = sp.apply_fixes(ctx, {"fixes": {"subtitles": [{"cue_id": 1, "text": "开始有点磕鸦豆沙了，嗑在哪呀？"}]}})
+    assert applied["subtitles"] == 1
+    assert _texts(ctx)[0] == "开始有点嗑鸦豆沙了，嗑在哪呀？"
+    assert wc.not_canonical(ctx) == ""

@@ -608,7 +608,7 @@ def apply_fixes(ctx: Ctx, review: ReviewAnswer) -> ReviewApplied:
     track = subtitle_track.read_track(ctx.clip_dir)
     linked = linked_session(ctx.session)
     has_speakers = (ctx.clip_dir / "speaker/speaker.srt").exists() and all(c.get("speaker") for c in track)
-    edited = _subtitle_edits(fixes.get("subtitles") or [], track, changed["skipped"])
+    edited = writing_canon.settle_edits(ctx, _subtitle_edits(fixes.get("subtitles") or [], track, changed["skipped"]), track, changed)
     if linked and has_speakers:
         changed["speakers"] = _speaker_edits(fixes.get("speakers") or [], track, edited, changed["skipped"])
     if edited:
