@@ -143,6 +143,45 @@ def carry(state_x: ClipState, state_y: ClipState, dir_x: Path, dir_y: Path) -> b
     return True
 
 
+KEEP_SHARE = 0.6          # a cover line this far inside a sentence the revision changed may have changed with it
+
+
+def published_cover(ctx: Ctx, title: str) -> CoverRecord | None:
+    """The cover a revision keeps: the one its manuscript is published with.
+
+    A revision of a published clip (`revise`) that only mends subtitles must not also swap the cover on the same BV
+    (three subtitle revisions each drew a new cover, one of them a generated picture in place of a good
+    screenshot).  So when this clip revises another, step 6 chose the same title, and no sentence the revision changed
+    holds the cover's words, the predecessor's cover is taken as it is: nothing is drawn or looked at.  A changed
+    title, cover words inside a changed sentence, `revise --fresh-cover` or an imported cover each end this, and the
+    cover is made anew."""
+    from . import subtitle_track, text_overlap
+
+    origin = ctx.state.data.get("revised_from")
+    if not isinstance(origin, dict) or origin.get("fresh_cover"):
+        return None
+    before = ctx.clip_dir.parent / str(origin["cid"])
+    picture, cands, old_title, old_srt = (before / "cover/cover.png", before / "title/candidates.json",
+                                          before / "title/title.txt", before / "subs/final.srt")
+    if not all(p.is_file() for p in (picture, cands, old_title, old_srt)):
+        return None
+    if old_title.read_text(encoding="utf-8").strip() != title.strip():
+        return None
+    lines = [str(x).strip() for x in json.loads(cands.read_text(encoding="utf-8")).get("cover_lines") or []]
+    if not lines:
+        return None
+    now = {text_overlap.key(c["text"]) for c in subtitle_track.parse_blocks(
+        (ctx.clip_dir / "subs/final.srt").read_text(encoding="utf-8"))}
+    changed = [k for c in subtitle_track.parse_blocks(old_srt.read_text(encoding="utf-8"))
+               if (k := text_overlap.key(c["text"])) not in now]
+    if any(text_overlap.share(text_overlap.key(line), k, min_run=2) >= KEEP_SHARE for line in lines for k in changed):
+        return None
+    return {"source": str(before), "files": {"cover.png": str(picture)},
+            "png_sha256": hashlib.sha256(picture.read_bytes()).hexdigest(), "lines": lines,
+            "decided_by": "修订沿用已发布的封面", "authority": f"{origin['cid']}：标题没变，改动的字幕里没有封面上的字",
+            "note": "", "at": utc_now()}
+
+
 def adopt(ctx: Ctx, rec: CoverRecord, *, title: str, process: list[str], cpa: list) -> StepOutcome:
     """Step 6's cover half for an imported cover: the picture and its lines go where the generated ones go, and the route
     record says they were imported and on whose basis.  No model is asked."""
