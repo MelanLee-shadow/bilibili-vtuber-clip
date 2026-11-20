@@ -15,7 +15,7 @@ from . import (
     gates,
     normalize,
 )
-from .adapters import PROFILE_ENV, REMOTE_PY, REMOTE_REPO
+from .adapters import PROFILE_ENV, REMOTE_PY, REMOTE_REPO, root_script
 from .runner import Ctx, StepOutcome
 from .source_read import (
     SourceMissing,
@@ -143,6 +143,16 @@ def _source_intervals(ctx: Ctx, clip: ClipInfo, start: float, end: float) -> lis
             for row in compilation.source_intervals(manifest, round(start * 1000), round(end * 1000))]
 
 
+def _dedupe_log_tail(ctx: Ctx) -> str:
+    """The end of the checker's own log (dedup/run.log on the media host), '' when it cannot be read."""
+    local = _local(ctx, "dedup/run.log")
+    try:
+        ctx.adapters.remote.get(f"{ctx.remote_dir}/dedup/run.log", local)
+        return local.read_text(encoding="utf-8", errors="replace").strip()[-400:]
+    except (OSError, RuntimeError):
+        return ""
+
+
 def step0_dedupe(ctx: Ctx) -> StepOutcome:
     clip = _clip(ctx)
     start, end = clip["start_ms"] / 1000, clip["end_ms"] / 1000
@@ -163,16 +173,19 @@ def step0_dedupe(ctx: Ctx) -> StepOutcome:
     rd = ctx.remote_dir
     ctx.adapters.remote.put(local_pkg, f"{rd}/dedup/package.json")
     ctx.adapters.remote.put(local_srt, f"{rd}/dedup/window.srt")
-    body = (f"mkdir -p {rd}/dedup/evidence {rd}/dedup/audio\ncd {REMOTE_REPO}\n"
-            f"PYTHONDONTWRITEBYTECODE=1 {PROFILE_ENV} {REMOTE_PY} -B scripts/check_external_duplicate_clips.py "
-            f"--package {rd}/dedup/package.json --output {rd}/dedup/result.json "
-            f"--evidence-dir {rd}/dedup/evidence --audio-work-dir {rd}/dedup/audio --upload-account if-configured "
-            f"> {rd}/dedup/run.log 2>&1\n"
-            "echo rc=$?\n")
+    # As root, like step 10's recheck: the checker reads this host's upload login to know our own uploads, and that
+    # file is root's (11-20: run as the lane's user it could not open it and every clip of the night stopped here).
+    cmd = (f"cd {REMOTE_REPO} && env {PROFILE_ENV} {REMOTE_PY} -B scripts/check_external_duplicate_clips.py "
+           f"--package {rd}/dedup/package.json --output {rd}/dedup/result.json "
+           f"--evidence-dir {rd}/dedup/evidence --audio-work-dir {rd}/dedup/audio --upload-account if-configured "
+           f"> {rd}/dedup/run.log 2>&1")
+    body = (f"mkdir -p {rd}/dedup/evidence {rd}/dedup/audio\n"
+            + root_script(cmd.replace("'", "'\\''"), env=(), owned=f"{rd}/dedup", recursive=True))
     res = _run_remote(ctx, "s0-dedupe", body)
-    # Exit 3 is the checker's own "block" signal; the decision in result.json is what counts.
+    # Exit 3 is the checker's own "block" signal; the decision in result.json is what counts.  Any other exit is the
+    # checker failing: its own log says why.
     if res.rc not in (0, 3):
-        return _fail("DEDUPE_TOOL_FAILED", f"{res.stdout[-300:]}{res.stderr[-300:]}")
+        return _fail("DEDUPE_TOOL_FAILED", _dedupe_log_tail(ctx) or f"{res.stdout[-300:]}{res.stderr[-300:]}")
     local_result = _local(ctx, "dedup/result.json")
     ctx.adapters.remote.get(f"{rd}/dedup/result.json", local_result)
     result = json.loads(local_result.read_text(encoding="utf-8"))
