@@ -198,12 +198,15 @@ class Picked:
 
 
 def pick_free(cv: Cover, cover_lines: Sequence[str], identity: str) -> Picked | None:
-    """The free stage's choice: the best-ranked eligible free candidate whose thumbnail passes, or None (then one picture
-    is generated, cover_stages).  An eligible candidate whose thumbnail fails does not end the free stage."""
+    """The free stage's choice: the first eligible free candidate whose thumbnail passes, or None (then one picture is
+    generated, cover_stages).  A picture from the stream goes before a library sticker (owner 11-18「没有用截图呢」): the
+    official emote stands in when no screenshot passes, before anything is paid for.  An eligible candidate whose
+    thumbnail fails does not end the free stage."""
     ranked = rank(cv.log.rows, repeats=lambda r: bool(r.get("repeat")), target_px=round(rules("cover")["face_target_frac"] * 1080))
+    ranked.sort(key=lambda r: r.get("route") == "emote")          # stable: the ranking stands within each kind
     for position, row in enumerate(ranked):
         if cv.thumb(row["id"], cover_lines, identity)["status"] != "FAIL":
-            lead = f"免费候选排名第 {position + 1} 的 {row['id']}" if position else f"免费候选中总分最高的 {row['id']}"
+            lead = f"免费候选排第 {position + 1} 的 {row['id']}" if position else f"免费候选中排最前的 {row['id']}"
             skipped = f"；前 {position} 名缩略图未过" if position else ""
             return Picked(row["id"], f"{lead}（{row['score']['total']} 分）缩略图{cv.thumbs[row['id']]['status']}{skipped}",
                           {r["id"]: cv.thumbs[r["id"]] for r in ranked[:position + 1]}, None, None)

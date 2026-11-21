@@ -1,8 +1,9 @@
 """Step 6 cover: the thumbnail check (70-cover; the approved batch was looked at at 180 px wide).
 
-The chosen picture is shrunk to `cover.thumb_width_px` on the media host and one CPA vision reading says whether the host's
-face is still recognisable and whether the punchline is still legible.  A tool or answer problem is `UNJUDGED` (recorded,
-never blocking); only a reading that says no is `FAIL`."""
+The chosen picture is shrunk to `cover.thumb_width_px` on the media host and a CPA vision reading says whether the host's
+face is still recognisable and whether the punchline is still legible.  A reading that says no is asked twice more there
+and an axis fails only when most readings fail it (the tool's `settle`): one reading of a borderline picture must not
+send a usable free candidate away.  A tool or answer problem is `UNJUDGED` (recorded, never blocking)."""
 
 from __future__ import annotations
 
@@ -26,6 +27,7 @@ class ThumbVerdict(TypedDict, total=False):
     reason: str
     width_px: int
     elapsed_s: float | None
+    readings: int
 
 
 def read_thumb(result: dict[str, object] | None, rc: int, width: int) -> ThumbVerdict:
@@ -47,7 +49,7 @@ def read_thumb(result: dict[str, object] | None, rc: int, width: int) -> ThumbVe
 
 
 def check_thumb(ctx: Ctx, cid: str, *, width: int, lines: list[str], identity: str) -> tuple[ThumbVerdict, list[CpaEvent]]:
-    """Shrink candidate `cid` on the media host and read it once.  Returns the verdict and the call's cpa record."""
+    """Shrink candidate `cid` on the media host and read it.  Returns the verdict and one cpa record per reading."""
     rd = ctx.remote_dir
     job = {"out": f"{rd}/cover/cand", "id": cid, "width": width, "judge_model": CPA_JUDGE_MODEL,
            "question": _render("cover_thumb.md", lines=" / ".join(lines), identity=identity)}
@@ -68,8 +70,11 @@ def check_thumb(ctx: Ctx, cid: str, *, width: int, lines: list[str], identity: s
         pass
     verdict = read_thumb(result, res.rc, width)
     calls = cast("list[dict[str, object]]", (result or {}).get("calls") or [])
-    took = calls[-1].get("elapsed_s") if calls else None
-    verdict["elapsed_s"] = cast("float | None", took)
-    record = cast("CpaEvent", {"call_id": f"cover-thumb-{cid}", "kind": "vision", "model": CPA_JUDGE_MODEL, "rc": res.rc,
-                               "elapsed_s": took, "usage": (calls[-1].get("usage") if calls else None)})
-    return verdict, [record]
+    spent = [cast(float, c["elapsed_s"]) for c in calls if isinstance(c.get("elapsed_s"), (int, float))]
+    verdict["elapsed_s"] = round(sum(spent), 1) if spent else None
+    verdict["readings"] = len(cast("list[object]", (result or {}).get("readings") or [])) or len(calls)
+    records = [cast("CpaEvent", {"call_id": f"cover-thumb-{cid}" + (f"-{n}" if n > 1 else ""), "kind": "vision",
+                                 "model": CPA_JUDGE_MODEL, "rc": c.get("rc", res.rc), "elapsed_s": c.get("elapsed_s"),
+                                 "usage": c.get("usage")}) for n, c in enumerate(calls, 1)]
+    return verdict, records or [cast("CpaEvent", {"call_id": f"cover-thumb-{cid}", "kind": "vision", "model": CPA_JUDGE_MODEL,
+                                                  "rc": res.rc, "elapsed_s": None, "usage": None})]
