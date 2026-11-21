@@ -45,6 +45,7 @@ import cover_face_crop as crop_mod
 import cover_layout as layout
 import cover_text_fit as text_fit
 import cover_confirm
+import cover_dead_panel as dead_panel
 import cover_emote_layer as emote_layer
 from cover_face_crop import frame_face, protect
 
@@ -736,6 +737,8 @@ class Run:
                 self.plans["screenshot"] = dict(crop_mod.plan_crop(hf, head_top, spec.get("keep") or [], self.rules, need),
                                                 head_top=head_top, text_top_wanted=need)
             crop_mod.apply_crop(spec, self.plans["screenshot"]["crop"])
+        if (dead := dead_panel.widest_dead_block(frame, spec.get("crop"), self.rules)) >= self.rules["dead_panel_max_frac"]:
+            return self.fail("screenshot", f"SCREENSHOT_DEAD_PANEL: 画面里有一整块死黑（占 {dead:.0%}）")
         guest_measured = frame_face(gf, spec["crop"]) if gf else None
         spec["face"] = protect([frame_face(hf, spec["crop"]), guest_measured])
         spec["keep"] = list(spec.get("keep") or []) + ([guest_measured] if guest_measured else [])

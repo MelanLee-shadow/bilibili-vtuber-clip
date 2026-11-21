@@ -26,6 +26,7 @@ from typing import Any, Callable, Iterator, TypeVar
 if TYPE_CHECKING:
     pass
 
+from src.autoslice.base_default import PRODUCTION_BASE
 from src.autoslice.deployed_code_root import deployed_code_root
 
 
@@ -54,7 +55,7 @@ _thread_locks_guard = threading.Lock()
 _thread_locks: dict[tuple[int, int, str, int], threading.Lock] = {}
 _MAX_PROVIDER_CANDIDATES = 5
 _MAX_PROVIDER_QUEUE_SECONDS = 10800
-_CANONICAL_PRODUCTION_ROOT = Path("/opt/bilive/autoslice")
+_CANONICAL_PRODUCTION_ROOT = Path(PRODUCTION_BASE)
 _ProviderResult = TypeVar("_ProviderResult")
 
 

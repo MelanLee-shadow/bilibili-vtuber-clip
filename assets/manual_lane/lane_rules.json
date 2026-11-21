@@ -591,6 +591,10 @@
     "fans_bottom_bleed_px": 30,
     "fans_source": "认可批次的粉丝贴纸拼贴（制作记录 第 3 节 v2/mk.py c7）：主表情包脸中心 x=640（640/1920≈0.333），粉丝贴纸放 x=1300、高 560、底部出画 30px",
     "sticker_face_center_x_frac_source": "认可批次的贴纸/表情包：脸中心 x=1100（制作记录 第 2 节 J8），1100/1920≈0.573，靠画面中部偏右；主人物在左侧时取镜像",
+    "dead_panel_max_frac": 0.1,
+    "dead_panel_dark_level": 12,
+    "dead_panel_line_frac": 0.9,
+    "dead_panel_source": "2026-11-21 接管会话审片：一条片的截图封面左侧三分之一是死黑（投屏窗口什么都没采到），所有检查都过了。量 62 张裁切后的源帧：整列（或整行）九成以上是黑（最大通道 ≤12）的相邻块，最宽的占画面 3.1%，这一张 30.7%；线定在 10%。暗场景不算（暗像素连不成整列）。",
     "emote_seed_margin_frac": 0.06,
     "emote_backdrop_min_frac": 0.01,
     "emote_backdrop_tries": [

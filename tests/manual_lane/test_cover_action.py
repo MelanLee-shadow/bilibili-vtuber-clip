@@ -133,9 +133,14 @@ def _screenshot_route(tmp_path, job_extra):
     spec.loader.exec_module(cc)
     shot = tmp_path / "spec.json"
     shot.write_text(json.dumps({"id": "screenshot", "crop": [0, 0, 1920], "lines": [{"text": "a"}], "keep": []}), "utf-8")
+    from PIL import Image
+    from src.autoslice.manual_lane.lane_rules import rules
+
+    frame = tmp_path / "frame.png"                                   # a lit frame: nothing in it is a dead panel
+    Image.new("RGB", (1920, 1080), (120, 170, 230)).save(frame)
     cover = object.__new__(cc.Run)
-    cover.job = {"screenshot_spec": str(shot), **job_extra}
-    cover.frame, cover.guest_boxes, cover.specs, cover.failed, cover.plans = "frame.png", [[0, 0, 1, 1]], [], [], {}
+    cover.job, cover.rules = {"screenshot_spec": str(shot), **job_extra}, rules("cover")
+    cover.frame, cover.guest_boxes, cover.specs, cover.failed, cover.plans = str(frame), [[0, 0, 1, 1]], [], [], {}
     cover.head = lambda: (None, None)
     cover.guest_in_frame = lambda: None
     cover.screenshot()
