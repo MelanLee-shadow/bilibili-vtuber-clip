@@ -136,7 +136,7 @@ def choose(renderer, spec, style, route, job):
     choose).  `style` is the text style the renderer will try first for this content.  The hue families the routes of
     this process already took are kept on the job (`background_taken`), so the routes of one process keep apart too."""
     if "frame" in spec:
-        return None
+        return panel(renderer, spec, style, route, job) if spec.get("panel") else None
     taken = job.setdefault("background_taken", [])
     rules, table = job["rules"], job["rules"]["backgrounds"]
     sha = job.get("content_sha256") or renderer.default_content_sha256(spec)
@@ -161,3 +161,45 @@ def choose(renderer, spec, style, route, job):
             "style_id": style["style_id"], "route": route, "hue_walk": walk, "route_shift": shift,
             "hues_taken_by_other_routes": list(taken[:-1]), "recently_used": recent, "session_used": sorted(session),
             "chosen": rows[picked["id"]], "considered": list(rows.values()), "basis": picked.get("basis")}
+
+
+def panel(renderer, spec, style, route, job):
+    """The colour of the text panel of a screenshot with a column (cover_side): the same table and the same turns as the
+    pastel grounds (not used by the last covers, not by this session, then the content hash).  Only the words stand on a
+    panel, so the conditions are theirs: both of the style's colours and its stroke read on the panel from top to
+    bottom.  Paints the panel (the spec then points at the painted picture) and returns the record of the choice."""
+    import cover_side
+
+    rules, table = job["rules"], job["rules"]["backgrounds"]
+    sha = job.get("content_sha256") or renderer.default_content_sha256(spec)
+    recipe = renderer.STROKES[style["stroke"]]
+    rings = [tuple(recipe[k]) for k in ("inner", "outer") if recipe[k] is not None]
+    need_text, need_stroke = renderer.MIN_CONTRAST, rules["background_stroke_min_distance"]
+    rows = {}
+    for entry in table:
+        colors = [_rgb(c) for c in entry["colors"]]
+        unders = [_gradient(colors, y, renderer.H) for y in (0, renderer.H / 2, renderer.H)]
+        text = min(_distance(renderer.PAL[c][1], u) for c in style["colors"] for u in unders)
+        stroke = min(max(_distance(ring, u) for ring in rings) for u in unders)
+        failed = [name for name, bad in (("TEXT_FILL_LOW_CONTRAST", text < need_text),
+                                         ("TEXT_STROKE_LOW_CONTRAST", stroke < need_stroke)) if bad]
+        rows[entry["id"]] = {"id": entry["id"], "text_distance": round(text, 1), "stroke_distance": round(stroke, 1),
+                             "layer_fused_frac": 0.0, "layer_mean_distance": None, "ok": not failed, "failed": failed,
+                             "miss": round(max(0, need_text - text) / need_text + max(0, need_stroke - stroke) / need_stroke, 3)}
+    passing, tier = [e for e in table if rows[e["id"]]["ok"]], "passes_all"
+    if not passing:
+        tier, passing = "none_passes_least_missed", [min(table, key=lambda e: rows[e["id"]]["miss"])]
+    recent, session = list(job.get("recent_background_ids") or ()), set(job.get("session_background_ids") or ())
+    rank = {e["id"]: 0 if e["id"] not in recent and e["id"] not in session
+            else 1 + max((i for i, r in enumerate(recent) if r == e["id"]), default=-1) + 1 for e in passing}
+    picked, level, walk = _select(passing, rank, sha, 0, [])
+    if level and tier == "passes_all":
+        tier = "passes_all_but_recently_used"
+    asked = spec["panel"]
+    shape = cover_side.paint(spec["frame"], spec, picked["colors"], rules, f"{job['out']}/{spec['id']}.panel.png")
+    del spec["panel"]                                       # the renderer never sees it
+    return {"id": picked["id"], "colors": list(picked["colors"]), "hue": picked["hue"], "tone": picked["tone"], "tier": tier,
+            "style_id": style["style_id"], "route": route, "hue_walk": walk, "route_shift": 0,
+            "hues_taken_by_other_routes": [], "recently_used": recent, "session_used": sorted(session),
+            "chosen": rows[picked["id"]], "considered": list(rows.values()), "basis": picked.get("basis"),
+            "panel": {"side": asked["side"], "edge": asked["edge"], "shape": [list(point) for point in shape]}}

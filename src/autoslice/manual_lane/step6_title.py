@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, TypedDict, cast
 from src.autoslice.channel_envelope import EnvelopeError, HOST_NAMES, parse_talk_title, render_talk_title
 
 from . import channel
+from .publication_id import publication_cid
 from . import (
     circle_context,
     cover_import,
@@ -566,7 +567,10 @@ def pick_title(ctx: Ctx) -> tuple[str, list[str], list[str], list[CpaEvent], Pat
     from .revise_run import title_online      # that module reaches the steps through trim_run: imported when used
 
     retitle = verdicts.retitle(str(ctx.state.data["clip"].get("cid") or ""))
-    online = None if approved or retitle else title_online(ctx.clip_dir, ctx.state)   # a revision keeps the title online
+    revises = isinstance(ctx.state.data.get("revised_from"), dict)
+    edited = (title_history.edited_title(ctx, publication_cid(str(ctx.state.data["clip"].get("cid") or ctx.clip_dir.name)))
+              if revises and not (approved or retitle) else None)
+    online = None if approved or retitle else title_online(ctx.clip_dir, ctx.state, edited)   # a revision keeps the title online
     title = online or title
     cands_path = _local(ctx, "title/candidates.json")
     cands_path.write_text(json.dumps({

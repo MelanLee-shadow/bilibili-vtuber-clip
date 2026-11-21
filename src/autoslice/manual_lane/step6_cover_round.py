@@ -199,11 +199,11 @@ class Picked:
 
 def pick_free(cv: Cover, cover_lines: Sequence[str], identity: str) -> Picked | None:
     """The free stage's choice: the first eligible free candidate whose thumbnail passes, or None (then one picture is
-    generated, cover_stages).  A picture from the stream goes before a library sticker (owner 11-18「没有用截图呢」): the
-    official emote stands in when no screenshot passes, before anything is paid for.  An eligible candidate whose
-    thumbnail fails does not end the free stage."""
+    generated, cover_stages).  A candidate that looks like a cover this stream already has goes behind one that does not
+    (owner 11-21「今天这个新切片全都是同一个标题封面」); among those, a picture from the stream goes before a library
+    sticker (owner 11-18「没有用截图呢」).  An eligible candidate whose thumbnail fails does not end the free stage."""
     ranked = rank(cv.log.rows, repeats=lambda r: bool(r.get("repeat")), target_px=round(rules("cover")["face_target_frac"] * 1080))
-    ranked.sort(key=lambda r: r.get("route") == "emote")          # stable: the ranking stands within each kind
+    ranked.sort(key=lambda r: (bool(r.get("repeat")), r.get("route") == "emote"))   # stable: the ranking stands within each kind
     for position, row in enumerate(ranked):
         if cv.thumb(row["id"], cover_lines, identity)["status"] != "FAIL":
             lead = f"免费候选排第 {position + 1} 的 {row['id']}" if position else f"免费候选中排最前的 {row['id']}"

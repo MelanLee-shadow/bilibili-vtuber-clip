@@ -206,7 +206,22 @@ def _row_projection(manuscript: str) -> dict[str, Any] | None:
         return None
     row = rows[0]
     return {"status": row["status"], "bvid": str(row.get("bvid") or ""), "recording_date": str(row.get("recording_date") or ""),
-            "reconciliation_status": str((row.get("publication_reconciliation") or {}).get("status") or "")}
+            "reconciliation_status": str((row.get("publication_reconciliation") or {}).get("status") or ""),
+            "reconciliation_title": str((row.get("publication_reconciliation") or {}).get("title") or "")}
+
+
+METADATA_EDITED = "VERIFIED_SAME_BV_METADATA"      # lane_publish.metadata: the row is bound to a title/tags/description edit
+
+
+def edited_title(ctx: Ctx, manuscript: str) -> str | None:
+    """The title an in-place edit gave the published manuscript (lane_publish metadata-plan/-run/-verify-live rebinds the
+    registry row to its receipt, with the new title), or None when the row is not bound to such an edit.  The lane's own
+    upload records (upload/online.json) do not know of that edit: a revision that kept their title would put the old
+    title back on the BV (a cover revision carried the title the edit had just replaced)."""
+    row = published_row(ctx, manuscript)
+    if row and row.get("reconciliation_status") == METADATA_EDITED and str(row.get("reconciliation_title") or "").strip():
+        return str(row["reconciliation_title"]).strip()
+    return None
 
 
 def bound_receipt(manuscript: str) -> dict[str, Any]:

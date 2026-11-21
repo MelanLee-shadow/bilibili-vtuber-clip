@@ -137,15 +137,19 @@ class Column:
             sticker, box, plan = place_solo(layer, face, run.renderer, self.rules, None, "right",
                                             frac if self.side == "left" else 1 - frac)
             zone = box[0] - FACE_GAP - SAFE_X0 if self.side == "left" else SAFE_X1 - box[2] - FACE_GAP
-            ink = run.text_ink({"lines": self.rows})[1]
-            start = self.rules["punch_start_px"]
-            size = start - 6 * ((start - self.rules["punch_floor_px"]) // 6)      # the renderer's own size grid
-            wide = max(ink(i, size)[0] for i, row in enumerate(self.rows) if row.get("punch"))
+            wide, size = self.punch_row(run)
             if wide <= zone:
                 self.placed[route] = {"zone_px": zone, "punch_row_px": wide, "at_size": size}
                 return sticker, box, dict(plan, text_layout=self.side)
             self.refused[route] = {"zone_px": zone, "punch_row_px": wide, "at_size": size}
         return place_solo(layer, face, run.renderer, self.rules, need_top, host_side, centre_frac)
+
+    def punch_row(self, run):
+        """(width of the widest punchline row, the size it is measured at): the floor size on the renderer's own grid."""
+        ink = run.text_ink({"lines": self.rows})[1]
+        start = self.rules["punch_start_px"]
+        size = start - 6 * ((start - self.rules["punch_floor_px"]) // 6)
+        return max(ink(i, size)[0] for i, row in enumerate(self.rows) if row.get("punch")), size
 
     def text(self, route, lines, layout="top"):
         """The layout and lines of a candidate's spec."""

@@ -407,7 +407,8 @@ def cover_plan(ctx: Ctx, cover_lines: Sequence[str], brief: CoverBrief, names: S
                 "session_compositions": [cast("list[str]", c["composition_key"]) for c in covers
                                          if c.get("composition_key") and c.get("recording_date") == date]}
     peers = cover_peers(ctx)
-    text_layout, layout_why = cover_column.next_layout(rotation["recent_layouts"], rules("cover"))
+    text_layout, layout_why = cover_column.next_layout(
+        rotation["recent_layouts"], rules("cover"), [c.get("layout") for c in covers if c.get("recording_date") == date])
     line = ("封面候选：screenshot、" + (f"emote（官方表情包 {entry.id} {entry.label}，{reason}）、" if entry else "")
             + f"cutout、{ai}" + ("" if entry else f"；表情包未列（{reason}）")
             + f"；近期封面 {len(covers)} 张（上一张 {recent['previous_route'] or '无'}，排除主表情包 {sorted(excluded) or '无'}，"
@@ -554,8 +555,9 @@ def _cover_job(ctx: Ctx, cover_lines: Sequence[str], plan: CoverPlan, boxes: Map
     host_side, _ = cover_host_side(plan, boxes)
     cover_rules = {k: v for k, v in rules("cover").items() if not (k.startswith("_") or k.endswith("_source") or k == "source")}
     # a column of text beside her: only when it is this cover's turn, she stands alone, and the brief's rows are these lines
+    # (the fans' sticker fixes the emote collage's centre: that route keeps its two lines itself, cover_layout.Column.place)
     rows = (cover_column.rows_of(cover_lines, (plan.get("brief") or {}).get("column_rows"), rules("cover"))
-            if plan.get("text_layout") in cover_column.COLUMNS and len(names) <= 1 and not plan.get("fans_emote") else None)
+            if plan.get("text_layout") in cover_column.COLUMNS and len(names) <= 1 else None)
     return {"text_layout": plan.get("text_layout") if rows else cover_column.TOP, "column_rows": cast("JsonValue", rows or []),
             "frame": f"{rd}/cover/frame.png", "screenshot_spec": f"{rd}/cover/spec.json", "out": f"{rd}/cover/cand",
             "lines": list(cover_lines), "font": f"{rd}/cover/fonts/{Path(COVER_FONT_REMOTE).name}",
@@ -570,6 +572,7 @@ def _cover_job(ctx: Ctx, cover_lines: Sequence[str], plan: CoverPlan, boxes: Map
             "recent_style_ids": list((plan.get("rotation") or {}).get("recent_style_ids") or []),
             "recent_background_ids": list((plan.get("rotation") or {}).get("recent_background_ids") or []),
             "session_background_ids": list((plan.get("rotation") or {}).get("session_background_ids") or []),
+            "session_compositions": list((plan.get("rotation") or {}).get("session_compositions") or []),
             "peers": bool((plan.get("peers") or {}).get("peers")),
             "peer_names": list((plan.get("peers") or {}).get("names") or []), "host_side": host_side, "identity": identity,
             "judge_question": _render("cover_judge.md", title=title, lines=" / ".join(cover_lines),
@@ -612,7 +615,7 @@ def _render_cover(ctx: Ctx, cues: Sequence[SrtCue], cover_lines: Sequence[str],
     for local, remote in ((local_spec, "cover/spec.json"), (local_job, "cover/job.json"), (COVER_RENDERER, "cover/render_cover.py"),
                           (COVER_REDRAW, "cover/redraw_background.py"), (COVER_STYLES, "cover/styles.json"),
                           (COVER_ROTATION, "cover/cover_style_rotation.py"), (COVER_CANDIDATES_TOOL, "cover/cover_candidates.py"),
-                          *((REMOTE_TOOLS / m, f"cover/{m}") for m in ("pick_frame.py", "cover_face_crop.py", "cover_text_fit.py", "cover_layout.py", "cover_clock.py", "cover_fast_text.py", "cover_background.py", "cover_band.py", "veto.py", "cover_confirm.py", "cover_emote_layer.py", "cover_dead_panel.py"))):
+                          *((REMOTE_TOOLS / m, f"cover/{m}") for m in ("pick_frame.py", "cover_face_crop.py", "cover_text_fit.py", "cover_layout.py", "cover_clock.py", "cover_fast_text.py", "cover_background.py", "cover_band.py", "veto.py", "cover_confirm.py", "cover_emote_layer.py", "cover_dead_panel.py", "cover_side.py"))):
         ctx.adapters.remote.put(local, f"{rd}/{remote}")
     prep = _run_remote(ctx, "s6-cover-frame",
                        f"mkdir -p {rd}/cover/fonts {rd}/cover/cand\ncp {COVER_FONT_REMOTE} {rd}/cover/fonts/{Path(COVER_FONT_REMOTE).name}\n"

@@ -353,19 +353,15 @@ def _member(ctx: Ctx, *, files: dict[str, str], cover_lines: list[str], dedup: D
             recording = recordings[piece["recording"]]
             piece["recording_context_srt"] = {
                 "path": str(compilation.recording_bcut_path(ctx.clip_dir, recording)),
-                "source_zero_srt_ms": -recording["bcut_source_zero_ms"],
-            }
+                "source_zero_srt_ms": -recording["bcut_source_zero_ms"]}
     return {
-        "schema_version": "finished-media-member.v1",
-        "member_slug": member_slug(clip["cid"]),
+        "schema_version": "finished-media-member.v1", "member_slug": member_slug(clip["cid"]),
         "recording_date": ctx.session["recording_date"],
         "maker": {"kind": "AGENT", "id": maker_id(ctx)},
         "files": {**files, "intro_receipt": str(ctx.clip_dir / "burn/intro_result.json")},
         "source": {
-            "pieces": pieces,
-            "context_srt": {"path": clip["mac_bcut_srt"],
-                            "source_zero_srt_ms": clip["start_ms"] - bcut_source_zero_ms(clip)},
-        },
+            "pieces": pieces, "context_srt": {"path": clip["mac_bcut_srt"],
+                                              "source_zero_srt_ms": clip["start_ms"] - bcut_source_zero_ms(clip)}},
         "selection_hook": selection_hook,
         "doubts": [{"id": d["id"], "grade": grade_of(d),
                     "cue_index": (cast(Sequence[int | None], numbers.get(str(d["id"]), [])) or [None])[0],
@@ -677,10 +673,14 @@ def _title_fix(ctx: Ctx, title: str, skipped: list[str], cpa_calls: list[CpaEven
     final subtitles with speakers, and the skill's judge on the title with the package's cover lines."""
     from src.autoslice.title_quote_check import check_title_quotes
 
+    from .revise_run import keeps_title
     from .step6_title import publish_gate_violations, title_inputs, title_judge
 
     current_title = (ctx.clip_dir / "title/title.txt").read_text(encoding="utf-8").strip()
     if not title:
+        return False
+    if keeps_title(ctx.state):     # a revision of a published manuscript: its title changes by the title edit, not here
+        skipped.append("review title not applied: a revision keeps the published title (改题走只改标题的工具)")
         return False
     canon_title = normalize.canon_text(title)[0]
     broken = gates.title_banned(canon_title)

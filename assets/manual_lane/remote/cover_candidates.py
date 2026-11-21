@@ -38,6 +38,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # the sibling modules uploaded with this tool
 import cover_background as background
+import cover_side as side_shot
 import cover_band as band
 import cover_clock as clock
 import cover_fast_text as fast_text
@@ -730,19 +731,14 @@ class Run:
         if hf is None:                          # a cover of her without her face is not made
             return self.fail("screenshot", "HOST_FACE_NOT_FOUND")
         gf = self.guest_in_frame()
-        if not self.guest_boxes:            # a solo frame is cropped around the measured face, as tight as the head allows
-            ink = self.text_ink(spec)[1]
-            need = text_fit.need_face_top(ink, len(spec["lines"]), self.rules, self.rules["punch_floor_px"])
-            with clock.phase("layout"):
-                self.plans["screenshot"] = dict(crop_mod.plan_crop(hf, head_top, spec.get("keep") or [], self.rules, need),
-                                                head_top=head_top, text_top_wanted=need)
-            crop_mod.apply_crop(spec, self.plans["screenshot"]["crop"])
+        if not self.guest_boxes:            # a solo frame: beside the column of words when it is its turn, else tight on the face
+            side_shot.solo(self, spec, hf, head_top, clock)
         if (dead := dead_panel.widest_dead_block(frame, spec.get("crop"), self.rules)) >= self.rules["dead_panel_max_frac"]:
             return self.fail("screenshot", f"SCREENSHOT_DEAD_PANEL: 画面里有一整块死黑（占 {dead:.0%}）")
         guest_measured = frame_face(gf, spec["crop"]) if gf else None
         spec["face"] = protect([frame_face(hf, spec["crop"]), guest_measured])
         spec["keep"] = list(spec.get("keep") or []) + ([guest_measured] if guest_measured else [])
-        self.specs.append(("screenshot", spec, "直播截图整张当底，弹幕框模糊", None,
+        self.specs.append(("screenshot", spec, side_shot.note(spec), None,
                            {"kind": "picture", "src": frame, "face": hf}, guest_measured))
 
     def emote(self, emote):
@@ -1015,6 +1011,10 @@ class Run:
                                                            recent_style_ids=job.get("recent_style_ids") or (),
                                                            content_sha256=job.get("content_sha256"))
         except SystemExit as exc:
+            if route == "screenshot" and self.column.placed.pop("screenshot", None):     # the column did not fit after all
+                self.column.refused["screenshot"] = {"reason": f"RENDER_REFUSED: {exc}"}
+                self.screenshot()
+                return self.render_row(*self.specs.pop())
             banded = route == "screenshot" and band.banded_spec(original, text_fit.need_face_top(
                 ink, len(spec["lines"]), self.rules, self.rules["punch_floor_px"]), os.path.join(out, "frame-band.png"))
             if banded:                     # 字放不下先换版式 (70-cover): the picture lowered for its text, not dropped
@@ -1063,7 +1063,7 @@ class Run:
                 "stroke": rec[-1].get("stroke"), "style_selection": selection,
                 "host_side": self.host_side if composed and guest_measured else ("right" if self.host_right else "left"),
                 "composition": ("peers_equal" if composed and guest_measured else
-                                "layers" if composed else "picture_band" if spec.get("band") else "picture"),
+                                "layers" if composed else "picture_band" if spec.get("band") else spec.get("composition", "picture")),
                 "band": spec.get("band")}
 
 
