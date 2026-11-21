@@ -25,6 +25,7 @@ import struct
 import sys
 import time
 
+from src.autoslice.base_default import default_base
 from src.autoslice.batch_items import ItemBatch
 from src.autoslice import evidence_lease
 
@@ -82,8 +83,7 @@ def metadata_json(path: Path) -> dict:
 
 def identity(info: os.stat_result) -> dict:
     return {"device": info.st_dev, "inode": info.st_ino, "size": info.st_size,
-            "mtime_ns": info.st_mtime_ns, "ctime_ns": info.st_ctime_ns,
-            "links": info.st_nlink}
+            "mtime_ns": info.st_mtime_ns, "ctime_ns": info.st_ctime_ns, "links": info.st_nlink}
 
 
 def under(path: Path, parent: Path) -> bool:
@@ -896,7 +896,7 @@ def apply_plan(plan: dict) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base", type=Path, default=Path("/opt/bilive/autoslice"))
+    parser.add_argument("--base", type=Path, default=Path(default_base()))
     parser.add_argument("--home", type=Path)
     parser.add_argument("--json", type=Path)
     parser.add_argument("--preserve-json", type=Path, help="JSON array of explicitly retained paths")

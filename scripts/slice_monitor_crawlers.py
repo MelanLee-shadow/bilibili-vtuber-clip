@@ -8,6 +8,8 @@ authority: ``Result`` must be ``success`` and ``ExecMainStatus`` must be ``0``.
 """
 from __future__ import annotations
 
+from src.autoslice.base_default import PRODUCTION_BASE
+
 UNIT_PREFIX = "oci3-crawl-"
 UNIT_SUFFIX = ".service"
 
@@ -44,7 +46,7 @@ def crawler_problems(results):
             "id": f"crawler_{job}_failed", "sev": "WARN",
             "msg": f"只读爬虫 {unit} 上次运行 {shown}（成功应为 Result=success 且 ExitStatus=0）；"
                    "对应的快照可能已过期。",
-            "fix": f"看 <宿主>:/opt/bilive/autoslice/logs/{job}.log 末行（失败行在日志文件，不在 journal）。",
+            "fix": f"看 <宿主>:{PRODUCTION_BASE}/logs/{job}.log 末行（失败行在日志文件，不在 journal）。",
         })
     return problems
 

@@ -241,6 +241,30 @@ def archive_date_issues(state: dict[str, Any], archive: dict[str, Any], date: st
     return sorted(issues)
 
 
+def predecessor_awaiting_disposition(state: dict[str, Any], relative: str) -> str | None:
+    """The piece recorded right before this one, in the same session, that the adapter has not settled yet.
+
+    A short piece at the start of a connection may be a reconnect stub.  The adapter classifies it at the end of
+    the stream, against this piece's local source and MP4 (bililive_recorder_adapter.build_connection_stub_disposition).
+    If they are gone by then the stub can never be classified and is re-muxed, and fails, on every pass
+    (and the first piece was short and left the host before the stream ended).  So a piece
+    stays local while the one before it is closed and neither finalized nor given a disposition.
+    """
+    events = state.get("webhook_files") or {}
+    mine = events.get(relative)
+    session = mine.get("session_id") if isinstance(mine, dict) else None
+    earlier = [name for name in events if name < relative]      # names carry the opening time
+    if not session or not earlier:
+        return None
+    before = max(earlier)
+    evidence = events[before]
+    if (not isinstance(evidence, dict) or evidence.get("session_id") != session
+            or evidence.get("status") != "CLOSED" or before in state.get("finalized", {})
+            or before in state.get("source_dispositions", {})):
+        return None
+    return before
+
+
 def disposition_references(state: dict[str, Any]) -> set[str]:
     """Physical evidence for dispositions must keep its original placement.
 

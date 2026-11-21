@@ -612,7 +612,7 @@ def _render_cover(ctx: Ctx, cues: Sequence[SrtCue], cover_lines: Sequence[str],
     for local, remote in ((local_spec, "cover/spec.json"), (local_job, "cover/job.json"), (COVER_RENDERER, "cover/render_cover.py"),
                           (COVER_REDRAW, "cover/redraw_background.py"), (COVER_STYLES, "cover/styles.json"),
                           (COVER_ROTATION, "cover/cover_style_rotation.py"), (COVER_CANDIDATES_TOOL, "cover/cover_candidates.py"),
-                          *((REMOTE_TOOLS / m, f"cover/{m}") for m in ("pick_frame.py", "cover_face_crop.py", "cover_text_fit.py", "cover_layout.py", "cover_clock.py", "cover_fast_text.py", "cover_background.py", "cover_band.py", "veto.py", "cover_confirm.py", "cover_emote_layer.py"))):
+                          *((REMOTE_TOOLS / m, f"cover/{m}") for m in ("pick_frame.py", "cover_face_crop.py", "cover_text_fit.py", "cover_layout.py", "cover_clock.py", "cover_fast_text.py", "cover_background.py", "cover_band.py", "veto.py", "cover_confirm.py", "cover_emote_layer.py", "cover_dead_panel.py"))):
         ctx.adapters.remote.put(local, f"{rd}/{remote}")
     prep = _run_remote(ctx, "s6-cover-frame",
                        f"mkdir -p {rd}/cover/fonts {rd}/cover/cand\ncp {COVER_FONT_REMOTE} {rd}/cover/fonts/{Path(COVER_FONT_REMOTE).name}\n"

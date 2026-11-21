@@ -468,10 +468,23 @@ class Mover:
         os.chmod(target, 0o644)
         identity.fsync_dir(target.parent)
 
-    def evict(self, relative: str, row: dict[str, Any]) -> None:
+    def evict(self, relative: str, row: dict[str, Any], names: list[str] | None = None) -> None:
+        """Remove the local copy of the named files (default: every file of the segment).
+
+        A file leaves once 115 holds the whole segment (the adapter then stops reading the local
+        group) and its own 123 copy is proven; it does not wait for the segment's other files, so
+        a remux is not kept beside its source while the source is still uploading.  A segment
+        bound to a connection stub is released whole: its receipt names both objects of both files.
+        """
+        names = list(row["files"]) if names is None else names
+        if not set(names) <= set(row["files"]):
+            raise identity.ArchiveError("eviction names a file outside the segment")
         current = identity.read_json(self.state_path)
         if not identity.verified_segment(current, self.archive, relative):
             raise identity.ArchiveError("archive/adapter identity changed before eviction")
+        if (any(not row["files"][name].get("deleted") for name in names)
+                and identity.predecessor_awaiting_disposition(current, relative)):
+            raise identity.ArchiveError("the piece before this one is not settled; eviction waits for it")
         stubs = None
         if relative in identity.disposition_references(current):
             # A connection stub's successor is released once 115 and 123 are
@@ -482,12 +495,15 @@ class Mover:
                 row["retained_reason"] = "ADAPTER_DISPOSITION_PHYSICAL_EVIDENCE"
                 self.save()
                 return
+        if stubs is not None and any(not item.get("deleted") and name not in names
+                                     for name, item in row["files"].items()):
+            raise identity.ArchiveError("a disposition successor is released whole; eviction deferred")
         if self.backup_root is not None and not all(
-                item.get("deleted") or self.backup_proven(name, item)
-                for name, item in row["files"].items()):
+                row["files"][name].get("deleted") or self.backup_proven(name, row["files"][name])
+                for name in names):
             raise identity.ArchiveError("123 backup not verified; eviction deferred")
         wanted = self.lane_wants(relative, row)
-        paths = [self.spool / name for name in row["files"]]
+        paths = [self.spool / name for name in names]
         if open_files(paths):
             raise identity.ArchiveError("local artifact is in use; eviction deferred")
         if stubs is not None:
@@ -506,7 +522,8 @@ class Mover:
                 self.save()
             elif release.get("dispositions") != expected:
                 raise identity.ArchiveError("disposition changed after successor release")
-        for name, item in row["files"].items():
+        for name in names:
+            item = row["files"][name]
             path = self.spool / name
             if item.get("deleted"):
                 if path.exists() or path.is_symlink():
@@ -594,15 +611,46 @@ class Mover:
                 # backup upload does not re-read the 115 copies on each retry.
                 # A backup proven once stays proven; 115 stays the archive of
                 # record and is re-checked right before deletion.
+                held: identity.ArchiveError | None = None
                 if self.backup_root is not None:
-                    self.verify_each([(row["files"][name], self.backup_place(name, row["files"][name]))
-                                      for name in live if not self.backup_proven(name, row["files"][name])])
+                    try:
+                        self.verify_each([(row["files"][name], self.backup_place(name, row["files"][name]))
+                                          for name in live if not self.backup_proven(name, row["files"][name])])
+                    except identity.ArchiveError as exc:
+                        held = exc
+                # Each file leaves on its own two proofs (evict); the copies still on their way
+                # keep the segment in the retry loop with their reason.
+                ready = [name for name in live
+                         if self.backup_root is None or self.backup_proven(name, row["files"][name])]
+                whole = relative in identity.disposition_references(state)
+                if held is not None and (whole or not ready):
+                    raise held
+                waiting = live and identity.predecessor_awaiting_disposition(state, relative)
+                if waiting:
+                    # Not an error and not retried with a re-read of the 115 copies: the adapter settles the
+                    # piece before this one at the end of the stream, from this piece's local files.
+                    if row.get("waiting_for") != waiting or row.get("error"):
+                        row["waiting_for"] = waiting
+                        for key in ("error", "reason", "next_attempt_epoch"):
+                            row.pop(key, None)
+                        self.save()
+                    if held is not None:
+                        raise held
+                    continue
+                row.pop("waiting_for", None)
+                wanted = set() if whole else self.lane_wants(relative, row)
+                # What frees the disk goes first: a file the lane takes over is only renamed.
+                ready.sort(key=lambda name: name in wanted)
                 if not rechecked:
                     # A retry after verification/crash obtains a new refreshed
-                    # listing before deleting any remaining local preimage.
-                    for name in live:
+                    # listing before deleting any remaining local preimage; one
+                    # drifted archive copy keeps every file of this pass local.
+                    for name in ready:
                         self.verify_file(row["files"][name])
-                self.evict(relative, row)
+                # Files already gone stay in the pass: evict refuses a path that reappeared.
+                self.evict(relative, row, [name for name in names if name not in live] + ready)
+                if held is not None:
+                    raise held
                 row.pop("error", None)
                 row.pop("next_attempt_epoch", None)
                 row["failures"] = 0
