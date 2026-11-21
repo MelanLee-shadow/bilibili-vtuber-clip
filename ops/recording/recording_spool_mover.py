@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -557,6 +558,52 @@ class Mover:
                                        "df": capacity(self.spool), "checked_at_epoch": time.time()})
             self.save()
 
+    def rematerialize(self, relative: str, row: dict[str, Any], waiting: str) -> None:
+        """Bring the files of an evicted piece back from their verified 115 copies.
+
+        The piece before it (`waiting`) is a closed piece the adapter has not settled: a reconnect stub is
+        classified from this piece's local source and MP4, and this piece left before that happened
+        ().  With the files back the adapter classifies the stub on its ordinary pass
+        and the piece is then released the ordinary way.  Each file is read once from the archive, checked
+        against the sealed SHA and put back under its sealed mtime; the row describes the new local copy.
+        """
+        missing = [(name, item) for name, item in row["files"].items() if item.get("deleted")]
+        need = sum(item["size"] for _, item in missing)
+        if capacity(self.spool)["available_bytes"] < 8 * 1024**3 + need:
+            raise identity.ArchiveError("no room to bring the piece back for the one before it")
+        require_cloud_mount(self.mount, self.mount)
+        for name, item in missing:
+            path, source = self.spool / name, self.mount / item["cloud_path"].lstrip("/")
+            if path.exists() or path.is_symlink():
+                raise identity.ArchiveError("deleted recording path reappeared")
+            if not identity.proof_valid(item.get("proof"), path=item["cloud_path"], size=item["size"]):
+                raise identity.ArchiveError("the archived copy is not proven; the piece is not brought back")
+            partial = path.with_name("." + path.name + ".back")
+            digest = hashlib.sha256()
+            with source.open("rb") as inp, partial.open("wb") as out:
+                for chunk in iter(lambda: inp.read(1024 * 1024), b""):
+                    digest.update(chunk)
+                    out.write(chunk)
+                out.flush()
+                os.fsync(out.fileno())
+            if partial.stat().st_size != item["size"] or digest.hexdigest() != item["sha256"]:
+                partial.unlink()
+                raise identity.ArchiveError("the archived copy differs from the sealed SHA; nothing brought back")
+            stamp = item["local_fingerprint"]["mtime_ns"]
+            os.utime(partial, ns=(stamp, stamp))
+            os.chmod(partial, 0o600)          # as the recorder writes them
+            os.replace(partial, path)
+            identity.fsync_dir(path.parent)
+            previous = item["local_fingerprint"]
+            item["local_fingerprint"] = identity.fingerprint(path)
+            for key in ("deleted", "delete_authorized", "handed_to_lane"):
+                item.pop(key, None)
+            row["brought_back_for"] = waiting
+            append_event(self.events, {"event": "LOCAL_BROUGHT_BACK", "path": str(path), "size": item["size"],
+                                       "sha256": item["sha256"], "from": item["cloud_path"], "for": waiting,
+                                       "previous_local_fingerprint": previous, "checked_at_epoch": time.time()})
+            self.save()
+
     def tick(self, now: float | None = None) -> None:
         supplied_now = now
         now = time.time() if now is None else now
@@ -570,6 +617,10 @@ class Mover:
                 row = (row if row and row.get("phase") != "unprepared"
                        else self.prepare(state, relative))
                 names = identity.artifact_paths(relative)
+                if row["phase"] == "verified" and any(row["files"][name].get("deleted") for name in names):
+                    unsettled = identity.predecessor_awaiting_disposition(state, relative)
+                    if unsettled:
+                        self.rematerialize(relative, row, unsettled)
                 live = [name for name in names if not row["files"][name].get("deleted")]
                 if (row["phase"] == "verified" and row.get("retained_reason")
                         and relative in identity.disposition_references(state)

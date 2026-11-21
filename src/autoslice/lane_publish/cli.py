@@ -7,7 +7,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import audit, first, manifest, repair
+from . import audit, first, manifest, metadata, repair
 from .common import OK, Refused
 
 
@@ -42,6 +42,26 @@ def _parser() -> argparse.ArgumentParser:
             q.add_argument("--journal", type=Path, required=True)
             for flag in extra:
                 q.add_argument(flag, action="store_true") if flag == "--dry-run" else q.add_argument(flag, type=Path, required=True)
+    e = sub.add_parser("metadata-plan", help="only the title, tags and description of a published BV (metadata.py)")
+    which = e.add_mutually_exclusive_group(required=True)
+    which.add_argument("--bvid")
+    which.add_argument("--cid", help="the clip or its publication id, as the registry row names it")
+    e.add_argument("--title")
+    e.add_argument("--tags", help="the whole new tag list, comma-separated")
+    desc = e.add_mutually_exclusive_group()
+    desc.add_argument("--desc-file", type=Path, help="the whole new description, as the page is to show it")
+    desc.add_argument("--fix-source-line", action="store_true", help="leave one of the repeated leading source lines")
+    for name in ("--authorized-by", "--quote"):
+        e.add_argument(name, required=True)
+    for name in ("--out", "--journal"):
+        e.add_argument(name, type=Path, required=True)
+    e.add_argument("--dry-run", action="store_true")
+    for name, extra in (("metadata-status", ()), ("metadata-run", ("--dry-run",)), ("metadata-verify-live", ("--out",))):
+        q = sub.add_parser(name)
+        q.add_argument("--plan", type=Path, required=True)
+        q.add_argument("--journal", type=Path, required=True)
+        for flag in extra:
+            q.add_argument(flag, action="store_true") if flag == "--dry-run" else q.add_argument(flag, type=Path, required=True)
     return top
 
 
@@ -67,6 +87,20 @@ def main(argv: list[str] | None = None) -> int:
         elif command == "verify":
             manifest.load_checked(args.manifest)
             print(f"verified {args.manifest}")
+        elif command == "metadata-plan":
+            _print(metadata.plan(bvid=args.bvid, cid=args.cid, title=args.title, tags=args.tags, desc_file=args.desc_file,
+                                 fix_source_line=args.fix_source_line, authorized_by=args.authorized_by, quote=args.quote,
+                                 out=args.out, journal=args.journal, dry_run=args.dry_run))
+        elif command == "metadata-status":
+            rc = metadata.status(plan_path=args.plan, journal=args.journal)
+            print("live" if rc == OK else "not live yet")
+            return rc
+        elif command == "metadata-run":
+            rc = metadata.run(plan_path=args.plan, journal=args.journal, dry_run=args.dry_run)
+            print(("would " if args.dry_run else "") + ("live" if rc == OK else "in progress"))
+            return rc
+        elif command == "metadata-verify-live":
+            _print(metadata.verify_live(plan_path=args.plan, journal=args.journal, out=args.out))
         elif command == "upload":
             _print(first.upload(args.manifest))
         elif name == "repair-plan":

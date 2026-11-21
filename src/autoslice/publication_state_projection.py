@@ -75,6 +75,7 @@ def validate_runtime_registry_entry(
             "VERIFIED_PUBLIC",
             "VERIFIED_SAME_BV",
             "VERIFIED_SAME_BV_COVER",
+            "VERIFIED_SAME_BV_METADATA",
         }
         or publication.get("candidate_id") != entry.get("candidate_id")
         or publication.get("recording_date") != entry.get("recording_date")
@@ -118,6 +119,18 @@ def validate_runtime_registry_entry(
                 and authority.get("bvid") == entry.get("bvid")
                 and authority.get("aid") == publication.get("aid")
                 and authority.get("new_cid") == publication.get("cid")
+            )
+        elif publication.get("status") == "VERIFIED_SAME_BV_METADATA":
+            # lane_publish metadata-*: only the title, tags and description changed; the cid is the one online before.
+            valid_authority = (
+                authority.get("schema_version")
+                == "same-bv-metadata-edit-completed.v1"
+                and authority.get("status") == "VERIFIED_FRESH_LIVE"
+                and authority.get("rc") == 0
+                and authority.get("candidate_id") == entry.get("candidate_id")
+                and authority.get("bvid") == entry.get("bvid")
+                and authority.get("aid") == publication.get("aid")
+                and authority.get("unchanged_cid") == publication.get("cid")
             )
         else:
             valid_authority = (
