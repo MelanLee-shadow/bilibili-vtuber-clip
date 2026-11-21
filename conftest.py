@@ -39,17 +39,37 @@ def pytest_configure(config):
     config.args[:] = _grouped_by_directory(list(config.args))
 
 
+def _absent_default_base() -> str:
+    """一个不存在、也建不出来的路径（在一个只读的空临时目录里），进程结束时把那个目录删掉。"""
+    import atexit
+    import tempfile
+
+    holder = Path(tempfile.mkdtemp(prefix="autoslice-default-base-"))
+    holder.chmod(0o555)
+    atexit.register(lambda: (holder.chmod(0o755), holder.rmdir()) if holder.is_dir() and not any(holder.iterdir()) else None)
+    return str(holder / "absent")
+
+
+# 代码在 AUTOSLICE_BASE 未设置时落到的默认根（src/autoslice/base_default.py，唯一定义）。生产是
+# /opt/bilive/autoslice：开发机上没有，生产主机上有——在那台主机上跑的测试读到了生产的运行时出版
+# 登记、回执和锁文件（2026-11-21 全量 80 多个失败）。这里在任何测试模块导入之前把它指到一个不存在、
+# 也建不出来的路径（有的模块在导入时就算好默认根）：和开发机上的 /opt/bilive/autoslice 一样——不是“空目录”，
+# 有的代码见到默认根存在就往里写，见到不存在才走临时根的回退。
+os.environ["AUTOSLICE_DEFAULT_BASE"] = _absent_default_base()
+
+
 @pytest.fixture(autouse=True)
 def _hermetic_autoslice_base(monkeypatch):
-    """磁盘密闭：默认清掉 ambient AUTOSLICE_BASE。
+    """磁盘密闭：逐测试清掉 ambient AUTOSLICE_BASE，并保证默认根仍是上面那个不存在的路径。
 
-    内容寻址裁决缓存按 env 根在调用时落盘：shell 带着可写 AUTOSLICE_BASE
-    跑套件时用例互吃缓存，带着不可写 /opt 默认时全绿只是巧合。套件的作者
-    基线是"未设置 base=缓存关"——这里把它变成保证：逐测试删除 ambient
-    值；需要缓存行为的测试自己 setenv 一个 tmp 根即可。
+    内容寻址裁决缓存按 env 根在调用时落盘：shell 带着可写 AUTOSLICE_BASE 跑套件时用例互吃缓存
+    （实测 11 红）。套件的作者基线是“未设置 base＝缓存关、不落盘”——设成任何目录（哪怕只读）都会
+    打开那些分支（实测：只读根让请求生命周期去建 cache 目录而失败）。所以 base 仍然删掉，
+    落到的默认根由上面那一行管；需要缓存行为或别的根的测试自己 setenv 一个 tmp 根。
     """
 
     monkeypatch.delenv("AUTOSLICE_BASE", raising=False)
+    monkeypatch.setenv("AUTOSLICE_DEFAULT_BASE", os.environ["AUTOSLICE_DEFAULT_BASE"])
 
 # ---- 密闭性守卫：单测永不真打 LLM 网络 ----------------------------------
 # 套件的承诺是"无凭据/无网络可跑、LLM 边界全部 mock"。若跑测试的 shell 恰好
@@ -72,6 +92,9 @@ def _hermetic_call_command(prompt, config):
     return _REAL_CALL_COMMAND(prompt, config)
 
 
+# a test of the channel itself takes the real one from here; `from conftest import ...` finds whichever
+# directory's conftest was imported last (tests/manual_lane has one too)
+_hermetic_call_command.real = _REAL_CALL_COMMAND
 _llm_client._call_command = _hermetic_call_command
 
 

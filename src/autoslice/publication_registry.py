@@ -27,6 +27,7 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 
+from src.autoslice.base_default import default_base
 from src.autoslice.channel_profile import load_channel_profile as _load_channel_profile
 from src.autoslice.publication_state_projection import (
     RUNTIME_REGISTRY_SCHEMA,
@@ -65,7 +66,7 @@ def _candidate_ids(row: Mapping) -> set[str]:
 
 def _runtime_registry_path() -> Path:
     return (
-        Path(os.environ.get("AUTOSLICE_BASE", "/opt/bilive/autoslice"))
+        Path(os.environ.get("AUTOSLICE_BASE", default_base()))
         / "state"
         / "publication_registry.runtime.v1.json"
     )

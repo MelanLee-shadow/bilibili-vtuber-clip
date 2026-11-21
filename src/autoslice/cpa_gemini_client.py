@@ -24,6 +24,8 @@ import urllib.parse
 import urllib.request
 import uuid
 
+from src.autoslice.base_default import default_base
+
 JsonValue: TypeAlias = "None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]"
 JsonObject: TypeAlias = dict[str, JsonValue]
 JsonMap: TypeAlias = Mapping[str, JsonValue]
@@ -216,7 +218,7 @@ def generate_native(*, model: str, body: JsonMap, purpose: str,
         data=request_bytes, headers={"Content-Type": "application/json",
             "Authorization": "Bearer " + key, "User-Agent": "Mozilla/5.0 autoslice-cpa-gemini"})
     ledger = Path(env.get("AUTOSLICE_CPA_GEMINI_LEDGER") or
-                  str(Path(env.get("AUTOSLICE_BASE", "/opt/bilive/autoslice")) / "state/cpa-gemini/requests.jsonl"))
+                  str(Path(env.get("AUTOSLICE_BASE", default_base())) / "state/cpa-gemini/requests.jsonl"))
     row: JsonObject = {"schema_version": "cpa-gemini-attempt.v1", "request_id": uuid.uuid4().hex,
         "recorded_at": datetime.now(timezone.utc).isoformat(), "purpose": purpose,
         "identity_model": model, "wire_model": actual_model, "transport": "cpa_gemini_native",
