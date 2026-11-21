@@ -618,6 +618,8 @@ def step6_title_cover(ctx: Ctx) -> StepOutcome:
     title, cover_lines, process, cpa_calls, cands_path = picked
     if (imported := cover_import.imported_cover(ctx)) is not None:      # the decided cover: nothing is drawn or looked at
         return cover_import.adopt(ctx, imported, title=title, process=process, cpa=cpa_calls)
+    if (kept := cover_import.published_cover(ctx, title)) is not None:     # a subtitle revision keeps the published cover
+        return cover_import.adopt(ctx, kept, title=title, process=process, cpa=cpa_calls)
     title_path = ctx.clip_dir / "title/title.txt"
     clip = _clip(ctx)
     cut_len = (clip["end_ms"] - clip["start_ms"]) / 1000

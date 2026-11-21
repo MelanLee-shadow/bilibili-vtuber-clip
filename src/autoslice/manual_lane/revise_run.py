@@ -17,6 +17,9 @@ The successor starts where `trim`'s successor starts, at step 3, with what X had
 - when X's cut media is no longer on the media host (reclaimed after publication), step 2 is not taken over: the
   successor cuts again from the recording, at the same boundary;
 - an imported cover (cover_import) follows the manuscript: the record and its files are copied;
+- the published cover: step 6 keeps X's cover when it chooses the same title and no sentence the revision changed holds
+  the cover's words (cover_import.published_cover), so a subtitle revision does not swap the cover on the BV;
+  `fresh_cover` asks for a new one;
 - the dictation and the compilation record, which later steps and the package guards read.
 Last X is marked SUPERSEDED by the successor (`reselect.supersede_candidate`, as `trim` does).  Nothing is asked of CPA.
 Any stop before that leaves no successor behind (what this run wrote is removed; X is untouched)."""
@@ -175,7 +178,8 @@ def title_online(clip_dir: Path, state: ClipState) -> str | None:
     return None
 
 
-def revise_clip(*, task: Path, cid: str, reason: str, adapters_for: AdaptersFor, fresh_speakers: bool = False) -> str:
+def revise_clip(*, task: Path, cid: str, reason: str, adapters_for: AdaptersFor, fresh_speakers: bool = False,
+                fresh_cover: bool = False) -> str:
     """Build the successor of the published clip `cid` of `task` and supersede `cid` by it; returns the successor's id.
     StateError (or the OSError of a copy) with the reason when it cannot be done; then nothing of the successor is left."""
     task = Path(task)
@@ -195,6 +199,9 @@ def revise_clip(*, task: Path, cid: str, reason: str, adapters_for: AdaptersFor,
                                  FROM_STEP_3 if has_media else tuple(k for k in FROM_STEP_3 if k != "cut"))
         _import_subtitles(task, state_x, state, cid, successor, reason, fresh_speakers)
         cover_import.carry(state_x, state, task / "clips" / cid, task / "clips" / successor)
+        if fresh_cover:      # the revision is about the cover: step 6 draws a new one (cover_import.published_cover)
+            cast("dict[str, object]", state.data["revised_from"])["fresh_cover"] = True
+            state.save()
         done = supersede_candidate(
             task_dir=task, cid=cid, by=successor, authority=f"修订（revise 命令）：{cid}", quote=reason,
             reason=f"已发布稿件的修订：{reason}；另建 {successor}，原片与它的成品包保持原样")

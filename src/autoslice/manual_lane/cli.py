@@ -451,7 +451,7 @@ def cmd_revise(args: argparse.Namespace) -> int:
     task = Path(args.task_dir)
     with clip_run_lock(task / "state" / f"{args.cid}.json"):      # the original is superseded: a running process must not hold it
         print(revise_clip(task=task, cid=args.cid, reason=args.reason, adapters_for=_adapters_for(args.on_media_host),
-                          fresh_speakers=args.fresh_speakers))
+                          fresh_speakers=args.fresh_speakers, fresh_cover=args.fresh_cover))
     return 0
 
 
@@ -662,6 +662,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--cid", required=True, help="a clip the registry holds as published (not superseded)")
     p.add_argument("--reason", required=True, help="why it is revised (kept in the original's supersede record)")
     p.add_argument("--fresh-speakers", action="store_true", help="do not take over the speakers: step 4 decides them again")
+    p.add_argument("--fresh-cover", action="store_true",
+                   help="draw a new cover even when the title stays (default: a revision keeps the published cover)")
     p.add_argument("--on-media-host", action="store_true", help="run controller and media work on the media host")
     p.set_defaults(func=cmd_revise)
 
