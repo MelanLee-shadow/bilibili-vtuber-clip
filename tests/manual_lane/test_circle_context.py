@@ -72,13 +72,13 @@ def test_a_found_reference_is_recorded_and_its_background_reaches_every_title_pr
     picked = si.pick_title(ctx)
     assert not isinstance(picked, StepOutcome), picked
 
-    assert search.calls == [(f"{TERM} 李豆沙", 8), (f"{TERM} 虚拟主播", 8)]
+    assert search.calls == [(f"{TERM} 李豆沙", 8), (f"{TERM} 虚拟主播", 8), *[(f"{TERM} 别名 虚拟UP主", 8)] * 2]   # asked once more: no result shows its letters
     record = _context(ctx)
     assert set(record) == {"terms", "beyond_limit", "call_id", "graph"} and record["call_id"] == "title-context"
     [term] = record["terms"]
     assert term["status"] == "FOUND" and term["note"] == NOTE and term["sources"] == [URL] and term["reason"] == ""
     assert (term["term"], term["cues"], term["why"]) == (TERM, [2], "笑点靠它才看得懂")
-    assert [q["query"] for q in term["queries"]] == [f"{TERM} 李豆沙", f"{TERM} 虚拟主播"]
+    assert [q["query"] for q in term["queries"]] == [f"{TERM} 李豆沙", f"{TERM} 虚拟主播", f"{TERM} 别名 虚拟UP主"]
     assert [h["url"] for h in term["queries"][0]["results"]] == [URL, OTHER_URL]
     assert len(term["queries"][0]["results"][1]["snippet"]) == 300 and term["queries"][0]["error"] == ""
 
@@ -153,7 +153,7 @@ def test_a_search_that_raises_is_recorded_on_the_term_and_the_step_goes_on(tmp_p
     assert not isinstance(picked, StepOutcome), picked
     [term] = _context(ctx)["terms"]
     assert term["status"] == "FAILED" and "OSError: network down" in term["reason"]
-    assert [q["error"] for q in term["queries"]] == ["OSError: network down"] * 2
+    assert [q["error"] for q in term["queries"]] == ["OSError: network down"] * 3
     assert "title-context" not in cpa.calls
     assert any(line.startswith(f"圈内背景：{TERM} → 检索失败（OSError: network down") for line in picked[2])
 
@@ -211,7 +211,7 @@ def test_only_the_first_three_references_are_processed(tmp_path):
     ctx, cpa, picked = _run(tmp_path, search=search, merge=_merge(*items))
     record = _context(ctx)
     assert [t["term"] for t in record["terms"]] == ["词0", "词1", "词2"] and record["beyond_limit"] == ["词3", "词4"]
-    assert len(search.calls) == 6 and len([c for c in cpa.calls if c.startswith("title-context")]) == 1
+    assert len(search.calls) == 9 and len([c for c in cpa.calls if c.startswith("title-context")]) == 1
     lines = [line for line in picked[2] if line.startswith("圈内背景")]
     assert len(lines) == 4 and "另有 2 个指称超过上限 3" in lines[-1]
 

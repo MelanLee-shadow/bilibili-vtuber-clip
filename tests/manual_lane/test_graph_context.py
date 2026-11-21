@@ -196,7 +196,7 @@ def test_a_reference_the_graph_knows_is_not_searched_and_an_unknown_one_still_is
     search = FakeSearch(configured=True)
     found = _gather(ctx, context, "乙乙", "丁大会", "没人知道的词", search=search)
     assert [t["term"] for t in found["terms"]] == ["没人知道的词"]
-    assert search.queries == ["没人知道的词 李豆沙", "没人知道的词 虚拟主播"]
+    assert search.queries == ["没人知道的词 李豆沙", "没人知道的词 虚拟主播", *["没人知道的词 别名 虚拟UP主"] * 2]
     assert found["graph"]["skipped_search"] == ["乙乙", "丁大会"]       # an accepted node and a candidate one
 
 
@@ -205,7 +205,7 @@ def test_a_reference_in_the_graph_but_without_background_in_the_prompt_is_still_
     context = gc.read(ctx, ["今天没有提到任何实体"])
     search = FakeSearch(configured=True)
     found = _gather(ctx, context, "乙乙", search=search)
-    assert [t["term"] for t in found["terms"]] == ["乙乙"] and len(search.calls) == 2
+    assert [t["term"] for t in found["terms"]] == ["乙乙"] and len(search.calls) == 3
     assert found["graph"]["skipped_search"] == []
 
 

@@ -23,6 +23,7 @@ from typing import Protocol
 from src.autoslice import community_name_graph as names
 from src.autoslice import news_event_graph as store
 from src.autoslice.crawl_window import CrawlWindow
+from src.autoslice import clip_name_identity as identity
 from src.autoslice import news_event_judge as judge
 from src.autoslice.knowledge_graph import GraphError, JsonValue, load_graph
 from src.autoslice.llm_client import LlmCallError
@@ -66,6 +67,7 @@ class Report:
     candidates: dict[str, int] = field(default_factory=dict)
     previous_discarded: str | None = None
     community: dict[str, JsonValue] | None = None
+    clip_names: dict[str, JsonValue] | None = None
 
     def error(self, text: str) -> None:
         if len(self.errors) < MAX_ERRORS_LISTED:
@@ -87,6 +89,7 @@ class Report:
                          "left_out_id_collision": self.left_out},
             "previous_discarded": self.previous_discarded}
         doc["community"] = self.community
+        doc["clip_names"] = self.clip_names
         return doc
 
 
@@ -304,6 +307,12 @@ def crawl(*, owner: str, repo_root: Path, runtime_root: Path, registry: Registry
                              f"({report.cpa['judge_failed']} failed, {report.cpa['judge_attempted']} attempted)",
                              report)
     report.cpa["rejected_items"] = sum(report.rejected.values())
+    if clip_names and clock() < search.deadline:  # whose name it is: the names the clips could not place (owner)
+        placed, report.clip_names = identity.run(clip_names, known, owner=owner, search=search.search,
+                                                 ask_json=lambda prompt: _call_json(llm_call, prompt), at=stamp,
+                                                 page=getattr(search.lookup, "page", None))
+        fresh = store.merge(fresh, placed)
+        known = store.with_candidates(known, placed)
     if community is not None:  # the community-name crawler's names, deduped against this graph (owner)
         name_notes: list[str] = []
         folded, report.community = names.run(

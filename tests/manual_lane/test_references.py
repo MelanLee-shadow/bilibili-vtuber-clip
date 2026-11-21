@@ -114,3 +114,59 @@ def test_what_the_clips_looked_up_is_left_for_the_news_crawler_and_becomes_its_s
     got = derive_seeds(owner="主播", graph=Graph({}, []), registry=None, dynamics=None, day=0, limit=5,
                        clip_names=clip_seed_names(seeds))
     assert sorted((s.name, s.origin) for s in got) == [("主播", "owner"), ("某个组合", "clips"), ("某某联盟", "clips")]
+
+
+# ---- a nickname that is not the person's name (owner 香蕉牛奶 = 咲间妮娜, name → xjnn → another word) -----------
+
+NICK, PERSON = "西瓜冰沙", "夏歌白霜"       # invented (xgbs): the repository graph has the real pair now, and its letters would be a lead
+PAGE = {"title": f"{PERSON} - 萌娘百科", "url": URL, "snippet": f"别名 霜老师、XGBS、{NICK}"}
+
+
+class PromptCpa(Cpa):
+    def ask(self, *, call_id, prompt_text, **kw):
+        self.prompts = [*getattr(self, "prompts", []), prompt_text]
+        return super().ask(call_id=call_id, prompt_text=prompt_text, **kw)
+
+
+def test_a_name_is_also_searched_where_other_names_are_listed_and_its_letters_reach_the_reader(tmp_path):
+    """The witness: beside the host and as a streamer the words are a drink; the page that lists the name is found by
+    the alias query, and the reader is shown that the page's title name has the name's first letters."""
+    draft = [{"id": 1, "start_s": 0.0, "end_s": 2.0, "text": f"她跟{NICK}在一起"}, {"id": 2, "start_s": 2.0, "end_s": 4.0, "text": HEARD}]
+    spot = [{"term": NICK, "cues": [1], "kind": "人物", "why": "没交代是谁", "likely": ""},
+            {"term": HEARD, "cues": [2], "kind": "现成说法", "why": "像一句流行语", "likely": ""}]
+    cpa = PromptCpa(spot=spot, known={NICK: (f"{PERSON}的昵称。", NICK)})
+    ctx = make_ctx(tmp_path, remote=FakeRemote(), cpa=cpa)
+    ctx.adapters.lookup = FakeSearch(configured=True, rows={f"{NICK} 别名 虚拟UP主": [PAGE]})
+    got = references.for_subtitles(ctx, draft)
+    queries = [q for q, _ in ctx.adapters.lookup.calls]
+    assert queries[:3] == [f"{NICK} 李豆沙", f"{NICK} 虚拟主播", f"{NICK} 别名 虚拟UP主"]
+    assert f"{HEARD} 别名 虚拟UP主" not in queries, "a saying is not looked up as somebody's other name"
+    items = json.loads(cpa.prompts[-1].split("检索结果）：\n", 1)[1])
+    assert items[0]["initials"] == {"letters": "XGBS", "in_results": [{"url": URL, "as": ["XGBS", PERSON]}], "known_names": []}
+    assert got["leads"] == [{"heard": NICK, "cues": [1], "is": f"{PERSON}的昵称。", "wording": NICK, "sources": ["wiki.example.org"]}]
+
+
+def test_a_known_name_with_the_same_letters_is_a_lead_and_is_searched_beside_the_term(tmp_path):
+    from src.autoslice.knowledge_graph import Graph, Node, Source
+
+    node = Node(id=f"person:{PERSON}", kind="person", names={"display": PERSON}, aliases=(), summary="", status="accepted",
+                sources=(Source("ledger", "test"),))
+    graph = graph_context.GraphContext("READ", "", Graph([node], []))
+    assert graph.same_initials(NICK) == [PERSON] and graph.same_initials("南町") == [] and graph_context.GraphContext("NONE", "").same_initials(NICK) == []
+    search = FakeSearch(configured=True)
+    item = cc.TermContext(term=NICK, cues=[1], why="", queries=[], status="", note="", sources=[], reason="", kind="人物",
+                          same_initials=[PERSON])
+    assert [q["query"] for q in cc._search(search, item)][2:] == [f"{NICK} 别名 虚拟UP主", f"{NICK} {PERSON}"]
+
+
+def test_what_the_graph_says_of_a_nickname_keeps_the_nickname_as_the_writing():
+    from types import SimpleNamespace
+
+    from src.autoslice.knowledge_graph import Graph, Node, Source
+
+    node = Node(id=f"person:{PERSON}", kind="person", names={"display": PERSON}, aliases=(NICK,), summary="", status="candidate",
+                sources=(Source("search", URL),))
+    graph = SimpleNamespace(graph=Graph([node], []), lines=())
+    lead = references._graph_lead(graph, {"term": NICK, "cues": [1]}, NICK)
+    assert lead["wording"] == NICK and lead["is"] == f"{NICK}是{PERSON}的另一个叫法"       # she said the nickname: it is not rewritten
+    assert references._graph_lead(graph, {"term": "笑间妮娜", "cues": [1]}, PERSON)["wording"] == PERSON

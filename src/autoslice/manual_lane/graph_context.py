@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
 from urllib.parse import urlparse
 
+from src.autoslice import name_initials
 from src.autoslice.channel_profile import load_channel_profile
 from src.autoslice.knowledge_graph import EDGES_FILE, NODES_FILE, Edge, Graph, Node, Source, load_graph
 from src.autoslice.combined_knowledge_graph import load_layers
@@ -76,6 +77,14 @@ class GraphContext:
         """The graph knows this reference and its background is in the prompt."""
         shown = {i for line in self.lines for i in line.ids}
         return self.graph is not None and any(n.id in shown for n in self.graph.find(term.strip()) if n.status != "retired")
+
+    def same_initials(self, term: str) -> list[str]:
+        """The graph's people, characters and groups one of whose spellings has the term's pinyin first letters
+        (name_initials: a circle nickname is often made from the letters of the name): leads for the lookup."""
+        if self.graph is None:
+            return []
+        return name_initials.same_letters(term, ((n.names["display"], n.surfaces()) for n in self.graph.nodes.values()
+                                                 if n.status != "retired" and n.kind in ("person", "character", "group")))
 
     def record(self, skipped: Sequence[str] = ()) -> GraphRecord:
         shown = sorted({i for line in self.lines for i in line.ids})

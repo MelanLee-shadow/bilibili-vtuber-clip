@@ -44,6 +44,7 @@ BAIKE_CARD_URL = "https://baike.baidu.com/api/openapi/BaikeLemmaCardApi"
 SEARCH_MCP_ENV = "MANUAL_LANE_SEARCH_MCP_URL"
 USER_AGENT = "vtuber-slice-manual-lane/1.0 (subtitle doubt lookup)"
 TIMEOUT_S = 15.0
+PAGE_MAX = 200_000                   # characters kept of a page read through the router
 GRAPH_PATH = channel.asset("topic_entity_graph.json")
 
 
@@ -240,8 +241,16 @@ class WebLookup:
         return [{"title": title, "abstract": str(data.get("abstract") or "")[:300], "url": data.get("url")}]
 
     def web(self, query: str, *, limit: int = 5) -> list[LookupRow]:
-        """Search Router MCP (streamable HTTP): initialize, keep Mcp-Session-Id, notifications/initialized,
-        tools/call free_search.  Only when configured; the caller checks `web_configured` first."""
+        """Search Router MCP free_search.  Only when configured; the caller checks `web_configured` first."""
+        return _mcp_results(self._tool("free_search", {"query": query}))[:limit]
+
+    def page(self, url: str, about: str) -> str:
+        """The text of one page, through the router's web_fetch (name_initials.listed opens the page a sign points to).
+        The whole page is asked for; an engine that answers with excerpts chooses them by `about`."""
+        return _mcp_page(self._tool("web_fetch", {"urls": [url], "objective": about, "full_content": True}))[:PAGE_MAX]
+
+    def _tool(self, name: str, arguments: dict[str, object]) -> str:
+        """One tools/call over streamable HTTP: initialize, keep Mcp-Session-Id, notifications/initialized, the call."""
         if not self.search_mcp_url:
             raise RuntimeError(f"{SEARCH_MCP_ENV} not configured")
         base = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
@@ -256,13 +265,39 @@ class WebLookup:
                                       "clientInfo": {"name": "vtuber-slice-manual-lane", "version": "1.0"}}}, None)
         session = headers.get("Mcp-Session-Id") or headers.get("mcp-session-id")
         post({"jsonrpc": "2.0", "method": "notifications/initialized"}, session)
-        _h, text = post({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                         "params": {"name": "free_search", "arguments": {"query": query}}}, session)
-        return _mcp_results(text)[:limit]
+        _h, text = post({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": name, "arguments": arguments}},
+                        session)
+        return text
 
     @property
     def web_configured(self) -> bool:
         return bool(self.search_mcp_url)
+
+
+def _mcp_page(text: str) -> str:
+    """The first document of a web_fetch result (a JSON body or an SSE stream): its content and its excerpts, whichever
+    the engine gave; "" when there is none."""
+    for raw in [line[5:].strip() for line in text.splitlines() if line.startswith("data:")] or [text]:
+        try:
+            msg = json.loads(raw)
+        except ValueError:
+            continue
+        if "error" in msg:
+            raise RuntimeError(f"MCP error: {str(msg['error'])[:200]}")
+        result = msg.get("result") or {}
+        doc = result.get("structuredContent")
+        if not isinstance(doc, dict):
+            for item in result.get("content") or []:
+                if item.get("type") == "text":
+                    try:
+                        doc = json.loads(item["text"])
+                    except ValueError:
+                        return str(item["text"])
+        documents = doc.get("documents") if isinstance(doc, dict) else None
+        first = documents[0] if documents and isinstance(documents[0], dict) else {}
+        excerpts = first.get("excerpts") if isinstance(first.get("excerpts"), list) else []
+        return "\n".join(str(part) for part in (first.get("content"), *excerpts) if part)
+    return ""
 
 
 def _mcp_results(text: str) -> list[LookupRow]:
