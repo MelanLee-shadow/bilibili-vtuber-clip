@@ -24,6 +24,7 @@ from collections.abc import Sequence
 from typing import NotRequired, TYPE_CHECKING, Protocol, TypedDict, cast
 from urllib.parse import urlparse
 
+from src.autoslice import name_initials
 from src.autoslice.channel_envelope import HOST_NAME
 
 from .graph_context import GraphContext, GraphRecord, process_line
@@ -41,6 +42,7 @@ MAX_TERMS = 3
 RESULTS_KEPT = 8
 SNIPPET_MAX = 300
 NEIGHBOURS = 2                      # subtitle sentences kept before and after a cue
+NOT_A_NAME = ("作品", "现成说法")      # the reader's kinds (reference_spot.md) that are not looked up as somebody's other name
 CUES_KEPT = 3                       # cues per reference whose neighbourhood goes to the model
 SHAPE_REASON = "TITLE_CONTEXT_SHAPE"
 FOUND, NOT_FOUND, UNCONFIGURED, FAILED = "FOUND", "NOT_FOUND", "UNCONFIGURED", "FAILED"
@@ -71,6 +73,7 @@ class TermContext(TypedDict):
     likely: NotRequired[str]      # what the reader of the draft guessed it stands for: a search lead, never a fact
     wording: NotRequired[str]     # FOUND: the reference's canonical writing, when the results give one (a saying, a title, a name)
     kind: NotRequired[str]
+    same_initials: NotRequired[list[str]]   # names the graph has whose pinyin first letters are the term's (name_initials)
     stage: NotRequired[str]       # the step that first asked for it (references.remember)
 
 
@@ -128,13 +131,21 @@ def _mark(item: TermContext, status: str, reason: str = "", note: str = "", sour
     item["status"], item["reason"], item["note"], item["sources"] = status, reason, note, list(sources)
 
 
-def _search(provider: Searcher, term: str, likely: str = "") -> list[Query]:
-    """The term's two queries, and the guessed wording alone when there is one (a saying or a title is found under
-    its own words, not beside the host's name); a search that raises is recorded on its query and the others still run."""
+def _search(provider: Searcher, item: TermContext) -> list[Query]:
+    """The term's queries: beside the host's name, as a streamer, and (unless it is a work or a saying) as one of
+    somebody's other names (name_initials.ALIAS_QUERY: a nickname is found on the page that lists it, not beside the
+    host); beside a known name with the same first letters; and the guessed wording alone when there is one (a saying
+    or a title is found under its own words).  A search that raises is recorded on its query and the others still run."""
+    term, likely = item["term"], item.get("likely", "")
     out: list[Query] = []
-    for text in (f"{term} {HOST_NAME}", f"{term} 虚拟主播", *([likely] if likely.strip() and likely.strip() != term else [])):
+    texts = [f"{term} {HOST_NAME}", f"{term} 虚拟主播",
+             *([name_initials.ALIAS_QUERY.format(name=term)] if item.get("kind", "") not in NOT_A_NAME else []),
+             *(f"{term} {name}" for name in item.get("same_initials", [])[:1]),
+             *([likely] if likely.strip() and likely.strip() != term else [])]
+    for text in dict.fromkeys(texts):
         try:
-            rows = provider.web(text, limit=RESULTS_KEPT)
+            rows = name_initials.listed(term, lambda q: provider.web(q, limit=RESULTS_KEPT), getattr(provider, "page", None)) \
+                if text == name_initials.ALIAS_QUERY.format(name=term) else provider.web(text, limit=RESULTS_KEPT)
             out.append(Query(query=text, results=_hits(rows), error=""))
         except Exception as exc:  # noqa: BLE001 - recorded on the query; the step is never blocked by a search
             out.append(Query(query=text, results=[], error=f"{type(exc).__name__}: {str(exc)[:200]}"))
@@ -182,11 +193,24 @@ def _settle(item: TermContext, row: ModelRow) -> None:
         _mark(item, NOT_FOUND, row.get("why_not", "").strip() or "检索结果说明不了")
 
 
+def _initials(item: TermContext) -> dict[str, object]:
+    """The mechanical signs of name_initials: the results that write the term in another spelling of the same sound
+    (the other script, a homophone), and, when the term has letters, the letters, the results that show them (written
+    out, or a title name with the same letters) and the graph's names that share them."""
+    term, want = item["term"], name_initials.letters(item["term"])
+    other = [{"url": hit["url"], "as": found} for hit in _results(item)
+             if (found := name_initials.written(f"{hit['title']} {hit['snippet']}", term)) and found != term.strip()]
+    seen = [{"url": hit["url"], "as": found} for hit in _results(item)
+            if (found := name_initials.signs(term, hit["title"], hit["snippet"]))]
+    return ({"written_as": other} if other else {}) | (
+        {"initials": {"letters": want.upper(), "in_results": seen, "known_names": item.get("same_initials", [])}} if want else {})
+
+
 def _explain(ctx: Ctx, pending: list[TermContext], numbered: dict[int, str], cpa_calls: list[CpaEvent],
              call_id: str = CALL_ID) -> str:
     """One model call for the terms that have results; returns its call id.  A failure marks those terms FAILED."""
     items = [{"term": t["term"], "cues": t["cues"], "why": t["why"], "likely": t.get("likely", ""),
-              "subtitles": _neighbourhood(numbered, t["cues"]), "results": _results(t)} for t in pending]
+              "subtitles": _neighbourhood(numbered, t["cues"]), "results": _results(t), **_initials(t)} for t in pending]
     prompt = _render("title_context.md", items=json.dumps(items, ensure_ascii=False, indent=1))
     terms = [t["term"] for t in pending]
     answer: object = None
@@ -216,7 +240,7 @@ def look_up(ctx: Ctx, terms: list[TermContext], numbered: dict[int, str], cpa_ca
         if not configured:
             _mark(item, UNCONFIGURED, "未配置检索入口")
             continue
-        item["queries"] = _search(provider, item["term"], item.get("likely", ""))
+        item["queries"] = _search(provider, item)
         if not _results(item):
             errors = [q["error"] for q in item["queries"] if q["error"]]
             if len(errors) == len(item["queries"]):
@@ -241,7 +265,8 @@ def gather(ctx: Ctx, merged: Merged, lines: str, cpa_calls: list[CpaEvent], grap
             asked.append(entry)
     known = references.load(ctx)
     terms = [known.get(e["term"].strip()) or TermContext(term=e["term"].strip(), cues=list(e["cues"]), why=e["why"], queries=[],
-                                                         status="", note="", sources=[], reason="") for e in asked[:MAX_TERMS]]
+                                                         status="", note="", sources=[], reason="",
+                                                         same_initials=graph.same_initials(e["term"])) for e in asked[:MAX_TERMS]]
     call_id = look_up(ctx, [t for t in terms if not t["status"]], _numbered(lines), cpa_calls)
     references.remember(ctx, terms, "title")
     terms += [t for name, t in known.items() if t["status"] == FOUND and all(name != x["term"] for x in terms)]

@@ -164,8 +164,10 @@ def _graph_lead(graph: Any, row: dict[str, Any], name: str) -> dict[str, Any]:
     nodes = [n for n in graph.graph.find(name) if n.status != "retired"]
     ids = {n.id for n in nodes}
     about = [line.text for line in graph.lines if ids & set(line.ids)]
-    return {"heard": row["term"], "cues": row["cues"], "is": "；".join(about)[:300],
-            "wording": nodes[0].names["display"] if nodes else name, "sources": ["知识图"]}
+    other = bool(nodes) and name not in nodes[0].names.values()      # a nickname stays as it was said: the name is in `is`
+    return {"heard": row["term"], "cues": row["cues"],
+            "is": "；".join([*([f"{name}是{nodes[0].names['display']}的另一个叫法"] if other else []), *about])[:300],
+            "wording": name if other or not nodes else nodes[0].names["display"], "sources": ["知识图"]}
 
 
 def for_subtitles(ctx: Ctx, draft: Sequence[SrtCue]) -> SubtitleReferences:
@@ -190,7 +192,8 @@ def for_subtitles(ctx: Ctx, draft: Sequence[SrtCue]) -> SubtitleReferences:
                 known.setdefault(row["term"], name)
     asked = [circle_context.TermContext(term=row["term"], cues=row["cues"], why=row.get("why", ""), queries=[], status="",
                                         note="", sources=[], reason="", likely=row.get("likely", "").strip(),
-                                        kind=row.get("kind", "")) for row in spotted if row["term"] not in known]
+                                        kind=row.get("kind", ""), same_initials=graph.same_initials(row["term"]))
+             for row in spotted if row["term"] not in known]
     circle_context.look_up(ctx, asked, numbered, calls, LOOKUP_CALL)
     from_graph = [_graph_lead(graph, row, known[row["term"]]) for row in spotted if row["term"] in known]
     line = ("外部指称：" + ("、".join(f"{t['term']}（{circle_context._outcome(t)}）" for t in asked) or "底稿里没有需要另查的指称")
