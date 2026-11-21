@@ -1,5 +1,5 @@
 """lane_publish, the public upload tool, against a fake Bilibili: a first publication, a video replacement and then a cover
-replacement on the same BV, each through the command line step 10 sends, and what the lane reads back from them (the receipt
+replacement on the same BV, each through the command line step 10 sends, an edit of only the title, tags and description, and what the lane reads back from them (the receipt
 chain, the packages used online, the same-BV authority, step 10's plan comparison).  Nothing reaches the network or biliup."""
 
 from __future__ import annotations
@@ -13,7 +13,8 @@ from pathlib import Path
 import pytest
 
 from src.autoslice import bilibili_member_api
-from src.autoslice.lane_publish import audit, authority, bili, first, manifest, registry, repair
+from src.autoslice import publication_registry
+from src.autoslice.lane_publish import audit, authority, bili, first, manifest, metadata, registry, repair
 from src.autoslice.publication_registry import load_publication_registry
 from src.autoslice.lane_publish.cli import main
 from src.autoslice.lane_publish.common import LOCK_BUSY
@@ -60,7 +61,7 @@ class FakeBili:
 
     def _publish(self, bvid: str) -> None:
         a = self.archives[bvid]
-        self.public[bvid] = {"aid": a["aid"], "bvid": bvid, "cid": a["videos"][0]["cid"], "title": a["title"],
+        self.public[bvid] = {"aid": a["aid"], "bvid": bvid, "cid": a["videos"][0]["cid"], "title": a["title"], "desc": a["desc"],
                              "pic": a["cover"].replace("https://upload/", "http://i0.hdslb.com/bfs/archive/"),
                              "pages": [{"cid": v["cid"], "part": v["title"]} for v in a["videos"]]}
 
@@ -366,6 +367,15 @@ def test_a_video_then_a_cover_replacement_on_the_same_bv(host, tmp_path, capsys,
     assert chain.predecessor_completed == done and chain.online_cover_sha256 == _sha(pkg3 / f"{pkg3.name}.cover.png")
     assert {p["package_root"] for p in receipt_chain.used_packages(chain)} == {str(tmp_path / f"pkg{n}" / pkg.name) for n in (1, 2, 3)}
 
+    # then only the title and tags: the chain still says which video and cover are online and which completion to follow
+    done4 = _metadata_edit(tmp_path, bvid, "--title", "【主播】改过的标题", "--tags", "虚拟主播,切片,嗦面")
+    assert len(host.appends) == 1 and json.loads(done4.read_text())["unchanged_cid"] == completed["new_cid"]
+    row = registry.rows_for(registry.load()["entries"], bvid=bvid)[0]
+    chain = receipt_chain.resolve(row["publication_reconciliation"]["authority"])
+    assert chain.bound == done4 and chain.predecessor_completed == done and chain.predecessor_new_cid == completed["new_cid"]
+    assert chain.online_cover_sha256 == _sha(pkg3 / f"{pkg3.name}.cover.png") and chain.online_tags == ("虚拟主播", "切片", "嗦面")
+    assert {p["package_root"] for p in receipt_chain.used_packages(chain)} == {str(tmp_path / f"pkg{n}" / pkg.name) for n in (1, 2, 3)}
+
 
 def test_an_audit_finds_a_changed_file_and_a_review_that_did_not_pass(host, tmp_path):
     pkg = package(tmp_path / "p")
@@ -483,3 +493,132 @@ def test_a_bv_the_older_upload_tool_registered_is_repaired_in_the_same_one_regis
             for r in rows] == [(name, "VERIFIED_SAME_BV_COVER", cid)]
     chain = receipt_chain.resolve(rows[0]["publication_reconciliation"]["authority"])
     assert chain.first_receipt == receipt and chain.online_cover_sha256 == _sha(pkg / f"{name}.cover.png")
+
+
+def _metadata_edit(tmp_path, bvid: str, *values: str, n: int = 1) -> Path:
+    """metadata-plan, -run, -verify-live through the command line; the completion receipt."""
+    work = tmp_path / f"meta{bvid}{n}"
+    plan, journal, done = work / "plan.json", work / "journal.jsonl", work / "completed.json"
+    assert main(["metadata-plan", "--bvid", bvid, *values, "--authorized-by", "维护者", "--quote", "标题为什么不加嗦",
+                 "--out", str(plan), "--journal", str(journal)]) == 0
+    walk = ["--plan", str(plan), "--journal", str(journal)]
+    assert main(["metadata-run", *walk]) == 0 and main(["metadata-status", *walk]) == 0
+    assert main(["metadata-verify-live", *walk, "--out", str(done)]) == 0
+    return done
+
+
+def test_a_metadata_edit_changes_only_the_title_tags_and_description_by_the_registry_row_alone(host, tmp_path, capsys):
+    import shutil
+
+    pkg, receipt = _first(host, tmp_path, capsys)
+    bvid, first_receipt = receipt["bvid"], first.receipt_path(tmp_path / "upload1/authorized-upload-manifest.json")
+    shutil.rmtree(pkg.parent)                     # the package, its video and cover are gone (the recording long before)
+    src = "https://live.bilibili.com/\n"
+    host.archives[bvid]["desc"] = src + src + "简介第一行\n第二行"      # what 11-15 to 11-18 first publications show
+    host._publish(bvid)
+    before = dict(host.archives[bvid], videos=list(host.archives[bvid]["videos"]))
+    capsys.readouterr()
+    done = _metadata_edit(tmp_path, bvid, "--title", "【主播】哭着说的测试标题", "--tags", "虚拟主播,切片,嗦面", "--fix-source-line")
+    after = host.archives[bvid]
+    assert (after["title"], after["tag"], after["desc"]) == ("【主播】哭着说的测试标题", "虚拟主播,切片,嗦面", src + "简介第一行\n第二行")
+    assert (after["cover"], after["videos"][0]["cid"], len(after["videos"])) == (before["cover"], before["videos"][0]["cid"], 1)
+    assert host.appends == [] and len(host.edits) == 1 and len(host.runs) == 1 and host.edits[0]["videos"][0]["title"] == after["title"]
+    completed = json.loads(done.read_text())
+    assert completed["schema_version"] == receipt_chain.METADATA_COMPLETED and completed["status"] == "VERIFIED_FRESH_LIVE"
+    assert completed["live_snapshot"]["public"]["tags"] == ["虚拟主播", "切片", "嗦面"] and completed["unchanged_cid"] == receipt["cid"]
+    # the registry row binds the new receipt, as every reader validates it, and its title is the new one
+    row = registry.rows_for(registry.load()["entries"], bvid=bvid)[0]
+    assert row["publication_reconciliation"]["status"] == metadata.ROW_STATUS == "VERIFIED_SAME_BV_METADATA"
+    assert row["publication_reconciliation"]["title"] == "【主播】哭着说的测试标题"
+    seen = [r for r in load_publication_registry(runtime_path=registry.path())["entries"] if r.get("bvid") == bvid]
+    assert [r["publication_reconciliation"]["authority"]["path"] for r in seen] == [str(done)]
+    chain = receipt_chain.resolve(row["publication_reconciliation"]["authority"])
+    assert chain.first_receipt == first_receipt and chain.predecessor_completed is None and chain.completions == ()
+    assert (chain.online_tags, chain.online_desc) == (("虚拟主播", "切片", "嗦面"), src + "简介第一行\n第二行")
+    # a stop and a run again: no second edit, the same receipt
+    walk = ["--plan", str(done.parent / "plan.json"), "--journal", str(done.parent / "journal.jsonl")]
+    assert main(["metadata-run", *walk]) == 0 and main(["metadata-verify-live", *walk, "--out", str(done)]) == 0
+    assert len(host.edits) == 1 and json.loads(done.read_text()) == completed
+    # a second edit on top: the chain walks both back to the first publication
+    done2 = _metadata_edit(tmp_path, bvid, "--tags", "虚拟主播,嗦面", n=2)
+    chain = receipt_chain.resolve(registry.rows_for(registry.load()["entries"], bvid=bvid)[0]["publication_reconciliation"]["authority"])
+    assert chain.bound == done2 and chain.first_receipt == first_receipt and chain.online_tags == ("虚拟主播", "嗦面")
+    assert host.archives[bvid]["title"] == "【主播】哭着说的测试标题" and json.loads(done2.read_text())["previous"] == bind_of(done)
+
+
+def bind_of(path: Path) -> dict:
+    return {"path": str(path), "sha256": _sha(path), "bytes": path.stat().st_size}
+
+
+def _plan_args(tmp_path, *which: str) -> list[str]:
+    return ["metadata-plan", *which, "--title", "【主播】新标题", "--authorized-by", "维护者", "--quote", "改",
+            "--out", str(tmp_path / "p.json"), "--journal", str(tmp_path / "j.jsonl")]
+
+
+def test_a_metadata_edit_of_a_bv_the_registry_does_not_hold_as_published_is_refused(host, tmp_path, capsys):
+    _pkg, receipt = _first(host, tmp_path, capsys)
+    for which in (["--bvid", "BV1notours001"], ["--cid", "clip_never_published"]):
+        assert main(_plan_args(tmp_path, *which)) == 3 and "已发布行有 0 条" in capsys.readouterr().err
+    registry.path().write_text("{not json")                         # unreadable is not "nothing published": refused too
+    assert main(_plan_args(tmp_path, "--bvid", receipt["bvid"])) == 3 and "读不到出版登记" in capsys.readouterr().err
+    assert host.edits == [] and not (tmp_path / "p.json").exists()
+
+
+@pytest.mark.parametrize("hold", ["bvid", "candidate"])
+def test_a_metadata_edit_of_a_held_bv_or_manuscript_is_refused(host, tmp_path, capsys, monkeypatch, hold):
+    pkg, receipt = _first(host, tmp_path, capsys)
+    held = {"candidate_id": pkg.name if hold == "candidate" else "fm-20261113-other", "recording_date": "2026-11-13",
+            "status": "hold_pending_review", "note": "维护者 搁置"} | ({"bvid": receipt["bvid"]} if hold == "bvid" else {})
+    committed = tmp_path / "committed_registry.json"
+    committed.write_text(json.dumps({"schema_version": publication_registry.REGISTRY_SCHEMA, "entries": [held]}))
+    monkeypatch.setattr(publication_registry, "DEFAULT_REGISTRY_PATH", committed)
+    for which in (["--bvid", receipt["bvid"]], ["--cid", "clip-a"]):
+        assert main(_plan_args(tmp_path, *which)) == 3 and "hold_pending_review" in capsys.readouterr().err
+    assert host.edits == [] and not (tmp_path / "p.json").exists()
+
+
+def test_a_metadata_readback_that_differs_from_the_plan_writes_no_receipt_and_moves_no_registry_row(host, tmp_path, capsys,
+                                                                                                   monkeypatch):
+    _pkg, receipt = _first(host, tmp_path, capsys)
+    bvid = receipt["bvid"]
+    authority_before = registry.rows_for(registry.load()["entries"], bvid=bvid)[0]["publication_reconciliation"]["authority"]
+    plan, journal, done = tmp_path / "p.json", tmp_path / "j.jsonl", tmp_path / "done.json"
+    assert main(["metadata-plan", "--bvid", bvid, "--title", "【主播】新标题", "--tags", "虚拟主播,切片,嗦面", "--authorized-by", "维护者",
+                 "--quote", "改", "--out", str(plan), "--journal", str(journal)]) == 0
+    walk = ["--plan", str(plan), "--journal", str(journal)]
+    # Bilibili took the edit but dropped a tag: never live, and verify-live refuses
+    edit = host.edit_archive
+
+    def drops_a_tag(payload):
+        return edit({**payload, "tag": payload["tag"].rsplit(",", 1)[0]})
+
+    monkeypatch.setattr(host, "edit_archive", drops_a_tag)
+    assert main(["metadata-run", *walk]) == 6 and main(["metadata-run", *walk]) == 6 and len(host.edits) == 1
+    assert main(["metadata-verify-live", *walk, "--out", str(done)]) == 3
+    # the tag comes back, the run sees it live; then the page changes again before the receipt: refused, nothing written
+    host.archives[bvid]["tag"] = "虚拟主播,切片,嗦面"
+    assert main(["metadata-run", *walk]) == 0 and len(host.edits) == 1
+    host.public[bvid] = {**host.public[bvid], "title": "别人改的标题"}
+    capsys.readouterr()
+    assert main(["metadata-verify-live", *walk, "--out", str(done)]) == 5 and "读回与计划不符" in capsys.readouterr().err
+    assert not done.exists()
+    row = registry.rows_for(registry.load()["entries"], bvid=bvid)[0]
+    assert row["publication_reconciliation"]["authority"] == authority_before
+    assert row["publication_reconciliation"]["status"] == "VERIFIED_PUBLIC"
+
+
+def test_a_metadata_edit_is_planned_only_against_a_public_single_part_bv_that_matches_its_row(host, tmp_path, capsys):
+    _pkg, receipt = _first(host, tmp_path, capsys)
+    bvid = receipt["bvid"]
+    host.public[bvid] = None                                        # under review: not now
+    assert main(_plan_args(tmp_path, "--bvid", bvid)) == 3 and "不是公开状态" in capsys.readouterr().err
+    host._publish(bvid)
+    host.public[bvid]["cid"] = 1                                    # online is not what the registry says
+    assert main(_plan_args(tmp_path, "--bvid", bvid)) == 3 and "不符" in capsys.readouterr().err
+    host._publish(bvid)
+    args = _plan_args(tmp_path, "--bvid", bvid)
+    args[args.index("【主播】新标题")] = receipt["title"]
+    assert main(args) == 3 and "没有要改的" in capsys.readouterr().err
+    args[args.index(receipt["title"])] = "没有前缀的标题"                # the channel's envelope stays
+    assert main(args) == 2 and "【主播】" in capsys.readouterr().err
+    assert host.edits == []

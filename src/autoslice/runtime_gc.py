@@ -43,7 +43,7 @@ ACTIVE = frozenset({"running", "processing", "in_progress", "producing", "render
 RECORDING = re.compile(r"\d+_\d{8}-\d{2}-\d{2}-\d{2}\.(mp4|flv|mkv|ts|m4s)$", re.I)
 SKIP_DIRS = frozenset({"recording", "recordings", "source-recordings"})
 NO_MEDIA_DIRS = frozenset({".git", ".venv", "venv", "node_modules"})
-VERIFIED = frozenset({"VERIFIED_PUBLIC", "VERIFIED_SAME_BV", "VERIFIED_SAME_BV_COVER"})
+VERIFIED = frozenset({"VERIFIED_PUBLIC", "VERIFIED_SAME_BV", "VERIFIED_SAME_BV_COVER", "VERIFIED_SAME_BV_METADATA"})
 RUNTIME_REGISTRY = Path("state") / "publication_registry.runtime.v1.json"
 TERMINAL_DISCARD = frozenset({"candidate_rejected", "rejected", "abandoned", "superseded"})
 # A concluded operator run declares itself terminal; free-form RESULT statuses do not.
@@ -106,7 +106,7 @@ def _published(row: dict) -> bool:
         isinstance(proof, dict)
         and proof.get("schema_version") == "publication-reconciliation.v1"
         and row.get("status") in {"published", "covered_by_publication"}
-        and proof.get("status") in {"VERIFIED_PUBLIC", "VERIFIED_SAME_BV", "VERIFIED_SAME_BV_COVER"}
+        and proof.get("status") in VERIFIED
         and proof.get("bvid") == row.get("bvid") and str(row.get("bvid", "")).startswith("BV")
         and (proof.get("candidate_id") == row.get("candidate_id")
              or isinstance(coverage, dict) and coverage.get("schema_version") == "publication-content-coverage.v1"

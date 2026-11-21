@@ -12,6 +12,8 @@ receipt chain (manual_lane/receipt_chain) and the publication registry readers (
     repair-status / cover-repair-status   0 done, 6 not yet
     repair-run / cover-repair-run         the replacement on Bilibili; again after a stop resumes, never repeats
     repair-verify-live / cover-...        read the live BV back, write the completion receipt, move the registry row
+    metadata-plan / -run / -status /      same BV, only its title, tags and description, by its registry row alone (no
+      -verify-live                        package, video, cover or recording is read; metadata.py)
 
 Return codes are step 10's: 0 done; 2 refused before anything (input, configuration); 3 refused by a gate (registry, ledger,
 manifest); 4 the shared lock is held by another upload or repair (`LOCK_BUSY` in the words); 5 Bilibili or biliup failed;

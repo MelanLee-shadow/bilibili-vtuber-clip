@@ -3,7 +3,8 @@
 The registry row of a published manuscript binds one receipt (`publication_reconciliation.authority`, a {path, sha256, bytes}):
 the first-publication receipt as long as the manuscript was never repaired, afterwards the completion receipt of the latest
 repair - `same-bv-repair-completed.v1` (the video and cover were replaced on the same BV) or
-`same-bv-cover-repair-completed.v1` (only the cover was).  Step 8 of a successor builds its same-BV authority from the FIRST
+`same-bv-cover-repair-completed.v1` (only the cover was) or `same-bv-metadata-edit-completed.v1` (only the title, tags and
+description were: lane_publish metadata-*).  Step 8 of a successor builds its same-BV authority from the FIRST
 receipt (new_bv_repair_authority), so it walks the chain back: a completion receipt binds the manifest of its repair
 ({path, sha256}), whose top-level `recovery_publication_authority` binds the receipt that repair was built from
 (`source_publication`), and so on until a receipt of the first-publication schema.  Any link that is missing, differs from the
@@ -25,6 +26,10 @@ What the walk also says, for the upload tool and for `revision.json`:
   receipt (`first_manifest_meta`) or where the plan records none (then they are not known from the chain, and the caller
   stops rather than guesses).
 
+A metadata completion has no manifest and no package: it binds the receipt the row bound before it (`previous`), and the walk
+goes on from there; everything above is then said of that receipt (a metadata edit changes no video or cover), except the tags
+and description online now, which are the latest metadata completion's own (`target`).
+
 - the packages that went online (`used_packages`): the sealed package of the first publication and of every completed repair the
   chain passed (the packages their manifests attest), which is what makes a package "used online" and so not to be redone.
 
@@ -41,6 +46,7 @@ from pathlib import Path
 FIRST_SCHEMA = "new-bv-publication-reconciliation-authority.v1"
 VIDEO_COMPLETED = "same-bv-repair-completed.v1"
 COVER_COMPLETED = "same-bv-cover-repair-completed.v1"
+METADATA_COMPLETED = "same-bv-metadata-edit-completed.v1"
 MAX_LINKS = 16
 
 
@@ -138,6 +144,16 @@ def first_manifest_meta(first_receipt: Path) -> tuple[tuple[str, ...], str | Non
     return tags, desc if isinstance(desc, str) else None
 
 
+def _metadata_completed(path: Path, value: dict) -> tuple[tuple[str, ...], str]:
+    """(final tags, final description) of a `same-bv-metadata-edit-completed.v1`."""
+    _completed(value, path, METADATA_COMPLETED)
+    target = value.get("target")
+    tags = _tags(target.get("tags")) if isinstance(target, Mapping) else None
+    if tags is None or not isinstance(target.get("desc"), str):
+        raise ReceiptChainError(f"{path}: the metadata completion carries no final tags or description (缺 target)")
+    return tags, target["desc"]
+
+
 def _replacement_cover(value: dict, path: Path) -> str:
     cover = (value.get("replacement") or {}).get("cover") if isinstance(value.get("replacement"), Mapping) else None
     if not isinstance(cover, Mapping) or not _plain(cover.get("sha256")):
@@ -166,19 +182,35 @@ def _predecessor_of_cover(path: Path, value: dict) -> tuple[Path, dict] | None:
     return _load(entry.get("completed"), f"the predecessor completion of {path.name}")
 
 
+def _below_metadata(path: Path, link: dict, seen: set[Path]) -> tuple[Path, dict, tuple[tuple[str, ...], str] | None]:
+    """The first receipt under the metadata completions at the top of the chain (a repair is built from the first receipt,
+    so a metadata completion is never further down), and the tags and description of the latest of them (None: none)."""
+    meta = None
+    for _ in range(MAX_LINKS):
+        if link.get("schema_version") != METADATA_COMPLETED:
+            return path, link, meta
+        if path in seen:
+            raise ReceiptChainError(f"the receipt chain returns to {path} (回执链成环)")
+        seen.add(path)
+        meta = meta or _metadata_completed(path, link)
+        path, link = _load(link.get("previous"), f"the receipt that the metadata edit {path.name} replaced")
+    raise ReceiptChainError(f"more than {MAX_LINKS} metadata edits in a row")
+
+
 def resolve(binding: object) -> Chain:
     """Walk the chain from the registry row's binding to the first-publication receipt (see the module docstring)."""
     bound, value = _load(binding, "the receipt the registry row binds")
-    path, link = bound, value
+    seen: set[Path] = set()
+    path, link, meta = _below_metadata(bound, value, seen)
+    top = path                  # the receipt that says which video and cover are online now
     predecessor: Path | None = None
     plan_authority: dict | None = None
     new_cid: int | None = None
     video_sha: str | None = None
     cover_sha: str | None = None
-    tags: tuple[str, ...] | None = None
-    desc: str | None = None
+    tags, desc = meta if meta else (None, None)
+    metadata_seen = meta is not None
     completions: list[Path] = []
-    seen: set[Path] = set()
     for _ in range(MAX_LINKS):
         if path in seen:
             raise ReceiptChainError(f"the receipt chain returns to {path} (回执链成环)")
@@ -191,15 +223,17 @@ def resolve(binding: object) -> Chain:
         if schema == VIDEO_COMPLETED:
             completions.append(path)
             cid, sha = _video_completed(path, link)
-            if path == bound:
+            if path == top:
                 predecessor, new_cid, video_sha, cover_sha = path, cid, sha, _replacement_cover(link, path)
                 plan_authority = _plan_authority(path, link)
-                tags, desc = _plan_meta(path, link, "target_metadata")
+                if not metadata_seen:
+                    tags, desc = _plan_meta(path, link, "target_metadata")
         elif schema == COVER_COMPLETED:
             completions.append(path)
-            if path == bound:
+            if path == top:
                 cover_sha = _cover_completed(path, link)
-                tags, desc = _plan_meta(path, link, "unchanged_metadata")
+                if not metadata_seen:
+                    tags, desc = _plan_meta(path, link, "unchanged_metadata")
                 before = _predecessor_of_cover(path, link)
                 if before is not None:
                     before_path, before_value = before

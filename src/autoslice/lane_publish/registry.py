@@ -9,7 +9,8 @@ upload tool takes), so a BV published or repaired by either tool is one row both
 A row: {candidate_id (the package name), recording_date, bvid, status: "published", publication_reconciliation:
 {schema_version, status, candidate_id, recording_date, bvid, aid, cid, title, authority: {path, sha256, bytes}, reconciled_at}}.
 `authority` binds the receipt the lane's receipt chain starts from: the first-publication receipt, after a same-BV repair the
-completion receipt of the latest one (status VERIFIED_SAME_BV / VERIFIED_SAME_BV_COVER, cid the cid online after it).  This
+completion receipt of the latest one (status VERIFIED_SAME_BV / VERIFIED_SAME_BV_COVER / VERIFIED_SAME_BV_METADATA, cid the
+cid online after it).  This
 is the shape manual_lane/title_history and receipt_chain read.
 
 A registry that cannot be found is not an empty one: when this machine has no runtime base at all the read raises

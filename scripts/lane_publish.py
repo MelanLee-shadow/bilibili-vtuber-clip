@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Step 10's upload tool for any channel: package audit, new BV, same-BV video or cover replacement, publication registry.
+"""Step 10's upload tool for any channel: package audit, new BV, same-BV video or cover replacement, same-BV title/tags/description
+edit, publication registry.
 See src/autoslice/lane_publish/__init__.py."""
 
 from __future__ import annotations

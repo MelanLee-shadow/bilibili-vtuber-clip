@@ -26,6 +26,7 @@ from . import (
     title_authority,
     title_history,
     title_names,
+    title_person,
     title_pick,
     title_understanding,
     title_verdicts,
@@ -66,7 +67,7 @@ if TYPE_CHECKING:
 
 TITLE_MAX_REGEN = 2                              # regeneration rounds after the first candidate round
 TITLE_RULES = ("banned", "prefix", "on_stage_known", "named", "involved_named", "prefix_names", "swap", "punchline",
-               "quotes", "canonical_names", "publish_gate", "published_duplicate")
+               "person", "quotes", "canonical_names", "publish_gate", "published_duplicate")
 
 
 class TitleChecks(TypedDict):
@@ -193,6 +194,9 @@ def title_checks(cand: TitleCandidate, names: Sequence[str], subtitles: str, *,
         failed["swap"] = "换主播自检未通过（或缺失）：换成别的主播仍成立，要重写"
     if not str(cand.get("punchline_person") or "").strip():
         failed["punchline"] = f"笑点未落在{channel.HOST}本人身上（punchline_person 为空）"
+    mixed = title_person.mixed_person(title)
+    if mixed:
+        failed["person"] = title_person.reason(mixed)
     quotes = check_title_quotes(title, subtitles)
     if quotes["status"] != "PASS":
         failed["quotes"] = "引号核对未过：" + ",".join(quotes["reason_codes"])
