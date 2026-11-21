@@ -573,6 +573,12 @@
     "column_punch_row_max_chars": 4,
     "column_context_row_max_chars": 8,
     "text_layouts_source": "频道主 2026-11-13：“封面现在的这个cue全都是左上一个右下一句话，这个版式有点太固定了……什么都在左边竖列的，都在右边竖列的之类的……不一定每次都是左上一句话，然后右下来一句话。”渲染器本来就有 left/right/top 三种，流水线只用了 top。现在按 text_layouts 的顺序轮换：跳过最近 text_layout_recent_covers 张用过的。竖列时人物的脸中心放在画宽的 column_face_center_x_frac（字在左）或其镜像（字在右）；封面字由封面说明那次模型调用按词的边界拆成 2 到 column_rows_max 行，笑点行拆出的每行不超过 column_punch_row_max_chars 字（一侧可用宽度约 860px，4 个字才放得到 200px 以上：851360 的表情包实渲 202px），前面一行拆出的每行不超过 column_context_row_max_chars 字。竖列只用于单人、没有 kmx 表情包的贴纸类候选；人物摆好后笑点行在下限字号放不下的候选仍用 top。",
+    "panel_slant_px": 110,
+    "panel_dot_step_px": 46,
+    "panel_dot_radius_px": 5,
+    "panel_dot_lift": 22,
+    "panel_rule_px": 14,
+    "panel_source": "频道主 2026-11-21：“今天这个新切片全都是同一个标题封面……这个颜色太单一了……它总是左上一行，然后右下一行，太单一了……你能不能根据调研结果重新想想这标封面怎么做”。技能第六节的同行调研：人物和字都很大，字占画面三分之一到一半，背景很简单（浅色渐变、波点、虚化截图）。截图路线原来只有“上方两行”一种构图；现在轮到竖列时把她挪到一侧（脸中心在 column_face_center_x_frac 或其镜像），另一侧画一块底板放竖列的字，底板颜色取 backgrounds 同一张表、同一套轮换（assets/manual_lane/remote/cover_side.py、cover_background.panel）。底板斜边每端倾斜 panel_slant_px、沿边一条 panel_rule_px 的白线；波点间距 panel_dot_step_px、半径 panel_dot_radius_px、比底色亮 panel_dot_lift：这五个数取自 2026-11-21 用当天两张直播画面做的试验图",
     "layout_order": [
       "face_floor",
       "punch_floor",

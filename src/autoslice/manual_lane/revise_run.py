@@ -156,14 +156,17 @@ def _import_subtitles(task: Path, state_x: ClipState, state: ClipState, cid: str
                   decided_by="owner" if owner else None, owner_edited=edited)
 
 
-def title_online(clip_dir: Path, state: ClipState) -> str | None:
-    """The title the manuscript carries online now, for a successor made by `revise`: what the nearest predecessor that
-    went online recorded (upload/online.json).  A revision redoes the subtitles, the speakers, the picture; the title a
-    published manuscript has is changed by its own road (the title edit and its receipt), and the same-BV repair refuses
-    a second revision that arrives with another title .
+def title_online(clip_dir: Path, state: ClipState, edited: str | None = None) -> str | None:
+    """The title the manuscript carries online now, for a successor made by `revise`: `edited` when an in-place edit
+    gave it one since (title_history.edited_title), else what the nearest predecessor that went online recorded
+    (upload/online.json).  A revision redoes the subtitles, the speakers, the picture; the title a published manuscript
+    has is changed by its own road (the title edit and its receipt), and the same-BV repair refuses a second revision
+    that arrives with another title .
     None for a clip that is not such a successor, or when no predecessor's record can be read."""
     task = clip_dir.parent.parent
     origin = state.data.get("revised_from")
+    if edited and isinstance(origin, dict) and origin.get("cid"):
+        return edited
     while isinstance(origin, dict) and origin.get("cid"):
         try:
             title = json.loads((task / "clips" / str(origin["cid"]) / "upload/online.json").read_text(encoding="utf-8")).get("title")
@@ -176,6 +179,19 @@ def title_online(clip_dir: Path, state: ClipState) -> str | None:
         except (OSError, ValueError, StateError):
             return None
     return None
+
+
+def keeps_title(state: ClipState) -> bool:
+    """A revision of a published manuscript keeps the title that is online, unless the owner asked for another title on
+    this clip (title_verdicts): step 6 takes that title, and the review (step 9) does not rewrite it -- a rewritten
+    title would go onto the BV with the repair (a cover revision came out of the review with a third
+    title).  A published title is changed by the title edit and its receipt."""
+    from . import title_verdicts
+
+    origin = state.data.get("revised_from")
+    if not (isinstance(origin, dict) and origin.get("cid")):
+        return False
+    return title_verdicts.load_verdicts().retitle(str((state.data.get("clip") or {}).get("cid") or "")) is None
 
 
 def revise_clip(*, task: Path, cid: str, reason: str, adapters_for: AdaptersFor, fresh_speakers: bool = False,

@@ -40,11 +40,24 @@ def rows_of(lines: Sequence[str], answer: object, rules: Mapping[str, Any]) -> l
     return rows
 
 
-def next_layout(recent: Sequence[str | None], rules: Mapping[str, Any]) -> tuple[str, str]:
-    """(layout, why) for the next cover: the first of `text_layouts` the recent covers did not use; when they used them
-    all, the one used longest ago."""
+def next_layout(recent: Sequence[str | None], rules: Mapping[str, Any], session: Sequence[str | None] = ()
+                ) -> tuple[str, str]:
+    """(layout, why) for the next cover: the first of `text_layouts` that neither the recent covers nor the covers of
+    this recording day (`session`) used.  When the day has used them all, a column the day used once comes round again
+    (a screenshot then stands beside it without the colour panel: its second look, cover_side), the one used longest
+    ago first.  Without a day's covers to go by: the first the recent covers did not use, else the one used longest
+    ago.  Owner the covers of one stream all looked the same."""
     order = [str(x) for x in rules["text_layouts"]]
     used = [x for x in recent if x in order][-int(rules["text_layout_recent_covers"]):]
-    fresh = [x for x in order if x not in used]
-    pick = fresh[0] if fresh else min(order, key=lambda x: max(i for i, u in enumerate(used) if u == x))
-    return pick, f"最近 {len(used)} 张用过 {'、'.join(used) or '无'}，这张轮到 {pick}"
+    today = [x for x in session if x in order]
+    fresh = [x for x in order if x not in used and x not in today]
+    again = [x for x in order if x in COLUMNS and today.count(x) == 1] if set(order) <= set(today) else []
+    if fresh:
+        pick = fresh[0]
+    elif again:
+        pick = min(again, key=lambda x: max(i for i, u in enumerate(today) if u == x))
+    else:
+        rest = [x for x in order if x not in used]
+        pick = rest[0] if rest else min(order, key=lambda x: max(i for i, u in enumerate(used) if u == x))
+    return pick, (f"最近 {len(used)} 张用过 {'、'.join(used) or '无'}" + (f"，本场用过 {'、'.join(today)}" if today else "")
+                  + f"，这张轮到 {pick}")
