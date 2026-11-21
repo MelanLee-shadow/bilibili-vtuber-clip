@@ -48,9 +48,14 @@ def pick_emote(ctx: Ctx, plan: CoverPlan, cover_lines: Sequence[str]) -> tuple[C
     from src.autoslice.cover_emote import load_emote_library
 
     recent = plan["recent"]
-    excluded = sorted(set(recent["last_five_main_emotes"]) | set(recent["source_session_main_emotes"]))
-    fallback = plan.get("emote")
     library = load_emote_library()
+    # the lane pastes the sticker as it is drawn, so one with a caption baked into the art would show that caption
+    # beside the cover's own lines (owner 表情包自带字一律在出图中省略): such a sticker is not offered
+    baked = {e.id for e in library.entries if e.baked_text} if library else set()
+    excluded = sorted(set(recent["last_five_main_emotes"]) | set(recent["source_session_main_emotes"]) | baked)
+    fallback = plan.get("emote")
+    if fallback and fallback["id"] in baked:
+        fallback = None
     entries = [e for e in library.entries if e.id not in excluded and e.use_when.strip()]
     if not library or not entries:
         reason = "表情包说明（emote 清单）读不到或没有可用条目，沿用关键词规则"

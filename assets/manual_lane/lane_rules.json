@@ -590,7 +590,72 @@
     "fans_h_px": 560,
     "fans_bottom_bleed_px": 30,
     "fans_source": "认可批次的粉丝贴纸拼贴（制作记录 第 3 节 v2/mk.py c7）：主表情包脸中心 x=640（640/1920≈0.333），粉丝贴纸放 x=1300、高 560、底部出画 30px",
-    "sticker_face_center_x_frac_source": "认可批次的贴纸/表情包：脸中心 x=1100（制作记录 第 2 节 J8），1100/1920≈0.573，靠画面中部偏右；主人物在左侧时取镜像"
+    "sticker_face_center_x_frac_source": "认可批次的贴纸/表情包：脸中心 x=1100（制作记录 第 2 节 J8），1100/1920≈0.573，靠画面中部偏右；主人物在左侧时取镜像",
+    "emote_seed_margin_frac": 0.06,
+    "emote_backdrop_min_frac": 0.01,
+    "emote_backdrop_tries": [
+      [
+        0.04,
+        1
+      ],
+      [
+        0.15,
+        1
+      ],
+      [
+        0.15,
+        0
+      ]
+    ],
+    "emote_keep_min_ratio": 0.85,
+    "emote_boxed_side_frac": 0.95,
+    "emote_cut_side_min_frac": 0.04,
+    "emote_fade_frac": 0.07,
+    "emote_flush_min_frac": 0.3,
+    "emote_layer_source": "2026-11-21 对库里 25 张官方表情包实测（assets/manual_lane/remote/cover_emote_layer.py）：高清重绘图的人物和小图蒙版对不上（24 号露棋盘格底、25 号露黑底），多数原图本身被方框裁掉耳朵或头发（左/右/上边缘不透明占比 4%–100%），34 张表情包封面里 19 张因此被判官判图层不干净。底色洪泛按“底色占蒙版外像素的份额、相邻色阶”从松到严试三档 emote_backdrop_tries；留下的人物面积不到蒙版的 0.85（松档会吃进人物：实测 0.33–0.70，正确的 ≥0.89）或左右上三边仍几乎全不透明（0.95，底没去掉）就换下一档，三档都不行（19 号）沿用小图蒙版。更松的档（份额 1%–4%、不带相邻色阶）试过：会沿着与底同色的深色描线吃进人物（10、19、20 号），面积小到 0.85 这条线看不出，没有采用。蒙版外扩 6% 以外才当作“肯定不是人物”的洪泛起点。被方框裁掉的一边（不透明占比 ≥4%）向内 7% 渐隐；左右两边里裁得最多的一边若 ≥30%（整只耳朵、半边头发）且封面上没有别的图层与它并排，就由排版贴到画布边缘、不渐隐（05 号被裁的耳朵渐隐后仍被判官三读三否）。"
+  },
+  "veto": {
+    "_doc": "模型判官的“不行”有代价时（免费封面候选落选、生成图重做、片被扣住），一次读数不算数：assets/manual_lane/remote/veto.py 的 confirm 在第一次不是干净通过时再问到 3 次，每一项多数不过才算不过；只有一次“不行”、别的调用都失败＝没有结论。本表登记每一处模型判定属于哪一类：confirm＝必须走 veto.confirm；repeated＝有自己的多遍规则；free＝说不行不花钱；none＝不是对成品说行不行（生成、读数取证、挑选、逐句定字）。remote 的键是直接向模型提问的函数（工具名.函数），purposes 的键与 effort.purposes 一一对应。新加一处模型判定必须先在这里归类（tests/manual_lane/test_veto_confirm.py）。",
+    "source": "行政 2026-11-21：同一张缩略图读 7 次 2 次说字读不出（一张合格截图因此换成付费图）；6 张存档的封面判官结论重读 2 张不同。频道主 2026-11-18：封面先用免费候选。",
+    "remote": {
+      "cover_thumb.main": "confirm｜缩略图认不出脸或读不出笑点字→换下一个候选，免费的都不过就去生图",
+      "cover_candidates.judge": "confirm｜图层/身份/忠于原画/不编造/主播在场任一不过→候选被否决：免费的落选，生成的重做",
+      "cover_candidates.found_by_most": "confirm｜找不到主播的脸、头或人物轮廓→这条路线不做（截图不出，或生成的图作废）",
+      "cover_fallback.main": "none｜候选全被否决后在其中挑一张",
+      "pick_frame.find_action": "none｜在整片里找经典动作帧（挑选）",
+      "pick_frame.main": "free｜这一帧不干净就看下一帧；读框失败用固定版式",
+      "look_at_frames.look": "none｜字幕代理看画面取证",
+      "read_banner.main": "none｜读横幅上的字",
+      "read_screen_subtitles.read_frame": "none｜读画面里的字幕",
+      "listen_windows._within": "none｜复听取证"
+    },
+    "purposes": {
+      "boundary": "none｜给出起止句（挑选）",
+      "adjudicate": "none｜逐句定字和把握度；扣不扣片由 review 定",
+      "subtitle-agent": "none｜逐句取证定字；扣不扣片由 review 定",
+      "concat-check": "none｜只标出拼接，不拦片",
+      "speaker-review": "none｜定说话人",
+      "speaker-video": "none｜定说话人",
+      "title": "none｜生成",
+      "title-read": "none｜读片归纳，独立读两遍再合并",
+      "title-merge": "none｜合并两份阅读",
+      "persona-observe": "none｜生成",
+      "reference-spot": "none｜生成",
+      "title-context": "none｜查不到就写查不到，不拦片",
+      "title-judge": "repeated｜技能规定判多遍、全过才过（title_authority.JUDGE_RUNS）；不过只重写标题，不换图不扣片",
+      "title-pick": "none｜排序",
+      "cover-brief": "none｜生成",
+      "cover-emote": "none｜按句意挑表情包，可一张不选（表情包路线不做，截图照做）",
+      "cover-text": "none｜把封面字压短",
+      "review": "repeated｜定不下且影响意思的句子再做两轮宽窗复听（wide_held），仍定不下才扣片",
+      "review-c": "none｜标出要再听的句子",
+      "import-meaning": "none｜只判换写法会不会变意思；扣不扣片由 review 定",
+      "writing-canon": "none｜逐处定写法",
+      "name-consistency": "none｜逐组定写法",
+      "trim": "repeated｜问两遍、两遍都提议才剪",
+      "discover-recall": "none｜挑选候选并打分",
+      "compilation-select": "none｜挑选"
+    }
   },
   "audio_under_subtitle": {
     "_doc": "第 8 步打包前对成片（burn/final.mp4，含片头）查掉声：字幕（subs/final.srt 的时间加片头偏移）里时长不短于 min_subtitle_s 的任何一句，若它所在时间段（两端各容 edge_tolerance_s）整段是数字静音（所有声道所有采样都不高于 noise_db，ffmpeg silencedetect），第 8 步以 AUDIO_SILENT_UNDER_SUBTITLE 失败，原因写明第几句与时间段。这是成品坏了不该发，不是对频道主决定的拦截；切片、合集、烧录、片头任一环节造成的掉声都在这里被拦下。字幕之间本来就安静的地方不查。",

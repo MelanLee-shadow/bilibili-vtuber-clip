@@ -44,6 +44,8 @@ import cover_fast_text as fast_text
 import cover_face_crop as crop_mod
 import cover_layout as layout
 import cover_text_fit as text_fit
+import cover_confirm
+import cover_emote_layer as emote_layer
 from cover_face_crop import frame_face, protect
 
 CALLS = []
@@ -194,8 +196,9 @@ def vision(job, name, question, images, out_dir):
 
 @clock.timed("judge")
 def judge(job, cid, question, image, frame, out_dir):
-    """The reading of one rendered candidate (full 1920 width, the first image) with the source frame for identity."""
-    return vision(job, f"{cid}.judge", question, [(image, 1920), (frame, 1280)], out_dir)
+    """One rendered candidate (1920 wide) judged against the source frame; a veto is confirmed: (answer, reused, votes)."""
+    return cover_confirm.confirm_judge(lambda n: vision(job, f"{cid}.judge" + cover_confirm.nth(n), question,
+                                                        [(image, 1920), (frame, 1280)], out_dir), parse_verdict, crop_mod.HOST)
 
 
 LOCATE = ("这张图（{w}x{h} 像素）里有虚拟主播" + crop_mod.HOST + "（Q 版、表情包、抠图也算她）；以画面实际造型和名牌辨认，"
@@ -209,24 +212,17 @@ FACE_IN = ("这张图（{w}x{h} 像素）是从一张画面里裁出的一位虚
            '{{"face": [x0, y0, x1, y1]}}，整数；看不出就写 null。')
 
 
+def found_by_most(job, name, question, images, out_dir, found):
+    """A locating reading; "not there" drops the route, so it is confirmed (cover_confirm.confirm_found)."""
+    return cover_confirm.confirm_found(lambda n: vision(job, name + cover_confirm.nth(n), question, images, out_dir), found)
+
+
 def _located(job, src, out_dir, name, question, key):
-    """One CPA vision reading of one picture for one face box (reused while the picture's bytes are unchanged)."""
+    """The face box one picture is read for (reused while the picture's bytes are unchanged)."""
     with Image.open(src) as im:
         w, h = im.size
-    try:
-        answer, _ = vision(job, name, question.format(w=w, h=h), [(src, w)], out_dir)
-    except (urllib.error.URLError, OSError, ValueError):
-        return None
-    match = re.search(r"\{.*\}", answer, re.DOTALL)
-    try:
-        box = json.loads(match.group(0)).get(key) if match else None
-    except ValueError:
-        box = None
-    if isinstance(box, list) and len(box) == 4 and all(isinstance(v, (int, float)) for v in box):
-        box = [int(round(v)) for v in box]
-        if 0 <= box[0] < box[2] <= w and 0 <= box[1] < box[3] <= h:
-            return box
-    return None
+    return found_by_most(job, name, question.format(w=w, h=h), [(src, w)], out_dir,
+                         lambda answer: cover_confirm.box_in(answer, key, w, h))
 
 
 @clock.timed("locate")
@@ -555,17 +551,22 @@ PEOPLE_LOCATE = ("这是一张已去背景的人物图（{w}x{h} 像素），请
 
 
 def located_people(job, src, out_dir, expected):
-    """Read all figures once when alpha columns disagree with the frame; vision() caches by source bytes and prompt."""
+    """Read all figures when alpha columns disagree with the frame; vision() caches by source bytes and prompt."""
     with Image.open(src) as im:
         w, h = im.size
+    return found_by_most(job, "locate-people-cutout", PEOPLE_LOCATE.format(w=w, h=h), [(src, w)], out_dir,
+                         lambda answer: people_in(answer, w, h, expected))
+
+
+def people_in(answer, w, h, expected):
+    """The `expected` figures of one answer (body, face, outline each), or None."""
     try:
-        answer, _ = vision(job, "locate-people-cutout", PEOPLE_LOCATE.format(w=w, h=h), [(src, w)], out_dir)
         match = re.search(r"\{.*\}", answer, re.DOTALL)
         # Some responses omit the outer opening bracket for an outline, but retain its closing bracket.
         raw = re.sub(r'("outline"\s*:\s*)(\[\s*-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?\s*\]\s*,)',
                      r'\1[\2', match.group(0)) if match else ""
         people = json.loads(raw)["people"] if match else None
-    except (urllib.error.URLError, OSError, ValueError, KeyError, TypeError):
+    except (ValueError, KeyError, TypeError):
         return None
     if not isinstance(people, list) or len(people) != expected:
         return None
@@ -677,15 +678,12 @@ class Run:
         return self.frame_guest[0] if self.frame_guest else None
 
     def head(self):
-        """The host's face and head top in the live frame, one reading (reused while the frame's bytes are unchanged)."""
+        """The host's face and head top in the live frame (reused while the frame's bytes are unchanged)."""
         with Image.open(self.frame) as im:
             w, h = im.size
         question = crop_mod.HEAD_LOCATE.format(w=w, h=h, identity=self.job.get("identity", "以图中实际造型为准"))
-        try:
-            answer, _ = vision(self.job, "locate-screenshot-head", question, [(self.frame, w)], self.out)
-        except (urllib.error.URLError, OSError, ValueError):
-            return None, None
-        return crop_mod.read_head(answer, w, h)
+        return found_by_most(self.job, "locate-screenshot-head", question, [(self.frame, w)], self.out,
+                             lambda a: cover_confirm.with_face(crop_mod.read_head(a, w, h))) or (None, None)
 
     def text_ink(self, spec):
         """(style the rotation tries first, ink(i, size)) for this spec's lines: what the renderer will paint."""
@@ -747,7 +745,8 @@ class Run:
     def emote(self, emote):
         clock.route("emote")
         job, out, frame, guest_box, renderer = self.job, self.out, self.frame, self.guest_box, self.renderer
-        cutout = "mask:" + emote["mask"]
+        solo = not guest_box and not job.get("fans_emote")           # nothing beside it: a cut side may go to the canvas edge
+        cutout, (layer, flush, _) = "alpha", emote_layer.layer_for(emote["hd"], emote["mask"], out, self.rules, solo)
         guest = ({"src": frame, "cutout": "none", "crop": half(guest_box), "h": GUEST_H} if guest_box else None)
         hf = host_face(job, emote["hd"], out, name="locate-emote")      # the face is measured in the emote itself
         if hf is None:
@@ -756,20 +755,21 @@ class Run:
         guest_measured = None
         if gf:
             stickers, _, guest_measured, face = peer_layers(
-                {"src": emote["hd"], "cutout": cutout, "fig": alpha_box(emote["hd"], cutout, renderer), "face": hf},
+                {"src": layer, "cutout": cutout, "fig": alpha_box(layer, cutout, renderer), "face": hf},
                 {"src": frame, "cutout": "none", "fig": half(guest_box), "face": gf}, renderer, self.host_side,
                 self.face_px, self.floor_px, self.need_top())
-            host_ref = {"kind": "layer", "src": emote["hd"], "crop": stickers[1]["crop"], "face": hf}
+            host_ref = {"kind": "layer", "src": layer, "crop": stickers[1]["crop"], "face": hf}
             keep = [guest_measured]
         else:
             try:
-                stickers, face, keep, host = self.solo_host("emote", {"src": emote["hd"], "cutout": cutout}, hf, guest,
+                stickers, face, keep, host = self.solo_host("emote", {"src": layer, "cutout": cutout, "flush": flush}, hf, guest,
                                                             self.rules["fans_main_center_x_frac"] if job.get("fans_emote") else None)
             except ValueError as exc:
                 return self.fail("emote", str(exc))
-            host_ref = {"kind": "layer", "src": emote["hd"], "crop": host["crop"], "face": hf}
+            host_ref = {"kind": "layer", "src": layer, "crop": host["crop"], "face": hf}
         if job.get("fans_emote"):        # the fans' sticker stands on the other side of the main emote (approved collage)
-            fans = {"src": job["fans_emote"]["hd"], "cutout": "mask:" + job["fans_emote"]["mask"], "x": self.rules["fans_x_px"],
+            fans = {"src": emote_layer.layer_for(job["fans_emote"]["hd"], job["fans_emote"]["mask"], out, self.rules)[0],
+                    "cutout": "alpha", "x": self.rules["fans_x_px"],
                     "h": self.rules["fans_h_px"], "y": 1080 - self.rules["fans_h_px"] + self.rules["fans_bottom_bleed_px"]}
             stickers.append(fans)
             keep = [*keep, [fans["x"], fans["y"], min(1920, fans["x"] + layer_size(fans["src"], fans["cutout"], None, fans["h"], renderer)),
@@ -1036,7 +1036,7 @@ class Run:
             row["guest_faces_measured"] = group_faces
         question = job["judge_question"].replace("{route}", route).replace("{route_note}", note)
         try:
-            answer, cached = judge(job, route, question, path, self.frame, self.images)
+            answer, cached, votes = judge(job, route, question, path, self.frame, self.images)
         except (urllib.error.URLError, OSError, ValueError) as exc:
             row.update(judge_error=type(exc).__name__)
             return row
@@ -1047,7 +1047,7 @@ class Run:
             verdict["face_judge"] = verdict.get("face")
             verdict["face"] = [max(0, min(1920, face_box[0])), max(0, min(1080, face_box[1])),
                                max(0, min(1920, face_box[2])), max(0, min(1080, face_box[3]))]
-        row.update(answer=answer, verdict=verdict, judge_cached=cached)
+        row.update(answer=answer, verdict=verdict, judge_cached=cached, judge_votes=votes)
         return row
 
     def render_record(self, spec, rec, selection, guest_measured):

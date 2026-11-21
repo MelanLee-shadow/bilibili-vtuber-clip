@@ -80,7 +80,8 @@ def place_solo(layer, face, renderer, rules, need_top, host_side, centre_frac=No
     ft, fb = max(0.0, (face[1] - oy) / bh), min(1.0, (face[3] - oy) / bh)
     cut = crop[1] <= 0 and oy <= 1                    # the figure runs into the source picture's own top edge: a flat cut
     bleed = cut and _bleed_fits(ft, fb, rules, need_top)
-    if bleed:                                         # no outline: the cut edge is then the canvas edge exactly
+    flush = layer.get("flush")                        # L | R: the source picture cuts the figure there (cover_emote_layer)
+    if bleed or flush:                                # no outline: the cut edge is then the canvas edge exactly
         outline = 0
     pad = outline + 4 if outline else 0               # the renderer pads the picture by the outline before it pastes
     plan = solve(ft, fb, rules, need_top, pad)
@@ -97,13 +98,17 @@ def place_solo(layer, face, renderer, rules, need_top, host_side, centre_frac=No
     fx0, fx1 = (face[0] - ox) * s, (face[2] - ox) * s
     x = round(centre - (fx0 + fx1) / 2 - pad)
     x = max(0, min(x, round(FRAME_W - pad - fx1)))
+    if flush:                                         # that side on the canvas edge, wherever the face then stands
+        x = 0 if flush == "L" else FRAME_W - w
     y = round(plan["face_top"] - pad - ft * h)
     sticker = {"src": layer["src"], "cutout": layer["cutout"], "crop": crop, "x": x, "y": max(0, y), "h": h,
                "measure_outline": True}
-    if "outline" in layer or bleed:
-        sticker["outline"] = 0 if bleed else layer["outline"]
+    if "outline" in layer or bleed or flush:
+        sticker["outline"] = 0 if bleed or flush else layer["outline"]
     box = [round(x + pad + fx0), round(max(0, y) + pad + ft * h), round(x + pad + fx1), round(max(0, y) + pad + fb * h)]
     plan.update(width=w, layer_xy=[x, max(0, y)], face=box, face_px=box[3] - box[1])
+    if flush:
+        plan["side_cut"] = {"side": flush, "at": "CANVAS_EDGE"}
     if cut:                                           # recorded either way: a flat cut inside the canvas is the source's, not the layout's
         plan["head_cut"] = "AT_CANVAS_TOP" if bleed else "INSIDE_CANVAS"
         plan["cut_edge_y"] = max(0, y) + pad
