@@ -328,7 +328,19 @@ class _Run:
         if problems:
             stop(READBACK_MISMATCH, "回读与应上线的内容不一致（线上已改，不回滚；online.json 记下了读到的）：" + "；".join(problems))
         self._mark("readback")
-        return StepOutcome(True, products={"online": str(path)}, process=self.process(), note=f"已上线并回读核对：{route.kind}，{self.job.bvid}")
+        return StepOutcome(True, products={"online": str(path)}, process=self.process(),
+                           note=f"已上线并回读核对：{route.kind}，{self.job.bvid}；{self._streak()}")
+
+    def _streak(self) -> str:
+        """The unattended-upload count after this upload (review_streak.json beside the task's state; owner)."""
+        from . import channel, review_streak
+
+        try:
+            clip = self.ctx.state.data["clip"]
+            return review_streak.line(review_streak.write(self.ctx.state.path.parent.parent, channel.asset(review_streak.LEDGER),
+                                                          online=(str(clip["recording_date"]), str(clip["cid"]))))
+        except (OSError, ValueError, KeyError) as exc:          # the clip is online already: the count is reported missing, not the step failed
+            return f"连续无改场次算不出（{type(exc).__name__}: {exc!s:.300}）"
 
 
 def run(ctx: Ctx, package: Path) -> StepOutcome:

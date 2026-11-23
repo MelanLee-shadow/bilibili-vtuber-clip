@@ -294,6 +294,7 @@ def cmd_status(args: argparse.Namespace) -> int:
         from .song_day import ledger_lines as song_lines
 
         print("\n".join(ledger_lines(Path(args.task_dir)) + song_lines(Path(args.task_dir))))
+        print(_streak_line(Path(args.task_dir)))
         for path in sorted((Path(args.task_dir) / "state").glob("*.json")):      # the clips of the task, by id
             state = ClipState.load(path)
             if state.data["clip"].get("status") == "SUPERSEDED":
@@ -310,6 +311,29 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(f"{step.number:>2} {step.key:<12} {rec.get('status', 'PENDING'):<8} {rec.get('reason', '') or ''} "
               f"cpa={len(rec.get('cpa') or [])} {str(rec.get('note', ''))[:400 if step.key == 'review' else 90]}")
     print(f"cpa_calls_total={state.cpa_call_count()}")
+    return 0
+
+
+def _streak_line(task_dir: Path) -> str:
+    from . import channel, review_streak
+
+    try:
+        return review_streak.line(review_streak.write(task_dir, channel.asset(review_streak.LEDGER)))
+    except (OSError, ValueError) as exc:
+        return f"连续无改场次：算不出（{type(exc).__name__}: {exc!s:.300}）"
+
+
+def cmd_review_streak(args: argparse.Namespace) -> int:
+    """The unattended-upload count (review_streak): one line, then the whole report."""
+    from . import channel, review_streak
+
+    ledger = channel.asset(review_streak.LEDGER)
+    if args.markdown:
+        print(review_streak.markdown(review_streak.load(ledger)), end="")
+        return 0
+    report = review_streak.write(Path(args.task_dir), ledger)
+    print(review_streak.line(report))
+    print(json.dumps(report, ensure_ascii=False, indent=1))
     return 0
 
 
@@ -578,6 +602,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--task-dir", required=True)
     p.add_argument("--cid", default=None)
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("review-streak", help="broadcasts in a row that went online with nothing to change (owner 2026-11-23: "
+                       "10 such earn unattended upload); counted from the channel's review_findings.jsonl and the task's uploads")
+    p.add_argument("--task-dir", required=True)
+    p.add_argument("--markdown", action="store_true", help="print the account as a table for people instead")
+    p.set_defaults(func=cmd_review_streak)
 
     p = sub.add_parser("listen-queue")
     p.add_argument("--task-dir", required=True)

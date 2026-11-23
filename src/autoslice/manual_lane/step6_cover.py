@@ -112,6 +112,9 @@ COVER_FRAME_W, COVER_FRAME_H = 1920, 1080
 # and gift bar sit on the right; Lidousha stands on the right side (body about x 1200-1700).
 COVER_DANMAKU_FALLBACK = [[1650, 700, 1830, 1060]]
 COVER_PERSON_FALLBACK = [[1200, 0, 1700, 1080]]
+# A danmaku box CPA reads from the frame is widened by one chat line above and below (and a little at the sides) before
+# the people are cut out: a box one line short left a readable line on 907000's cover (U452 ledger,).
+COVER_DANMAKU_PAD_X, COVER_DANMAKU_PAD_Y = 12, 48
 FRAME_OFFSETS_S = (0, -4, 4, -8, 8, -12, 12)   # candidate cover frames around the default moment
 
 
@@ -140,10 +143,11 @@ def subtract_rect(rect: Sequence[int], hole: Sequence[int]) -> list[list[int]]:
 
 def blur_boxes(danmaku: Sequence[Sequence[int]] | None, person: Sequence[Sequence[int]] | None,
                face: Sequence[int]) -> list[list[int]]:
-    """Boxes to blur: the danmaku boxes (or the fixed layout), with the host's body and the face cut out, so the blur
+    """Boxes to blur: the danmaku boxes CPA read, one chat line larger (or the fixed layout), with the host's body and the face cut out, so the blur
     never reaches the person.  The fixed host body is always cut out: CPA's person box may be the other guest.
     Clamped to the frame."""
-    bases = [list(b) for b in (danmaku or COVER_DANMAKU_FALLBACK)]
+    bases = ([[x0 - COVER_DANMAKU_PAD_X, y0 - COVER_DANMAKU_PAD_Y, x1 + COVER_DANMAKU_PAD_X, y1 + COVER_DANMAKU_PAD_Y]
+              for x0, y0, x1, y1 in danmaku] if danmaku else [list(b) for b in COVER_DANMAKU_FALLBACK])
     holes = [list(h) for h in list(person or []) + COVER_PERSON_FALLBACK] + [list(face)]
     out: list[list[int]] = []
     for base in bases:
