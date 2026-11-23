@@ -12,9 +12,9 @@ instead, the picture reading can be a character off (1086800_trim: the SC card �
  around them, and the sentence reads at least six of the record's characters in all and, of a longer record, eight
  or most of it (a word of her own inside the reading does not count against it: 1677890 「他们提的是黑白小猪的猪屎」) (the difference may start or end both texts: 11-16 「冲b币换电池」 was rewritten
  充 at the start) -- she is plainly reading it, and only the written form of those characters differs;
-- and what she said is the record's: the written characters sound like the record's (the same blurred pinyin,
- name_match.sound_key: a homophone written another way, 充/冲), or a recogniser heard the record's sound there and
- not the written one (南酮: both recognisers heard nán tīng, the sound of 南町). When she reads a comment back in
+- and what she said is the record's: the written characters are said like the record's (the same pinyin,
+ name_match.raw_pinyin: a homophone written another way, 充/冲), or a recogniser heard the record's sound there (the
+ blurred pinyin, name_match.sound_key) and not the written one (南酮: both recognisers heard nán tīng, the sound of 南町). When she reads a comment back in
  her own words -- another pronoun, another word, a joke on it (你的ID for 我的ID, 主播 for 主包, 祥子 for 样子) --
  the sound differs and nothing is changed (the 11-18 sweep over 34 lane clips found 27 such stretches);
 - the sentence's own words around it (her reply, what she adds) are never touched, nor anything when two records
@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import TypedDict
 
 from .evidence_attach import DANMAKU_BEFORE_S
-from .name_match import sound_key
+from .name_match import raw_pinyin, sound_key
 from .recorder_events import event_lookback_s
 
 MIN_SPAN = 6        # equal + differing characters of one stretch
@@ -98,8 +98,11 @@ def _contains(heard: tuple[str, ...], part: tuple[str, ...] | None) -> bool:
 
 
 def she_said_the_record(st: Stretch, heard: Sequence[str]) -> bool:
-    """The written characters sound like the record's, or a recogniser heard the record's sound and not theirs."""
-    if sound_key(st["written"]) is not None and sound_key(st["written"]) == sound_key(st["record_has"]):
+    """The written characters are said as the record's (the same pinyin: a homophone written another way), or a
+    recogniser heard the record's sound and not theirs.  Only the exact pinyin settles it alone: under the blurred key
+    zhen and zheng are one sound, and 11-20 785950 「李豆沙从未认证过」 (both recognisers 认证, a viewer's pun 认真过
+    just before) would have been copied as 认真."""
+    if raw_pinyin(st["written"]) is not None and raw_pinyin(st["written"]) == raw_pinyin(st["record_has"]):
         return True
     keys = [k for k in (sound_key(h) for h in heard) if k]
     rec = sound_key(st["left"] + st["record_has"] + st["right"])
@@ -182,3 +185,28 @@ def settle(clip_dir: Path, process: list[str]) -> list[Copy]:
                                                         encoding="utf-8")
     process.append(process_line(found))
     return found
+
+
+def settle_edits(clip_dir: Path, edited: dict[int, dict[str, object]], track: Sequence[Mapping[str, object]],
+                 notes: list[str]) -> dict[int, dict[str, object]]:
+    """Step 9's review: its new texts copied from the chat records as step 3's were -- one definition on every path
+    (11-16 1668160: the review rewrote her reading of 「冲b币换电池」 as 充, a homophone fix).  Runs before the
+    canonical writing, as at step 3 (a word the writing table settles is written its way in a reading too: 11-20).  An
+    edit that only changed the reading of a record is then no edit."""
+    lines = clip_dir / "danmaku/lines.json"
+    numbers = [n for n, c in edited.items() if c["text"] != track[n - 1]["text"]]
+    if not numbers or not lines.is_file():
+        return edited
+    cues = [dict(edited[n]) for n in numbers]
+    found = copies(cues, json.loads(lines.read_text(encoding="utf-8")), heard_over(clip_dir, cues))
+    if not found:
+        return edited
+    apply(cues, found)
+    out = dict(edited)
+    for n, cue in zip(numbers, cues, strict=True):
+        if cue["text"] == track[n - 1]["text"] and cue.get("speaker") == track[n - 1].get("speaker"):
+            out.pop(n)
+        else:
+            out[n] = cue
+    notes.append("复审改字后" + process_line([{**c, "cue": numbers[c["cue"] - 1]} for c in found]).lstrip("- "))
+    return out

@@ -4,7 +4,7 @@
 Cover frame choice (skill 7, and the 692 review).  For each candidate time, extract one full-resolution frame (the cut
 is 1920x1080, so boxes read from it are in that space) and ask the CPA vision route whether the picture shows an
 unrelated page or UI.  The first frame answered CLEAN is chosen.  Then the same frame is read once more for boxes:
-the danmaku box and gift bar (to blur), the host's body (to keep clear of the blur, and the reference of the cover's
+every block of viewers' text wherever it sits (to blur), the host's face (the only thing the blur keeps off), the host's body (to keep clear of the blur, and the reference of the cover's
 generated layers) and the guest's body (the guest's layer of a composed cover).  The host is identified from the
 frame and nameplate, allowing the headwear actually shown instead of assuming her ears are visible.
 
@@ -14,7 +14,7 @@ seconds are tiled into numbered sheets and each sheet is asked once; when severa
 picks among them.  That frame is the first candidate.
 
 OUT.json = {"chosen": seconds or null, "action": {"t", "what"} or {"t": null, "why"}, "checked": [{t, verdict, text}], "calls": [{kind, t, model, rc, elapsed_s, usage}], "boxes": {"danmaku": [[x0,y0,x1,y1]...],
-"person": [[...]...], "guest": [[...]...]} or null}.  A box read that fails leaves boxes null; the caller then uses the fixed layout.
+"person": [[...]...], "face": [[...]...], "guest": [[...]...]} or null}.  A box read that fails leaves boxes null; the caller then uses the fixed layout.
 
 Runs on OCI3 under the root wrapper that loads cpa.env (CPA_BASE_URL / CPA_API_KEY); the key is never printed.
 """
@@ -46,11 +46,14 @@ def _channel():
 HOST, BODY_HINT, FACE_HINT = _channel()
 QUESTION = ("这是直播切片的一帧（1920x1080）。画面里是否出现与本段直播内容无关的页面、测试页或界面（例如和直播无关的网页、"
             "测试用的页面标题、系统界面）？如果有，只回答 DIRTY；如果画面干净，只回答 CLEAN。只回答这一个词。")
-BOX_QUESTION = ("这是直播画面（1920x1080 像素）。请给出三类矩形，坐标是整幅画面的像素，格式 [x0,y0,x1,y1]：\n"
-                "danmaku：直播间右侧的弹幕框和礼物栏（聊天、礼物、弹幕区域）；\n"
+BOX_QUESTION = ("这是直播画面（1920x1080 像素）。请给出四类矩形，坐标是整幅画面的像素，格式 [x0,y0,x1,y1]：\n"
+                "danmaku：画面上每一块能读出观众文字的区域（弹幕框、评论列表、礼物栏、SC、点歌单等，在哪就框哪，"
+                "压在人物身上的也框；一块一个框，框住整列文字，宁大勿小）；\n"
                 "person：主播" + HOST + "本人的身体范围" + (BODY_HINT or "，依据名牌和画面辨认") + "；\n"
+                "face：主播" + HOST + "的脸，只框眉毛到下巴、两颊之间（不含头发、耳朵、发饰）" + ("，" + FACE_HINT.strip("，；。") if FACE_HINT else "") + "；\n"
                 "guest：画面里另一位主播（不是" + HOST + "）的身体范围。\n"
-                "只输出一个 JSON 对象：{\"danmaku\": [[x0,y0,x1,y1]], \"person\": [[x0,y0,x1,y1]], \"guest\": [[x0,y0,x1,y1]]}；"
+                "只输出一个 JSON 对象：{\"danmaku\": [[x0,y0,x1,y1]], \"person\": [[x0,y0,x1,y1]], \"face\": [[x0,y0,x1,y1]], "
+                "\"guest\": [[x0,y0,x1,y1]]}；"
                 "找不到的类别写空数组，不要编造。")
 
 
@@ -199,7 +202,7 @@ def read_boxes(text):
     except ValueError:
         return None
     out = {}
-    for key in ("danmaku", "person", "guest"):
+    for key in ("danmaku", "person", "face", "guest"):
         boxes = []
         for box in raw.get(key) or []:
             if isinstance(box, list) and len(box) == 4 and all(isinstance(v, (int, float)) for v in box):

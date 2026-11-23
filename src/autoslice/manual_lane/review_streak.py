@@ -6,6 +6,12 @@ Owner's words: 「仍然需要你看过后才能上传，不过我需要知道�
 - The account is the channel's `review_findings.jsonl` (one row per change a clip needed after the lane had passed it):
   changed before upload by whoever looked at it, or after it was public by anyone who found it.  A row also says why the
   lane let it through and what check it became (`landed`); a row whose check is not made yet is `status: open`.
+- A row is `landed` only when it shows the repair covers the class, not the one clip (admin U453,): `class`
+  (the relation that failed, over which members), `generator` (the step, rule or data that produces them and was
+  changed), `unseen_members` (two or more members not used to design the repair, at least one entering at the ordinary
+  upstream input, each with its result), `guard` (the test that fails on the old generator and passes on the new) and
+  `controls` (what must not change and was checked).  A row that cannot say these is `open`: the fix is not proved for
+  the class yet.  `withdrawn` is a row found not to be a defect; `landed` then says why.
 - A broadcast is a broadcast day (discover_media.broadcast_days: the day the stream started, 4:00 Beijing) on which at
   least one clip was uploaded.  It is clean when the account has no row for it and none of its clips needed a revision
   (a `_rN` clip that went online: a revision is itself a change, so a revision the account forgot still makes the day
@@ -32,7 +38,9 @@ SCHEMA = "manual-lane.review-streak.v1"
 COUNT_FROM = "2026-11-15"
 TARGET = 10
 FOUND = ("before_upload", "after_publish")
-STATUS = ("landed", "open")
+STATUS = ("landed", "open", "withdrawn")
+PROOF = ("class", "generator", "unseen_members", "guard", "controls")
+ENTERED = ("existing", "upstream")
 REQUIRED = ("day", "clips", "found", "by", "noticed", "problem", "why_passed", "landed", "status")
 _REVISION = re.compile(r"_r\d+$")
 _DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -58,12 +66,30 @@ def load(path: Path) -> list[dict[str, Any]]:
                    "clips is not a non-empty list" if not isinstance(row["clips"], list) or not row["clips"] else
                    f"found is not one of {FOUND}" if row["found"] not in FOUND else
                    f"status is not one of {STATUS}" if row["status"] not in STATUS else
-                   "a landed row says what it became" if row["status"] == "landed" and not str(row["landed"]).strip() else
+                   "a landed row says what it became" if row["status"] != "open" and not str(row["landed"]).strip() else
+                   _proof(row) if row["status"] == "landed" and _proof(row) else
                    "counts is not true/false" if not isinstance(row.get("counts", True), bool) else "")
         if problem:
             raise LedgerError(f"{path}:{n}: {problem}")
         rows.append(row)
     return rows
+
+
+def _proof(row: Mapping[str, Any]) -> str:
+    """Why a `landed` row does not show the class repaired ("" when it does)."""
+    blank = [k for k in PROOF if k != "unseen_members" and not str(row.get(k) or "").strip()]
+    if blank:
+        return f"a landed row needs {blank}"
+    members = row.get("unseen_members")
+    if not isinstance(members, list) or len(members) < 2:
+        return "a landed row needs unseen_members: two or more"
+    for m in members:
+        if not isinstance(m, dict) or m.get("entered") not in ENTERED or not str(m.get("member") or "").strip() \
+                or not str(m.get("result") or "").strip():
+            return f"an unseen member needs member, entered ({'/'.join(ENTERED)}) and result: {m}"
+    if not any(m["entered"] == "upstream" for m in members):
+        return "a landed row needs an unseen member entering at the upstream input"
+    return ""
 
 
 def uploaded(task_dir: Path) -> dict[str, list[str]]:
@@ -113,12 +139,22 @@ def line(report: Mapping[str, Any]) -> str:
 def markdown(rows: Sequence[Mapping[str, Any]]) -> str:
     """The account as a table for people (the handoff's POST-PASS-FINDINGS.md is this, made again after each new row)."""
     where = {"before_upload": "传前", "after_publish": "发布后"}
-    head = ["| 直播日 | 片 | 问题 | 谁发现、何时 | 流水线当时为什么放行 | 落成了什么 | 状态 |", "|---|---|---|---|---|---|---|"]
+    head = ["| 直播日 | 片 | 问题 | 谁发现、何时 | 流水线当时为什么放行 | 落成了什么 | 这一类、没用来设计的片 | 状态 |",
+            "|---|---|---|---|---|---|---|---|"]
+    state = {"landed": "已落成", "withdrawn": "不是缺陷", "open": "**未落成**"}
     cell = lambda v: str(v).replace("|", "／").replace("\n", " ")
     body = [f"| {r['day']}{'' if r.get('counts', True) else '（不计）'} | {cell('、'.join(r['clips']))} | {cell(r['problem'])} | "
             f"{cell(r['by'])}，{where[r['found']]}，{r['noticed']} | {cell(r['why_passed'])} | {cell(r['landed'])} | "
-            f"{'已落成' if r['status'] == 'landed' else '**未落成**'} |" for r in sorted(rows, key=lambda r: (r["day"], r["noticed"]))]
+            f"{cell(_members(r))} | {state[r['status']]} |" for r in sorted(rows, key=lambda r: (r["day"], r["noticed"]))]
     return "\n".join(head + body) + "\n"
+
+
+def _members(row: Mapping[str, Any]) -> str:
+    out = str(row.get("class") or "")
+    for m in row.get("unseen_members") or []:
+        if isinstance(m, dict):
+            out += f"；{m.get('member')}（{'上游新进' if m.get('entered') == 'upstream' else '已有'}）：{m.get('result')}"
+    return out or "—"
 
 
 def write(task_dir: Path, ledger: Path, *, online: tuple[str, str] | None = None,

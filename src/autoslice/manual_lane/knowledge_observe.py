@@ -5,7 +5,7 @@ a person or a work it names, is knowledge the next clip needs.  The accepted gra
 only by a commit; what the clips show in between is kept here, with the lane's task, as persona_observe keeps traits:
 
 - `after_run` (every run of a clip ends in cli._finish_run): once the review is done, one model call reads the final
-  subtitles and the graph's spellings and names at most `observe_max` items: another name of an entity the graph has
+  subtitles, the clip's chat and super chats (danmaku/lines.json) and the graph's spellings and names at most `observe_max` items: another name of an entity the graph has
   (`alias`, with the node it belongs to) or an entity it does not have (`entity`).  An item is kept only when the name
   is no spelling of the graph yet, the node exists (for an alias), and its quotes stand, letter for letter, in the
   final subtitles and contain the name; an entity whose every quote thanks a viewer for a gift is that viewer, not
@@ -75,9 +75,20 @@ def lines(task: Path) -> list[str]:
             for row in load(task) if _sessions(row) >= least]
 
 
-def _kept(answer: object, text: str, g: Graph) -> list[dict[str, Any]]:
-    """The answer's items that pass: a name the graph does not spell yet, quotes in the subtitles that contain it, and
-    for an alias a node of the graph."""
+def chat(ctx: Ctx) -> list[str]:
+    """The clip's chat and super chats as step 3 wrote them (danmaku/lines.json), one text a line.  A name the viewers
+    use often stands only here: the subtitles carry what ASR heard (11-14: 「李李」 in the chat, "lily" in the subtitles)."""
+    try:
+        rows = json.loads((ctx.clip_dir / "danmaku/lines.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [" ".join(r["text"].split()) for r in rows if isinstance(r, dict) and isinstance(r.get("text"), str)
+            and r["text"].strip() and r.get("type") in (None, "sc")]
+
+
+def _kept(answer: object, texts: tuple[str, ...], g: Graph) -> list[dict[str, Any]]:
+    """The answer's items that pass: a name the graph does not spell yet, quotes that contain it and stand letter for
+    letter in the subtitles or in one chat line, and for an alias a node of the graph."""
     rows, seen = [], set()
     for item in (answer.get("items") if isinstance(answer, dict) else None) or []:
         if not (isinstance(item, dict) and isinstance(item.get("name"), str) and isinstance(item.get("quotes"), list)):
@@ -88,7 +99,8 @@ def _kept(answer: object, text: str, g: Graph) -> list[dict[str, Any]]:
         if kind == ALIAS and item.get("of") not in g.nodes:
             continue
         quotes = [str(q).strip() for q in item["quotes"]
-                  if text_overlap.letters(name) in text_overlap.letters(q) and text_overlap.letters(q) in text]
+                  if text_overlap.letters(name) in text_overlap.letters(q)
+                  and any(text_overlap.letters(q) in t for t in texts)]
         if not quotes or kind == ENTITY and all(_thanks_viewer(q) for q in quotes):
             continue
         seen.add(name)
@@ -121,10 +133,12 @@ def after_run(ctx: Ctx) -> str:
     try:
         g = graph()
         subtitles, _own = persona_observe.host_text(ctx)
-        letters = text_overlap.letters(subtitles)
+        said = chat(ctx)
+        texts = (text_overlap.letters(subtitles), *(text_overlap.letters(line) for line in said))
         record = _ask_cpa(ctx, CALL, _render("knowledge_observe.md", known=_known(g), lines=subtitles,
+                                             chat="\n".join(said) or "（这条片没有弹幕记录）",
                                              most=str(rules("knowledge_observe")["observe_max"])), purpose=CALL)
-        found = _kept(_json_from_text(record["response_text"]), letters, g) if _cpa_ok(record) else None
+        found = _kept(_json_from_text(record["response_text"]), texts, g) if _cpa_ok(record) else None
     except Exception as exc:  # noqa: BLE001 - an observation is never a reason to fail a clip that is done
         return f"知识图观察：未完成（{type(exc).__name__}: {str(exc)[:120]}），下次运行再读"
     if found is None:

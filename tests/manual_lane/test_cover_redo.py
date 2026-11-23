@@ -259,3 +259,11 @@ def test_the_rejection_text_is_the_judges_own_words_per_axis():
     row = _row("a", "ai_sticker", ["CPA_VETO:identity", "HOST_FACE_NOT_FOUND", "MAIN_FACE_BELOW_25_PERCENT"], _verdict("identity"))
     assert cover_redo.rejection_text(row) == f"identity: {IDENTITY_WORDS} | HOST_FACE_NOT_FOUND"
     assert cover_redo.retry_brief({"action": "talking"}, "x")["action"].startswith("talking. A previous attempt")
+
+
+def test_the_judge_is_asked_whether_the_picture_adds_an_object_the_source_does_not_show():
+    # 475420 (11-14): a sticker drew her holding a lit cigarette; in the clip she only mimed it.  The judge's
+    # source_faithful axis names that case, and its no vetoes the picture (the test above).
+    from src.autoslice.manual_lane.step_io import PROMPTS
+    line = next(l for l in (PROMPTS / "cover_judge.md").read_text(encoding="utf-8").splitlines() if "source_faithful" in l)
+    assert "多出源画面里看不到的物件" in line

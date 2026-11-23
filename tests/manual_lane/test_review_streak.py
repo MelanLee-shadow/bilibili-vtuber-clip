@@ -10,9 +10,15 @@ import pytest
 from src.autoslice.manual_lane import review_streak as rs
 
 
+PROOF = {"class": "k", "generator": "g", "guard": "tests/x.py::test_g", "controls": "c",
+         "unseen_members": [{"member": "m1", "entered": "existing", "result": "ok"},
+                            {"member": "m2", "entered": "upstream", "result": "ok"}]}
+
+
 def _row(day: str, found: str = "before_upload", status: str = "landed", **kw: object) -> dict[str, object]:
     return {"day": day, "clips": ["c"], "found": found, "by": "x", "noticed": day, "problem": "p", "why_passed": "w",
-            "landed": "check" if status == "landed" else "", "status": status, **kw}
+            "landed": "check" if status == "landed" else "", "status": status, **(PROOF if status == "landed" else {}),
+            **kw}
 
 
 def _ledger(tmp_path: Path, rows: list[dict[str, object]]) -> Path:
@@ -60,7 +66,10 @@ def test_ten_clean_broadcasts_reach_the_target() -> None:
 
 @pytest.mark.parametrize("bad, words", [
     ({"day": "11-20"}, "YYYY-MM-DD"), ({"found": "later"}, "found"), ({"status": "done"}, "status"),
-    ({"clips": []}, "clips"), ({"status": "landed", "landed": " "}, "what it became"), ({"counts": "no"}, "counts")])
+    ({"clips": []}, "clips"), ({"status": "landed", "landed": " "}, "what it became"), ({"counts": "no"}, "counts"),
+    ({"guard": ""}, "guard"), ({"unseen_members": PROOF["unseen_members"][:1]}, "two or more"),
+    ({"unseen_members": [{**m, "entered": "existing"} for m in PROOF["unseen_members"]]}, "upstream input"),
+    ({"unseen_members": [{"member": "m", "entered": "upstream"}, {"member": "n", "entered": "existing"}]}, "result")])
 def test_a_malformed_row_stops_the_reading(tmp_path: Path, bad: dict[str, object], words: str) -> None:
     with pytest.raises(rs.LedgerError, match=words):
         rs.load(_ledger(tmp_path, [{**_row("2026-11-20"), **bad}]))
@@ -79,4 +88,10 @@ def test_open_rows_are_counted_and_shown_in_the_table() -> None:
     rows = [_row("2026-11-14", status="open"), _row("2026-11-15")]
     assert rs.tally(rows, {})["open"] == 1
     table = rs.markdown(rows)
-    assert "**未落成**" in table and table.count("\n") == 4
+    assert "**未落成**" in table and table.count("\n") == 4 and "m2（上游新进）：ok" in table
+
+
+def test_an_open_row_needs_no_proof_and_a_withdrawn_row_says_why(tmp_path: Path) -> None:
+    assert rs.load(_ledger(tmp_path, [_row("2026-11-20", status="open")]))[0]["status"] == "open"
+    with pytest.raises(rs.LedgerError, match="what it became"):
+        rs.load(_ledger(tmp_path, [_row("2026-11-20", status="withdrawn")]))

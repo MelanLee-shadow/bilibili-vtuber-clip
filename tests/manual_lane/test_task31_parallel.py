@@ -164,7 +164,8 @@ def test_the_same_answers_give_the_same_products_under_delays(tmp_path):
     assert [d["id"] for d in slow[1]] == [d["id"] for d in serial[1]]
     for key in ("state", "final_text", "confidence", "source", "cpa_call"):
         assert [d.get(key) for d in slow[1]] == [d.get(key) for d in serial[1]], key
-    assert slow[2] == serial[2]
+    run_meter = "并行执行："                # the line that reports this run's measured peak, which timing decides
+    assert [l for l in slow[2] if not l.startswith(run_meter)] == [l for l in serial[2] if not l.startswith(run_meter)]
     assert slow[3] > 1                     # the delayed run really did overlap (its CPA calls)
 
 

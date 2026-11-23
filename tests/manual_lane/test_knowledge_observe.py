@@ -87,3 +87,19 @@ def test_a_name_two_sessions_bear_out_reaches_the_subtitle_agent(tmp_path, monke
     assert len(rows) == 1 and [w["recording_date"] for w in rows[0]["witnesses"]] == ["2026-11-01", "2026-11-02"]
     assert ko.lines(task) == ["- 「李李」是「主播甲」的另一个叫法（2 场直播的切片里出现过，尚未审定）"]
     assert "「李李」是「主播甲」的另一个叫法" in channel_facts.for_subtitles(task)
+
+
+def test_a_name_the_viewers_use_only_in_the_chat_is_kept_from_the_chat(tmp_path, monkeypatch):
+    # 907000 (11-14): the subtitles said "lily" (what ASR heard), the chat said 「李李」; reading the subtitles only, the
+    # graph never learnt her nickname.  A chat quote stands only when it is one chat line, letter for letter.
+    chat_alias = {"type": "alias", "name": "甲宝", "of": "person:主播甲", "why": "SC 对着她这样叫", "quotes": ["甲宝晚上好"]}
+    joined = {"type": "entity", "name": "乙乙乙", "kind": "term", "why": "x", "quotes": ["晚上好乙乙乙"]}  # spans two lines
+    ctx, _ = _clip(tmp_path, monkeypatch, "clip", "2026-11-01", [chat_alias, joined], [(H, "lily 你好")])
+    (ctx.clip_dir / "danmaku").mkdir(parents=True, exist_ok=True)
+    (ctx.clip_dir / "danmaku/lines.json").write_text(json.dumps([
+        {"t_s": 1.0, "text": "甲宝晚上好", "type": "sc", "sender": "观众丙"}, {"t_s": 2.0, "text": "乙乙乙"},
+        {"t_s": 3.0, "text": "舰长", "type": "guard", "sender": "观众丁"}], ensure_ascii=False), encoding="utf-8")
+    line = ko.after_run(ctx)
+    assert "「甲宝」是「主播甲」的另一个叫法" in line and "乙乙乙" not in line
+    prompt = ctx.adapters.cpa.prompts[0]
+    assert "甲宝晚上好" in prompt and "观众丙" not in prompt and "舰长" not in prompt.split("醒目留言（")[-1]
