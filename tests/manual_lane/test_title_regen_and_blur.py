@@ -35,9 +35,15 @@ def test_default_blur_is_the_fixed_strip_minus_the_host_body_and_face():
 
 def test_cpa_boxes_are_used_and_cut_out_the_person_where_they_overlap():
     # the fixed host body (x 1200-1700) is always cut out, so the box keeps only its right side
-    assert si.blur_boxes([[1640, 690, 1840, 1070]], [[1100, 100, 1500, 1080]], FACE) == [[1700, 690, 1840, 1070]]
+    assert si.blur_boxes([[1640, 690, 1840, 1070]], [[1100, 100, 1500, 1080]], FACE) == [[1700, 642, 1852, 1080]]
     # where the person's body reaches into the box, only the part beside the body is blurred
-    assert si.blur_boxes([[1640, 690, 1840, 1070]], [[1600, 0, 1700, 1080]], FACE) == [[1700, 690, 1840, 1070]]
+    assert si.blur_boxes([[1640, 690, 1840, 1070]], [[1600, 0, 1700, 1080]], FACE) == [[1700, 642, 1852, 1080]]
+
+
+def test_a_danmaku_box_read_one_line_short_still_blurs_the_line_below_it():
+    # 907000 (11-14): CPA read the chat column as y 50-410; the line at about 410-450 stayed readable on the cover
+    boxes = si.blur_boxes([[78, 50, 251, 410]], [[422, 70, 1690, 1080]], FACE)
+    assert boxes == [[66, 2, 263, 458]]
 
 
 def test_blur_never_overlaps_the_face_or_the_person_for_any_boxes():
@@ -112,7 +118,7 @@ def test_a_passing_first_round_is_not_regenerated(tmp_path):
 def test_cpa_person_box_on_the_other_guest_does_not_unblur_the_host_body():
     # 692: CPA's person box was the guest on the left; the host on the right must still be kept clear
     boxes = si.blur_boxes([[1650, 700, 1830, 1080]], [[35, 178, 710, 910]], FACE)
-    assert boxes == [[1700, 700, 1830, 1080]]
+    assert boxes == [[1700, 652, 1842, 1080]]
     assert all(not _overlaps(b, [1200, 0, 1700, 1080]) for b in boxes)
 
 
