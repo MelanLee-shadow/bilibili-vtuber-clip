@@ -677,10 +677,8 @@ def _title_fix(ctx: Ctx, title: str, skipped: list[str], cpa_calls: list[CpaEven
     """The review's title, canoned, when it differs from the current one and passes what step 6's title passed (TASK-25:
     the review's title no longer skips them): 维护者's banned words, the publish gate, the quote check against the
     final subtitles with speakers, and the skill's judge on the title with the package's cover lines."""
-    from src.autoslice.title_quote_check import check_title_quotes
-
     from .revise_run import keeps_title
-    from .step6_title import publish_gate_violations, title_inputs, title_judge
+    from .step6_title import checks_on, publish_gate_violations, title_inputs, title_judge
 
     current_title = (ctx.clip_dir / "title/title.txt").read_text(encoding="utf-8").strip()
     if not title:
@@ -701,9 +699,10 @@ def _title_fix(ctx: Ctx, title: str, skipped: list[str], cpa_calls: list[CpaEven
         return False
     names = participant_names(ctx.session)
     _track, lines, srt_text = title_inputs(ctx, names)
-    quotes = check_title_quotes(canon_title, srt_text)
-    if quotes["status"] != "PASS":
-        skipped.append(f"review title fails the quote check {quotes['reason_codes']}")
+    checks = checks_on(ctx, canon_title)
+    if not checks["ok"]:
+        skipped.append("review title fails step 6's title checks " + str(checks["failed"]) + "："
+                       + "；".join(checks["reasons"])[:300])
         return False
     cands_path = ctx.clip_dir / "title/candidates.json"
     cover = (json.loads(cands_path.read_text(encoding="utf-8")).get("cover_lines") or []) if cands_path.exists() else []

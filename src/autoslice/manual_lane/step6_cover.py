@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 from collections.abc import Mapping, Sequence
 from functools import partial
@@ -84,6 +85,21 @@ def cover_line_limits() -> tuple[int, int]:
     feed-safe width and the text sizes the renderer must reach), so the title step holds them before anything is rendered."""
     cover = rules("cover")
     return cover["first_line_max_chars"], cover["punch_line_max_chars"]
+
+
+COVER_PAUSES = "。，、；,;"           # shown as a space inside a line
+COVER_LINE_END = COVER_PAUSES + "：:"   # dropped at the end of a line; inside it a colon is the 「名字：原话」 form (70-cover)
+
+
+def cover_line(text: object) -> str:
+    """A cover line as it is shown: the canonical writing, no pause mark or colon at its end, and a pause mark inside it
+    shown as a space (11-23 625460: the punchline 「勾到了。我要笑」 was rendered with its full stop).  A colon inside the
+    line stays (「安晚：暖一暖」 is the name-and-words form step 70 allows), and so do ！？… (how the line is said).  Every
+    cover line a model writes in step 6 comes through here."""
+    from .normalize import canon_text
+
+    line = canon_text(str(text).strip())[0].strip().rstrip(COVER_LINE_END + " ")
+    return re.sub(rf"\s*[{COVER_PAUSES}]+\s*", " ", line).strip()
 
 
 def cover_lines_overflow(lines: Sequence[str]) -> str:

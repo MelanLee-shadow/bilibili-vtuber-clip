@@ -154,3 +154,96 @@ def test_titles_that_open_differently_or_too_short_to_tell_pass_the_opener_check
     assert step6_title.opener('【李豆沙】游戏里抢石头') == '游戏里'
     assert step6_title.opener('【李豆沙】好') == ''
     assert not [t for t in batch if step6_title.opener(t) and step6_title.opener(t) == step6_title.opener('【李豆沙】玩游戏抢石头')]
+
+
+def test_a_title_that_writes_the_unnamed_guest_label_as_a_person_is_written_again(tmp_path, monkeypatch):
+    # 11-23: step 4 heard the collab partners by voiceprint on a day whose session named none; the prompt said
+    # 「[连线] 是李豆沙以外的连线方」 and the titles read 「连线提议反矮人联盟」「跟连线抓金块」.
+    from src.autoslice.manual_lane import subtitle_track
+    fake_title_skill(tmp_path, monkeypatch)
+    monkeypatch.setattr(title_history, 'load_publication_registry', lambda: {'entries': []})
+    ctx, cpa = context(tmp_path, 'collab', '连线提议炸弹取暖')
+    ctx.session['participants'] = [['李豆沙', '小李']]        # the room title named nobody: host only
+    cues = subtitle_track.read_track(ctx.clip_dir)
+    for i, cue in enumerate(cues):
+        cue['speaker'] = step6_title.GUEST_LABEL if i == 1 else step6_title.HOST
+    subtitle_track.write_track(ctx.clip_dir, cues, speakers=True)
+    cpa.responses.append(answer('队友提议炸弹取暖'))
+    assert not isinstance(step6_title.pick_title(ctx), StepOutcome)
+    record = json.loads((ctx.clip_dir / 'title/candidates.json').read_text())
+    first_round = [c for c in record['candidates'] if c['round'] == 0]
+    assert first_round and all('label_as_name' in c['checks']['failed'] for c in first_round)
+    assert record['chosen']['title'] == '【李豆沙】队友提议炸弹取暖' and record['chosen']['checks']['ok']
+    assert '[未具名嘉宾]' in cpa.title_prompts[0] and '不要把这个标签当名字写' in cpa.title_prompts[0]
+
+
+def test_a_label_word_she_says_herself_may_stand_in_the_title():
+    # the check is on the label, not the word: 「连线」 she says in a line may be quoted
+    cand = {'title': '【李豆沙】说好连线结果掉线了', 'on_stage': ['李豆沙'], 'punchline_person': '她',
+            'swap_check': {'holds_with_other_host': False}}
+    said = '1\n00:00:01,000 --> 00:00:02,000\n[李豆沙] 说好连线结果掉线了\n'
+    label = '1\n00:00:01,000 --> 00:00:02,000\n[连线] 掉线了\n'
+    assert 'label_as_name' not in step6_title.title_checks(cand, ['李豆沙'], said)['failed']
+    assert 'label_as_name' in step6_title.title_checks(cand, ['李豆沙'], label)['failed']
+
+
+def test_cover_text_that_writes_the_unnamed_guest_label_as_a_person_fails_every_candidate(tmp_path, monkeypatch):
+    from src.autoslice.manual_lane import subtitle_track
+    fake_title_skill(tmp_path, monkeypatch)
+    monkeypatch.setattr(title_history, 'load_publication_registry', lambda: {'entries': []})
+    ctx, cpa = context(tmp_path, 'cover', '队友提议炸弹取暖')
+    ctx.session['participants'] = [['李豆沙', '小李']]
+    cues = subtitle_track.read_track(ctx.clip_dir)
+    cues[1]['speaker'] = step6_title.GUEST_LABEL
+    subtitle_track.write_track(ctx.clip_dir, cues, speakers=True)
+    leaky = json.loads(cpa.responses[0])
+    leaky['cover_lines'] = ['连线说', '炸弹取暖']
+    cpa.responses[0] = json.dumps(leaky, ensure_ascii=False)
+    cpa.responses.append(answer('队友提议炸弹取暖'))
+    assert not isinstance(step6_title.pick_title(ctx), StepOutcome)
+    record = json.loads((ctx.clip_dir / 'title/candidates.json').read_text())
+    assert all('label_as_name' in c['checks']['failed'] for c in record['candidates'] if c['round'] == 0)
+    assert '连线' not in ''.join(record['cover_lines'])
+
+
+def test_clips_of_one_batch_pick_their_titles_one_after_another(tmp_path, monkeypatch):
+    # 11-23: ten clips reached step 6 together; each saw only the batch's old titles and ten opened 「游戏里」
+    import threading
+    import time
+    inside, most = [0], [0]
+
+    def slow(ctx):
+        inside[0] += 1
+        most[0] = max(most[0], inside[0])
+        time.sleep(0.1)
+        inside[0] -= 1
+        return StepOutcome(ok=False, reason='X', note='')
+    monkeypatch.setattr(step6_title, '_pick_title', slow)
+    ctxs = [context(tmp_path, f'c{i}', '她嘴硬了')[0] for i in range(3)]
+    threads = [threading.Thread(target=step6_title.pick_title, args=(c,)) for c in ctxs]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert most[0] == 1
+
+
+def test_a_pause_mark_in_the_cover_text_is_not_rendered(tmp_path, monkeypatch):
+    # 11-23 625460: the punchline 「勾到了。我要笑」 went onto the cover with its full stop
+    fake_title_skill(tmp_path, monkeypatch)
+    monkeypatch.setattr(title_history, 'load_publication_registry', lambda: {'entries': []})
+    ctx, cpa = context(tmp_path, 'pause', '小李半分钟后真的嘴硬了')
+    said = json.loads(cpa.responses[0])
+    said['cover_lines'] = ['队友求助勾石头，', '勾到了。我要笑']
+    cpa.responses[0] = json.dumps(said, ensure_ascii=False)
+    assert not isinstance(step6_title.pick_title(ctx), StepOutcome)
+    record = json.loads((ctx.clip_dir / 'title/candidates.json').read_text())
+    assert record['cover_lines'] == ['队友求助勾石头', '勾到了 我要笑']
+
+
+def test_the_name_and_words_form_keeps_its_colon_on_the_cover():
+    # 11-23 443680: 「安晚：暖一暖」 (step 70 allows 「名字：原话」) came out as 「安晚 暖一暖」
+    from src.autoslice.manual_lane.step6_cover import cover_line
+    assert cover_line('安晚：暖一暖') == '安晚：暖一暖'
+    assert cover_line('勾到了。我要笑') == '勾到了 我要笑' and cover_line('快帮我！') == '快帮我！'
+    assert cover_line('她说：') == '她说'

@@ -75,6 +75,10 @@ def test_bcut_code_509_counts_as_a_rate_limit():
     assert fap.rate_limited(RuntimeError("HTTP Error 429"))
     assert not fap.rate_limited(RuntimeError("HTTP Error 500: upstream"))
     assert not fap.rate_limited(RuntimeError("task 14290 failed"))
+    # 11-23: bcut's 412 at task/result, and the client giving up after its own host-wide waiting
+    assert fap.rate_limited(RuntimeError("HTTP 412 at https://member.bilibili.com/x/bcut/rubick-interface/task/result"))
+    assert fap.rate_limited(type("AsrThrottled", (RuntimeError,), {})("bcut still throttled after 1500s of waiting"))
+    assert not fap.rate_limited(RuntimeError("task 14120 failed"))
 
 
 def test_successful_calls_of_one_provider_are_at_least_the_minimum_interval_apart_across_clips(tmp_path):
