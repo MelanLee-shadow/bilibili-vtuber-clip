@@ -75,6 +75,7 @@ class TitleHistory:
             "一条仍只用一种，主语清楚可不写名字；不为了轮换编造内容，不改引语中的称呼。",
             "已发：\n" + ("\n".join(f"- {t}" for t in self.published) or "无可读标题"),
             "本批已起：\n" + ("\n".join(f"- {t}" for t in self.batch) or "暂无"),
+            "本批已起的标题只看开头：本片不要用和它们一样的开头和句式（自检 batch_opener 会拦）。",
         ])
 
 

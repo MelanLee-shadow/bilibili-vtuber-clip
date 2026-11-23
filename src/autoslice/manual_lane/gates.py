@@ -140,7 +140,7 @@ def boundary_sanity(cues: Sequence[SrtCue], *, start_cue: int, end_cue: int) -> 
         return Verdict.failed("BOUNDARY_OUTSIDE_SEGMENT", f"cut {start_cue}-{end_cue} not in this segment")
     duration = float(by_id[end_cue]["end_s"]) - float(by_id[start_cue]["start_s"])
     if not CLIP_MIN_SECONDS <= duration <= CLIP_MAX_SECONDS:
-        return Verdict.failed("BOUNDARY_LENGTH_UNREASONABLE", f"{duration:.2f}s outside 30s-10min")
+        return Verdict.failed("BOUNDARY_LENGTH_UNREASONABLE", f"{duration:.2f}s outside {CLIP_MIN_SECONDS:.0f}s-{CLIP_MAX_SECONDS:.0f}s")
     return Verdict.passed(duration_s=round(duration, 3))
 
 

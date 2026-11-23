@@ -131,3 +131,26 @@ def test_a_clip_published_once_does_not_meet_its_own_title_as_a_duplicate(monkey
         {'status': 'published', 'candidate_id': 'fm-20261106-xsemantictalk-486140-633940', 'title': '【李豆沙】名字只是相像'}]})
     titles, _ = title_history.published_titles('semantictalk_486140_633940')
     assert titles == ['【李豆沙】别的片的标题', '【李豆沙】名字只是相像']
+
+
+def test_a_title_that_opens_like_one_the_batch_already_has_is_written_again(tmp_path, monkeypatch):
+    # 11-23: eight of ten clips of one round opened 「游戏里…」; the batch's titles reached the prompt for the names only.
+    fake_title_skill(tmp_path, monkeypatch)
+    monkeypatch.setattr(title_history, 'load_publication_registry', lambda: {'entries': []})
+    first, _ = context(tmp_path, 'first', '游戏里被紫色堵门了')
+    assert not isinstance(step6_title.pick_title(first), StepOutcome)
+    second, cpa = context(tmp_path, 'second', '游戏里抢一个破石头')
+    cpa.responses.append(answer('抢一个破石头抢崩溃了'))
+    assert not isinstance(step6_title.pick_title(second), StepOutcome)
+    record = json.loads((second.clip_dir / 'title/candidates.json').read_text())
+    first_round = [c for c in record['candidates'] if c['round'] == 0]
+    assert first_round and all('batch_opener' in c['checks']['failed'] for c in first_round)
+    assert record['chosen']['title'] == '【李豆沙】抢一个破石头抢崩溃了' and record['chosen']['checks']['ok']
+    assert '本片不要用和它们一样的开头' in cpa.title_prompts[0]
+
+
+def test_titles_that_open_differently_or_too_short_to_tell_pass_the_opener_check():
+    batch = ('【李豆沙】游戏里被紫色堵门了', '【李豆沙】好')
+    assert step6_title.opener('【李豆沙】游戏里抢石头') == '游戏里'
+    assert step6_title.opener('【李豆沙】好') == ''
+    assert not [t for t in batch if step6_title.opener(t) and step6_title.opener(t) == step6_title.opener('【李豆沙】玩游戏抢石头')]

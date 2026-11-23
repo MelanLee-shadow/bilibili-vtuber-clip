@@ -26,7 +26,7 @@ from src.autoslice.finished_media_review.common import AUTO_CHECKS_NAME, EVIDENC
 from src.autoslice.upload_description import description_for_title
 
 from . import (channel, compilation, cover_import, dissent_register, doubt_policy, focused_retry, gates, normalize, package_guards,
-               publication_id, review_owner, revision_authority, speaker_v8, step10_run, subtitle_track, title_authority, writing_canon)
+               publication_id, read_aloud_copy, review_owner, revision_authority, speaker_v8, step10_run, subtitle_track, title_authority, writing_canon)
 from .adapters import CPA_JUDGE_MODEL, recover_cpa_terminal
 from .compilation import MemberPiece
 from .config import participant_description, participant_names, placeholder_as_person
@@ -147,6 +147,7 @@ class ReviewApplied(TypedDict):
     cpa: list[CpaEvent]
     dissent: NotRequired[list[Dissent]]
     adopted: NotRequired[list[str]]     # owner-decided clip: the sentences he did not touch that the review changed
+    read_aloud: NotRequired[list[str]]  # the review's texts that read a chat record, written as the record has them
 
 
 class ReviewCounts(TypedDict):
@@ -604,7 +605,12 @@ def apply_fixes(ctx: Ctx, review: ReviewAnswer) -> ReviewApplied:
     track = subtitle_track.read_track(ctx.clip_dir)
     linked = linked_session(ctx.session)
     has_speakers = (ctx.clip_dir / "speaker/speaker.srt").exists() and all(c.get("speaker") for c in track)
-    edited = writing_canon.settle_edits(ctx, _subtitle_edits(fixes.get("subtitles") or [], track, changed["skipped"]), track, changed)
+    read_aloud: list[str] = []
+    edited = read_aloud_copy.settle_edits(ctx.clip_dir, _subtitle_edits(fixes.get("subtitles") or [], track, changed["skipped"]),
+                                          track, read_aloud)       # type: ignore[arg-type]
+    if read_aloud:
+        changed["read_aloud"] = read_aloud
+    edited = writing_canon.settle_edits(ctx, edited, track, changed)    # type: ignore[arg-type]
     if linked and has_speakers:
         changed["speakers"] = _speaker_edits(fixes.get("speakers") or [], track, edited, changed["skipped"])
     if edited:
@@ -889,7 +895,7 @@ def _review_record(review: ReviewAnswer, applied: ReviewApplied, call: CpaEvent,
                   for n in focused.get("notes") or [] if isinstance(n, dict)]
     record: ReviewRecord = {"call": call.get("call_id"), "cpa": [*calls, *applied["cpa"]],
                             "applied": cast(ReviewCounts, {k: v for k, v in applied.items()
-                                                           if k not in {"skipped", "cpa", "dissent", "adopted"}}),
+                                                           if k not in {"skipped", "cpa", "dissent", "adopted", "read_aloud"}}),
                             "skipped": applied["skipped"], "notes": notes, "rebuild": False}
     review_owner.carry(record, applied)
     if held_ids is not None:
@@ -1148,7 +1154,7 @@ def _review_process(ctx: Ctx, record: ReviewRecord, applied: ReviewApplied, *, r
                 f"affects_meaning={d.get('affects_meaning')}；{d.get('review_note')}"
                 for d in current_doubts(ctx)[0]
                 if str(d.get("review_note") or "").startswith("复审最终判断：")]
-    process += [f"未采用：{s}" for s in applied["skipped"]] + review_owner.process_lines(applied.get("dissent")) + applied.get("adopted", [])
+    process += [f"未采用：{s}" for s in applied["skipped"]] + review_owner.process_lines(applied.get("dissent")) + applied.get("adopted", []) + applied.get("read_aloud", [])
     process += [f"复审记录：{n.get('item', '')} 第 {n.get('cue_id', '-')} 句 {str(n.get('text', ''))[:160]}"
                 for n in record["notes"]]
     return process
@@ -1234,7 +1240,7 @@ def _finish_or_wide(ctx: Ctx, record: ReviewRecord, process: list[str]) -> StepO
         scoped, skipped = _focused_review(ctx, answer, held_ids)
         applied = apply_fixes(ctx, scoped)
         applied["skipped"].extend([*skipped, *review_owner.skipped_lines(applied)])
-        process.extend(applied.get("adopted", []))
+        process.extend(applied.get("adopted", []) + applied.get("read_aloud", []))
         review_owner.carry(record, applied)
         after = len(doubt_policy.holds(current_doubts(ctx)[0]))
         rewind = _review_rewind(ctx, applied, before_grades)

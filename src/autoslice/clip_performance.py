@@ -219,7 +219,53 @@ def packaging(lane: Mapping[str, Any] | None, view: Mapping[str, Any], tags: lis
         intro = _read_json(lane["dir"] / "burn" / "intro_result.json") or {}
         out["cover_lines"] = [str(line.get("text", "")) for line in spec.get("lines") or [] if isinstance(line, dict)]
         out["intro"] = intro.get("intro_id") if intro.get("status") == "PREPENDED" else None
+        offset = (intro.get("intro_offset_ms") or 0) / 1000 if intro.get("status") == "PREPENDED" else 0.0
+        at_s = title_line_s(str(view.get("title") or ""), _cues(lane["dir"] / "pkg" / "final.srt"))
+        out["title_line_s"] = None if at_s is None else round(at_s + offset, 1)
     return out
+
+
+_CUE = re.compile(r"(\d+):(\d+):(\d+)[,.](\d+) --> ")
+_CLAUSE = re.compile(r"[，。！？!?、,.…~～；;：:“”\"「」]+")
+TITLE_LINE_MIN = 5                                  # characters of the title's last clause a cue must say in a row
+
+
+def _cues(path: Path) -> list[tuple[float, str]]:
+    try:
+        blocks = path.read_text(encoding="utf-8").strip().split("\n\n")
+    except OSError:
+        return []
+    out = []
+    for block in blocks:
+        lines = block.split("\n")
+        m = _CUE.match(lines[1]) if len(lines) >= 3 else None
+        if m:
+            h, mi, s, ms = map(int, m.groups())
+            out.append((h * 3600 + mi * 60 + s + ms / 1000, "".join(lines[2:])))
+    return out
+
+
+def _run(a: str, b: str) -> int:
+    best, prev = 0, [0] * (len(b) + 1)
+    for ca in a:
+        cur = [0] * (len(b) + 1)
+        for j, cb in enumerate(b, 1):
+            if ca == cb:
+                cur[j] = prev[j - 1] + 1
+                best = max(best, cur[j])
+        prev = cur
+    return best
+
+
+def title_line_s(title: str, cues: list[tuple[float, str]]) -> float | None:
+    """When the first cue that says the title's last clause starts (None: no cue says it)."""
+    body = re.sub(r"^【[^】]*】", "", title)
+    clauses = [c for c in _CLAUSE.split(body) if c]
+    if not clauses:
+        return None
+    last = clauses[-1]
+    need = min(TITLE_LINE_MIN, len(last))
+    return next((start for start, text in cues if _run(last, _CLAUSE.sub("", text)) >= need), None)
 
 
 # --- reads -------------------------------------------------------------------------------------------------------

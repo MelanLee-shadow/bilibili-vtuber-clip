@@ -194,7 +194,8 @@ def _v8_predictions(ctx: Ctx) -> tuple[Sequence[speaker_v8.SpeakerChunk], Mappin
 
 def _speaker_from_preds(ctx: Ctx, units: Sequence[speaker_v8.SpeakerChunk],
                         preds: Mapping[str, speaker_v8.RawPrediction], *,
-                        unit_kind: str, video: ov.VideoEvidence | None = None) -> StepOutcome:
+                        unit_kind: str, video: ov.VideoEvidence | None = None,
+                        heard: Mapping[str, object] | None = None) -> StepOutcome:
     """The labels of a clip from its v8 predictions.  `video` is the picture evidence of a single-participant clip with
     other voices (step4_other_voices): the host and everyone else are two people, and the review also reads the screen
     subtitles; without it this is the linked-clip path, unchanged."""
@@ -204,7 +205,7 @@ def _speaker_from_preds(ctx: Ctx, units: Sequence[speaker_v8.SpeakerChunk],
         {"start_ms": round(c["start_s"] * 1000), "end_ms": round(c["end_s"] * 1000)} for c in final_cues]
     spans: list[speaker_v8.SpeakerUnit] = [{"id": u["id"], "start_ms": u["s"], "end_ms": u["e"]} for u in units]
     cfg = rules("speaker")
-    n_people = speaker_v8.people(ctx.session) if video is None else OTHER_VOICES_PEOPLE
+    n_people = speaker_v8.people(ctx.session) if video is None and heard is None else OTHER_VOICES_PEOPLE
     host_min = speaker_v8.host_threshold(n_people, cfg)
     decided = [cast(speaker_v8.SpeakerDecision, dict(d, v8_mid=speaker_v8.mid_band(d, n_people, cfg)))
                for d in speaker_v8.cue_speakers(cues, spans, preds, host_min=host_min)]
@@ -246,14 +247,18 @@ def _speaker_from_preds(ctx: Ctx, units: Sequence[speaker_v8.SpeakerChunk],
     mode = "linked_v8_mid_review" if mid_review else "linked_v8_clusters" if cluster_process else "linked_v8"
     if video is not None:
         mode = OTHER_VOICES_MODE
-    decision.write_text(json.dumps({"mode": mode,
+    elif heard is not None:
+        mode = GUESTS_HEARD_MODE
+    decision.write_text(json.dumps({"mode": mode, **({"heard": dict(heard)} if heard is not None else {}),
                                     "rule": OTHER_VOICES_RULE if video is not None else f"v8: host iff top={channel.HOST} and p>={host_min} ({n_people} people, lane_rules speaker); uncertain or no unit = guest; mid band -> CPA review; "
                                             "8c1: MOSS clusters named by the host voiceprint give the label (v8 without them); MAI only flags; flagged cues read by CPA, which changes a label only on an acoustic tie or with explicit content evidence (speaker_v8.adopt_review); a cut only at the label engine switch, parts labelled by it",
                                     "cues": decided, "lone_chars": lone,
                                     "video_subtitled": any(d.get("video_subtitled") for d in decided)},
                                    ensure_ascii=False, indent=2), encoding="utf-8")
-    kind = "other_voices" if video is not None else "linked_v8"
-    lead = "有他人声音（看视频）v8 二分" if video is not None else "联动 v8 二分"
+    kind = "other_voices" if video is not None else GUESTS_HEARD_MODE if heard is not None else "linked_v8"
+    lead = ("有他人声音（看视频）v8 二分" if video is not None else
+            f"场次没登记嘉宾，但声纹听到别人（{(heard or {}).get('basis')}）：按主播与其他人 v8 二分" if heard is not None else
+            "联动 v8 二分")
     return StepOutcome(True, products={"speaker_srt": str(speaker), "decision": str(decision)},
                        note=f"{kind} host={host_n} guest={len(decided) - host_n} no_unit={no_unit}", cpa=cluster_cpa,
                        process=[f"{lead}：{channel.HOST} {host_n} 句，嘉宾 {len(decided) - host_n} 句（其中无可用证人 {no_unit} 句，"
@@ -728,6 +733,25 @@ def _speaker_import(ctx: Ctx, rec: ImportRecord) -> StepOutcome | None:
                                 f"{len(labels) - host_n} 句（未跑 v8）"])
 
 
+GUESTS_HEARD_MODE = "guests_heard_v8"
+
+
+def guests_heard(ctx: Ctx) -> dict[str, object] | None:
+    """Step 3's voiceprint answer (subs/voices.json) when it says, past lane_rules other_voices guests_min_share or
+    guests_min_run, that people other than the host talk in a clip of a session that names no guest; else None.
+    U453 : such a clip was labelled all host, guests' lines and all."""
+    path = ctx.clip_dir / "subs/voices.json"
+    try:
+        heard = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    cfg = rules("other_voices")
+    share, run = heard.get("share"), heard.get("longest_run")
+    if not heard.get("others") or share is None or run is None:
+        return None
+    return heard if float(share) >= float(cfg["guests_min_share"]) or int(run) >= int(cfg["guests_min_run"]) else None
+
+
 def step4_speaker(ctx: Ctx) -> StepOutcome:
     rec = imported(ctx)
     if rec:
@@ -752,9 +776,18 @@ def step4_speaker(ctx: Ctx) -> StepOutcome:
         return _fail("SPEAKER_SCREEN_FAILED", screen.error, cpa=screen.calls, process=[screen.line])
     if ov.video_playing(screen.frames):
         return _speaker_other_voices(ctx, screen)
+    heard = guests_heard(ctx)
+    if heard is not None:   # nobody named a guest, but the voiceprint hears others talk: host and the others, two people
+        got = _v8_predictions(ctx)
+        if isinstance(got, StepOutcome):
+            return got
+        units, preds, unit_kind = got
+        out = _speaker_from_preds(ctx, units, preds, unit_kind=unit_kind, heard=heard)
+        return StepOutcome(out.ok, reason=out.reason, products=out.products, note=out.note,
+                           cpa=[*screen.calls, *out.cpa], process=[*([screen.line] if screen.frames else []), *out.process])
     speaker = _local(ctx, "speaker/speaker.srt")
     speaker.write_text(_label_host_lines(ctx.clip_dir / "subs/final.srt"), encoding="utf-8")
     return StepOutcome(True, products={"speaker_srt": str(speaker), "decision": str(decision)},
                        note=f"speaker_mode={verdict.evidence['speaker_mode']}", cpa=screen.calls,
                        process=["uniform host：每句都是主播，不加说话人标签（无分色开启记录）",
-                                *([screen.line, "画面上没有在播放的被看视频，无他人声音证据，保持 uniform host"] if screen.frames else [])])
+                                *([screen.line, "画面上没有在播放的被看视频，声纹也没听到够多的别人声音，保持 uniform host"] if screen.frames else [])])

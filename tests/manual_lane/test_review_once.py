@@ -723,3 +723,19 @@ def test_a_push_doubt_table_with_an_unsettled_meaning_effect_is_refused(tmp_path
     si.record_import(ctx.state, ctx.clip_dir, push, source="push-test", authority="U130", verbatim=True)
     out = si.step3_subtitles(ctx)
     assert not out.ok and out.reason == "IMPORT_DOUBTS_INVALID" and ctx.adapters.cpa.calls == []
+
+
+def test_a_review_fix_of_a_sentence_she_reads_from_the_chat_keeps_the_record_s_writing(tmp_path, monkeypatch):
+    # 1668160 (11-16): she read the comment 「冲b币换电池」; the review "fixed" 冲 to the homophone 充.  The review's
+    # texts go through read_aloud_copy as step 3's did (one definition); its other changes in the sentence stay.
+    final = _srt([(28.0, 31.0, "冲b币换电池"), (31.0, 33.0, "我想想啊")])
+    ctx, _, _ = _package(tmp_path, monkeypatch, _review({"subtitles": [
+        {"cue_id": 1, "text": "充b币换电池"}, {"cue_id": 2, "text": "我想想呀"}]}), final=final, doubts=[])
+    (ctx.clip_dir / "danmaku").mkdir(parents=True, exist_ok=True)
+    (ctx.clip_dir / "danmaku/lines.json").write_text(json.dumps([{"t_s": 20.0, "text": "冲b币换电池"}], ensure_ascii=False),
+                                                    encoding="utf-8")
+    applied = sp.apply_fixes(ctx, json.loads(_review({"subtitles": [
+        {"cue_id": 1, "text": "充b币换电池"}, {"cue_id": 2, "text": "我想想呀"}]})))
+    texts = [c["text"] for c in _cues(ctx, "subs/final.srt")]
+    assert texts == ["冲b币换电池", "我想想呀"] and applied["subtitles"] == 1
+    assert any("「充」→「冲」" in line for line in applied["read_aloud"])

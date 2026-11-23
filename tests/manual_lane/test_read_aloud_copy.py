@@ -89,3 +89,10 @@ def test_settle_rewrites_the_decided_subtitles_and_records_it(tmp_path):
     assert "南町歌" in (tmp_path / "subs/final.srt").read_text(encoding="utf-8")
     assert "「酮」→「町」" in process[0]
     assert json.loads((tmp_path / "subs/read_aloud_copy.json").read_text(encoding="utf-8"))[0]["record_has"] == "町"
+
+
+def test_a_near_sound_the_recognisers_heard_as_written_is_her_own_word():
+    # 785950 (11-20): she kept saying 「李豆沙从未认证过」; a viewer punned 「李豆沙从未认真过」 just before.  zhen and
+    # zheng are one sound only under the blur; both recognisers heard 认证, so the sentence stays as written.
+    cues = [cue("李豆沙从未认证过", 138.4, 140.1)]
+    assert rac.copies(cues, [{"t_s": 127.6, "text": "李豆沙从未认真过"}], [["牛仔从未认证过", "刘莎从未认证过"]]) == []

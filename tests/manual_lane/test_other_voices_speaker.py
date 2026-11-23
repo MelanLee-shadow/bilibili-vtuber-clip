@@ -377,3 +377,32 @@ def test_the_part_the_review_names_is_what_is_burned_of_that_sentence(tmp_path):
     assert row["speaker"] == H and row["unshown"] == "好奇怪" and row["burned_text"] == "好奇怪"
     burned = step5_burn._burned_lines(ctx).read_text(encoding="utf-8")
     assert f"[{H}] 好奇怪" in burned and "这动画" not in burned
+
+
+# ----- U453 : no guest named, no video, but the voiceprint hears others talk ----------------------------
+
+def _heard(ctx, share, run):
+    (ctx.clip_dir / "subs/voices.json").write_text(json.dumps(
+        {"others": share >= 0.05 or run >= 3, "share": share, "longest_run": run, "basis": f"不像主播的占 {share:.1%}"}),
+        encoding="utf-8")
+
+
+def test_a_clip_whose_voiceprint_hears_guests_separates_them_although_the_session_names_none(tmp_path):
+    # 897000 (11-23, a three-person collab the session did not record): 72.8 % not the host, 22 chunks in a row; the
+    # whole clip had been labelled the host and its title gave a guest's line to her
+    ctx, _, _ = _ctx(tmp_path, playing=False, host_probs=(0.95, 0.05, 0.95, 0.05))
+    _heard(ctx, 0.728, 22)
+    out = si.step4_speaker(ctx)
+    assert out.ok, out.reason
+    assert _labels(ctx) == [H, G, H, G]
+    decision = json.loads((ctx.clip_dir / "speaker/decision.json").read_text(encoding="utf-8"))
+    assert decision["mode"] == "guests_heard_v8" and decision["heard"]["share"] == 0.728
+
+
+def test_a_clip_with_a_few_chunks_unlike_the_host_stays_uniform_host(tmp_path):
+    # the solo clips measured 0-3.4 %, one chunk in a row: noise, not a guest
+    ctx, _, _ = _ctx(tmp_path, playing=False, host_probs=(0.95, 0.05, 0.95, 0.05))
+    _heard(ctx, 0.034, 1)
+    assert si.step4_speaker(ctx).ok
+    assert set(_labels(ctx)) <= {H} and json.loads(
+        (ctx.clip_dir / "speaker/decision.json").read_text(encoding="utf-8")).get("mode") is None

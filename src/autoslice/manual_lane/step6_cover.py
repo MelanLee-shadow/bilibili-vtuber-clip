@@ -115,6 +115,7 @@ COVER_PERSON_FALLBACK = [[1200, 0, 1700, 1080]]
 # A danmaku box CPA reads from the frame is widened by one chat line above and below (and a little at the sides) before
 # the people are cut out: a box one line short left a readable line on 907000's cover (U452 ledger,).
 COVER_DANMAKU_PAD_X, COVER_DANMAKU_PAD_Y = 12, 48
+HEAD_SHARE = 0.4                 # the head of a person box, when CPA gave no face box: the part the blur keeps off
 FRAME_OFFSETS_S = (0, -4, 4, -8, 8, -12, 12)   # candidate cover frames around the default moment
 
 
@@ -142,13 +143,23 @@ def subtract_rect(rect: Sequence[int], hole: Sequence[int]) -> list[list[int]]:
 
 
 def blur_boxes(danmaku: Sequence[Sequence[int]] | None, person: Sequence[Sequence[int]] | None,
-               face: Sequence[int]) -> list[list[int]]:
-    """Boxes to blur: the danmaku boxes CPA read, one chat line larger (or the fixed layout), with the host's body and the face cut out, so the blur
-    never reaches the person.  The fixed host body is always cut out: CPA's person box may be the other guest.
-    Clamped to the frame."""
-    bases = ([[x0 - COVER_DANMAKU_PAD_X, y0 - COVER_DANMAKU_PAD_Y, x1 + COVER_DANMAKU_PAD_X, y1 + COVER_DANMAKU_PAD_Y]
-              for x0, y0, x1, y1 in danmaku] if danmaku else [list(b) for b in COVER_DANMAKU_FALLBACK])
-    holes = [list(h) for h in list(person or []) + COVER_PERSON_FALLBACK] + [list(face)]
+               face: Sequence[int], faces: Sequence[Sequence[int]] | None = None) -> list[list[int]]:
+    """Boxes to blur, clamped to the frame.  The relation: every block of viewers' text on the frame is blurred, and no
+    face is (U453 #12,).
+
+    With the blocks CPA read from this frame, each one a chat line larger, only the faces are cut out: the faces CPA read
+    (`faces`), else the head of each person box (its top HEAD_SHARE).  The body under a chat column is blurred with the
+    column: the fixed layout's body and face boxes cut the readable middle out of a column that stood where the host
+    stood in an older layout (1162860, 1611980, 1627860: blur boxes 1 px to 200 px wide, the chat readable).
+    Without a reading the fixed layout is used, with its fixed body and face cut out."""
+    if danmaku:
+        bases = [[x0 - COVER_DANMAKU_PAD_X, y0 - COVER_DANMAKU_PAD_Y, x1 + COVER_DANMAKU_PAD_X, y1 + COVER_DANMAKU_PAD_Y]
+                 for x0, y0, x1, y1 in danmaku]
+        holes = ([list(f) for f in faces] if faces else
+                 [[x0, y0, x1, y0 + round((y1 - y0) * HEAD_SHARE)] for x0, y0, x1, y1 in person or []] or [list(face)])
+    else:
+        bases = [list(b) for b in COVER_DANMAKU_FALLBACK]
+        holes = [list(h) for h in list(person or []) + COVER_PERSON_FALLBACK] + [list(face)]
     out: list[list[int]] = []
     for base in bases:
         pieces = [base]
@@ -217,7 +228,7 @@ def _frame_choice(doc: FrameDocument, t0: float, times: Sequence[float], *, reus
                   ) -> tuple[float, str, dict[str, list[list[int]]] | None]:
     tail = _action_note(doc) + ("（沿用上次同一批候选帧的判读，未再调用）" if reused else "")
     raw_boxes = doc.get("boxes") or {}
-    boxes = ({k: _valid_boxes(raw_boxes.get(k)) for k in ("danmaku", "person", "guest")}
+    boxes = ({k: _valid_boxes(raw_boxes.get(k)) for k in ("danmaku", "person", "face", "guest")}
              if isinstance(raw_boxes, dict) else None)
     if doc.get("chosen") is not None:
         note = f"CPA 看图选帧 {float(cast(float, doc['chosen'])):.2f}s（无无关页面）"

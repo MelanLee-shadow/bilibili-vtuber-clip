@@ -24,6 +24,7 @@ from . import (
     graph_context,
     normalize,
     parallel,
+    text_overlap,
     title_authority,
     title_history,
     title_names,
@@ -68,7 +69,8 @@ if TYPE_CHECKING:
 
 TITLE_MAX_REGEN = 2                              # regeneration rounds after the first candidate round
 TITLE_RULES = ("banned", "prefix", "on_stage_known", "named", "involved_named", "prefix_names", "swap", "punchline",
-               "person", "quotes", "canonical_names", "publish_gate", "published_duplicate")
+               "person", "quotes", "canonical_names", "publish_gate", "published_duplicate", "batch_opener")
+OPENER = 3      # a title's first characters after the prefix; two clips of one batch do not open alike (11-23: 8 of 10 「游戏里…」)
 
 
 class TitleChecks(TypedDict):
@@ -151,20 +153,31 @@ def publish_gate_violations(raw_title: str) -> list[str]:
     return codes
 
 
+def opener(title: str) -> str:
+    """The first OPENER letters of a title's body (after 【…】); "" when it is shorter."""
+    envelope = parse_talk_title(title)
+    letters = text_overlap.letters(envelope.body if envelope is not None else title)
+    return letters[:OPENER] if len(letters) >= OPENER else ""
+
+
 def title_checks(cand: TitleCandidate, names: Sequence[str], subtitles: str, *,
-                 envelope_error: str = "", published: tuple[str, ...] = (),
+                 envelope_error: str = "", published: tuple[str, ...] = (), batch: Sequence[str] = (),
                  non_formal: Sequence[title_names.NonFormal] = ()) -> TitleChecks:
     """The deterministic checks of skill section 4 on one candidate.  Each rule it breaks is named once in `reasons`;
     `score` counts the rules the candidate passes (len(TITLE_RULES) is perfect).  `subtitles` is the final SRT with
     the speaker labels where there are any: quoted words are checked against it by the repo's checker
     (title_cover_quotes; skill section 8 items 1-2: verbatim, and the speaker when the title names who said it).
-    `non_formal` are the non-formal spellings of a name found in the body (title_names)."""
+    `non_formal` are the non-formal spellings of a name found in the body (title_names).  `batch`: the titles the
+    other clips of this batch already have (title_history.recent_titles)."""
     from src.autoslice.title_quote_check import check_title_quotes
 
     title = str(cand.get("title", "")).strip()
     failed: dict[str, str] = {}
     if title_history.duplicate_title(title, published):
         failed["published_duplicate"] = "标题与已发标题重复，请依据本片字幕重写"
+    if alike := [t for t in batch if opener(t) and opener(t) == opener(title)]:
+        failed["batch_opener"] = (f"开头「{opener(title)}」和本批已起的「{alike[0]}」一样；同一批的片各用各的开头和句式，"
+                                  "从本片最好笑的那一下起句")
     banned = gates.title_banned(title)
     if banned:
         failed["banned"] = "禁词：" + ",".join(banned)
@@ -410,7 +423,8 @@ def _title_rounds(ctx: Ctx, names: Sequence[str], cpa_calls: list[CpaEvent]
             cand["name_fixes"] = name_fixes
             cand["prefix_repeat"] = envelope is not None and title_names.prefix_repeat(envelope.partners, body)
             cand["checks"] = title_checks(cand, names, srt_text, envelope_error=envelope_error,
-                                          published=history.published_titles, non_formal=formal.non_formal(body))
+                                          published=history.published_titles, batch=history.batch,
+                                          non_formal=formal.non_formal(body))
             cand["round"] = round_no
             cand["accepted"] = False
         cover = [normalize.canon_text(str(x).strip())[0] for x in (parsed_answer.get("cover_lines") or [])]
@@ -500,7 +514,8 @@ def _cover_regions(boxes: Mapping[str, list[list[int]]] | None) -> tuple[list[li
     danmaku = boxes.get("danmaku") if boxes else None
     person = boxes.get("person") if boxes else None
     guests = boxes.get("guest") if boxes else None
-    blur = blur_boxes(danmaku, list(person or []) + list(guests or []), COVER_FACE_BOX)
+    faces = boxes.get("face") if boxes else None
+    blur = blur_boxes(danmaku, list(person or []) + list(guests or []), COVER_FACE_BOX, faces)
     keep = [b for b in (guests or []) if not any(_rect_overlap(b, h) for h in COVER_PERSON_FALLBACK)]   # the other people only
     return blur, keep
 
