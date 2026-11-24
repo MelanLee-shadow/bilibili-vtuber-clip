@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Daily crawl of circle news (events, projects, alliances, collaborations) into a candidate entity graph.
 
-Reads the roster and the owner's dynamics snapshots, searches through the Search Router, lets CPA judge the results,
+Reads the roster and the owner's dynamics snapshots and the registry accounts' recent dynamics (the accounts step 6
+reads when it asks who is in a call), searches through the Search Router, lets CPA judge the results and the dynamics,
 and writes `<write-root>/knowledge/{nodes,edges}.jsonl` (status=candidate only; format: src/autoslice/knowledge_graph)
 plus `<write-root>/crawl_report.json`.  Exit 0 = delivered (partial failures are counted in the report and logged);
 exit 2 = the run could not deliver (no search succeeded, CPA answered nothing, the graph did not validate).
@@ -90,6 +91,25 @@ def _load_snapshot(path: Path, validate, label: str, notes: list[str]):  # noqa:
         return None
 
 
+def read_peer_posts(notes: list[str]) -> dict[str, list[dict[str, str]]] | None:
+    """The recent dynamics of the reviewed registry's accounts, read the way step 6 reads them (collab_guests.accounts,
+    dynamics_feed.recent); None with a note when the registry cannot be read, a note per account that cannot."""
+    try:
+        from src.autoslice.manual_lane import collab_guests, dynamics_feed
+
+        uids = collab_guests.accounts()
+    except Exception as exc:  # noqa: BLE001 - the web search still runs; the log says the dynamics were not read
+        notes.append(f"peer dynamics unavailable: {type(exc).__name__}: {str(exc)[:200]}")
+        return None
+    out: dict[str, list[dict[str, str]]] = {}
+    for name, uid in list(uids.items())[:collab_guests.PEERS_READ]:
+        try:
+            out[name] = dynamics_feed.recent(uid)
+        except (dynamics_feed.FeedError, OSError, ValueError) as exc:
+            notes.append(f"peer dynamics {name}: {type(exc).__name__}: {str(exc)[:200]}")
+    return out
+
+
 class NameVideos:
     """Bilibili video search for one community name, paced like the community-name crawler (its sources config:
     hosts, request cap, interval); the public WBI signing key is fetched once, on first use."""
@@ -137,6 +157,7 @@ def main(argv: list[str] | None = None) -> int:
     notes: list[str] = []
     registry = _load_snapshot(args.registry, lambda raw: validate_registry(raw, as_of=None), "registry", notes)
     dynamics = _load_snapshot(args.dynamics, validate_dynamics_snapshot, "dynamics", notes)
+    peer_posts = read_peer_posts(notes)
     community = None
     if args.community_names is not None:
         try:
@@ -165,6 +186,7 @@ def main(argv: list[str] | None = None) -> int:
             runtime_root=args.write_root,
             registry=registry,
             dynamics=dynamics,
+            peer_posts=peer_posts,
             search=RouterSearch(WebLookup(), deadline=time.monotonic() + args.max_runtime_seconds),
             llm_call=llm_call,
             now=now,

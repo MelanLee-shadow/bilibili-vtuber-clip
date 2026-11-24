@@ -46,6 +46,14 @@ def srt(n: int = 40, step: float = 2.0) -> str:
     return "\n\n".join(blocks) + "\n"
 
 
+# The JSON line of lidousha's writing-judge template (what quality_shape reads: the endings and the banned styles).
+QUALITY_JSON_LINE = ('{"named":{"ok":true,"why":""},"mishap":{"ok":true,"words":"","why":""},"last_clause":{"text":"",'
+                     '"whose":"host|to_host|others|editor","evidence":""},"banned":{"editor_comment":"",'
+                     '"editor_question":"","person_switch":"","flow_list":"","catalog":""},"pronouns":[],'
+                     '"setup":{"ok":true,"why":""},"open":{"ok":true,"why":""},"swap":{"holds_with_other_host":false,'
+                     '"why":""},"overall":"PASS|FAIL","fail_reasons":[]}')
+
+
 def fake_title_skill(tmp_path: Path, monkeypatch) -> Path:
     """Synthetic files for tests of title/history/review plumbing, not editorial quality.
 
@@ -71,6 +79,10 @@ def fake_title_skill(tmp_path: Path, monkeypatch) -> Path:
     (root / "references/judge-prompt.md").write_text(
         "# Synthetic judge template\n\n---\n"
         "@@RULES@@\n@@SUBTITLE@@\n@@PREFIX@@@@TITLE@@\n@@COVER1@@\n@@COVER2@@\n", encoding="utf-8",
+    )
+    (root / "references/quality-judge-prompt.md").write_text(
+        "# Synthetic writing-judge template\n\n---\n写法判官\n@@RULES@@\n@@SUBTITLE@@\n@@PREFIX@@@@TITLE@@\n"
+        + QUALITY_JSON_LINE + "\n", encoding="utf-8",
     )
     projection = tmp_path / "title_editorial_method.json"
     projection.write_text(json.dumps(title_editorial_method.projection_data(
@@ -167,6 +179,24 @@ JUDGE_PASS = json.dumps({"fact_core": "x", "claims": [], "quotes": [], "rhetoric
                         ensure_ascii=False)
 
 
+# The writing judge's answer (references/quality-judge-prompt.md output shape), PASS unless a test scripts its own.
+QUALITY_PASS = json.dumps({"named": {"ok": True, "why": ""}, "mishap": {"ok": True, "words": "嘴硬", "why": ""},
+                           "last_clause": {"text": "x", "whose": "host", "evidence": "3 [李豆沙]"},
+                           "banned": {"editor_comment": "", "editor_question": "", "person_switch": "", "flow_list": "",
+                                      "catalog": ""},
+                           "pronouns": [], "setup": {"ok": True, "why": ""}, "open": {"ok": True, "why": ""},
+                           "swap": {"holds_with_other_host": False, "why": ""}, "overall": "PASS", "fail_reasons": []},
+                          ensure_ascii=False)
+
+
+def quality_fail(*reasons, flow_list: str = "问完……接出……"):
+    """A writing judge's FAIL: the answer says PASS-shaped items except a 流水账 hit, and the reasons given."""
+    answer = json.loads(QUALITY_PASS)
+    answer["banned"]["flow_list"] = flow_list
+    answer.update(overall="FAIL", fail_reasons=list(reasons) or ["流水账"])
+    return json.dumps(answer, ensure_ascii=False)
+
+
 # The clip-understanding answers (title_understand.md / title_understand_merge.md output shape).
 READING = json.dumps({"main_line": "李豆沙讲了她的主线", "punchline": "她先嘴硬，接着自己拆台（序号 3）",
                       "punchline_cues": [3], "who_is_who": [], "side_topics": []}, ensure_ascii=False)
@@ -260,6 +290,38 @@ def is_judge(call_id: str) -> bool:
     return "title-judge" in call_id
 
 
+_QUALITY_RUN = re.compile(r"-q\d+$")
+
+
+ACCEPTED_JUDGE = {"overall": "PASS", "fail_reasons": [], "runs": [{"overall": "PASS", "fail_reasons": []}],
+                  "quality": [{"overall": "PASS", "fail_reasons": []}], "authorities": []}
+
+
+def accept_title(clip_dir, title: str, by: str = "step6") -> None:
+    """Record title/accepted.json for a fixture that writes title/title.txt itself (as step 6 does once both judges pass);
+    step 8 refuses a title without it (title_acceptance)."""
+    from src.autoslice.manual_lane import title_acceptance
+    title_acceptance.write(clip_dir, title, by, None if by == "owner" else ACCEPTED_JUDGE)
+
+
+def write_title(clip_dir, title: str, by: str = "step6") -> None:
+    """title/title.txt and its acceptance receipt, for a fixture that stands in for step 6 (or a later title writer)."""
+    path = clip_dir / "title/title.txt"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(title + "\n", encoding="utf-8")
+    accept_title(clip_dir, title, by)
+
+
+def is_quality(call_id: str) -> bool:
+    """A run of the writing judge (title_judge asks `<call>-q1`, `-q2` beside the fact judge's `<call>-1`, `-2`)."""
+    return is_judge(call_id) and bool(_QUALITY_RUN.search(call_id))
+
+
+def judge_pass(call_id: str) -> str:
+    """The passing answer of whichever judge `call_id` is a run of (the fact judge's or the writing judge's shape)."""
+    return QUALITY_PASS if is_quality(call_id) else JUDGE_PASS
+
+
 def cover_verdict(people=("李豆沙", "雾深Girimi"), *, hook=2, face=(1300, 300, 1600, 650), clean=True):
     """A CPA vision answer for one candidate, in the shape cover_judge.md asks for."""
     ok = {"pass": True, "reason": "看图"}
@@ -320,18 +382,21 @@ def _jpeg() -> bytes:
 
 _JPEG = _jpeg()
 
-_POSITION_TAIL = re.compile(r"-(?:d)?(\d+)$")
+_POSITION_TAIL = re.compile(r"-([dq])?(\d+)$")
+_QUALITY_AFTER = 1000      # title_judge asks the fact runs, then the writing runs (`-q1`, `-q2`), in one pass
 
 
 def _family(call_id: str) -> str:
     """The family of one call id: its text without the trailing position (`title-judge-r0-2` -> `title-judge-r0`,
-    `concat-d005` -> `concat`, `adjudicate-p1-3` -> `adjudicate-p1`)."""
+    `title-judge-r0-q1` -> `title-judge-r0`, `concat-d005` -> `concat`, `adjudicate-p1-3` -> `adjudicate-p1`)."""
     return _POSITION_TAIL.sub("", call_id)
 
 
 def _position(call_id: str) -> int:
     match = _POSITION_TAIL.search(call_id)
-    return int(match.group(1)) if match else 0
+    if not match:
+        return 0
+    return int(match.group(2)) + (_QUALITY_AFTER if match.group(1) == "q" else 0)
 
 
 def serial_order(call_ids: list[str]) -> list[str]:
@@ -365,7 +430,7 @@ class FakeCpa:
     scripted verdict, and the next judge call in the round takes the next one."""
 
     def __init__(self, responses, *, judge=(), delay: tuple[float, float] = (0.0, 0.0), readings=None, merges=None,
-                 pick=(), writing_canon=None, context=None):
+                 pick=(), writing_canon=None, context=None, quality=()):
         self.responses = list(responses)
         self.writing_canon = writing_canon   # a callable(prompt) -> answer text; every hit "not the same word" if None
         self.pick = list(pick)            # one ranking answer per title-pick call; the original order after they run out
@@ -373,6 +438,8 @@ class FakeCpa:
         self.merges = list(merges) if merges is not None else [MERGE]   # one per ask; the last repeats
         self.context = context            # the title-context answer: a text or a callable(prompt) -> text (None text = a failed call); all found false if unset
         self.judge = list(judge)          # one verdict per judge call (its runs share it); JUDGE_PASS after they run out
+        self.quality = list(quality)      # the same for the writing judge's runs (-q1, -q2); QUALITY_PASS after
+        self._quality_taken: dict[str, str] = {}
         self._rows: list[tuple[str, str]] = []
         self.meter = InFlight(delay)
         self._lock = threading.Lock()
@@ -392,7 +459,17 @@ class FakeCpa:
         return [prompt for call_id, prompt in _parallel_key(self._rows)
                 if call_id == "title" or call_id.startswith("title-regen-")]
 
+    def _quality_answer(self, call_id: str) -> str:
+        group = _QUALITY_RUN.sub("", call_id)          # title-judge-r0-q1 and -q2 are one writing-judge call
+        with self._lock:
+            if group not in self._quality_taken:
+                index = len(self._quality_taken)
+                self._quality_taken[group] = self.quality[index] if index < len(self.quality) else QUALITY_PASS
+            return self._quality_taken[group]
+
     def _judge_answer(self, call_id: str) -> str:
+        if is_quality(call_id):
+            return self._quality_answer(call_id)
         group = _family(call_id)          # title-judge-r0-1 and -2 are one judge call
         with self._lock:
             if group not in self._judge_taken:

@@ -216,7 +216,7 @@ def test_asr_products_on_disk_are_reused_without_a_remote_asr_call(tmp_path):
 
 
 # ----- step 6: title -----------------------------------------------------------------------------
-def test_title_all_candidates_breaking_reviewers_title_rule_are_regenerated_then_the_best_is_taken(tmp_path):
+def test_title_all_candidates_breaking_reviewers_title_rule_are_regenerated_then_the_step_stops(tmp_path):
     cand = [{"title": "【李豆沙】这段直接把人笑哭", "on_stage": ["李豆沙"], "punchline_person": "她笑哭了",
              "swap_check": {"holds_with_other_host": False}},
             {"title": "【李豆沙】当场破防了", "on_stage": ["李豆沙"], "punchline_person": "她破防了",
@@ -230,9 +230,10 @@ def test_title_all_candidates_breaking_reviewers_title_rule_are_regenerated_then
     (ctx.clip_dir / "subs").mkdir(parents=True, exist_ok=True)
     (ctx.clip_dir / "subs" / "final.srt").write_text(srt(3), encoding="utf-8")
     out = si.step6_title_cover(ctx)
-    # two regenerations; nothing silently dropped: the best candidate is taken and the unpassed item is recorded
+    # two regenerations, then the step stops: no title is chosen by score (skill 八.4; until 11-24 the best was taken)
     # regen-2's prompt is identical to regen-1's (same rejected reasons): it is answered from the CPA cache (COST-07)
-    assert ctx.adapters.cpa.calls == [*UNDERSTANDING_CALLS, "title", "title-regen-1", "cover-brief", "cover-emote"]
+    assert ctx.adapters.cpa.calls == [*UNDERSTANDING_CALLS, "title", "title-regen-1"]
+    assert out.reason == "TITLE_NOT_ACCEPTED" and not (ctx.clip_dir / "title" / "title.txt").exists()
     cands_doc = json.loads((ctx.clip_dir / "title" / "candidates.json").read_text(encoding="utf-8"))
     assert cands_doc["forced"] is True and "禁词" in "\n".join(out.process)
 

@@ -113,6 +113,14 @@ def is_bad_grade(grade: str) -> bool:
     return WORST_GRADE in text or text == BAD_GRADE
 
 
+def predicted_bad(item: PickItem | None) -> bool:
+    """The ranking predicts the owner rejects this candidate (差, 尤其差) or that it fails what the research measured; a
+    candidate without a ranking (a round with one passing candidate, the owner's own body) is not."""
+    if not item:
+        return False
+    return is_bad_grade(item["grade"]) or bool(item.get("research_fail"))
+
+
 def answer_problem(value: object, n: int) -> str:
     """Why the ranking answer is not usable, or "": an object with `order` (a list; what is missing, repeated or out of
     range in it is mended by `normalized_order`) and `predicted`, one object per candidate with its whole `index`, a
@@ -166,6 +174,7 @@ def rank_round(ctx: Ctx, call_id: str, basis: PickBasis, *, titles: Sequence[str
                      circle_context=f"\n{basis.circle}" if basis.circle else "",
                      candidates="\n".join(f"{k} {titles[i]}" for k, i in enumerate(ranked_ids)))
     answer, reason = ask_json(ctx, call_id, prompt, purpose=PICK_PURPOSE, shape="TITLE_PICK_SHAPE", cpa_calls=cpa_calls,
+                              goes_on=True,
                               problem=lambda value: answer_problem(value, n), unparseable="TITLE_PICK_UNPARSEABLE")
     if reason or not isinstance(answer, dict):
         return RoundPick(order=[*model_ranked, *rest],

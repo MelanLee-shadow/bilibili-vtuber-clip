@@ -122,6 +122,20 @@ def test_a_clip_whose_model_gave_no_answer_is_asked_again_every_round_and_listed
     assert "stopped" not in json.loads(ar.ledger_path(tmp_path).read_text())["clips"]["unanswered"]
 
 
+def test_a_failed_call_the_step_went_on_without_does_not_make_a_stop_wait_for_the_provider(tmp_path):
+    """Review step 6 goes on when its taste ranking gets no answer (step_io.ask_json goes_on=True) and may
+    later stop for a reason of its own (no candidate passed both judges); that stop was read as the provider's doing,
+    so the clip was run again every round and never listed as stuck."""
+    clip(tmp_path, "unranked")
+    def run(cid):
+        calls = [{"call_id": "title-pick-r0", "rc": 1, "tolerated": True}, {"call_id": "title-judge-r0-q1", "rc": 0}]
+        stop(tmp_path, cid, "title_cover", "TITLE_NOT_ACCEPTED", cpa=calls)
+    rounds = [round_(tmp_path, run) for _ in range(4)]
+    assert [calls for _, calls in rounds] == [[["unranked"]]] * 3 + [[]]
+    assert all(result["waiting_provider"] == [] for result, _ in rounds)
+    assert [s["cid"] for s in rounds[-1][0]["stuck"]] == ["unranked"]
+
+
 def test_a_second_round_at_the_same_time_leaves_at_once(tmp_path):
     clip(tmp_path, "slow")
     inner = []

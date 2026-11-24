@@ -162,7 +162,7 @@ def test_text_that_fits_no_picture_is_shortened_once_and_every_candidate_is_rend
                        answers=[json.dumps({"cover_lines": ["破防了"]}, ensure_ascii=False)])
     out = si.step6_title_cover(ctx)
     assert out.ok, (out.reason, out.note)
-    assert ctx.adapters.cpa.calls == [*UNDERSTANDING_CALLS, "title", "title-judge-r0-1", "title-judge-r0-2", "cover-brief",
+    assert ctx.adapters.cpa.calls == [*UNDERSTANDING_CALLS, "title", "title-judge-r0-1", "title-judge-r0-2", "title-judge-r0-q1", "title-judge-r0-q2", "cover-brief",
                                       "cover-emote", "cover-emote", "title-cover-retry-1"]    # the new lines ask the emote again (listed by family)
     job = json.loads(remote.files[f"{RD}/cover/job.json"].decode("utf-8"))
     assert job["lines"] == ["破防了"]

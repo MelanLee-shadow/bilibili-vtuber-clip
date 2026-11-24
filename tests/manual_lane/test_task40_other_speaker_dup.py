@@ -36,6 +36,14 @@ def _run(tmp_path, monkeypatch, guest, mode="C"):
     monkeypatch.setenv("MANUAL_LANE_WHOLE_WITNESS", "moss")
 
     def script(name, body, remote):
+        if name == "s3-listen-game-sound":     # a line of Latin letters only (a table's canonical cyt): a person said it
+            windows = json.loads(remote.files[f"{RD}/listen/windows-game-sound.json"])
+            models = json.loads(remote.files[f"{RD}/listen/models-game-sound.json"])
+            heard = [{"win": w["win"], "slug": m["slug"], "model": m["name"], "status": "OK",
+                      "lines": [{"source": "person", "start_s": 0.0, "text": w["text"]}]}
+                     for w in windows for m in models]
+            remote.files[f"{RD}/listen/out/all.json"] = json.dumps(heard).encode()
+            return RemoteResult(0, f'LISTEN_DONE {len(heard)} records {len(heard)} {{"OK": {len(heard)}}}\n', "")
         if name.startswith("s3-listen-"):
             remote.files[f"{RD}/listen/out/all.json"] = b"[]"
             return RemoteResult(0, 'LISTEN_DONE 0 records 0 {"OK": 0}\n', "")

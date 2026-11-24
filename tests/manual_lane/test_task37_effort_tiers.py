@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 
 import pytest
-from fakes import (COVER_BRIEF, COVER_EMOTE, JUDGE_PASS, UNDERSTANDING_CALLS, FakeCpa, FakeRemote, fake_cover, is_judge, make_ctx,
+from fakes import (COVER_BRIEF, COVER_EMOTE, JUDGE_PASS, judge_pass, UNDERSTANDING_CALLS, FakeCpa, FakeRemote, fake_cover, is_judge, make_ctx,
                    rules_with, srt, understanding_answer)
 
 from src.autoslice.manual_lane import stage_impl as si
@@ -294,7 +294,7 @@ class JitterCpa:
         elif call_id == "cover-emote":
             text = COVER_EMOTE
         elif is_judge(call_id):
-            text = JUDGE_PASS
+            text = judge_pass(call_id)
         else:
             text = understanding_answer(call_id) or self.answers["title"]
         return {"call_id": call_id, "model": model, "effort": effort, "rc": 0, "elapsed_s": 0.1,
@@ -335,7 +335,8 @@ def test_the_e2e_fake_log_is_in_input_order_50_runs_in_a_row(tmp_path):
             return super().ask(call_id=call_id, prompt_text=prompt_text, model=model, effort=effort,
                                remote_dir=remote_dir)
 
-    want = [*UNDERSTANDING_CALLS, "title", "title-judge-r0-1", "title-judge-r0-2", "cover-brief", "cover-emote"]
+    want = [*UNDERSTANDING_CALLS, "title", "title-judge-r0-1", "title-judge-r0-2", "title-judge-r0-q1",
+            "title-judge-r0-q2", "cover-brief", "cover-emote"]
     seen = set()
     for i in range(50):
         cpa = JitterCpa({"title": TITLE})
@@ -356,4 +357,5 @@ def test_the_lane_record_list_is_in_input_order_50_runs_in_a_row(tmp_path):
         out = si.step6_title_cover(ctx)
         assert out.ok, out.note
         seen.add(tuple(c["call_id"] for c in out.cpa if c["call_id"].startswith("title")))
-    assert seen == {(*UNDERSTANDING_CALLS, "title", "title-judge-r0-1", "title-judge-r0-2")}, f"record order varied: {seen}"
+    assert seen == {(*UNDERSTANDING_CALLS, "title", "title-judge-r0-1", "title-judge-r0-2", "title-judge-r0-q1",
+                     "title-judge-r0-q2")}, f"record order varied: {seen}"

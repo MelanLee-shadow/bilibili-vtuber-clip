@@ -125,7 +125,8 @@ def _han(name: str) -> str:
 
 def misattributed_reason(found: list[tuple[str, str]]) -> str:
     return ("「我」分不清是谁：" + "；".join(f"“{c}”是{s}说的" for c, s in found)
-            + "，标题里没写出是她说的，观众会当成主播自己；写明是谁说的（如「名字：…」），或换成主播自己说的话")
+            + "，标题里没写出是她说的，观众会当成主播自己；在这句前写出是谁说的（名字＋说、问，原话放进引号；skill 不用冒号），"
+            "或换成主播自己说的话")
 
 
 def reason(mixed: tuple[str, str]) -> str:

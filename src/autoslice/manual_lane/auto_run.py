@@ -93,9 +93,10 @@ def provider_failed(state: ClipState, step: str) -> bool:
     """Whether the stopped step failed on something outside the clip, which the next round may find gone: a model call
     that came back without an answer after its tries (step_io._ask_cpa; with several runs of a step at once the failed
     call need not be the last one recorded), or one of OUTSIDE_STOPS in the step's note (the first
-    unattended round: a redeploy and a recogniser's rate limit each stopped a clip)."""
+    unattended round: a redeploy and a recogniser's rate limit each stopped a clip).  A failed call the step went on
+    without (`tolerated`, step_io.ask_json) is not why it stopped."""
     record = state.step(step)
-    return (any(call.get("rc") not in (0, None) for call in record.get("cpa") or [])
+    return (any(call.get("rc") not in (0, None) and not call.get("tolerated") for call in record.get("cpa") or [])
             or any(mark in str(record.get("note") or "") for mark in OUTSIDE_STOPS))
 
 

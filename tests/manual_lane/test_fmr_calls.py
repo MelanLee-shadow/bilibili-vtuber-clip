@@ -7,7 +7,7 @@ import json
 import subprocess
 
 from fakes import fmr_check_wrote
-from fakes import FakeCpa, FakeRemote, make_ctx
+from fakes import FakeCpa, FakeRemote, accept_title, make_ctx
 
 from src.autoslice.manual_lane import stage_package as sp
 from src.autoslice.manual_lane.adapters import RemoteResult
@@ -25,6 +25,7 @@ def _prepared(tmp_path, cpa_review=None):
     c = ctx.clip_dir
     (c / "title").mkdir(parents=True)
     (c / "title/title.txt").write_text("【李豆沙】标题\n", encoding="utf-8")
+    accept_title(c, "【李豆沙】标题")
     (c / "title/candidates.json").write_text(json.dumps({"cover_lines": ["甲", "乙"]}), encoding="utf-8")
     (c / "cover").mkdir(parents=True)
     (c / "cover/cover.png").write_bytes(b"png")

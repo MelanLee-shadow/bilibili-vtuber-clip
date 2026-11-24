@@ -30,7 +30,7 @@ import os
 from pathlib import Path
 from typing import TypedDict
 
-from . import doubt_policy, normalize, package_audio, revision_authority, subtitle_track, title_history
+from . import doubt_policy, normalize, package_audio, revision_authority, subtitle_track, title_acceptance, title_history
 from .publication_id import publication_cid
 from .runner import Ctx, StepOutcome
 from .srt_text import SrtCue, parse_srt
@@ -88,11 +88,18 @@ OWNER_DECIDED_FILE = "subs/not_subtitled.json"      # in a push: [{start_s, end_
 
 def record_owner_decided(clip_dir: Path, decided: list[dict]) -> list[dict]:
     """A push the owner decided (`import-subtitles --decided-by owner`) that names lines he decided to leave without a
-    subtitle (OWNER_DECIDED_FILE, with his note as the reason: 系统音、效果音, owner U469): the gaps of the new
-    final subtitles that hold those lines are recorded as decided (DECIDED_FILE, the reason kept), as step 3 records the
+    subtitle (OWNER_DECIDED_FILE, with his note as the reason: 系统音、效果音, owner U469): recorded as
+    `record_left_out` records them."""
+    return record_left_out(clip_dir, decided, "频道主决定不出字幕")
+
+
+def record_left_out(clip_dir: Path, decided: list[dict], by: str) -> list[dict]:
+    """Lines `decided` ([{start_s, end_s, text, reason}] on the clip's clock) that were left out of the final subtitles on
+    purpose -- by the owner, or step 3's game-sound check (game_sound.py) -- `by` saying who: the gaps of the final
+    subtitles that hold those lines are recorded as decided (DECIDED_FILE, the reason kept), as step 3 records the
     stretches it was asked about, so the package step does not stop for them.  A gap is decided only when what the dictation
-    holds in it outside his lines is not speech by itself (under MIN_SPOKEN_CHARS): a gap that also holds speech he did not
-    decide on still stops step 8.  Returns the decided gaps; no dictation (asr/bcut.srt): nothing is recorded (step 8 does
+    holds in it outside those lines is not speech by itself (under MIN_SPOKEN_CHARS): a gap that also holds speech nobody
+    decided on still stops step 8.  Returns the decided gaps; no dictation (asr/bcut.srt): nothing is recorded (step 8 does
     not look either)."""
     dictation_file = clip_dir / "asr/bcut.srt"
     if not dictation_file.is_file():
@@ -108,7 +115,7 @@ def record_owner_decided(clip_dir: Path, decided: list[dict]) -> list[dict]:
         rest = sum(spoken_chars(str(c["text"])) for c in inside if his(float(c["start_s"]), float(c["end_s"])) is None)
         line = his(gap["start_s"], gap["end_s"])
         if line is not None and rest < MIN_SPOKEN_CHARS:
-            kept.append({**gap, "reason": f"频道主决定不出字幕：{line.get('reason') or ''}（「{line.get('text') or ''}」）"})
+            kept.append({**gap, "reason": f"{by}：{line.get('reason') or ''}（「{line.get('text') or ''}」）"})
     path = clip_dir / DECIDED_FILE
     if kept:        # beside what the subtitle step decided before (a revision carries its predecessor's)
         before = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []
@@ -184,6 +191,8 @@ def check(ctx: Ctx, old_package: Path) -> tuple[StepOutcome | None, list[str]]:
     if refused:
         return refused, []
     notes = [*notes, *audio_notes]
+    if why := title_acceptance.problem(ctx.clip_dir):      # the title went out only if both judges passed (skill 八.3-4)
+        return _fail(title_acceptance.NOT_ACCEPTED, why), []
     dictation_file = ctx.clip_dir / "asr/bcut.srt"
     if not dictation_file.is_file():
         return None, [*notes, "没有机器听写（asr/bcut.srt），未做有声无字幕检查"]

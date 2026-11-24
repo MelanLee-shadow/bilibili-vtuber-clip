@@ -253,14 +253,22 @@ def failure_line(record: CpaEvent) -> str:
 
 
 def ask_json(ctx: Ctx, call_id: str, prompt_text: str, *, purpose: str, problem: Callable[[Any], str], shape: str,
-             cpa_calls: list[CpaEvent], unparseable: str = "CPA_RESPONSE_UNPARSEABLE") -> tuple[Any, str]:
+             cpa_calls: list[CpaEvent], goes_on: bool, unparseable: str = "CPA_RESPONSE_UNPARSEABLE") -> tuple[Any, str]:
     """One model call whose answer must be a JSON value `problem` has nothing against (`problem` returns "" for a usable
     value, else what is wrong with it).  Returns (value, "") or (None, why there is no value).  An answer outside the
     contract is asked again while the tries last (the `accepts` of _ask_cpa; the failure then begins with `shape`).  The
-    call's record is appended to cpa_calls whether or not it gave a value."""
+    call's record is appended to cpa_calls whether or not it gave a value.
+
+    `goes_on` (no default: every caller says it): True when the step carries on without the answer.  The record is then
+    marked `tolerated`, so a later stop of the step for a reason of its own (step 6's TITLE_NOT_ACCEPTED) is not read by
+    auto_run.provider_failed as waiting for the provider: a clip stopped that way was run again every round and never
+    listed as stuck (review)."""
     record = _ask_cpa(ctx, call_id, prompt_text, purpose=purpose,
                       accepts=lambda value: f"{shape} ({found})" if (found := problem(value)) else "")
-    cpa_calls.append(_log(record))
+    logged = _log(record)
+    if goes_on:
+        logged["tolerated"] = True
+    cpa_calls.append(logged)
     if not _cpa_ok(record):
         return None, failure_line(record)
     try:

@@ -182,7 +182,10 @@ def prompt_for(win, prompt_tpl):
     tempo = float(win.get("tempo", 1.0))
     lead = (win["core"][0] - win["audio"][0]) / tempo
     tail = (win["audio"][1] - win["core"][1]) / tempo
-    return prompt_tpl.replace("{lead}", f"{lead:.1f}").replace("{tail}", f"{tail:.1f}")
+    prompt = prompt_tpl.replace("{lead}", f"{lead:.1f}").replace("{tail}", f"{tail:.1f}")
+    # a window that carries its subtitle (game_sound.py: who said this line) hands it to the prompt; no other window
+    # has `text`, so their prompts (and the keys of their stored records) are what they were
+    return prompt.replace("{text}", win["text"]) if "text" in win else prompt
 
 
 def key_for(audio, tempo, model_name, slug, prompt):

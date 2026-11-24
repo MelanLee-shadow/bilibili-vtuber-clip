@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 
 import pytest
-from fakes import FakeCpa, FakeRemote, judge_fail, make_ctx, srt
+from fakes import FakeCpa, FakeRemote, is_quality, judge_fail, make_ctx, srt
 
 from src.autoslice import channel_envelope
-from src.autoslice.channel_envelope import render_talk_title
+from src.autoslice.channel_envelope import parse_talk_title, render_talk_title
 from src.autoslice.manual_lane import normalize
 from src.autoslice.manual_lane import stage_impl as si
 from src.autoslice.manual_lane.runner import StepOutcome
@@ -62,8 +62,11 @@ def test_explicit_body_reaches_judge_and_persisted_title_unchanged(
     assert data["candidates"][0]["title"] == data["chosen"]["title"] == picked[0] == expected
     assert (ctx.clip_dir / "title/title.txt").read_text(encoding="utf-8") == expected + "\n"
     assert (ctx.clip_dir / "cpa/title.completion.txt").read_text(encoding="utf-8") == response
-    judge_prompts = [p for call, p in zip(cpa.calls, cpa.prompts, strict=True) if "title-judge" in call]
+    judge_prompts = [p for call, p in zip(cpa.calls, cpa.prompts, strict=True)
+                     if "title-judge" in call and not is_quality(call)]
     assert len(judge_prompts) == 2 and all(f"标题：{expected}" in p for p in judge_prompts)
+    writing = [p for call, p in zip(cpa.calls, cpa.prompts, strict=True) if is_quality(call)]   # skill 八.4
+    assert len(writing) == 2 and all(f"正文：{parse_talk_title(expected).body}" in p for p in writing)
     assert "title-regen-1" not in cpa.calls
 
 
@@ -110,9 +113,9 @@ def test_exhausted_title_rounds_never_force_a_role_label_as_a_name(tmp_path):
     response = _answer(bad, good)
     ctx, _, picked = _pick(tmp_path, [HOST, "连线"], [response] * 3,
                             judge=[judge_fail("仍需改进")] * 3)
-    assert not isinstance(picked, StepOutcome), picked
+    assert isinstance(picked, StepOutcome) and picked.reason == "TITLE_NOT_ACCEPTED", picked   # skill 八.4
     result = json.loads((ctx.clip_dir / "title/candidates.json").read_text(encoding="utf-8"))
-    assert result["forced"] and picked[0] == render_talk_title(BODY)
+    assert result["forced"] and result["chosen"]["title"] == render_talk_title(BODY)
     assert all("placeholder_identity" in c["checks"]["failed"]
                for c in result["candidates"] if "连线" in c["title"])
 
@@ -183,7 +186,7 @@ def test_dual_representation_is_an_explicit_rejection(tmp_path, body):
 def test_legacy_bare_title_is_not_reinterpreted_as_a_new_body(tmp_path):
     response = _answer(_candidate("title", BODY, [HOST]))
     ctx, cpa, picked = _pick(tmp_path, [HOST], [response] * 3)
-    assert not isinstance(picked, StepOutcome), picked  # existing exhausted-round forced choice
+    assert isinstance(picked, StepOutcome) and picked.reason == "TITLE_NOT_ACCEPTED", picked   # no forced choice
     data = json.loads((ctx.clip_dir / "title/candidates.json").read_text(encoding="utf-8"))
     assert data["forced"] and not data["chosen"]["accepted"] and data["chosen"]["title"] == BODY
     assert "prefix" in data["chosen"]["checks"]["failed"]
@@ -262,7 +265,7 @@ def test_registry_failure_cannot_turn_a_candidate_into_a_pass(tmp_path, monkeypa
     monkeypatch.setattr(channel_envelope, "resolve_partners", unavailable)
     response = _answer(_candidate("title_body", BODY, [HOST, GUEST]))
     ctx, cpa, picked = _pick(tmp_path, [HOST, GUEST], [response] * 3)
-    assert not isinstance(picked, StepOutcome), picked  # existing exhausted-round forced choice
+    assert isinstance(picked, StepOutcome) and picked.reason == "TITLE_NOT_ACCEPTED", picked   # no forced choice
     data = json.loads((ctx.clip_dir / "title/candidates.json").read_text(encoding="utf-8"))
     assert data["forced"] and not data["chosen"]["accepted"]
     assert all("publish_gate_error:RuntimeError" in c["checks"]["reasons"] for c in data["candidates"])

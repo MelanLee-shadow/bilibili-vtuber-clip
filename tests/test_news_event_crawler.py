@@ -57,7 +57,9 @@ def _registry(*members):
 
 
 def _dynamics(*texts):
-    return {"items": [{"dynamic_id": str(i), "published_at": STAMP, "text": t} for i, t in enumerate(texts)]}
+    """Owner dynamics posted before crawler.POST_DAYS: seeds for the web search, not results of their own (those are
+    tested with `_post` below)."""
+    return {"items": [{"dynamic_id": str(i), "published_at": "2026-11-01T00:00:00Z", "text": t} for i, t in enumerate(texts)]}
 
 
 # ---- seeds ---------------------------------------------------------------------------------------------------------
@@ -432,6 +434,7 @@ def test_entry_point_exit_codes(tmp_path, monkeypatch, capsys):
     llm = _cpa(_answer(_item(url=RESULT["url"], kind="group", name="新联盟")))
     monkeypatch.setattr(script, "WebLookup", lambda: lookup)
     monkeypatch.setattr(script, "build_llm_call", lambda config: llm)
+    monkeypatch.setattr(script, "read_peer_posts", lambda notes: {})
     argv = ["--registry", str(registry), "--dynamics", str(dynamics), "--write-root", str(runtime),
             "--max-seeds", "6", "--now", STAMP]
     assert script.main(argv) == 0
@@ -448,6 +451,74 @@ def test_entry_point_exit_codes(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(script, "build_llm_call", lambda config: _cpa(error=LlmCallError("CPA quota exhausted")))
     assert script.main(argv) == 2
     assert "cpa_unavailable" in capsys.readouterr().err
+
+
+# ---- the accounts' own dynamics (owner 11-23, U468: 「这个联动完全可以直接从新闻Crawler把这个动态一抓就知道了」) --------
+
+POSTS_NOW = dt.datetime(2026, 11, 24, 2, 0, tzinfo=dt.timezone.utc)
+
+
+def _post(ident, at, text):
+    return {"dynamic_id": ident, "published_at": at, "text": text}
+
+
+def test_recent_dynamics_of_the_owner_and_the_peers_are_results_of_their_own():
+    owner = {"items": [_post("11", "2026-11-22T13:22:00+00:00", "我们明天晚上八点的女大矿工见噢[脸红]"),
+                       _post("10", "2026-11-17T15:13:00+00:00", "晚安小熊")]}
+    peers = {"安晚awa": [_post("21", "2026-11-23T17:10:00+00:00", "晚安矿工是对的但我要晕倒了!"),
+                        _post("x", "2026-11-23T15:00:00+00:00", "坏行"), _post("22", "2026-11-23T16:00:00", "无时区"),
+                        _post("23", "2026-11-23T16:00:00+00:00", "")],
+             "礼墨Sumi": [], OWNER: [_post("99", "2026-11-23T00:00:00+00:00", "主播的动态只取快照里的")]}
+    got = crawler.post_batches(OWNER, owner, peers, POSTS_NOW)
+    assert [seed for seed, _ in got] == ["B站动态·李豆沙", "B站动态·安晚awa"]
+    (_, mine), (_, hers) = got
+    assert mine == [{"title": "李豆沙 自己发的 B 站动态（发布于 2026-11-22）", "url": "https://www.bilibili.com/opus/11",
+                     "snippet": "我们明天晚上八点的女大矿工见噢"}], "older than POST_DAYS left out, emotes removed"
+    assert hers == [{"title": "安晚awa 自己发的 B 站动态（发布于 2026-11-24）", "url": "https://www.bilibili.com/opus/21",
+                     "snippet": "晚安矿工是对的但我要晕倒了!"}], "the date is Beijing's; bad id, naive time, no text left out"
+
+
+def test_a_collab_the_host_announces_and_her_guest_posts_about_becomes_news(tmp_path, repo):
+    owner = {"items": [_post("11", "2026-11-22T13:22:00+00:00", "我们明天晚上八点的女大矿工见噢")]}
+    peers = {"安晚": [_post("21", "2026-11-23T15:33:00+00:00", "晚安矿工是对的但我要晕倒了!")]}
+
+    def answer(prompt):
+        if "B站动态·" not in prompt.split("检索材料：", 1)[-1]:
+            return _answer()
+        return _answer(
+            _item(url="https://www.bilibili.com/opus/11", name="女大矿工", valid_from="2026-11-22",
+                  date_basis="发布于 2026-11-22", participants=[{"name": OWNER, "kind": "person", "relation": "founded"}]),
+            _item(url="https://www.bilibili.com/opus/21", name="女大矿工", valid_from="2026-11-23",
+                  date_basis="发布于 2026-11-23", participants=[{"name": "安晚", "kind": "person",
+                                                                 "relation": "participates_in"}]))
+    llm = _cpa(answer)
+    report = _run(tmp_path, repo, FakeLookup(), llm, dynamics=owner, peer_posts=peers, now=POSTS_NOW)
+    asked = [p for p in llm.calls if "B站动态·" in p.split("检索材料：", 1)[-1]]
+    assert len(asked) == 1 and "女大矿工见噢" in asked[0] and "矿工是对的" in asked[0], "both accounts in one call"
+    assert report.search["post_rows"] == 2 and report.per_seed["B站动态·安晚"] == {"rows": 1, "findings": 1}
+    assert report.inputs["peer_posts"] is True
+    combined = store.load_combined(repo, tmp_path / "runtime")
+    event = next(n for n in combined.nodes.values() if n.names["display"] == "女大矿工")
+    assert event.status == "candidate"
+    assert {s.ref for s in event.sources} == {"https://www.bilibili.com/opus/11", "https://www.bilibili.com/opus/21"}
+    assert {(e.from_id, e.type) for e in combined.edges if e.to_id == event.id} == {
+        (f"person:{OWNER}", "founded"), ("person:安晚", "participates_in")}
+
+
+def test_peer_dynamics_are_read_for_the_registry_accounts_and_a_refusal_is_a_note(monkeypatch):
+    script = _script()
+    from src.autoslice.manual_lane import collab_guests, dynamics_feed
+
+    monkeypatch.setattr(collab_guests, "accounts", lambda: {"安晚awa": 1, "礼墨Sumi": 2})
+
+    def recent(uid):
+        if uid == 2:
+            raise dynamics_feed.FeedError("uid 2: empty first page (risk control)")
+        return [_post("21", "2026-11-23T15:33:00+00:00", "矿工")]
+    monkeypatch.setattr(dynamics_feed, "recent", recent)
+    notes = []
+    assert script.read_peer_posts(notes) == {"安晚awa": [_post("21", "2026-11-23T15:33:00+00:00", "矿工")]}
+    assert notes == ["peer dynamics 礼墨Sumi: FeedError: uid 2: empty first page (risk control)"]
 
 
 # ---- one thing, one node ---------------------------------------------------------------------------------------------

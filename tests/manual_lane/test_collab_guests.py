@@ -173,7 +173,8 @@ def test_the_feed_reader_takes_the_time_from_the_dynamic_id_and_leaves_picture_p
     rows = [{"opus_id": "1273928639090524164", "content": "晚安\n矿工是对的但我要晕倒了!"}, {"opus_id": "1273824645026414617", "content": ""},
             {"opus_id": "x", "content": "坏行"}]
     monkeypatch.setattr(dynamics_feed, "_get", lambda url, referer="": {"code": 0, "data": {"items": rows}})
-    assert dynamics_feed.recent(1) == [{"published_at": "2026-11-23T15:33:45+00:00", "text": "晚安矿工是对的但我要晕倒了!"}]
+    assert dynamics_feed.recent(1) == [{"dynamic_id": "1273928639090524164", "published_at": "2026-11-23T15:33:45+00:00",
+                                        "text": "晚安矿工是对的但我要晕倒了!"}]
     monkeypatch.setattr(dynamics_feed, "_get", lambda url, referer="": {"code": 0, "data": {"items": []}})
     with pytest.raises(dynamics_feed.FeedError):          # an empty first page is Bilibili refusing, not "no posts"
         dynamics_feed.recent(1)

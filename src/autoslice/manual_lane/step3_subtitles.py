@@ -6,6 +6,7 @@ Split out of stage_impl.py (TASK-13); stage_impl re-exports every name, so calle
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import json
 from collections.abc import Callable, Mapping, Sequence
@@ -16,6 +17,7 @@ from . import text_overlap
 from . import (
     doubt_policy,
     evidence_attach,
+    game_sound,
     gates,
     lane_lines,
     name_consistency,
@@ -82,13 +84,18 @@ class SortedCues(TypedDict):
 
 def step3_subtitles(ctx: Ctx) -> StepOutcome:
     """Step 3 for every adjudication mode, then the words of subs/final.srt written in the table's canonical form
-    (writing_canon: an imported push too; a verbatim push takes over its source clip's verdicts)."""
+    (writing_canon: an imported push too; a verbatim push takes over its source clip's verdicts).  Before that, on the
+    lane's own subtitles, the read-aloud records copied (read_aloud_copy) and the game's or the software's own words
+    taken out (game_sound, U469)."""
     rec = imported(ctx)
     outcome = _step3_decided(ctx)
     if outcome.ok:
         _chat_product(ctx, outcome.process)
     if outcome.ok and not rec:      # an imported push is its own authority
         read_aloud_copy.settle(ctx.clip_dir, outcome.process)
+        stop = game_sound.settle(ctx, outcome.process)
+        if stop is not None:
+            return dataclasses.replace(outcome, ok=False, reason=stop[0], note=stop[1])
     return writing_canon.settle_step3(ctx, outcome, verbatim=bool(rec and rec.get("verbatim")))
 
 

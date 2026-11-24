@@ -100,16 +100,19 @@ def _answer(cands, recommended=0):
                       ensure_ascii=False)
 
 
-def test_all_candidates_failing_self_check_get_two_regeneration_rounds_then_the_best_is_taken(tmp_path):
+def test_all_candidates_failing_self_check_get_two_regeneration_rounds_then_the_step_stops(tmp_path):
+    """Skill 八.4 (owner, U471): after the rewrites no title is taken by score; the old code took the
+    highest-scored candidate and went on to the cover."""
     bad_swap = _cand("【李豆沙】她半分钟后真的破防了", holds=True)                                # fails swap
     bad_name = _cand("【李豆沙】她和弹幕吵起来了", on_stage=("李豆沙", "雾深Girimi"))   # fails names
     answers = [_answer([bad_swap, bad_name]), _answer([bad_swap]), _answer([bad_swap])]
     ctx, cpa, _ = _ctx(tmp_path, answers, frames={"chosen": 12.0, "checked": []})
     out = si.step6_title_cover(ctx)
-    assert out.ok, out.note
+    assert not out.ok and out.reason == "TITLE_NOT_ACCEPTED" and "不按得分硬选" in out.note, out
     assert cpa.calls[:6] == [*UNDERSTANDING_CALLS, "title", "title-regen-1", "title-regen-2"]
     assert len([c for c in cpa.calls if c == "title" or c.startswith("title-regen")]) == 3   # no fourth round
-    assert "候选全部未通过自检" in "\n".join(out.process)
+    assert not any(c.startswith("cover") for c in cpa.calls)                                 # no cover for no title
+    assert not (ctx.clip_dir / "title/title.txt").exists()
     cands = json.loads((ctx.clip_dir / "title" / "candidates.json").read_text(encoding="utf-8"))
     assert cands["forced"] is True and cands["rounds"] == ["title", "title-regen-1", "title-regen-2"]
     assert cands["chosen"]["checks"]["ok"] is False
@@ -128,7 +131,8 @@ def test_the_regeneration_prompt_carries_the_reasons_of_the_failed_round(tmp_pat
 def test_a_passing_first_round_is_not_regenerated(tmp_path):
     ctx, cpa, _ = _ctx(tmp_path, [_answer([_cand("【李豆沙】她半分钟后真的破防了")])], frames={"chosen": None, "checked": []})
     out = si.step6_title_cover(ctx)
-    assert out.ok and cpa.calls == [*UNDERSTANDING_CALLS, "title", "title-judge-r0-1", "title-judge-r0-2", "cover-brief", "cover-emote"]
+    assert out.ok and cpa.calls == [*UNDERSTANDING_CALLS, "title", "title-judge-r0-1", "title-judge-r0-2",
+                                    "title-judge-r0-q1", "title-judge-r0-q2", "cover-brief", "cover-emote"]
     cands = json.loads((ctx.clip_dir / "title" / "candidates.json").read_text(encoding="utf-8"))
     assert cands["forced"] is False
 
