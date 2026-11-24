@@ -8,7 +8,7 @@ A final cue takes the probability mean over the ASR units it overlaps; a unit th
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from itertools import pairwise
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 
@@ -217,14 +217,26 @@ def people(session: SpeakerPeople) -> int:
     return int(session.get("speaker_count") or len(session.get("participants") or []) or 1)
 
 
-def host_threshold(n_people: int, cfg: SpeakerRules) -> float:
+def known_participants(session: SpeakerPeople, classes: Iterable[str]) -> bool:
+    """Every participant of the session is one of the classifier's own people (an unnamed guest never is)."""
+    from .config import participant_names
+
+    groups = [g for g in session.get("participants") or [] if g]
+    names = participant_names(session)
+    return len(groups) >= 2 and len(names) == len(groups) and set(names) <= set(classes)
+
+
+def host_threshold(n_people: int, cfg: SpeakerRules, *, known: bool = False) -> float:
     """COACH e05 §10 第1/2款 (lane_rules speaker): three or more people -> multi_person_host_min, else
-    two_person_host_min."""
-    many = n_people >= int(cfg["multi_person_from"])
-    return float(cfg["multi_person_host_min"] if many else cfg["two_person_host_min"])
+    two_person_host_min.  Three or more people who are all the classifier's own classes (`known`) ->
+    multi_person_known_host_min: 维护者's 11-23 labels of the 李豆沙/礼墨Sumi/安晚awa trio (158 lines) showed 0.9 only
+    turned host lines into guest ones there (21 wrong, all host -> guest); 0.8 kept guest -> host at 0."""
+    if n_people < int(cfg["multi_person_from"]):
+        return float(cfg["two_person_host_min"])
+    return float(cfg["multi_person_known_host_min"] if known else cfg["multi_person_host_min"])
 
 
-def mid_band(row: SpeakerDecision, n_people: int, cfg: SpeakerRules) -> str:
+def mid_band(row: SpeakerDecision, n_people: int, cfg: SpeakerRules, *, host_min: float | None = None) -> str:
     """COACH e05 §10 第3款: "tie" when two people speak and the cue's v8 host probability lies in two_person_mid (the
     review reads it by turn-taking; unsure = guest); "guest_unless_content" when three or more speak and it lies between
     the two-person and the many-person thresholds (guest unless explicit content evidence); "" otherwise."""
@@ -232,7 +244,8 @@ def mid_band(row: SpeakerDecision, n_people: int, cfg: SpeakerRules) -> str:
     if p is None or not cfg.get("review_mid"):
         return ""
     if n_people >= int(cfg["multi_person_from"]):
-        lo, hi = float(cfg["two_person_host_min"]), float(cfg["multi_person_host_min"])
+        lo = float(cfg["two_person_host_min"])
+        hi = float(cfg["multi_person_host_min"] if host_min is None else host_min)
         return "guest_unless_content" if lo <= float(p) < hi else ""
     lo, hi = (float(x) for x in cfg["two_person_mid"])
     return "tie" if lo <= float(p) <= hi else ""

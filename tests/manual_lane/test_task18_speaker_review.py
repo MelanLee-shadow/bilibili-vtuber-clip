@@ -117,3 +117,20 @@ def test_the_prompts_carry_the_rule_and_no_reading_aloud_heuristic():
     for name in ("speaker_review.md", "review.md"):
         text = (PROMPTS / name).read_text(encoding="utf-8")
         assert "念题" not in text and all(k in text for k in sv.EVIDENCE_KINDS)
+
+
+def test_the_review_prompt_states_how_many_people_speak_and_where_v8_labels_come_from():
+    """11-23 three-person collab: the prompt said 「说话的有两位」 and described MOSS naming while the labels were v8's."""
+    from types import SimpleNamespace
+
+    from src.autoslice.manual_lane import speaker_v8
+    from src.autoslice.manual_lane.step4_speaker import _review_setting
+
+    trio = SimpleNamespace(session={"participants": [[speaker_v8.HOST], ["安晚awa"], ["礼墨Sumi"]]})
+    who, evidence = _review_setting(trio, [{"label_from": "v8"}])
+    assert "说话的有 3 位" in who and "两位" not in who and "MOSS" not in evidence and "v8" in evidence
+    duo = SimpleNamespace(session={"participants": [[speaker_v8.HOST], ["雾深Girimi"]]})
+    who2, evidence2 = _review_setting(duo, [{"label_from": "moss"}, {"label_from": "v8"}])
+    assert "说话的有两位" in who2 and "MOSS" in evidence2
+    review = (PROMPTS / "speaker_review.md").read_text(encoding="utf-8")
+    assert "{who}" in review and "{evidence}" in review and "说话的有两位" not in review

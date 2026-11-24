@@ -65,6 +65,7 @@ class SplitRules(_RuleMetadata, total=False):
 class SpeakerRules(_RuleMetadata, total=False):
     two_person_host_min: float
     multi_person_host_min: float
+    multi_person_known_host_min: float
     multi_person_from: int
     two_person_mid: list[float]
     review_mid: bool

@@ -72,7 +72,7 @@ if TYPE_CHECKING:
 TITLE_MAX_REGEN = 2                              # regeneration rounds after the first candidate round
 TITLE_RULES = ("banned", "prefix", "on_stage_known", "named", "involved_named", "prefix_names", "swap", "punchline",
                "person", "quotes", "canonical_names", "publish_gate", "published_duplicate", "batch_opener",
-               "label_as_name")
+               "label_as_name", "first_person_speaker")
 OPENER = 3      # a title's first characters after the prefix; two clips of one batch do not open alike (11-23: 8 of 10 「游戏里…」)
 
 
@@ -221,6 +221,8 @@ def title_checks(cand: TitleCandidate, names: Sequence[str], subtitles: str, *,
     mixed = title_person.mixed_person(title)
     if mixed:
         failed["person"] = title_person.reason(mixed)
+    if others := title_person.misattributed(title, subtitles, host=HOST, guests=[n for n in names if n != HOST]):
+        failed["first_person_speaker"] = title_person.misattributed_reason(others)
     quotes = check_title_quotes(title, subtitles)
     if quotes["status"] != "PASS":
         failed["quotes"] = "引号核对未过：" + ",".join(quotes["reason_codes"])
@@ -242,6 +244,26 @@ def title_checks(cand: TitleCandidate, names: Sequence[str], subtitles: str, *,
             failed_keys.append(key)
     return {"ok": not failed_keys, "reasons": reasons, "failed": failed_keys,
             "score": len(TITLE_RULES) - len(failed_keys)}
+
+
+ONLINE_RECHECK = ("quotes", "first_person_speaker", "person", "label_as_name")   # what a revision's subtitles decide
+TITLE_RECEIPT_HINT = "authorized_upload.py title-repair，再 manual_lane record-title-receipt"
+
+
+def online_title_breaks(ctx: Ctx, names: Sequence[str], online: str) -> list[str]:
+    """Why the published title a revision would keep is wrong on the revision's subtitles and speakers: the rules that
+    read the subtitles (ONLINE_RECHECK); [] when it still holds.  Owner 11-23 (U467), after the speakers of three collab
+    clips were redone from his labels: 「所以这个标题可能需要重起，你去看一眼」 — 625460's title quoted a line the
+    labels gave to two people, and the revision had kept it without looking."""
+    _track, _lines, srt_text = title_inputs(ctx, names)
+    checks = title_checks(cast(TitleCandidate, {"title": online, "on_stage": list(names)}), names, srt_text,
+                          self_report=False)
+    why, at = {}, 0
+    for key in (k for k in TITLE_RULES if k in checks["failed"]):     # reasons are in rule order; the gate gives several
+        width = len(publish_gate_violations(online)) if key == "publish_gate" else 1
+        why[key] = "；".join(checks["reasons"][at:at + width])
+        at += width
+    return [why[k] for k in ONLINE_RECHECK if k in why]
 
 
 def checks_on(ctx: Ctx, title: str) -> TitleChecks:
@@ -679,6 +701,9 @@ def _pick_title(ctx: Ctx) -> tuple[str, list[str], list[str], list[CpaEvent], Pa
     edited = (title_history.edited_title(ctx, publication_cid(str(ctx.state.data["clip"].get("cid") or ctx.clip_dir.name)))
               if revises and not (approved or retitle) else None)
     online = None if approved or retitle else title_online(ctx.clip_dir, ctx.state, edited)   # a revision keeps the title online
+    stale = online_title_breaks(ctx, names, online) if online else []
+    if stale:                       # the revision's subtitles show the published title wrong: it is not kept silently
+        online = None
     title = online or title
     cands_path = _local(ctx, "title/candidates.json")
     cands_path.write_text(json.dumps({
@@ -699,6 +724,9 @@ def _pick_title(ctx: Ctx) -> tuple[str, list[str], list[str], list[CpaEvent], Pa
     process.append(canon_line)
     if online:
         process.append(f"修订沿用线上标题：{online}（已发布稿件的修订不改题；改题走改题回执，本轮候选只用来定封面字）")
+    elif stale:
+        process.append("线上标题对不上本轮字幕，不沿用：" + "；".join(stale)
+                       + f"；改用本轮选出的标题，发布前须先用只改标题的工具改题并登记回执（{TITLE_RECEIPT_HINT}）")
     elif retitle and not approved:
         process.append(f"频道主要求换标题（原话：{retitle['evidence']}），修订不沿用线上标题，用本轮选出的标题；"
                        f"标题与封面字按他说的看点写（笑点：{retitle['punchline']}），不按模型自己读出的主线")

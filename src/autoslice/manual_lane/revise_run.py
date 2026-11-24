@@ -13,7 +13,8 @@ The successor starts where `trim`'s successor starts, at step 3, with what X had
 - the subtitles and speakers X has now (after its review), imported verbatim as `trim`'s successor imports its own
   (step_import.record_import, `decided_by` as X's); a later `import-subtitles` replaces them.  With `fresh_speakers`
   the speakers are not taken over: step 4 decides them again by the code of today (a revision made because the
-  speakers were wrong).  What step 3 decided not to subtitle (package_guards.DECIDED_FILE) goes with the subtitles;
+  speakers were wrong).  What step 3 decided not to subtitle (package_guards.DECIDED_FILE) goes with the subtitles, and
+  so do the owner's labels by name (guest_identity.OWNER_FILE) when the speakers are taken over;
 - when X's cut media is no longer on the media host (reclaimed after publication), step 2 is not taken over: the
   successor cuts again from the recording, at the same boundary;
 - an imported cover (cover_import) follows the manuscript: the record and its files are copied;
@@ -33,7 +34,8 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from . import compilation, cover_import, owner_edits, package_guards, publication_id, subtitle_track, title_history, writing_canon
+from . import (compilation, cover_import, guest_identity, owner_edits, package_guards, publication_id, subtitle_track, title_history,
+               writing_canon)
 from .reselect import SUPERSEDED, supersede_candidate
 from .runner import Ctx
 from .state import ClipState, StateError, utc_now
@@ -148,6 +150,10 @@ def _import_subtitles(task: Path, state_x: ClipState, state: ClipState, cid: str
             shutil.copyfile(xdir / rel, push / rel)
     prior = state_x.data.get("imported")
     owner = prior is not None and prior.get("decided_by") == "owner"
+    named = (prior or {}).get("files", {}).get(guest_identity.OWNER_FILE)
+    if owner and speakers and named and Path(named).is_file():      # who he said said each line, by name (same clock)
+        (push / "speaker").mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(named, push / "speaker" / guest_identity.OWNER_FILE)
     edited = None
     if owner:       # the push is X's cues one for one: each keeps what is known of it (the owner edited it or not); the push has no baseline
         track = subtitle_track.parse_blocks((xdir / "subs/final.srt").read_text(encoding="utf-8"))

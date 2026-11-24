@@ -83,11 +83,49 @@ def record_decided(clip_dir: Path, gaps: list[Gap], decided: list[Gap]) -> None:
         path.unlink(missing_ok=True)
 
 
+OWNER_DECIDED_FILE = "subs/not_subtitled.json"      # in a push: [{start_s, end_s, text, reason}] on the clip's clock
+
+
+def record_owner_decided(clip_dir: Path, decided: list[dict]) -> list[dict]:
+    """A push the owner decided (`import-subtitles --decided-by owner`) that names lines he decided to leave without a
+    subtitle (OWNER_DECIDED_FILE, with his note as the reason: 系统音、效果音, owner U469): the gaps of the new
+    final subtitles that hold those lines are recorded as decided (DECIDED_FILE, the reason kept), as step 3 records the
+    stretches it was asked about, so the package step does not stop for them.  A gap is decided only when what the dictation
+    holds in it outside his lines is not speech by itself (under MIN_SPOKEN_CHARS): a gap that also holds speech he did not
+    decide on still stops step 8.  Returns the decided gaps; no dictation (asr/bcut.srt): nothing is recorded (step 8 does
+    not look either)."""
+    dictation_file = clip_dir / "asr/bcut.srt"
+    if not dictation_file.is_file():
+        return []
+    final = subtitle_track.parse_blocks((clip_dir / "subs/final.srt").read_text(encoding="utf-8"))
+    dictation = parse_srt(dictation_file.read_text(encoding="utf-8"))
+
+    def his(start: float, end: float) -> dict | None:
+        return next((d for d in decided if float(d["start_s"]) < end and start < float(d["end_s"])), None)
+    kept = []
+    for gap in gaps_with_speech(final, dictation):
+        inside = [c for c in dictation if gap["start_s"] <= float(c["start_s"]) and float(c["end_s"]) <= gap["end_s"]]
+        rest = sum(spoken_chars(str(c["text"])) for c in inside if his(float(c["start_s"]), float(c["end_s"])) is None)
+        line = his(gap["start_s"], gap["end_s"])
+        if line is not None and rest < MIN_SPOKEN_CHARS:
+            kept.append({**gap, "reason": f"频道主决定不出字幕：{line.get('reason') or ''}（「{line.get('text') or ''}」）"})
+    path = clip_dir / DECIDED_FILE
+    if kept:        # beside what the subtitle step decided before (a revision carries its predecessor's)
+        before = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []
+        path.write_text(json.dumps([*undecided_of(before, kept), *kept], ensure_ascii=False, indent=1), encoding="utf-8")
+    return kept
+
+
+def undecided_of(rows: list, decided: list) -> list:
+    """`rows` without those `decided` covers (same stretch, within half a second)."""
+    return [g for g in rows if not any(abs(g["start_s"] - d["start_s"]) <= 0.5 and abs(g["end_s"] - d["end_s"]) <= 0.5
+                                       for d in decided)]
+
+
 def undecided(clip_dir: Path, gaps: list[Gap]) -> list[Gap]:
     """`gaps` without the ones the subtitle step decided on (record_decided): same stretch, within half a second."""
     path = clip_dir / DECIDED_FILE
-    decided = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []
-    return [g for g in gaps if not any(abs(g["start_s"] - d["start_s"]) <= 0.5 and abs(g["end_s"] - d["end_s"]) <= 0.5 for d in decided)]
+    return undecided_of(gaps, json.loads(path.read_text(encoding="utf-8")) if path.is_file() else [])
 
 
 def _attested(old_package: Path, used: list[dict]) -> bool:

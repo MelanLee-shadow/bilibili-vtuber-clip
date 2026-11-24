@@ -34,7 +34,9 @@ IMPORT_DIR = "import"
 IMPORT_FILES = {"final.srt": "subs/final.srt", "speaker.srt": "speaker/speaker.srt", "review.tsv": "subs/review.tsv",
                 "doubts.json": "subs/doubts.json", "writing_canon.json": "subs/writing_canon.json",
                 "cut.srt": "subs/cut.srt",      # cut.srt: the sentences the owner marked 删 (cut-clock times); trim_run cuts them from the video
-                "baseline.srt": "subs/baseline.srt"}    # baseline.srt: the subtitles as the owner saw them before he edited (owner_edits)
+                "baseline.srt": "subs/baseline.srt",    # baseline.srt: the subtitles as the owner saw them before he edited (owner_edits)
+                "not_subtitled.json": "subs/not_subtitled.json",   # lines the owner decided to leave unsubtitled (package_guards.record_owner_decided)
+                "speakers.json": "speaker/speakers.json"}   # who the owner says said each line, by name (guest_identity.owner_lines)
 # what an import replaces: step 3 and everything after it is produced again from the import (ordinary path)
 IMPORT_REDO = ("subtitles", "speaker", "burn", "title_cover", "tags", "package", "review", "upload")
 
@@ -202,6 +204,23 @@ def _push_doubts(base: Path, rec: ImportRecord) -> list[ImportedDoubt] | StepOut
     return _import_doubts(rows_tsv, str(rec.get("source")))
 
 
+def _owner_not_subtitled(ctx: Ctx, rec: ImportRecord, base: Path) -> list[str]:
+    """PROCESS lines for the push's lines the owner decided to leave without a subtitle (not_subtitled.json): recorded
+    for the package step (package_guards.record_owner_decided) when the import is the owner's; ignored, and said so,
+    when it is not."""
+    path = base / "not_subtitled.json"
+    if not path.is_file():
+        return []
+    lines = json.loads(path.read_text(encoding="utf-8"))
+    if rec.get("decided_by") != "owner":
+        return [f"推送带了 {len(lines)} 句“不出字幕”的决定，但这次导入不是频道主定的（没有 --decided-by owner），不采用"]
+    from .package_guards import DECIDED_FILE, record_owner_decided
+
+    kept = record_owner_decided(ctx.clip_dir, lines)
+    said = "；".join(f"「{d.get('text')}」{d.get('reason') or ''}" for d in lines)
+    return [f"频道主定为不出字幕的 {len(lines)} 句（{said}）：对上有声无字幕检查的 {len(kept)} 段，记为已决定（{DECIDED_FILE}）"]
+
+
 def _step3_import_verbatim(ctx: Ctx, rec: ImportRecord, cues: Sequence[TimedText]) -> StepOutcome:
     """Step 3 from a push that is already this lane's finished subtitles (record_import(verbatim=True)): the text is
     written as it was given, with no rewrite at all (no laughter strip, canon, numerals, re-splitting, lone-character
@@ -232,7 +251,7 @@ def _step3_import_verbatim(ctx: Ctx, rec: ImportRecord, cues: Sequence[TimedText
     record_lone(ctx.clip_dir, [], fresh=True)
     process = [f"字幕原样导入自 {rec.get('source')}（{rec.get('from')}，{rec.get('authority', '')}）：{len(cues)} 句，"
                f"文字、拆条、时间一律不改；未听写、未重新裁决；疑点表 {len(doubts)} 条来自推送",
-               *meaning["process"], hold_line(doubts)]
+               *_owner_not_subtitled(ctx, rec, base), *meaning["process"], hold_line(doubts)]
     return StepOutcome(True, products=products, note=f"原样导入 {rec.get('source')}：{len(cues)} 句", process=process,
                        cpa=meaning["cpa"])
 
@@ -277,7 +296,7 @@ def _step3_import(ctx: Ctx, rec: ImportRecord) -> StepOutcome:
                f"规范化后 {len(shaped)} 句（拆条 {log['extra_cues_from_split']}，时间重叠改为先后 {overlaps} 处，"
                f"规范表替换 {len(log['canon_replacements'])} 处，相邻句开头重复 {len(log['adjacent_repeats'])} 处只记录）；"
                f"未听写、未重新裁决；疑点表来自 {source_of_doubts}",
-               lone_char_line(log["lone_chars"]), *meaning["process"], hold_line(doubts)]
+               lone_char_line(log["lone_chars"]), *_owner_not_subtitled(ctx, rec, base), *meaning["process"], hold_line(doubts)]
     record_lone(ctx.clip_dir, log["lone_chars"], fresh=True)
     return StepOutcome(True, products=products, note=f"导入 {rec.get('source')}：{len(shaped)} 句", process=process,
                        cpa=meaning["cpa"])
