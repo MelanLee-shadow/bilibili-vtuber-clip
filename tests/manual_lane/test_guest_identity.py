@@ -70,3 +70,42 @@ def test_one_guest_or_a_failed_call_names_nothing(tmp_path):
     assert _identify(ctx, answer=AssertionError) == {}
     ctx, _ = _clip(tmp_path, 'e')
     assert _identify(ctx, answer=None) == {} and guest_identity.saved_lines(ctx) == {}
+
+
+def _owner(ctx, names, *, decided_by="owner"):
+    """The channel owner's own labels came with his import (speaker_label_page apply -> import/speakers.json)."""
+    rows = [{"start_s": 2.0 * i, "end_s": 2.0 * i + 1.8, "text": t, "speaker": names.get(i + 1, s)}
+            for i, (s, t) in enumerate(LINES)]
+    path = ctx.clip_dir / 'import/speakers.json'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(rows, ensure_ascii=False))
+    ctx.state.data['imported'] = {"source": "owner-labels", "from": "x", "authority": "x", "at": "x",
+                                  "files": {"speakers.json": str(path)},
+                                  **({"decided_by": decided_by} if decided_by else {})}
+
+
+def test_the_owners_names_stand_over_the_model_and_name_his_unlabelled_lines(tmp_path):
+    # 11-24 625460: he labelled the guest lines by name; the lane kept only 连线 and the title had to write 队友
+    ctx, _ = _clip(tmp_path, 'f')
+    _owner(ctx, {2: "礼墨Sumi", 3: "安晚awa", 4: "礼墨Sumi", 6: "未知"})
+    asked = []
+    got = _identify(ctx, asked=asked)          # the model's answer says line 2 is 安晚awa
+    assert asked and got[2] == "礼墨Sumi" and got[3] == "安晚awa" and got[4] == "礼墨Sumi"
+    assert got[6] == "礼墨Sumi"                  # 未知 to him; his line 4 names the group it shares with it
+    assert json.loads((ctx.clip_dir / guest_identity.PATH).read_text())["owner"] == {"2": "礼墨Sumi", "3": "安晚awa", "4": "礼墨Sumi"}
+    _track, lines, _srt = step6_title.title_inputs(ctx, ['李豆沙', '安晚awa', '礼墨Sumi'])
+    assert '[礼墨Sumi] 我我我不是' in lines
+
+
+def test_with_every_guest_line_named_by_him_no_model_is_asked(tmp_path):
+    ctx, _ = _clip(tmp_path, 'g')
+    _owner(ctx, {2: "安晚awa", 3: "安晚awa", 4: "礼墨Sumi", 6: "礼墨Sumi"})
+    asked = []
+    assert _identify(ctx, answer=None, asked=asked) == {2: "安晚awa", 3: "安晚awa", 4: "礼墨Sumi", 6: "礼墨Sumi"}
+    assert asked == []
+
+
+def test_names_in_an_import_he_did_not_decide_are_not_his(tmp_path):
+    ctx, _ = _clip(tmp_path, 'h')
+    _owner(ctx, {2: "礼墨Sumi", 3: "礼墨Sumi", 4: "礼墨Sumi", 6: "礼墨Sumi"}, decided_by=None)
+    assert _identify(ctx) == {2: "安晚awa", 3: "安晚awa"}

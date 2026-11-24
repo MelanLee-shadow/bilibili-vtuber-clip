@@ -10,13 +10,20 @@ answer, a spelling of her name stands in one of the three lines before. A group 
 citation in it says so; a guest line takes its MOSS group's guest (MAI's when MOSS has no group there, MOSS is the
 label engine of step 4); a line whose two groups name different guests stays unnamed. The result is kept in
 title/guest_identity.json, and title_inputs labels those lines with the guest's name, so the title may write what she
-said as hers and the quote checker holds it to that."""
+said as hers and the quote checker holds it to that.
+
+Before any of that, the channel owner's own labels: a clip whose subtitles he decided (`import-subtitles --decided-by
+owner`) and whose push brought speakers.json (scripts/speaker_label_page.py apply: his label of every line, by name) has
+its guest lines named by him (`owner_lines`). His names stand over every citation and group; they also name the groups
+they fall in, which names his unlabelled lines; the model is asked only when some guest line is left without his name
+(11-24 625460: he labelled 「哦，勾到了。我要笑。」 礼墨Sumi, the lane kept only 连线, and the title had to say 队友)."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from . import text_overlap
@@ -120,6 +127,47 @@ def resolve(track: Sequence[TrackCue], groups: Mapping[str, Sequence[str | None]
     return lines, names
 
 
+OWNER_FILE = "speakers.json"       # the import's copy of the push's speaker/speakers.json (step_import.IMPORT_FILES)
+
+
+def owner_rows(ctx: Ctx) -> list[dict[str, Any]] | None:
+    """The owner's labels by name ([{start_s, end_s, text, speaker}], the clip's clock) when the clip's import is his
+    (`--decided-by owner`) and brought them; None otherwise.  A successor carries them on: revise_run (same clock),
+    trim_run (moved with the cues it keeps)."""
+    from .step_import import imported, owner_decided
+
+    path = ((imported(ctx) or {}).get("files") or {}).get(OWNER_FILE)
+    if not path or not owner_decided(ctx):
+        return None
+    return cast("list[dict[str, Any]]", json.loads(Path(path).read_text(encoding="utf-8")))
+
+
+def names_by_overlap(cues: Sequence[Mapping[str, Any]], rows: Sequence[Mapping[str, Any]]) -> list[str | None]:
+    """For each cue, the speaker of the owner's row that overlaps it most (None where none does)."""
+    out: list[str | None] = []
+    for cue in cues:
+        a, b = float(cue["start_s"]), float(cue["end_s"])
+        best, most = None, 0.0
+        for row in rows:
+            ov = min(float(row["end_s"]), b) - max(float(row["start_s"]), a)
+            if ov > most:
+                best, most = row, ov
+        out.append(str(best["speaker"]) if best is not None and best.get("speaker") else None)
+    return out
+
+
+def owner_lines(ctx: Ctx, track: Sequence[TrackCue], guests: Sequence[str]) -> dict[int, str]:
+    """{line: guest} for the guest lines the channel owner named himself (see the module docstring): a guest line takes the
+    name of his line that overlaps it most; a name that is no guest (the host, 未知) names nothing.  {} when the import
+    is not his or brought no speakers.json."""
+    rows = owner_rows(ctx)
+    if not rows:
+        return {}
+    names = names_by_overlap(track, rows)
+    return {i: str(n) for i, (cue, n) in enumerate(zip(track, names, strict=True), 1)
+            if cue.get("speaker") == GUEST_LABEL and n in guests}
+
+
 def _prompt_lines(track: Sequence[TrackCue], groups: Mapping[str, Sequence[str | None]]) -> str:
     from .subtitle_track import plain_text
 
@@ -144,29 +192,37 @@ def identify(ctx: Ctx, track: Sequence[TrackCue], ask: Callable[[str, str], dict
     guests = needed(ctx, track)
     if not guests:
         return {}
+    owner = owner_lines(ctx, track, guests)
     groups = _groups(ctx, track)
     lines_text = _prompt_lines(track, groups)
-    key = hashlib.sha256(json.dumps([lines_text, guests, groups], ensure_ascii=False).encode()).hexdigest()
+    key = hashlib.sha256(json.dumps([lines_text, guests, groups, sorted(owner.items())], ensure_ascii=False).encode()).hexdigest()
     path = ctx.clip_dir / PATH
     if path.exists():
         saved = json.loads(path.read_text(encoding="utf-8"))
         if saved.get("key") == key:
             return {int(k): v for k, v in saved["lines"].items()}
-    from .collab_guests import streamers
+    marks = [{"line": i, "name": n} for i, n in sorted(owner.items())]      # his names, as citations that always hold
+    if owner and all(i in owner for i, c in enumerate(track, 1) if c.get("speaker") == GUEST_LABEL):
+        answer: dict[str, Any] | None = None
+        anchors: list[dict[str, Any]] = []
+    else:
+        from .collab_guests import streamers
 
-    try:
-        known = streamers(ctx)
-    except Exception:  # noqa: BLE001 - without the graph an answer is checked against the formal name alone
-        known = {}
-    prompt = _render("guest_identity.md", host=HOST, guests="、".join(guests), lines=lines_text)
-    answer = ask("guest-identity", prompt)
-    if answer is None:
-        return {}
-    anchors = kept_anchors(answer, track, guests, known)
-    lines, names = resolve(track, groups, anchors)
+        try:
+            known = streamers(ctx)
+        except Exception:  # noqa: BLE001 - without the graph an answer is checked against the formal name alone
+            known = {}
+        prompt = _render("guest_identity.md", host=HOST, guests="、".join(guests), lines=lines_text)
+        answer = ask("guest-identity", prompt)
+        if answer is None:
+            return owner
+        anchors = kept_anchors(answer, track, guests, known)
+    lines, names = resolve(track, groups, [*marks, *anchors])
+    lines.update(owner)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"key": key, "guests": guests, "answer": answer, "anchors": anchors,
-                                "groups": names, "lines": {str(k): v for k, v in sorted(lines.items())}},
+    path.write_text(json.dumps({"key": key, "guests": guests, "owner": {str(k): v for k, v in sorted(owner.items())},
+                                "answer": answer, "anchors": anchors, "groups": names,
+                                "lines": {str(k): v for k, v in sorted(lines.items())}},
                                ensure_ascii=False, indent=1), encoding="utf-8")
     return lines
 

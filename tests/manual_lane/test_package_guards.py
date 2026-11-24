@@ -70,6 +70,30 @@ def test_a_stretch_the_subtitle_step_was_asked_about_and_left_without_a_line_doe
     assert not (ctx.clip_dir / package_guards.DECIDED_FILE).exists()
 
 
+def test_lines_the_owner_decided_to_leave_unsubtitled_do_not_stop_step_8_and_other_speech_still_does(tmp_path, monkeypatch):
+    # 11-24 (U469): his labels said 系统音 for the English MVP call; the import dropped it and step 8 stopped on the gap
+    from src.autoslice.manual_lane import step_import
+
+    final = FINAL + [(14.0, 16.0, "第三句"), (21.0, 23.0, "第四句")]
+    ctx = _clip(tmp_path, final, [(3.0, 5.5, "Ladies and gentlemen MVP"), (10.0, 12.0, "这一段没有人决定过"),
+                                  (16.5, 17.5, "Nine eight seven"), (18.5, 20.5, "我还在这里说话呢")])
+    push = tmp_path / "push"
+    push.mkdir()
+    (push / "not_subtitled.json").write_text(json.dumps([
+        {"start_s": 3.0, "end_s": 5.5, "text": "Ladies and gentlemen MVP", "reason": "是系统音"},
+        {"start_s": 16.5, "end_s": 17.5, "text": "Nine eight seven", "reason": "系统倒数"}], ensure_ascii=False), encoding="utf-8")
+    assert "不采用" in step_import._owner_not_subtitled(ctx, {"source": "x"}, push)[0]        # not the owner's: not taken
+    assert not (ctx.clip_dir / package_guards.DECIDED_FILE).exists()
+    said = step_import._owner_not_subtitled(ctx, {"source": "x", "decided_by": "owner"}, push)
+    assert "对上有声无字幕检查的 1 段" in said[0]           # 16-21 also holds speech he did not decide on: not decided
+    _patch(monkeypatch, Recorder())
+    out = sp.step8_package(ctx)
+    assert out.reason == "SPEECH_WITHOUT_SUBTITLES" and "共 2 段" in out.note and "2.0-7.0s" not in out.note
+    assert "9.0-14.0s" in out.note and "16.0-21.0s" in out.note
+    kept = json.loads((ctx.clip_dir / package_guards.DECIDED_FILE).read_text(encoding="utf-8"))
+    assert kept[0]["reason"].startswith("频道主决定不出字幕：是系统音")
+
+
 def test_laughter_and_fillers_in_the_gap_do_not_stop_the_step(tmp_path, monkeypatch):
     ctx = _clip(tmp_path, FINAL, [(3.0, 4.0, "哈哈哈哈（笑）"), (4.0, 5.0, "嗯，啊……"), (5.0, 6.0, "呃哦")])
     _patch(monkeypatch, Recorder())

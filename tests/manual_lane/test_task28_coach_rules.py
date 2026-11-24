@@ -206,3 +206,25 @@ def test_ordinals_sequence_words_and_approximate_numbers_stay_in_characters():
     assert numerals("一秒钟")[0] == "1秒钟"
     assert numerals("二零一九年")[0] == "2019年" and numerals("二十三天")[0] == "23天"
     assert numerals("前两天")[0] == "前2天"                          # a count of two days: a quantity
+
+
+def test_three_known_people_use_the_lower_host_threshold_and_an_unknown_guest_keeps_the_high_one():
+    """维护者's 11-23 trio labels: with every participant a classifier class, 0.9 only turned host lines into guest
+    ones; a guest the classifier does not know keeps 0.9."""
+    cfg = rules("speaker")
+    classes = {speaker_v8.HOST, "礼墨Sumi", "安晚awa"}
+    trio = {"participants": [[speaker_v8.HOST, "小李"], ["安晚awa"], ["礼墨Sumi"]]}
+    stranger = {"participants": [[speaker_v8.HOST], ["安晚awa"], ["雾深Girimi"]]}
+    unnamed = {"participants": [[speaker_v8.HOST], ["礼墨Sumi"], ["连线"]]}
+    assert speaker_v8.known_participants(trio, classes)
+    assert not speaker_v8.known_participants(stranger, classes)
+    assert not speaker_v8.known_participants(unnamed, classes)
+    known = speaker_v8.host_threshold(3, cfg, known=True)
+    assert known == 0.8 and speaker_v8.host_threshold(3, cfg) == 0.9
+    assert speaker_v8.host_threshold(2, cfg, known=True) == 0.5        # two people: unchanged
+    cue, unit = [{"start_ms": 0, "end_ms": 1000}], [{"id": "u1", "start_ms": 0, "end_ms": 1000}]
+    row = speaker_v8.cue_speakers(cue, unit, _pred(0.85), host_min=known)[0]
+    assert row["speaker"] == speaker_v8.HOST and speaker_v8.mid_band(row, 3, cfg, host_min=known) == ""
+    low = speaker_v8.cue_speakers(cue, unit, _pred(0.7), host_min=known)[0]
+    assert low["speaker"] == speaker_v8.GUEST_LABEL
+    assert speaker_v8.mid_band(low, 3, cfg, host_min=known) == "guest_unless_content"

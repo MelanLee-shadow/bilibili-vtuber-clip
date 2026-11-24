@@ -102,3 +102,78 @@ def test_clips_of_one_day_asking_together_send_one_call(tmp_path):
     for t in threads:
         t.join()
     assert len(calls) == 1 and got == [['安晚awa', '礼墨Sumi']] * 3
+
+
+# U468 (owner): 「这个联动完全可以直接从新闻Crawler把这个动态一抓就知道了」 — the 11-23 dynamics as posted
+DYNAMICS = {
+    step6_title.HOST: [{"published_at": "2026-11-22T13:22:00+00:00", "text": "大家——不好意思刚干完活回去会太晚惹,今晚就早点休息好不好我们明天晚上八点的女大矿工见噢...!"},
+                       {"published_at": "2026-11-17T15:13:00+00:00", "text": "晚安小熊——附赠一张照片"}],
+    "安晚awa": [{"published_at": "2026-11-23T15:33:00+00:00", "text": "晚安矿工是对的但我要晕倒了!(什么我没发出来这个动态)"},
+              {"published_at": "2026-11-18T15:32:00+00:00", "text": "晚安为什么...下播...如此困难..."}],
+    "礼墨Sumi": [{"published_at": "2026-11-23T08:50:00+00:00", "text": "请宿主做好准备！"},
+               {"published_at": "2026-11-13T16:19:00+00:00", "text": "晚安哦晚安哦！"}],
+    "雾深Girimi": [{"published_at": "2026-11-23T14:00:00+00:00", "text": "晚安大家今天也辛苦了"},
+                 {"published_at": "2026-11-10T14:00:00+00:00", "text": "晚安大家"}],
+}
+PEERS = {"安晚awa": 1, "礼墨Sumi": 2, "雾深Girimi": 3}
+
+
+def _day_of_dynamics(tmp_path, cid, monkeypatch, *, chat, dynamics=DYNAMICS, unread=()):
+    monkeypatch.setattr(collab_guests, "accounts", lambda: dict(PEERS))
+    monkeypatch.setattr(collab_guests, "read_dynamics", lambda uids: ({n: v for n, v in dynamics.items()
+                                                                       if n == step6_title.HOST or n in uids}, list(unread)))
+    ctx, _ = _collab(tmp_path, cid, chat=chat)
+    ctx.session['recording_date'] = '2026-11-23'
+    return ctx
+
+
+def test_the_event_the_host_announced_and_a_peer_posted_about_links_her_without_the_chat():
+    assert collab_guests.linked(DYNAMICS, '2026-11-23') == {"安晚awa": ["矿工"]}    # 晚安: both always write it
+    named = {**DYNAMICS, "礼墨Sumi": [{"published_at": "2026-11-23T08:50:00+00:00", "text": "今晚和李豆沙一起挖矿"}]}
+    assert "李豆沙" in collab_guests.linked(named, "2026-11-23")["礼墨Sumi"]       # or she names the host
+    assert collab_guests.linked(DYNAMICS, '2026-12-05') == {}                         # another day: nothing around it
+
+
+def test_a_guest_the_chat_hardly_names_is_asked_about_from_her_dynamics_and_kept_on_them(tmp_path, monkeypatch):
+    asked = []
+    ctx = _day_of_dynamics(tmp_path, 'dy1', monkeypatch, chat=["awa在吗"] + ["今天玩什么"] * 30)
+    answer = {"in_call": [{"name": "安晚awa", "quotes": ["矿工是对的但我要晕倒了"]}], "not_in_call": []}
+    assert collab_guests.name_guests(ctx, lambda _id, prompt: asked.append(prompt) or answer) == ["安晚awa"]
+    prompt = asked[0]
+    assert "明天晚上八点的女大矿工见" in prompt and "### 安晚awa（弹幕里 1 条提到）" in prompt
+    assert "两人以前都没写过的词：矿工" in prompt and "### 雾深Girimi（弹幕里 0 条提到）" in prompt
+    assert ctx.session['guest_evidence']['source'] == "session_chat+dynamics"
+    record = json.loads((tmp_path / collab_guests.CACHE.format(date='2026-11-23')).read_text(encoding="utf-8"))
+    assert record["dynamics"]["linked"] == {"安晚awa": ["矿工"]} and record["guests"] == ["安晚awa"]
+
+
+def test_a_quote_from_a_dynamic_must_stand_in_her_own_post_and_say_something(tmp_path, monkeypatch):
+    # too short, the host's post not hers, not in her post, her daily post with nothing tying it to the host
+    for i, (name, quotes) in enumerate((("安晚awa", ["晚安"]), ("安晚awa", ["明天晚上八点的女大矿工见"]),
+                                        ("安晚awa", ["矿工是对的但我不晕"]), ("雾深Girimi", ["晚安大家今天也辛苦了"]))):
+        ctx = _day_of_dynamics(tmp_path / str(i), f'dq{i}', monkeypatch, chat=["今天玩什么"] * 30)
+        answer = {"in_call": [{"name": name, "quotes": quotes}]}
+        assert collab_guests.name_guests(ctx, lambda *a, ans=answer: ans) == [], quotes
+
+
+def test_chat_candidates_get_their_dynamics_beside_and_an_unread_feed_is_recorded(tmp_path, monkeypatch):
+    asked = []
+    ctx = _day_of_dynamics(tmp_path, 'dy2', monkeypatch, chat=CHAT, unread=["礼墨Sumi: CrawlError: risk control"])
+    collab_guests.name_guests(ctx, lambda _id, prompt: asked.append(prompt) or ANSWER)
+    assert "请宿主做好准备！" in asked[0] and "### 礼墨Sumi（弹幕里 8 条提到）" in asked[0]
+    record = json.loads((tmp_path / collab_guests.CACHE.format(date='2026-11-23')).read_text(encoding="utf-8"))
+    assert record["dynamics"]["unread"] == ["礼墨Sumi: CrawlError: risk control"] and record["guests"] == ["安晚awa", "礼墨Sumi"]
+
+
+def test_the_feed_reader_takes_the_time_from_the_dynamic_id_and_leaves_picture_posts_out(monkeypatch):
+    import pytest
+
+    from src.autoslice.manual_lane import dynamics_feed
+
+    rows = [{"opus_id": "1273928639090524164", "content": "晚安\n矿工是对的但我要晕倒了!"}, {"opus_id": "1273824645026414617", "content": ""},
+            {"opus_id": "x", "content": "坏行"}]
+    monkeypatch.setattr(dynamics_feed, "_get", lambda url, referer="": {"code": 0, "data": {"items": rows}})
+    assert dynamics_feed.recent(1) == [{"published_at": "2026-11-23T15:33:45+00:00", "text": "晚安矿工是对的但我要晕倒了!"}]
+    monkeypatch.setattr(dynamics_feed, "_get", lambda url, referer="": {"code": 0, "data": {"items": []}})
+    with pytest.raises(dynamics_feed.FeedError):          # an empty first page is Bilibili refusing, not "no posts"
+        dynamics_feed.recent(1)

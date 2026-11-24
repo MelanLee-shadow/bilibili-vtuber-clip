@@ -95,10 +95,11 @@
     "min_content_chars": 2
   },
   "speaker": {
-    "_doc": "Step 4 without engine clusters (v8 only).  The host threshold on the cue's v8 host probability depends on how many people speak: multi_person_from or more -> multi_person_host_min, else two_person_host_min.  The people count is session.speaker_count when the session records it, else the number of participant groups.  Two people: a cue whose probability lies in two_person_mid goes to the CPA speaker review as an acoustic tie (by turn-taking; unsure = guest).  Three or more: a cue in [two_person_host_min, multi_person_host_min) is the guest and goes to the review, where only explicit content evidence (自称) makes it the host.",
-    "source": "COACH-ADVICE e05 §10 第1/2/3/5款",
+    "_doc": "Step 4 without engine clusters (v8 only).  The host threshold on the cue's v8 host probability depends on how many people speak: multi_person_from or more -> multi_person_host_min, else two_person_host_min.  The people count is session.speaker_count when the session records it, else the number of participant groups.  Two people: a cue whose probability lies in two_person_mid goes to the CPA speaker review as an acoustic tie (by turn-taking; unsure = guest).  Three or more: a cue in [two_person_host_min, multi_person_host_min) is the guest and goes to the review, where only explicit content evidence (自称) makes it the host.  Three or more people who are all classes of the classifier (session participants named, every name in its class_order): host when the host probability >= multi_person_known_host_min.  Evidence: 维护者's 11-23 labels of the 李豆沙/礼墨Sumi/安晚awa trio, 3 clips, 141 one-speaker lines, replayed on step 4's own host_prob: 0.9 -> 18 wrong (all host -> guest), 0.8 -> 15 (guest -> host 0), 0.6 -> 12 (guest -> host 1).  A guest the classifier does not know keeps 0.9 (Girimi 10-24: lower thresholds turn her lines into the host's).",
+    "source": "COACH-ADVICE e05 §10 第1/2/3/5款; multi_person_known_host_min: 维护者 11-23 speaker labels (A12)",
     "two_person_host_min": 0.5,
     "multi_person_host_min": 0.9,
+    "multi_person_known_host_min": 0.8,
     "multi_person_from": 3,
     "two_person_mid": [
       0.3,

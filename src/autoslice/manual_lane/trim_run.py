@@ -44,7 +44,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 
-from . import compilation, cover_import, gates, owner_edits, publication_id, subtitle_track, trim, writing_canon
+from . import compilation, cover_import, gates, guest_identity, owner_edits, publication_id, subtitle_track, trim, writing_canon
 from .adapters import Adapters
 from .lane_rules import rules
 from .recorder_events import Danmaku
@@ -335,6 +335,13 @@ def _build(task: Path, ctx: Ctx, mat: _Material, passed: list[trim.Span], adapte
                                  shift_s=offset)
     push = ctx.clip_dir / "trim" / "push"
     _write_push(push, mat, final, speaker, doubts)
+    if rows := guest_identity.owner_rows(ctx):      # the owner's labels by name follow the cues Y keeps (guest_identity.owner_lines)
+        named = [dict(c, owner=n) for c, n in zip(mat.speaker_cues, guest_identity.names_by_overlap(mat.speaker_cues, rows), strict=True)]
+        kept = trim.shifted(trim.moved(named, passed, measured), offset, length)
+        (push / "speaker").mkdir(exist_ok=True)
+        (push / "speaker" / guest_identity.OWNER_FILE).write_text(json.dumps(
+            [{"start_s": c["start_s"], "end_s": c["end_s"], "text": c["text"], "speaker": c["owner"]} for c in kept if c.get("owner")],
+            ensure_ascii=False, indent=1), encoding="utf-8")
     if (canon := ctx.clip_dir / writing_canon.FILE).is_file():    # X's verdicts on its words: Y takes them over
         shutil.copyfile(canon, push / writing_canon.FILE)
     from .step_import import IMPORT_DIR, imported, owner_decided, record_import

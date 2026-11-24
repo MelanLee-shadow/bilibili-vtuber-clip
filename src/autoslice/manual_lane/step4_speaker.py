@@ -206,8 +206,11 @@ def _speaker_from_preds(ctx: Ctx, units: Sequence[speaker_v8.SpeakerChunk],
     spans: list[speaker_v8.SpeakerUnit] = [{"id": u["id"], "start_ms": u["s"], "end_ms": u["e"]} for u in units]
     cfg = rules("speaker")
     n_people = speaker_v8.people(ctx.session) if video is None and heard is None else OTHER_VOICES_PEOPLE
-    host_min = speaker_v8.host_threshold(n_people, cfg)
-    decided = [cast(speaker_v8.SpeakerDecision, dict(d, v8_mid=speaker_v8.mid_band(d, n_people, cfg)))
+    classes = {c for r in preds.values() for c in (r.get("probs") or {})}
+    known = video is None and heard is None and speaker_v8.known_participants(ctx.session, classes)
+    host_min = speaker_v8.host_threshold(n_people, cfg, known=known)
+    decided = [cast(speaker_v8.SpeakerDecision,
+                    dict(d, v8_mid=speaker_v8.mid_band(d, n_people, cfg, host_min=host_min)))
                for d in speaker_v8.cue_speakers(cues, spans, preds, host_min=host_min)]
     clip_start = int(ctx.state.data["clip"]["start_ms"])
     decided = speaker_v8.apply_reviewer_labels(
@@ -412,8 +415,25 @@ def _review_prompt(ctx: Ctx, fused: list[speaker_v8.SpeakerDecision], low: Seque
         else f"声音证据倾向{fused[i]['speaker']}，只有明确的内容证据才能改整句的说话人")
         + _switch_note(fused[i], cues[i], cl) for i in low)
     names, fans = speaker_context_lines(ctx)
+    who, evidence = _review_setting(ctx, fused)
     return _render("speaker_review.md", host=speaker_v8.HOST, guest=speaker_v8.GUEST_LABEL, lines=lines,
-                   pending=pending, names=names, fans=fans)
+                   pending=pending, names=names, fans=fans, who=who, evidence=evidence)
+
+
+def _review_setting(ctx: Ctx, fused: Sequence[speaker_v8.SpeakerDecision]) -> tuple[str, str]:
+    """How many people speak and where the current labels come from, as the review prompt states them.  The prompt
+    used to say 「说话的有两位」 and describe MOSS naming for every collab; in the 11-23 three-person collab the
+    labels were v8's and three people spoke, so the reader was told the wrong setting."""
+    host, guest = speaker_v8.HOST, speaker_v8.GUEST_LABEL
+    n = speaker_v8.people(ctx.session)
+    who = (f"说话的有 {n} 位：主播「{host}」和 {n - 1} 位连线嘉宾；字幕只分两种颜色，主播标「{host}」，"
+           f"其他每一位都标「{guest}」。" if n >= 3 else f"说话的有两位：主播「{host}」和连线嘉宾（标签写「{guest}」）。")
+    if all(r.get("label_from", "v8") == "v8" for r in fused):
+        evidence = f"每一句按主播声纹（v8，按主播声纹逐段判断）定是不是{host}，把握不够的算{guest}。"
+    else:
+        evidence = (f"MOSS 把整片分成几个说话人，与主播登记声纹最像的那一个算{host}，其余算{guest}；"
+                    "MOSS 没覆盖的句子按 v8（按主播声纹逐段判断）。")
+    return who, evidence
 
 
 def _review_answers(record: CpaEvent) -> dict[int, speaker_v8.SpeakerReview]:

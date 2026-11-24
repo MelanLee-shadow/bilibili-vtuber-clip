@@ -41,6 +41,16 @@ def _no_picture_reading_by_default(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_dynamics_reading_by_default(monkeypatch):
+    """Step 6 reads the Bilibili dynamics of the host and her registry peers when it asks who is in a call
+    (collab_guests.read_dynamics, a network read on the media host); the suite reads none, and test_collab_guests.py,
+    which exercises them, gives its own."""
+    from src.autoslice.manual_lane import collab_guests
+
+    monkeypatch.setattr(collab_guests, "read_dynamics", lambda _uids: ({}, []))
+
+
+@pytest.fixture(autouse=True)
 def _no_other_recognisers_by_default(monkeypatch):
     """The subtitle agent starts with the whole clip as MAI and MOSS heard it (playbook_step3.other_recognitions, one
     remote pass per clip); a test that scripts an agent conversation has no such pass, so the suite gives none and the
