@@ -300,10 +300,12 @@ ACCEPTED_JUDGE = {"overall": "PASS", "fail_reasons": [], "runs": [{"overall": "P
 
 
 def accept_title(clip_dir, title: str, by: str = "step6") -> None:
-    """Record title/accepted.json for a fixture that writes title/title.txt itself (as step 6 does once both judges pass);
-    step 8 refuses a title without it (title_acceptance)."""
-    from src.autoslice.manual_lane import title_acceptance
-    title_acceptance.write(clip_dir, title, by, None if by == "owner" else ACCEPTED_JUDGE)
+    """Record title/accepted.json for a fixture that writes title/title.txt itself (as step 6 does once both judges pass,
+    judged by the skill as it is now); step 8 refuses a title without it (title_acceptance) and judges again one judged
+    by another version of the skill (step6_title.title_current)."""
+    from src.autoslice.manual_lane import title_acceptance, title_authority
+    judge = {**ACCEPTED_JUDGE, "authorities": title_authority.judge_authorities()}
+    title_acceptance.write(clip_dir, title, by, None if by == "owner" else judge)
 
 
 def write_title(clip_dir, title: str, by: str = "step6") -> None:

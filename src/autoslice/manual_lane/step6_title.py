@@ -382,6 +382,36 @@ def title_inputs(ctx: Ctx, names: Sequence[str]) -> tuple[list[TrackCue], str, s
     return track, title_authority.numbered_lines(labelled, rename), title_authority.speaker_srt(labelled, rename)
 
 
+def title_current(ctx: Ctx, cpa_calls: list[CpaEvent]) -> StepOutcome | str:
+    """The title that goes out, judged by the skill as it is now: when its receipt's judges read another version
+    (title_acceptance.stale), both judges are asked again on the same title, the subtitles and the cover lines (the
+    writing judge alone for a published title a revision keeps, as when it was kept).  Passing rewrites the receipt
+    with the new verdict, same writer; failing stops with NOT_ACCEPTED (redo from step 6).  Returns that failure, or
+    the PROCESS line ("" when the receipt was already the current skill's).  Step 8 and step 10 call it before a
+    package is built and before anything is sent."""
+    current = title_authority.judge_authorities()
+    receipt = title_acceptance.stale(ctx.clip_dir, current)
+    if receipt is None:
+        return ""
+    title, by = str(receipt.get("title") or "").strip(), str(receipt["by"])
+    judge = receipt.get("judge")
+    old = judge.get("authorities") if isinstance(judge, dict) else None
+    versions = (" / ".join(str(a.get("sha256", ""))[:8] for a in (old if isinstance(old, list) else [])
+                           if isinstance(a, Mapping)) or "没有记录") + " → " + " / ".join(str(a["sha256"])[:8] for a in current)
+    _track, lines, _srt = title_inputs(ctx, participant_names(ctx.session))
+    cands_path = ctx.clip_dir / "title/candidates.json"
+    cover = (json.loads(cands_path.read_text(encoding="utf-8")).get("cover_lines") or []) if cands_path.exists() else []
+    judged = title_judge(ctx, "current-title-judge", lines, title, [str(x) for x in cover], cpa_calls, facts=by != "online")
+    if isinstance(judged, StepOutcome):
+        return judged
+    if judged["overall"] != "PASS":
+        return _fail(title_acceptance.NOT_ACCEPTED,
+                     f"标题「{title}」是按另一版标题技能判过的（{versions}），按现行技能重判不过："
+                     + "；".join(judged["fail_reasons"])[:300] + "；从第 6 步重做", cpa=cpa_calls)
+    title_acceptance.write(ctx.clip_dir, title, by, judged)
+    return f"标题是按另一版标题技能判过的（{versions}），按现行技能重判，两位判官都过：{title}"
+
+
 UNNAMED = "未具名嘉宾"
 SPEAKER_LABELS = (GUEST_LABEL, UNNAMED)     # speaker tags, never names: a title that writes one names nobody
 

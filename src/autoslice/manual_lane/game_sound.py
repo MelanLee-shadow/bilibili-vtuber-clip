@@ -20,6 +20,9 @@ review let 「ten」 pass.  The voiceprint does not tell them apart either (a ga
   punctuation after it; a line with nothing left is removed, a line that keeps her words starts (or ends) where the
   first hearing heard them start (or the game part start), within the line's own time; her Chinese words are never
   removed here, whatever a hearing says;
+- a line fewer than two hearings answered is heard once more by the first level (`THIRD`): a hearing that comes back
+  with no part at all has not answered, and 1493180's 「Three, two.」「Three, two, one.」 (11-23) stayed because 3.8's
+  first hearing came back empty while its second placed them in the game;
 - anything a hearing calls a person's, or unsure, stays; with one hearing answering nothing is removed (PROCESS says so);
 - what was removed is recorded as decided for the package step (package_guards.record_left_out), so it does not stop on
   the dictation that heard it;
@@ -44,6 +47,7 @@ PROMPT = "listen_game_sound.md"
 LABEL = "game-sound"
 PREFIX = "GS"
 AGAIN = "GR"            # the first level's second hearing: its own window names and its own slug (`<slug>-again`)
+THIRD = "GT"            # its third, for the lines fewer than two hearings answered (`<slug>-third`)
 MARGIN_S = 1.0          # audio before / after the line, never past the midpoint of the gap to a neighbour
 MIN_KEPT_S = 0.5        # a line that keeps her words keeps at least this long
 REPORT = "subs/game_sound.json"
@@ -106,16 +110,16 @@ def windows(cues: Sequence[TrackCue], found: Sequence[int]) -> list[dict]:
     return out
 
 
-def again_windows(wins: Sequence[dict]) -> list[dict]:
-    """The windows of the first level's second hearing: the same audio and line under their own names."""
-    return [{**w, "win": AGAIN + str(w["win"]).removeprefix(PREFIX)} for w in wins]
+def again_windows(wins: Sequence[dict], prefix: str = AGAIN) -> list[dict]:
+    """The windows of a further hearing by the first level: the same audio and line under their own names."""
+    return [{**w, "win": prefix + str(w["win"]).removeprefix(PREFIX)} for w in wins]
 
 
-def heard_again(records: Sequence[Mapping[str, object]]) -> list[dict]:
-    """The second hearing's records under the windows' own names and the hearing's slug (`<slug>-again`)."""
+def heard_again(records: Sequence[Mapping[str, object]], prefix: str = AGAIN, suffix: str = "again") -> list[dict]:
+    """A further hearing's records under the windows' own names and the hearing's slug (`<slug>-<suffix>`)."""
     def name(win: str) -> str:
-        return PREFIX + win[len(AGAIN):] if win.startswith(AGAIN) else win
-    return [{**r, "win": name(str(r.get("win", ""))), "slug": f"{r.get('slug')}-again"} for r in records]
+        return PREFIX + win[len(prefix):] if win.startswith(prefix) else win
+    return [{**r, "win": name(str(r.get("win", ""))), "slug": f"{r.get('slug')}-{suffix}"} for r in records]
 
 
 def hearings(models: Sequence[Mapping[str, object]]) -> list[str]:
@@ -248,7 +252,14 @@ def settle(ctx: Ctx, process: list[str]) -> tuple[str, str] | None:
                                                       prompt=PROMPT, prepared=True)
     if records is None or again is None:
         return UNHEARD, f"游戏/软件声音检查：复听工具失败，{len(wins)} 句只写外文或数字的字幕没有判定"
-    verdicts = decide(cues, wins, [*records, *heard_again(again)], hearings(models))
+    heard, slugs = [*records, *heard_again(again)], hearings(models)
+    verdicts = decide(cues, wins, heard, slugs)
+    short = [w for w, v in zip(wins, verdicts, strict=True) if len(v["levels"]) < 2]
+    third = None if not short else _listen_pass(ctx, f"{LABEL}-third", again_windows(short, THIRD), models[:1],
+                                                prompt=PROMPT, prepared=True)
+    if third:
+        heard, slugs = [*heard, *heard_again(third, THIRD, "third")], [*slugs, f"{models[0]['slug']}-third"]
+        verdicts = decide(cues, wins, heard, slugs)
     report.write_text(json.dumps(verdicts, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     unheard = [v for v in verdicts if not v["levels"]]
     if unheard:

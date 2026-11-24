@@ -396,6 +396,12 @@ def step8_package(ctx: Ctx) -> StepOutcome:
     refused, guard_notes = package_guards.check(ctx, package := package_dir(ctx))     # before anything is built or deleted
     if refused:
         return refused
+    from .step6_title import title_current
+
+    title_cpa: list[CpaEvent] = []
+    rejudged = title_current(ctx, title_cpa)       # a title judged by an older skill is judged by the current one
+    if isinstance(rejudged, StepOutcome):
+        return rejudged
     (pkg := _pkg(ctx)).mkdir(parents=True, exist_ok=True)
     ctx.adapters.remote.get(f"{rd}/burn/final.mp4", pkg / "final.mp4")
     ctx.adapters.remote.get(f"{rd}/burn/final.ass", pkg / "final.ass")
@@ -449,10 +455,11 @@ def step8_package(ctx: Ctx) -> StepOutcome:
     products = {"package": str(pkg / "final.mp4"), "member": str(member_path), "fmr_check": str(check_log),
                 "fmr_package": str(package), **revision_authority.record(ctx, pkg, guard_notes),
                 **({"fmr_findings": str(findings)} if findings.exists() else {})}
-    return StepOutcome(True, products=products,
+    return StepOutcome(True, products=products, cpa=title_cpa,
                        note=f"FMR check rc={check.returncode}，记录 {len(flags)} 条 FLAG/FAIL（不拦）",
                        process=[f"成片包已组装：{title}",
                                 f"本片看点来源：{hook_origin}",
+                                *([rejudged] if rejudged else []),
                                 "FMR init 完成，check 完成（结果写入 fmr_check.log；FLAG/FAIL 只记录）"]
                        + guard_notes + [f"FMR {line[:200]}" for line in flags[:20]])
 

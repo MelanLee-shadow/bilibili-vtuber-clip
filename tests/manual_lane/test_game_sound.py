@@ -184,6 +184,34 @@ def test_one_hearing_alone_removes_nothing(tmp_path, monkeypatch):
     assert any("只有一遍复听回答、未删" in line for line in outcome.process)
 
 
+def test_a_line_a_hearing_came_back_empty_for_is_heard_a_third_time(tmp_path, monkeypatch):
+    # 11-23 1493180: 3.8's first hearing of 「Three, two.」 came back with no part at all and its second placed it in
+    # the game; one answer removes nothing, so the countdown stayed.  A hearing with no part has not answered: that line,
+    # and only that line, is heard once more
+    ctx = _clip_ctx(tmp_path, CLIP_316670)
+    asked = []
+
+    def listen(ctx_, label, windows, models, **_kw):
+        asked.append((label, [w["win"] for w in windows]))
+
+        def lines(w, slug):
+            if label == "game-sound" and (slug != "38m" or w["text"] == "three two"):
+                return []       # the second level is off; 3.8 heard nothing in the countdown's window
+            return rows(("game", 1.0, w["text"]))
+        return [{"win": w["win"], "slug": m["slug"], "model": m["name"], "status": "OK", "lines": lines(w, m["slug"])}
+                for w in windows for m in models]
+    _step3_hears(monkeypatch, listen)
+    outcome = step3_subtitles.step3_subtitles(ctx)
+    assert outcome.ok
+    assert asked == [("game-sound", ["GS002", "GS005"]), ("game-sound-again", ["GR002", "GR005"]),
+                     ("game-sound-third", ["GT005"])]
+    final = (ctx.clip_dir / "subs/final.srt").read_text(encoding="utf-8")
+    assert "three two" not in final and "\n10\n" not in final
+    verdicts = json.loads((ctx.clip_dir / gs.REPORT).read_text(encoding="utf-8"))
+    assert [sorted(v["levels"]) for v in verdicts] == [["38m", "38m-again"], ["38m-again", "38m-third"]]
+    assert [v["removed"] for v in verdicts] == [[0], [0]]
+
+
 def test_a_clip_without_such_a_line_is_not_heard_and_an_imported_push_is_left_alone(tmp_path, monkeypatch):
     ctx = _clip_ctx(tmp_path, [cue(1.0, 2.0, "矿工也是很难当"), cue(3.0, 4.0, "怎么还有30秒？")])
     monkeypatch.setattr(step3_evidence, "_listen_pass", lambda *a, **k: (_ for _ in ()).throw(AssertionError("heard")))
