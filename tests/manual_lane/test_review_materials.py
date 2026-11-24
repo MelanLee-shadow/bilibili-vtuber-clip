@@ -106,3 +106,29 @@ def test_review_sees_why_each_content_tag_was_chosen(tmp_path, monkeypatch):
     prompt = sp.review_prompt(ctx)
     assert "- 养：反复撒娇：“你不可以攻击李李的呀”" in prompt and "理由和字幕对不上才删" in prompt
     assert "落选" not in prompt
+
+
+def test_a_review_title_fix_that_writes_the_voiceprint_guest_label_as_a_name_is_not_applied(tmp_path, monkeypatch):
+    # 11-23: guests heard by voiceprint on a day whose session names none; the label reaches the review's title fix too
+    from src.autoslice.manual_lane import subtitle_track
+    from src.autoslice.manual_lane.step6_title import GUEST_LABEL
+    ctx, _, _ = _ctx(tmp_path, monkeypatch)
+    ctx.session['participants'] = [['李豆沙']]
+    cues = subtitle_track.read_track(ctx.clip_dir)
+    cues[0]['speaker'] = GUEST_LABEL
+    subtitle_track.write_track(ctx.clip_dir, cues, speakers=True)
+    skipped = []
+    assert not sp._title_fix(ctx, '【李豆沙】跟连线抓金块抓到崩溃', skipped, [])
+    assert skipped and 'label_as_name' in skipped[0]
+
+
+def test_a_review_title_that_opens_like_another_clip_of_the_batch_is_not_applied(tmp_path, monkeypatch):
+    # 11-23: step 6 kept 443680's titles off the batch's 「游戏里…」, then the review rewrote it to 「游戏里提议用炸弹取暖…」
+    ctx, _, _ = _ctx(tmp_path, monkeypatch)
+    other = 'semantictalk_1_2_11230000'
+    (ctx.state.path.parent / f'{other}.json').write_text(json.dumps({'clip': {'cid': other}}), encoding='utf-8')
+    (ctx.clip_dir.parent / other / 'title').mkdir(parents=True)
+    (ctx.clip_dir.parent / other / 'title/title.txt').write_text('【李豆沙】游戏里被紫色堵门\n', encoding='utf-8')
+    skipped = []
+    assert not sp._title_fix(ctx, '【李豆沙】游戏里新合成台词', skipped, [])
+    assert skipped and 'batch_opener' in skipped[0]

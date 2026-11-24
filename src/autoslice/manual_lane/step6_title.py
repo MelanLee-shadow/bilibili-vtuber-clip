@@ -8,6 +8,7 @@ Split out of stage_impl.py (TASK-13); stage_impl re-exports every name, so calle
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -15,7 +16,7 @@ from typing import TYPE_CHECKING, TypedDict, cast
 
 from src.autoslice.channel_envelope import EnvelopeError, HOST_NAMES, parse_talk_title, render_talk_title
 
-from . import channel
+from . import channel, collab_guests
 from .publication_id import publication_cid
 from . import (
     circle_context,
@@ -46,6 +47,7 @@ from .step6_cover import (
     COVER_RETRIES,
     COVER_TEXT_TOO_LONG,
     cover_line_limits,
+    cover_line,
     cover_lines_overflow,
     CoverRenderResult,
     _cover_brief,
@@ -69,7 +71,8 @@ if TYPE_CHECKING:
 
 TITLE_MAX_REGEN = 2                              # regeneration rounds after the first candidate round
 TITLE_RULES = ("banned", "prefix", "on_stage_known", "named", "involved_named", "prefix_names", "swap", "punchline",
-               "person", "quotes", "canonical_names", "publish_gate", "published_duplicate", "batch_opener")
+               "person", "quotes", "canonical_names", "publish_gate", "published_duplicate", "batch_opener",
+               "label_as_name")
 OPENER = 3      # a title's first characters after the prefix; two clips of one batch do not open alike (11-23: 8 of 10 「游戏里…」)
 
 
@@ -153,6 +156,9 @@ def publish_gate_violations(raw_title: str) -> list[str]:
     return codes
 
 
+SELF_REPORT = ("on_stage_known", "swap", "punchline")     # rules on the writer's own account of its candidate
+
+
 def opener(title: str) -> str:
     """The first OPENER letters of a title's body (after 【…】); "" when it is shorter."""
     envelope = parse_talk_title(title)
@@ -162,19 +168,23 @@ def opener(title: str) -> str:
 
 def title_checks(cand: TitleCandidate, names: Sequence[str], subtitles: str, *,
                  envelope_error: str = "", published: tuple[str, ...] = (), batch: Sequence[str] = (),
-                 non_formal: Sequence[title_names.NonFormal] = ()) -> TitleChecks:
+                 non_formal: Sequence[title_names.NonFormal] = (), self_report: bool = True) -> TitleChecks:
     """The deterministic checks of skill section 4 on one candidate.  Each rule it breaks is named once in `reasons`;
     `score` counts the rules the candidate passes (len(TITLE_RULES) is perfect).  `subtitles` is the final SRT with
     the speaker labels where there are any: quoted words are checked against it by the repo's checker
     (title_cover_quotes; skill section 8 items 1-2: verbatim, and the speaker when the title names who said it).
     `non_formal` are the non-formal spellings of a name found in the body (title_names).  `batch`: the titles the
-    other clips of this batch already have (title_history.recent_titles)."""
+    other clips of this batch already have (title_history.recent_titles).  `self_report=False` leaves out the rules on
+    the writer's own account of its candidate (SELF_REPORT): a title written without one (the review's) is judged by
+    the skill's judge instead."""
     from src.autoslice.title_quote_check import check_title_quotes
 
     title = str(cand.get("title", "")).strip()
     failed: dict[str, str] = {}
     if title_history.duplicate_title(title, published):
         failed["published_duplicate"] = "标题与已发标题重复，请依据本片字幕重写"
+    if leaked := label_as_name(title, subtitles):
+        failed["label_as_name"] = LABEL_REASON.format(leaked)
     if alike := [t for t in batch if opener(t) and opener(t) == opener(title)]:
         failed["batch_opener"] = (f"开头「{opener(title)}」和本批已起的「{alike[0]}」一样；同一批的片各用各的开头和句式，"
                                   "从本片最好笑的那一下起句")
@@ -218,6 +228,8 @@ def title_checks(cand: TitleCandidate, names: Sequence[str], subtitles: str, *,
         failed["canonical_names"] = "名字写法不是正式写法：" + "；".join(
             f"{n['written']} 应写成 {n['formal']}" for n in non_formal)
     publish = publish_gate_violations(str(cand.get("title", "")))   # the same gate as step 8, raw codes into reasons
+    if not self_report:
+        failed = {k: v for k, v in failed.items() if k not in SELF_REPORT}
     reasons: list[str] = []
     failed_keys: list[str] = []
     for key in TITLE_RULES:
@@ -230,6 +242,26 @@ def title_checks(cand: TitleCandidate, names: Sequence[str], subtitles: str, *,
             failed_keys.append(key)
     return {"ok": not failed_keys, "reasons": reasons, "failed": failed_keys,
             "score": len(TITLE_RULES) - len(failed_keys)}
+
+
+def checks_on(ctx: Ctx, title: str) -> TitleChecks:
+    """Step 6's checks on a whole title written after step 6 (the review's rewrite): the same `title_checks`, on the
+    chosen candidate's reading of the story (on_stage, involved, swap, punchline person) with the new title, against
+    this batch's and the published titles.  11-23: the review rewrote 443680's title to open like another clip of the
+    batch (「游戏里…」) and to put a guest's proposal in the host's mouth, past checks it only partly repeated."""
+    names = participant_names(ctx.session)
+    track, _lines, srt_text = title_inputs(ctx, names)
+    path = ctx.clip_dir / "title/candidates.json"
+    chosen = (json.loads(path.read_text(encoding="utf-8")).get("chosen") or {}) if path.exists() else {}
+    envelope = parse_talk_title(title)
+    cand = cast(TitleCandidate, {**chosen, "title": title})
+    if not chosen.get("on_stage"):      # no candidate of step 6 (an owner's title): the prefix says who is on stage
+        cand["on_stage"] = [HOST, *(envelope.partners if envelope is not None else ())]
+    history = title_history.recent_titles(ctx.state.path, ctx.clip_dir, str(ctx.state.data["clip"].get("cid") or ""),
+                                          ctx=ctx)
+    formal = title_names.canonical_names(title_authority.subtitle_text(track), names)
+    return title_checks(cand, names, srt_text, published=history.published_titles, batch=history.batch,
+                        non_formal=formal.non_formal(envelope.body if envelope is not None else title), self_report=False)
 
 
 def _feedback_text(candidates: Sequence[TitleCandidate]) -> str:
@@ -291,11 +323,39 @@ def title_inputs(ctx: Ctx, names: Sequence[str]) -> tuple[list[TrackCue], str, s
     numbered lines and as SRT for the quote checker.  speaker.srt's guest label stands for the one guest."""
     from . import subtitle_track   # imports stage_impl, which re-exports this module: imported here, not at the top
 
+    from .guest_identity import saved_lines
+
     track = subtitle_track.read_track(ctx.clip_dir)
     rename = title_authority.speaker_names(names, host=HOST, guest_label=GUEST_LABEL)
+    if unnamed_guests(ctx, track):
+        rename[GUEST_LABEL] = UNNAMED
+    known = saved_lines(ctx)      # guest lines told apart (guest_identity): labelled with her name
+    labelled = [cast("TrackCue", {**c, "speaker": known[i]}) if i in known else c for i, c in enumerate(track, 1)]
+    return track, title_authority.numbered_lines(labelled, rename), title_authority.speaker_srt(labelled, rename)
+
+
+UNNAMED = "未具名嘉宾"
+SPEAKER_LABELS = (GUEST_LABEL, UNNAMED)     # speaker tags, never names: a title that writes one names nobody
+
+
+LABEL_REASON = "「{}」是说话人标签，不是名字；写字幕里叫出的名字，认不出就写“队友”这类泛称或不写"
+
+
+def label_as_name(text: str, subtitles: str) -> str:
+    """The speaker label `text` writes as if it were a word of the clip: one of SPEAKER_LABELS that the subtitles'
+    lines never say (their [speaker] tags aside).  Title, cover text and the review's title fix all go out under it."""
+    said = re.sub(r"^\[[^\]]+\]\s*", "", subtitles, flags=re.M)
+    return next((w for w in SPEAKER_LABELS if w in text and w not in said), "")
+
+
+def unnamed_guests(ctx: Ctx, track: Sequence[TrackCue]) -> bool:
+    """The clip's other speakers have no name the lane knows: a participant of the session whose identity is unknown,
+    or guests step 4 heard by voiceprint on a day whose session names none (guests_heard_v8; 11-23: the titles wrote
+    the label 「连线」 as a person, 「连线提议反矮人联盟」)."""
     if len(participant_names(ctx.session, visual=True)) > len(participant_names(ctx.session)):
-        rename[GUEST_LABEL] = "未具名嘉宾"
-    return track, title_authority.numbered_lines(track, rename), title_authority.speaker_srt(track, rename)
+        return True
+    return (not [n for n in participant_names(ctx.session) if n != HOST]
+            and any(c.get("speaker") == GUEST_LABEL for c in track))
 
 
 def _speaker_note(track: Sequence[TrackCue], names: Sequence[str], *, anonymous: bool = False) -> str:
@@ -304,8 +364,16 @@ def _speaker_note(track: Sequence[TrackCue], names: Sequence[str], *, anonymous:
     if anonymous:
         return "每句前的 [说话人] 来自 speaker.srt（已核对）；[未具名嘉宾] 是身份未知的说话角色。"
     guest = title_authority.speaker_names(names, host=HOST, guest_label=GUEST_LABEL).get(GUEST_LABEL)
-    return ("每句前的 [说话人] 来自 speaker.srt（已核对），引语归属以它为准"
-            + (f"；本场连线只有一位，标作 [{guest}]。" if guest else f"；[{GUEST_LABEL}] 是{channel.HOST}以外的连线方。"))
+    others = [n for n in names if n != HOST]
+    if guest:
+        tail = f"；本场连线只有一位，标作 [{guest}]。"
+    elif len(others) >= 2:
+        tail = (f"；标着 [{'] / ['.join(others)}] 的句子已按识别器的说话人分组和对话证据定到那位嘉宾，可以写成她说的；"
+                f"[{GUEST_LABEL}] 是本场连线的{'、'.join(others)}中认不出是哪位的一句：正文可以点名本场连线的人，"
+                "这样的句子只有字幕里叫出名字时才写成那个人说的。")
+    else:
+        tail = f"；[{GUEST_LABEL}] 是{channel.HOST}以外的连线方。"
+    return "每句前的 [说话人] 来自 speaker.srt（已核对），引语归属以它为准" + tail
 
 
 def _raw_title_candidates(answer: TitleAnswer) -> list[TitleCandidate]:
@@ -376,9 +444,12 @@ def _title_rounds(ctx: Ctx, names: Sequence[str], cpa_calls: list[CpaEvent]
     history = title_history.recent_titles(ctx.state.path, ctx.clip_dir, str(ctx.state.data["clip"].get("cid") or ""), ctx=ctx)
     rounds: list[TitleRound] = []
     feedback = ""
-    anonymous = len(participant_names(ctx.session, visual=True)) > len(participant_names(ctx.session))
+    anonymous = unnamed_guests(ctx, track)
     speaker_note = _speaker_note(track, names, anonymous=anonymous)
-    if anonymous:
+    if anonymous and len(participant_names(ctx.session, visual=True)) == len(participant_names(ctx.session)):
+        speaker_note += (f"[{UNNAMED}] 是声纹听出的别人，不知道是谁：标题、前缀、封面都不要把这个标签当名字写；"
+                         "字幕里叫出了对方的名字才写那个名字，认不出就写“队友”这类泛称或不写。")
+    elif anonymous:
         labels = [str(g[0]).strip() for g in ctx.session.get("participants") or [] if g and unknown_participant(str(g[0]))]
         speaker_note += ("「连线」是身份未知的说话人标签，不是账号名；前缀和封面署名不要写它，on_stage 只写已知正式名。"
                          if all(n == "连线" for n in labels) else
@@ -427,13 +498,20 @@ def _title_rounds(ctx: Ctx, names: Sequence[str], cpa_calls: list[CpaEvent]
                                           non_formal=formal.non_formal(body))
             cand["round"] = round_no
             cand["accepted"] = False
-        cover = [normalize.canon_text(str(x).strip())[0] for x in (parsed_answer.get("cover_lines") or [])]
+        cover = [cover_line(x) for x in (parsed_answer.get("cover_lines") or [])]
         if (overflow := cover_lines_overflow(cover)):      # cover text the renderer cannot hold at the punchline floor: rewrite
             for cand in candidates:
                 cand["checks"]["ok"] = False
                 cand["checks"]["failed"].append("cover_lines_too_long")
                 cand["checks"]["reasons"].append(f"封面字过长：{overflow}")
                 cand["checks"]["score"] -= 1
+        if leaked := next(filter(None, (label_as_name(line, srt_text) for line in cover)), ""):
+            for cand in candidates:      # the cover text goes with every candidate of the round
+                if "label_as_name" not in cand["checks"]["failed"]:
+                    cand["checks"]["ok"] = False
+                    cand["checks"]["failed"].append("label_as_name")
+                    cand["checks"]["reasons"].append("封面字：" + LABEL_REASON.format(leaked))
+                    cand["checks"]["score"] -= 1
         if anonymous:
             for cand in candidates:
                 envelope = parse_talk_title(cand["title"])
@@ -544,11 +622,13 @@ def _shortened_cover(ctx: Ctx, cover: CoverRenderResult, cover_lines: list[str],
         if not _cpa_ok(retry):
             break
         try:
-            new_lines = [normalize.canon_text(str(x).strip())[0]
+            new_lines = [cover_line(x)
                          for x in (_json_from_text(retry["response_text"]).get("cover_lines") or [])]
         except (ValueError, AttributeError):
             break
-        if not _cover_lines_ok(new_lines) or any(placeholder_as_person(ctx.session, line) for line in new_lines):
+        said = title_inputs(ctx, participant_names(ctx.session))[2]
+        if not _cover_lines_ok(new_lines) or any(placeholder_as_person(ctx.session, line) or label_as_name(line, said)
+                                                 for line in new_lines):
             break
         new_lines, canon_line = writing_canon.settle_cover(ctx, new_lines, cpa_calls, call_id=f"writing-canon-cover-{attempts}")
         process.append(canon_line)
@@ -559,6 +639,19 @@ def _shortened_cover(ctx: Ctx, cover: CoverRenderResult, cover_lines: list[str],
 
 
 def pick_title(ctx: Ctx) -> tuple[str, list[str], list[str], list[CpaEvent], Path] | StepOutcome:
+    """_pick_title while holding the batch's title lock: the clips of one batch write their titles one after another,
+    so each sees the titles the others just wrote (title_history.recent_titles reads title/title.txt).  11-23: ten
+    clips reached step 6 together, each saw only the batch's old titles, and ten titles opened 「游戏里」; the
+    batch_opener check cannot see a title still being written."""
+    import fcntl
+
+    lock_path = ctx.state.path.parent / ".title-batch.lock"
+    with open(lock_path, "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _pick_title(ctx)
+
+
+def _pick_title(ctx: Ctx) -> tuple[str, list[str], list[str], list[CpaEvent], Path] | StepOutcome:
     """Step 6's title half: candidates from the authorities, the checks, the judge, the choice; writes
     title/candidates.json (with the authorities' hashes) and title/title.txt.  Returns (title, cover lines, process
     lines, CPA calls, candidates path), or the failed outcome."""
@@ -574,7 +667,7 @@ def pick_title(ctx: Ctx) -> tuple[str, list[str], list[str], list[CpaEvent], Pat
     if chosen is None:
         return _fail("TITLE_NO_CANDIDATE", "CPA returned no title candidates", cpa=cpa_calls)
     chosen_round = rounds[chosen["round"]]
-    cover_lines = [normalize.canon_text(str(x).strip())[0] for x in (chosen_round["parsed"].get("cover_lines") or [])]
+    cover_lines = [cover_line(x) for x in (chosen_round["parsed"].get("cover_lines") or [])]
     try:
         title, cover_lines, canon_line = writing_canon.settle_title_cover(ctx, str(chosen["title"]).strip(), cover_lines, cpa_calls)
     except writing_canon.WritingCanonFailed as exc:
@@ -631,14 +724,59 @@ def pick_title(ctx: Ctx) -> tuple[str, list[str], list[str], list[CpaEvent], Pat
     return title, cover_lines, process, cpa_calls, cands_path
 
 
+def _asker(ctx: Ctx, calls: list[CpaEvent]) -> Callable[[str, str], dict | None]:
+    """A CPA ask for the title step's helpers: the parsed JSON object, None when the call or its answer failed."""
+    def ask(call_id: str, prompt: str) -> dict | None:
+        record = _ask_cpa(ctx, call_id, prompt, purpose="title")
+        calls.append(_log(record))
+        if not _cpa_ok(record):
+            return None
+        try:
+            answer = _json_from_text(record["response_text"])
+        except ValueError:
+            return None
+        return answer if isinstance(answer, dict) else None
+    return ask
+
+
+def _name_guests(ctx: Ctx) -> tuple[list[str], list[CpaEvent]]:
+    """collab_guests on this clip: (the guests it added to the session, its CPA call)."""
+    calls: list[CpaEvent] = []
+    try:
+        return collab_guests.name_guests(ctx, _asker(ctx, calls)), calls
+    except collab_guests.GuestsUnknown as exc:
+        exc.calls = calls      # type: ignore[attr-defined]  # the failed call's record goes with the failed step
+        raise
+
+
+def _identify_guests(ctx: Ctx) -> tuple[dict[int, str], list[CpaEvent]]:
+    """guest_identity on this clip: ({line: guest}, its CPA call)."""
+    from . import guest_identity, subtitle_track
+
+    calls: list[CpaEvent] = []
+    return guest_identity.identify(ctx, subtitle_track.read_track(ctx.clip_dir), _asker(ctx, calls)), calls
+
+
 def step6_title_cover(ctx: Ctx) -> StepOutcome:
     final_srt = (ctx.clip_dir / "subs/final.srt").read_text(encoding="utf-8")
     cues = parse_srt(final_srt)
+    try:
+        guests, guest_calls = _name_guests(ctx)
+    except collab_guests.GuestsUnknown as exc:
+        return _fail("CPA_CALL_FAILED", str(exc), cpa=getattr(exc, "calls", []))
+    identified, identity_calls = _identify_guests(ctx)
+    guest_calls += identity_calls
     names = participant_names(ctx.session, visual=True)
     picked = pick_title(ctx)
     if isinstance(picked, StepOutcome):
         return picked
     title, cover_lines, process, cpa_calls, cands_path = picked
+    cpa_calls[:0] = guest_calls
+    if guests:
+        process.insert(0, f"本场连线：{'、'.join(guests)}（场次没写、声纹听出别人，按整场弹幕认出；"
+                          f"{collab_guests.CACHE.format(date=ctx.session.get('recording_date'))}）")
+    if identity_calls:
+        process.insert(0, f"嘉宾是谁：{len(identified)} 句连线定到具体的人（识别器分组＋对话证据，guest_identity.json）")
     if (imported := cover_import.imported_cover(ctx)) is not None:      # the decided cover: nothing is drawn or looked at
         return cover_import.adopt(ctx, imported, title=title, process=process, cpa=cpa_calls)
     if (kept := cover_import.published_cover(ctx, title)) is not None:     # a subtitle revision keeps the published cover

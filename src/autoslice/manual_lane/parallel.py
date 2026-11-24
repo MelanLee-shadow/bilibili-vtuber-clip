@@ -22,7 +22,9 @@ provider it holds a slot of: that would wait on itself, so it raises.
 What it deliberately does not do: **retry**.  Retry and backoff already live in the adapters, once:
 ``assets/manual_lane/remote/cpa_text.py`` retries 408/429/5xx and waits out 524/503 in-process,
 ``listen_windows.py`` retries a window three times and turns a 429 into a QUOTA record, ``witness_windows.py``
-caches by excerpt bytes, ``free_asr_paced.py`` paces one call per provider.  A second retry layer here would
+caches by excerpt bytes, ``free_asr_paced.py`` paces one call per provider, and ``scripts/free_asr_client.py``
+waits out bcut's 412/429/-509 and resubmits a task bcut reports failed under one host-wide cooldown (every bcut caller,
+step 8's audio gate included).  A second retry layer here would
 re-send on its own timing and hide the provider's own signal.
 """
 

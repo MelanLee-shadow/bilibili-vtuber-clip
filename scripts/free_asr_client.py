@@ -25,6 +25,8 @@ import datetime
 import hashlib
 import hmac
 import json
+import os
+import random
 import subprocess
 import sys
 import tempfile
@@ -38,11 +40,77 @@ from pathlib import Path
 
 UA_BILI = "Bilibili/1.0.0"
 RETRYABLE_HTTP = {412, 429, 500, 502, 503, 504}
+THROTTLE_HTTP = {412, 429}
 MAX_TRIES = 4
+
+# A free recogniser's rate limit is waited out, not turned into a failed clip (U152/U304: 「并发不设人为上限,按真实限流
+# 自适应,免费接口别太猛,限流就等/换接口」; 11-23: 11 clips at once got bcut's 412 at task/result and 「bcut task
+# failed」, and 7 of them stopped at step 8).  There is no cap on how many calls run; when bcut says too many, every
+# caller on the host backs off together: the waiting time is kept in a shared cooldown file (written by atomic
+# replace, never locked), each throttled answer doubles it up to COOLDOWN_MAX_S, and every bcut request first sleeps
+# until it has passed.  A call gives up only after RATE_LIMIT_BUDGET_S of such waiting.
+RATE_LIMIT_BUDGET_S = float(os.environ.get("FREE_ASR_RATE_LIMIT_BUDGET_S", "1500"))
+COOLDOWN_FIRST_S = 15.0
+COOLDOWN_MAX_S = 300.0
+BCUT_TASK_TRIES = 4             # a task that bcut itself reports failed (state 3) is submitted again
+COOLDOWN_FILE = Path(os.environ.get("FREE_ASR_COOLDOWN_DIR") or tempfile.gettempdir()) / "free-asr-bcut-cooldown.json"
+
+_sleep = time.sleep
+_now = time.time
 
 
 class AsrError(RuntimeError):
     pass
+
+
+class AsrThrottled(AsrError):
+    """The provider kept saying "too many" for the whole waiting budget."""
+
+
+def _read_cooldown() -> dict:
+    try:
+        doc = json.loads(COOLDOWN_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
+def _wait_cooldown() -> None:
+    """Sleep until the host's shared cooldown for bcut has passed (nothing to wait when none is set)."""
+    until = float(_read_cooldown().get("until") or 0.0)
+    left = until - _now()
+    if left > 0:
+        _sleep(left)
+
+
+def _note_throttled(reason: str) -> float:
+    """Lengthen the host's shared cooldown after a throttled answer and return how long it now lasts."""
+    doc = _read_cooldown()
+    now = _now()
+    last = float(doc.get("seconds") or 0.0) if float(doc.get("until") or 0.0) + COOLDOWN_MAX_S > now else 0.0
+    seconds = min(COOLDOWN_MAX_S, max(COOLDOWN_FIRST_S, last * 2))
+    seconds *= 1 + random.uniform(0, 0.2)       # callers that were throttled together do not all come back at once
+    until = max(float(doc.get("until") or 0.0), now + seconds)
+    try:
+        COOLDOWN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = COOLDOWN_FILE.with_name(f"{COOLDOWN_FILE.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps({"until": until, "seconds": seconds, "reason": reason[:200]}), encoding="utf-8")
+        os.replace(tmp, COOLDOWN_FILE)
+    except OSError:
+        pass                    # an unwritable cooldown only loses the sharing; this caller still waits below
+    return max(0.0, until - now)
+
+
+def _note_answered() -> None:
+    """An answer that was not throttled ends the doubling (the cooldown file is left for its own time to pass)."""
+    doc = _read_cooldown()
+    if doc.get("seconds") and float(doc.get("until") or 0.0) <= _now():
+        try:
+            tmp = COOLDOWN_FILE.with_name(f"{COOLDOWN_FILE.name}.{os.getpid()}.tmp")
+            tmp.write_text(json.dumps({"until": 0.0, "seconds": 0.0}), encoding="utf-8")
+            os.replace(tmp, COOLDOWN_FILE)
+        except OSError:
+            pass
 
 
 def _request(url: str, *, data: bytes | None = None, method: str = "GET",
@@ -101,29 +169,64 @@ def _bcut_api(url: str, *, form: dict | None = None, js: dict | None = None,
     if params:
         url = f"{url}?{urllib.parse.urlencode(params)}"
     last_err = None
-    for attempt in range(MAX_TRIES):
-        if attempt:
-            time.sleep(2 ** attempt)
+    deadline = _now() + RATE_LIMIT_BUDGET_S
+    failures = 0
+    while True:
+        _wait_cooldown()
         try:
             payload = _request_json(url, data=data, method=method,
                                     headers=headers)
         except urllib.error.HTTPError as e:
             last_err = AsrError(f"HTTP {e.code} at {url}: {e.read()[:200]!r}")
-            if e.code in RETRYABLE_HTTP:
+            if e.code in THROTTLE_HTTP:
+                _throttled(str(last_err), deadline, last_err)
+                continue
+            if e.code in RETRYABLE_HTTP and failures + 1 < MAX_TRIES:
+                failures += 1
+                _sleep(2 ** failures)
                 continue
             raise last_err from e
         code = payload.get("code")
         if code:
             last_err = AsrError(f"bcut API code {code}: {payload.get('message')}")
             if code == -509:  # 请求过于频繁
+                _throttled(str(last_err), deadline, last_err)
                 continue
             raise last_err
+        _note_answered()
         return payload["data"]
-    raise last_err
+
+
+def _throttled(reason: str, deadline: float, err: AsrError) -> None:
+    """Back off after a throttled answer, or give up when the call's waiting budget is spent."""
+    wait = _note_throttled(reason)
+    if _now() + wait > deadline:
+        raise AsrThrottled(f"bcut still throttled after {RATE_LIMIT_BUDGET_S:.0f}s of waiting: {reason}") from err
+    _sleep(wait)
+
+
+class _TaskFailed(AsrError):
+    """bcut accepted the audio and then reported the task failed (state 3, so far always with an empty remark)."""
 
 
 def transcribe_bcut(sound: bytes, *, poll_interval: float = 3.0,
                     poll_timeout: float = 900.0, log=print) -> dict:
+    """bcut's transcript of `sound`.  A task bcut reports failed is submitted again after the host's shared cooldown
+    (11-23: it came back failed while 11 clips ran at once; those clips passed when run again); it raises after
+    BCUT_TASK_TRIES failed tasks or when throttling outlasts the waiting budget."""
+    for attempt in range(1, BCUT_TASK_TRIES + 1):
+        try:
+            return _bcut_job(sound, poll_interval=poll_interval, poll_timeout=poll_timeout, log=log)
+        except _TaskFailed as e:
+            if attempt == BCUT_TASK_TRIES:
+                raise
+            wait = _note_throttled(str(e))
+            log(f"[bcut] {e}; submitting again in {wait:.0f}s ({attempt}/{BCUT_TASK_TRIES})")
+            _sleep(wait)
+    raise AssertionError("unreachable")
+
+
+def _bcut_job(sound: bytes, *, poll_interval: float, poll_timeout: float, log) -> dict:
     name = f"{int(time.time())}.mp3"
     created = _bcut_api(f"{BCUT_BASE}/resource/create", form={
         "type": 2, "name": name, "size": len(sound),
@@ -150,8 +253,10 @@ def transcribe_bcut(sound: bytes, *, poll_interval: float = 3.0,
     log(f"[bcut] task created: {task_id}")
     deadline = time.monotonic() + poll_timeout
     while time.monotonic() < deadline:
+        asked = _now()
         rsp = _bcut_api(f"{BCUT_BASE}/task/result",
                         params={"model_id": BCUT_MODEL_ID, "task_id": task_id})
+        deadline += max(0.0, _now() - asked - 30.0)     # time spent waiting out throttling is not the task's time
         if rsp.get("state") == 4:
             parsed = json.loads(rsp["result"])
             return {"utterances": [
@@ -160,8 +265,8 @@ def transcribe_bcut(sound: bytes, *, poll_interval: float = 3.0,
                 for u in parsed.get("utterances", [])
             ]}
         if rsp.get("state") == 3:
-            raise AsrError(f"bcut task failed: {rsp.get('remark')}")
-        time.sleep(poll_interval)
+            raise _TaskFailed(f"bcut task failed: {rsp.get('remark')}")
+        _sleep(poll_interval)
     raise AsrError(f"bcut poll timeout after {poll_timeout}s (task {task_id})")
 
 

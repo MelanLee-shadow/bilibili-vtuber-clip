@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 
-from fakes import FakeRemote, make_ctx
+from fakes import SESSION, FakeRemote, make_ctx
 
 from src.autoslice.manual_lane import speaker_v8 as sv
 from src.autoslice.manual_lane import stage_impl as si
@@ -140,3 +140,58 @@ def test_without_a_voiceprint_naming_of_moss_v8_labels_and_mai_only_flags(tmp_pa
     rows, _calls, process = si._speaker_clusters(ctx, [{"text": "a"}, {"text": "b"}, {"text": "c"}], _cues(), _v8_rows())
     assert rows[0]["speaker"] == sv.HOST and rows[0]["speaker_confidence"] == "高"   # MOSS absent is no reason
     assert "moss" not in rows[0]["clusters"] and any("MOSS 无可用簇，标签用 v8" in p for p in process)
+
+
+def test_with_more_than_two_people_moss_does_not_label_and_v8_does(tmp_path):
+    """11-23 (公开规则：上传的视频字幕归属全是错的): a three-person voice collab where MOSS heard two clusters. The
+ cluster closest to the host's voiceprint also held a guest, and 8c1 burned every line of it as the host. With
+ fewer clusters than the session's people MOSS does not label: v8 does, and the process says why."""
+    embedded = []
+
+    def script(name, body, remote):
+        from src.autoslice.manual_lane.adapters import RemoteResult
+        if name == "s4-moss-voiceprint":
+            embedded.append(name)
+            remote.files[f"{si.SPEAKER_V8_ROOT}/clip-moss/out/centroids.json"] = json.dumps(
+                {"S1": {"n": 2, "dur_ms": 4500, "cos": 0.71}, "S2": {"n": 2, "dur_ms": 3500, "cos": 0.22}}).encode()
+            return RemoteResult(0, "CLUSTER_COS_DONE\n", "")
+        return RemoteResult(0, "", "")
+
+    class Cpa:
+        def ask(self, *, call_id, prompt_text, model, effort, remote_dir):
+            return {"call_id": call_id, "model": model, "effort": effort, "rc": 0, "elapsed_s": 0.1,
+                    "response_text": "[]", "stderr_tail": ""}
+
+    three = dict(SESSION, participants=[["李豆沙"], ["雾深Girimi"], ["礼墨Sumi"]])
+    ctx = make_ctx(tmp_path, remote=FakeRemote(on_script=script), cpa=Cpa(), session=three)
+    (ctx.clip_dir / "witness").mkdir(parents=True)
+    for name in ("moss", "mai"):
+        (ctx.clip_dir / f"witness/{name}.json").write_text(json.dumps(
+            {"status": "OK", "segments": [dict(s, text="x") for s in _segs()]}), encoding="utf-8")
+    rows, _calls, process = si._speaker_clusters(ctx, [{"text": "a"}, {"text": "b"}, {"text": "c"}], _cues(), _v8_rows())
+    assert embedded == []                                                   # not named by the voiceprint at all
+    assert all(r["label_from"] == "v8" and "moss" not in r["clusters"] for r in rows)
+    assert rows[2]["speaker"] == sv.GUEST_LABEL                              # v8's guest stays the guest
+    assert any("本场 3 人（MOSS 分出 2 组" in p and "标签用 v8（主播声纹逐句判）" in p for p in process)
+
+
+def test_three_people_and_three_moss_clusters_still_label_by_v8(tmp_path):
+    """Three people and as many MOSS clusters: 8c1 is not validated beyond two people, v8 labels (11-23 1493180: MOSS
+    found three clusters and v8 heard a guest on half the cues of the host's)."""
+    three = dict(SESSION, participants=[["李豆沙"], ["雾深Girimi"], ["礼墨Sumi"]])
+    ctx = make_ctx(tmp_path, remote=FakeRemote(), cpa=None, session=three)
+    (ctx.clip_dir / "witness").mkdir(parents=True)
+    segs = _segs() + [{"start_ms": 7500, "end_ms": 8000, "speaker": "S3"}]
+    for name in ("moss", "mai"):
+        (ctx.clip_dir / f"witness/{name}.json").write_text(json.dumps(
+            {"status": "OK", "segments": [dict(s, text="x") for s in segs]}), encoding="utf-8")
+
+    class Cpa:
+        def ask(self, *, call_id, prompt_text, model, effort, remote_dir):
+            return {"call_id": call_id, "model": model, "effort": effort, "rc": 0, "elapsed_s": 0.1,
+                    "response_text": "[]", "stderr_tail": ""}
+
+    ctx.adapters.cpa = Cpa()
+    rows, _calls, process = si._speaker_clusters(ctx, [{"text": "a"}, {"text": "b"}, {"text": "c"}], _cues(), _v8_rows())
+    assert all(r["label_from"] == "v8" for r in rows)
+    assert any("本场 3 人（MOSS 分出 3 组" in p for p in process)

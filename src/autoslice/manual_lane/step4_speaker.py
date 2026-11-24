@@ -294,14 +294,20 @@ SPEAKER_CLUSTER_SCRIPT = REMOTE_TOOLS / "speaker_cluster_cos.sh"
 
 def _moss_voiceprint_names(ctx: Ctx, segs: Sequence[speaker_v8.EngineSegment]) -> dict[str, speaker_v8.ClusterName] | None:
     """MOSS clusters named by the host's enrolled voiceprint on OCI3 (speaker_cluster_cos.sh, v8's CAM++ copy):
-    speaker_v8.name_by_voiceprint.  Reused while the segments are unchanged.  None when it cannot name them (one cluster,
-    or the embedding failed: recorded by the caller as v8 labels)."""
+ speaker_v8.name_by_voiceprint. Reused while the segments are unchanged. None when it cannot name them (one cluster,
+ or the embedding failed: recorded by the caller as v8 labels), and when the session has more than two people. 8c1
+ was validated on two-person collabs only; with three people a cluster can hold two of them and naming the whole
+ cluster by its closest centroid labels a guest as the host (11-23, a three-person voice collab: MOSS found two
+ clusters in 583860, 897000 and 625460, the host's cluster also held 礼墨Sumi, and every published line of that
+ cluster was burned as 李豆沙 although v8 heard a guest; 公开规则：上传的视频字幕归属全是错的). v8 there is the
+ host voiceprint judged cue by cue, the speaker prefill 公开规则corrected on 10-31 (101/115 right; 公开规则11-23: 「为什么
+ 不用之前那种预填的做法呢？」)."""
     rd, cid = ctx.remote_dir, ctx.state.data["clip"]["cid"]
     units = [{"id": f"m{i}", "seg": cid, "s": int(sg["start_ms"]), "e": int(sg["end_ms"]), "lw": int(sg["end_ms"])}
              for i, sg in enumerate(segs)]
     index = [{"id": f"m{i}", "cluster": str(sg["speaker"])} for i, sg in enumerate(segs)]
-    if len({r["cluster"] for r in index}) < 2:
-        return None
+    if len({r["cluster"] for r in index}) < 2 or len(participant_names(ctx.session)) > 2:
+        return None     # one cluster, or more than two people: v8 labels (moss_short_of_people)
     units_local, index_local = _local(ctx, "speaker/moss-units.json"), _local(ctx, "speaker/moss-index.json")
     cent_local = _local(ctx, "speaker/moss-centroids.json")
     doc = {"units": units}
@@ -329,6 +335,7 @@ class _Clusters:
     engines: dict[str, list[speaker_v8.ClusterCue | None]] = field(default_factory=dict)
     named: dict[str, dict[str, speaker_v8.ClusterName]] = field(default_factory=dict)
     segments: dict[str, list[speaker_v8.EngineSegment]] = field(default_factory=dict)
+    short_of_people: tuple[int, int] | None = None     # (MOSS clusters, people of the session) when more than two people
 
 
 class WitnessDocument(TypedDict, total=False):
@@ -356,6 +363,9 @@ def _witness_clusters(ctx: Ctx, cues: Sequence[speaker_v8.MillisecondSpan],
         cl.segments[name] = segs
     if "moss" in cl.named and not any("cos" in v for v in cl.named["moss"].values()):
         cl.engines.pop("moss")   # MOSS without a voiceprint naming (one cluster, embedding failed): v8 labels, MAI flags
+        found, people = len({str(sg["speaker"]) for sg in cl.segments["moss"]}), len(participant_names(ctx.session))
+        if found >= 2 and people > 2:
+            cl.short_of_people = (found, people)
     return cl
 
 
@@ -363,7 +373,10 @@ def _cluster_line(cl: _Clusters, fused: Sequence[speaker_v8.SpeakerDecision], lo
     return ("说话人分簇：" + "；".join(
         f"{e.upper()} " + "，".join(f"{c}→{v['speaker']}" + (f"（与主播登记声纹余弦 {v['cos']}）" if "cos" in v else "")
                                     for c, v in cl.named[e].items()) for e in cl.engines)
-            + (f"；标签用 MOSS 簇（8c1：余弦最高的一簇是{channel.HOST}，其余是嘉宾）" if "moss" in cl.engines else "；MOSS 无可用簇，标签用 v8")
+            + (f"；标签用 MOSS 簇（8c1：余弦最高的一簇是{channel.HOST}，其余是嘉宾）" if "moss" in cl.engines else
+               f"；本场 {cl.short_of_people[1]} 人（MOSS 分出 {cl.short_of_people[0]} 组；按组定名只在两人联动上验证过，"
+               f"三人以上一组可能混两个人），标签用 v8（主播声纹逐句判）"
+               if cl.short_of_people else "；MOSS 无可用簇，标签用 v8")
             + "，MAI 簇（按 v8 重叠定名）只作辅助信号"
             + f"；与 v8、MAI 都一致 {len(fused) - len(low)} 句，不一致或句内两人、待 CPA 复核 {len(low)} 句")
 
