@@ -52,6 +52,7 @@ class ListenResult(TypedDict):
 
 
 T = TypeVar("T")
+ROOT = "listen/wide-held"     # every file of the review's post-review listening rounds; redo clears it with the review
 
 
 class WideListeningError(RuntimeError):
@@ -65,7 +66,7 @@ def _save(path: Path, value: object) -> None:
 
 
 def snapshot_before(ctx: Ctx) -> None:
-    before = ctx.clip_dir / "listen/wide-held/before"
+    before = ctx.clip_dir / ROOT / "before"
     before.mkdir(parents=True, exist_ok=True)
     for rel in ("subs/final.srt", "subs/doubts.json", "speaker/speaker.srt", "pkg/REVIEW.md"):
         source = ctx.clip_dir / rel
@@ -144,7 +145,7 @@ def collect(ctx: Ctx, wide: WideProgress, held_ids: list[str], number: int) -> t
         raise ValueError("held IDs changed outside the original wide review scope")
     wanted = {t["win"] for t in targets}
     windows = [w for w in wide["windows"] if w["win"] in wanted]
-    root = ctx.clip_dir / "listen/wide-held"
+    root = ctx.clip_dir / ROOT
     root.mkdir(parents=True, exist_ok=True)
 
     def asr() -> AsrResult:

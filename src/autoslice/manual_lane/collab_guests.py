@@ -17,11 +17,14 @@ registry's accounts (`read_dynamics`, at the time step 6 asks, so posts after th
 Each account that posted then is a candidate even when the chat hardly names her, her posts go to CPA beside her chat
 lines, with what ties them to the host's (`linked`: a word both wrote then and neither before, 矿工 not 晚安, or the
 host's name); a quote may be one of her chat lines or stand in one of her own posts there, and one there only for her
-posts is kept on a quote from a post that holds such a tie."""
+posts is kept on a quote from a post that holds such a tie.  The live room's title is the host's own words about the
+day too (11-23 「？！女大矿工？！」, in the recorder's header of the clip's chat file, `room_title`): it is shown beside
+her dynamics and its words count as hers around the day."""
 
 from __future__ import annotations
 
 import datetime as dt
+import html
 import json
 import re
 from collections.abc import Callable, Mapping, Sequence
@@ -43,6 +46,8 @@ MIN_QUOTE = 4        # letters a quote from a dynamic must have (a dynamic is lo
 _BEIJING = dt.timezone(dt.timedelta(hours=8))
 _HAN_PAIR = re.compile(r"(?=([一-鿿]{2}))")
 _UID = re.compile(r"space\.bilibili\.com/(\d+)")
+_ROOM_TITLE = re.compile(r'<BililiveRecorderRecordInfo\b[^>]*?\stitle="([^"]*)"')
+HEADER_BYTES = 8192   # the recorder writes its record info in the first lines of the chat XML
 
 Dynamics = dict[str, list[dict[str, str]]]          # account (HOST for the host) -> [{"published_at", "text"}]
 
@@ -112,6 +117,18 @@ def mentions(chat: Sequence[str], known: dict[str, list[str]]) -> dict[str, list
             for name, spellings in known.items()}
 
 
+def room_title(clip_dir: Path) -> str:
+    """The live room's title when the clip's chat file was recorded (the recorder's header of danmaku/recording.xml,
+    step 3's copy of the source recording's chat), or "" (no file; a joined clip's chat carries no header)."""
+    path = clip_dir / "danmaku/recording.xml"
+    if not path.exists():
+        return ""
+    with path.open("rb") as f:
+        head = f.read(HEADER_BYTES).decode("utf-8", errors="replace")
+    m = _ROOM_TITLE.search(head)
+    return html.unescape(m.group(1)).strip() if m else ""
+
+
 def accounts() -> dict[str, int]:
     """The reviewed streamer registry's people (the names a title prefix may use) -> the uid of their homepage."""
     from src.autoslice.channel_envelope import load_related_streamers
@@ -167,13 +184,14 @@ def _host_spellings() -> set[str]:
     return {HOST, *HOST_NAMES}
 
 
-def linked(dynamics: Dynamics, date: str) -> dict[str, list[str]]:
+def linked(dynamics: Dynamics, date: str, title: str = "") -> dict[str, list[str]]:
     """Accounts whose dynamics around the broadcast day tie them to the host -> what ties them: a word (two Chinese
-    characters) the host's dynamics around the day hold and that neither wrote before (女大矿工 / 矿工, not 晚安), or one
-    of the host's names.  A shared new word can be chance (11-18: 电脑, 小播 in the dynamics of four accounts), so this is
-    shown to CPA as a lead and asked of a quote (`kept`), not taken as the answer."""
+    characters) the host's dynamics around the day or the day's live room title (`title`) hold and that neither wrote
+    before (女大矿工 / 矿工, not 晚安), or one of the host's names.  A shared new word can be chance (11-18: 电脑, 小播 in
+    the dynamics of four accounts), so this is shown to CPA as a lead and asked of a quote (`kept`), not taken as the
+    answer."""
     host_near, host_before = _around(dynamics.get(HOST, []), date)
-    fresh = _pairs(host_near) - _pairs(host_before)
+    fresh = _pairs([*host_near, title]) - _pairs(host_before)
     host = _host_spellings()
     out = {}
     for name, items in dynamics.items():
@@ -244,18 +262,20 @@ def _day_record(ctx: Ctx, cache: Path, date: str, ask: Callable[[str, str], dict
         uids = accounts()
         uids = dict(sorted(uids.items(), key=lambda kv: -len(said.get(kv[0], [])))[:PEERS_READ])
         dynamics, unread = read_dynamics(uids)
-        links = linked(dynamics, date)
+        title = room_title(ctx.clip_dir)
+        links = linked(dynamics, date, title)
         for name, items in dynamics.items():
             if name != HOST and _around(items, date)[0]:
                 named.setdefault(name, said.get(name, []))
         posted = {name: _around(dynamics.get(name, []), date)[0] for name in named}
         host_posted = _around(dynamics.get(HOST, []), date)[0]
-        seen = {"host": host_posted, "accounts": {n: v for n, v in posted.items() if v}, "linked": links, "unread": unread}
+        seen = {"room_title": title, "host": host_posted, "accounts": {n: v for n, v in posted.items() if v}, "linked": links, "unread": unread}
         record: dict[str, Any] = {"date": date, "candidates": {}, "dynamics": seen, "guests": []}
         if named:
             from .step_io import _render
 
-            prompt = _render("collab_guests.md", host_dynamics="\n".join(f"- {t}" for t in host_posted) or "（没有）",
+            prompt = _render("collab_guests.md", room_title=title or "（没读到）",
+                             host_dynamics="\n".join(f"- {t}" for t in host_posted) or "（没有）",
                              candidates="\n\n".join(_candidate_block(name, lines, posted[name], links.get(name))
                                                     for name, lines in named.items()))
             answer = ask("collab-guests", prompt)
@@ -271,7 +291,8 @@ def _candidate_block(name: str, lines: Sequence[str], posted: Sequence[str], wor
     head = f"### {name}（弹幕里 {len(lines)} 条提到）"
     chat = "\n".join(f"- {t}" for t in lines[:SHOWN]) or "- （弹幕里没有提到她）"
     own = ("\n她这几天自己发的动态：\n" + "\n".join(f"- {t}" for t in posted)) if posted else ""
-    shared = f"\n她的动态和主播这几天的动态都写到、两人以前都没写过的词：{'、'.join(words)}" if words else ""
+    shared = (f"\n她的动态和主播这几天的动态或直播间标题都写到、两人以前都没写过的词：{'、'.join(words)}"
+              if words else "")
     return f"{head}\n{chat}{own}{shared}"
 
 

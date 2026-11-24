@@ -9,6 +9,8 @@ recording time of the file's zero.
 
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 
@@ -40,10 +42,33 @@ class SelectionEntry(TypedDict):
     cue_ids: NotRequired[list[str | int]]
     selection_scorecard: NotRequired[SelectionScorecard]
     hook: NotRequired[JsonValue]
+    owner_mark: NotRequired[JsonValue]   # discover_select: the owner's mark in the chat this candidate was seated for
 
 
 class SelectionDocument(TypedDict):
     input_pool: NotRequired[list[SelectionEntry]]
+
+
+def selection_entry(selection_path: Path, cid: str) -> SelectionEntry:
+    """The entry of `cid` in a selection file (StateError when it is not there)."""
+    data = cast(SelectionDocument, json.loads(Path(selection_path).read_text(encoding="utf-8")))
+    # discover's clip id is the candidate's id plus the recording start (lane_cid: _MMDDHHMM); the recording's own
+    # selection file (recall.json) names the candidate without it -- goldfish 4 had to edit the file to init a clip
+    bare = re.sub(r"_\d{8}$", "", cid)
+    for entry in data.get("input_pool", []):
+        if entry.get("cid") in (cid, bare):
+            return entry
+    raise StateError(f"candidate {cid} not found in {selection_path}")
+
+
+def owner_marked(clip: ClipInfo) -> bool:
+    """The clip was seated for the channel owner's mark in the chat (discover_select: an entry with `owner_mark`, 11-15
+    「我要自动流水线能切出这一块来」), read from the selection file `init` made it from.  A clip made without one (by
+    hand, in tests) is not marked; a selection file that is gone or no longer names the clip is an error."""
+    path = clip.get("selection_file")
+    if not path:
+        return False
+    return bool(selection_entry(Path(path), str(clip.get("cid") or "")).get("owner_mark"))
 
 
 def entry_source_name(entry: SelectionEntry) -> str:

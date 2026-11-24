@@ -117,6 +117,7 @@ def voice_chunks(ctx: Ctx, bcut: Sequence[SrtCue]) -> tuple[dict[int, list[speak
     same = units_local.exists() and json.loads(units_local.read_text(encoding="utf-8")) == units_doc
     if not (same and pred_local.exists()):
         rd = ctx.remote_dir
+        pred_local.unlink(missing_ok=True)      # never paired with other chunks: a failed run below leaves no reading
         units_local.write_text(json.dumps(units_doc, ensure_ascii=False), encoding="utf-8")
         ctx.adapters.remote.put(units_local, f"{rd}/speaker/chunks-units.json")
         ctx.adapters.remote.put(SPEAKER_V8_SCRIPT, f"{rd}/speaker/speaker_v8_run.sh")

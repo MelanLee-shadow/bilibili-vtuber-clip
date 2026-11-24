@@ -134,6 +134,28 @@ def test_the_event_the_host_announced_and_a_peer_posted_about_links_her_without_
     assert collab_guests.linked(DYNAMICS, '2026-12-05') == {}                         # another day: nothing around it
 
 
+RECORDER_HEADER = ('\ufeff<?xml version="1.0" encoding="utf-8"?>\n<i>\n  <BililiveRecorder version="2.18.0" />\n'
+                   '  <BililiveRecorderRecordInfo roomid="22966160" shortid="0" name="李豆沙_Channel" '
+                   'title="？！女大矿工？！" areanameparent="虚拟主播" start_time="2026-11-23T20:00:46+08:00" />\n</i>\n')
+
+
+def test_the_live_room_title_is_the_hosts_word_about_the_day(tmp_path, monkeypatch):
+    # 11-23: the room title 「？！女大矿工？！」 named the event 安晚awa posted about, with no dynamic of the host's needed
+    silent = {**DYNAMICS, step6_title.HOST: [d for d in DYNAMICS[step6_title.HOST] if "矿工" not in d["text"]]}
+    assert collab_guests.linked(silent, "2026-11-23") == {}
+    assert collab_guests.linked(silent, "2026-11-23", "？！女大矿工？！") == {"安晚awa": ["矿工"]}
+    asked = []
+    ctx = _day_of_dynamics(tmp_path, 'rt1', monkeypatch, chat=["awa在吗"] + ["今天玩什么"] * 30, dynamics=silent)
+    assert collab_guests.room_title(ctx.clip_dir) == ""                       # no chat file: nothing read
+    (ctx.clip_dir / "danmaku/recording.xml").write_text(RECORDER_HEADER, encoding="utf-8")
+    assert collab_guests.room_title(ctx.clip_dir) == "？！女大矿工？！"
+    answer = {"in_call": [{"name": "安晚awa", "quotes": ["矿工是对的但我要晕倒了"]}], "not_in_call": []}
+    assert collab_guests.name_guests(ctx, lambda _id, prompt: asked.append(prompt) or answer) == ["安晚awa"]
+    assert "这场的直播间标题：？！女大矿工？！" in asked[0] and "两人以前都没写过的词：矿工" in asked[0]
+    record = json.loads((tmp_path / collab_guests.CACHE.format(date='2026-11-23')).read_text(encoding="utf-8"))
+    assert record["dynamics"]["room_title"] == "？！女大矿工？！" and record["guests"] == ["安晚awa"]
+
+
 def test_a_guest_the_chat_hardly_names_is_asked_about_from_her_dynamics_and_kept_on_them(tmp_path, monkeypatch):
     asked = []
     ctx = _day_of_dynamics(tmp_path, 'dy1', monkeypatch, chat=["awa在吗"] + ["今天玩什么"] * 30)

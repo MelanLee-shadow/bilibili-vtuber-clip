@@ -46,7 +46,8 @@ from typing import TYPE_CHECKING, cast
 
 from .adapters import Adapters, DanmakuSource, LocalRemote, Remote, SshCpaJudge, SshRemote
 from .chat_archive import ArchiveChat
-from .clip_init import SelectionDocument, SelectionEntry, clip_from_entry, create_clip_state
+from .clip_init import clip_from_entry, create_clip_state
+from .clip_init import selection_entry as _selection_entry
 from .compilation import RecordingInput, compile_session
 from . import dissent_register, knowledge_observe, persona_observe
 from .config import load_session_config
@@ -75,17 +76,6 @@ if TYPE_CHECKING:
 
 
 SPEAKER_STEP = next(step.number for step in STEPS if step.key == "speaker")      # `run --trim` cuts after this step
-
-
-def _selection_entry(selection_path: Path, cid: str) -> SelectionEntry:
-    data = cast(SelectionDocument, json.loads(Path(selection_path).read_text(encoding="utf-8")))
-    # discover's clip id is the candidate's id plus the recording start (lane_cid: _MMDDHHMM); the recording's own
-    # selection file (recall.json) names the candidate without it -- goldfish 4 had to edit the file to init a clip
-    bare = re.sub(r"_\d{8}$", "", cid)
-    for entry in data.get("input_pool", []):
-        if entry.get("cid") in (cid, bare):
-            return entry
-    raise StateError(f"candidate {cid} not found in {selection_path}")
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -511,7 +501,7 @@ def cmd_import_cover(args: argparse.Namespace) -> int:
         if state.data["clip"].get("status") == SUPERSEDED:
             raise StateError(f"{args.cid} is SUPERSEDED by {state.data['clip'].get('superseded_by')}; import the cover into the replacement")
         if args.withdraw:
-            done = withdraw(state, decided_by=args.decided_by, reason=args.reason)
+            done = withdraw(state, task / "clips" / args.cid, decided_by=args.decided_by, reason=args.reason)
             print(json.dumps({"cid": args.cid, "withdrawn_cover": done,
                               "note": "step 6 and the steps after it are forgotten; the next `run` draws the cover itself"}, ensure_ascii=False))
             return 0

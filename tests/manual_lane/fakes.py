@@ -199,10 +199,12 @@ def quality_fail(*reasons, flow_list: str = "问完……接出……"):
 
 # The clip-understanding answers (title_understand.md / title_understand_merge.md output shape).
 READING = json.dumps({"main_line": "李豆沙讲了她的主线", "punchline": "她先嘴硬，接着自己拆台（序号 3）",
-                      "punchline_cues": [3], "who_is_who": [], "side_topics": []}, ensure_ascii=False)
+                      "punchline_cues": [3], "who_is_who": [], "side_topics": [], "host_role": "主角"},
+                     ensure_ascii=False)
 MERGE = json.dumps({"agree": True, "main_line": "李豆沙讲了她的主线", "punchline": "她先嘴硬，接着自己拆台（序号 3）",
                     "punchline_cues": [3], "who_is_who": [{"term": "它", "means": "她的小号", "cues": [2]}],
-                    "side_topics": ["顺带聊了晚饭"], "hook_holds": True, "conflicts": []}, ensure_ascii=False)
+                    "side_topics": ["顺带聊了晚饭"], "hook_holds": True, "conflicts": [], "host_role": "主角"},
+                   ensure_ascii=False)
 
 
 UNDERSTANDING_CALLS = ["title-read-1", "title-read-2", "title-merge"]   # what step 6 asks before the first title

@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from fakes import MERGE, UNDERSTANDING_CALLS, FakeCpa, FakeRemote, make_ctx, srt
+from fakes import MERGE, READING, UNDERSTANDING_CALLS, FakeCpa, FakeRemote, make_ctx, srt
 
 from src.autoslice.manual_lane import stage_impl as si
 from src.autoslice.manual_lane import channel_facts, title_names, title_understanding
@@ -56,7 +56,8 @@ def test_two_readings_and_a_merge_are_recorded_and_carried_by_every_title_round(
     merge = cpa.prompts[cpa.calls.index("title-merge")]
     assert (hook or "（无）") in merge and "李豆沙讲了她的主线" in merge          # the readings are in the merge prompt
     found = _record(ctx)["understanding"]
-    assert found["readings"] == [{"main_line": "李豆沙讲了她的主线", "punchline": "她先嘴硬，接着自己拆台（序号 3）"}] * 2
+    assert found["readings"] == [{"main_line": "李豆沙讲了她的主线", "punchline": "她先嘴硬，接着自己拆台（序号 3）",
+                                  "host_role": "主角"}] * 2
     assert found["merged"] == json.loads(MERGE) and found["hook"] == hook
     assert any(f"本片主线：李豆沙讲了她的主线（两份阅读一致；选片理由{hook_word}）" == line for line in picked[2])
     assert len(cpa.title_prompts) == 2
@@ -153,6 +154,170 @@ def test_a_metric_without_the_tier_section_stops_the_step_naming_it(tmp_path, mo
     _, cpa, picked = _pick(tmp_path, [])
     assert isinstance(picked, StepOutcome) and picked.reason == "TITLE_AUTHORITY_MISSING"
     assert "metric.md" in picked.note and not cpa.calls
+
+# ----- how she figures in the main line: a clip about others stops before any title --------------------------------
+def _roles(read_1, read_2, merged, why="她只说了 4、16 两句，主线靠礼墨Sumi撑着"):
+    readings = {run: json.dumps(dict(json.loads(READING), host_role=role), ensure_ascii=False)
+                for run, role in ((1, read_1), (2, read_2))}
+    merge = json.dumps(dict(json.loads(MERGE), host_role=merged, host_role_why=why), ensure_ascii=False)
+    return {"readings": readings, "merges": [merge]}
+
+
+@pytest.mark.parametrize("read_1,read_2", [("旁观", "旁观"), ("旁观", "参与"), ("参与", "旁观")])
+def test_a_clip_whose_main_line_is_other_peoples_business_stops_before_any_title(tmp_path, read_1, read_2):
+    """11-23 625460: 礼墨Sumi grabbing stones and melting down, 李豆沙 three lines; three title rounds all failed the
+    swap test and the step stopped TITLE_NOT_ACCEPTED.  Owner: selection is 「围绕李豆沙」."""
+    from src.autoslice.manual_lane import auto_run
+
+    ctx, cpa, picked = _pick(tmp_path, [_answer(_cand("她半分钟后真的破防了"))], **_roles(read_1, read_2, "旁观"))
+    assert isinstance(picked, StepOutcome) and picked.reason == "NOT_ABOUT_HOST", picked
+    assert cpa.calls == UNDERSTANDING_CALLS                       # no title round, no judge, no context lookup
+    assert not (ctx.clip_dir / "title/title.txt").exists() and not (ctx.clip_dir / "title/accepted.json").exists()
+    assert picked.note == picked.process[0]
+    # no speaker.srt: a clip with no speakers at all, every line hers
+    assert picked.note.startswith(f"本片主线不围绕李豆沙：她在主线里是「旁观」（两份阅读：{read_1}、{read_2}；合并：旁观；"
+                                  "她的句子 3/3）")
+    assert "她只说了 4、16 两句，主线靠礼墨Sumi撑着" in picked.note and "这条不发" in picked.note
+    # every call answered: auto_run does not read the stop as waiting for the model, so it is listed as stuck
+    ctx.state.data["steps"]["title_cover"] = {"status": "STOPPED", "reason": picked.reason, "cpa": picked.cpa}
+    assert not auto_run.provider_failed(ctx.state, "title_cover")
+
+
+@pytest.mark.parametrize("read_1,read_2,merged", [
+    ("主角", "主角", "主角"),      # a reaction clip: her reactions to the video are the main line
+    ("参与", "参与", "参与"),      # a collab exchange she is one side of
+    ("主角", "参与", "参与"),
+    ("旁观", "参与", "参与"),      # the merge settled against the one reading that said 旁观
+    ("参与", "参与", "旁观"),      # a merge overruling two readings that agree she is in the main line does not stop
+])
+def test_a_clip_she_leads_or_takes_part_in_goes_on_to_the_title(tmp_path, read_1, read_2, merged):
+    ctx, cpa, picked = _pick(tmp_path, [_answer(_cand("她半分钟后真的破防了"))], **_roles(read_1, read_2, merged))
+    assert not isinstance(picked, StepOutcome), picked
+    assert "title" in cpa.calls and (ctx.clip_dir / "title/title.txt").is_file()
+    found = _record(ctx)["understanding"]
+    assert [r["host_role"] for r in found["readings"]] == [read_1, read_2] and found["merged"]["host_role"] == merged
+
+
+def test_a_revision_of_a_published_clip_is_not_stopped_by_the_reading(tmp_path):
+    """The clip is already out: its subtitle revision keeps going (the online title stays)."""
+    before = tmp_path / "clips" / "published"
+    (before / "upload").mkdir(parents=True)
+    (before / "upload/online.json").write_text('{"bvid": "BV1", "title": "【李豆沙】线上的标题"}', encoding="utf-8")
+    cpa = FakeCpa([_answer(_cand("她半分钟后真的破防了"))] * 2, **_roles("旁观", "旁观", "旁观"))
+    ctx = make_ctx(tmp_path, remote=FakeRemote(), cpa=cpa, session=SESSION)
+    (ctx.clip_dir / "subs").mkdir(parents=True, exist_ok=True)
+    (ctx.clip_dir / "subs/final.srt").write_text(srt(3), encoding="utf-8")
+    ctx.state.data["revised_from"] = {"cid": "published", "reason": "字幕", "at": "t"}
+    picked = si.pick_title(ctx)
+    assert not isinstance(picked, StepOutcome), picked
+    assert picked[0] == "【李豆沙】线上的标题"
+
+
+def _speakers(ctx, *labels):
+    from src.autoslice.manual_lane import subtitle_track
+
+    cues = subtitle_track.parse_blocks(srt(len(labels)))
+    subtitle_track.write_track(ctx.clip_dir, [dict(c, speaker=s) for c, s in zip(cues, labels, strict=True)],
+                               speakers=True)
+
+
+def _pick_labelled(tmp_path, labels, *, clip=None, **cpa_options):
+    cpa = FakeCpa([_answer(_cand("她半分钟后真的破防了"))], **cpa_options)
+    ctx = make_ctx(tmp_path, remote=FakeRemote(), cpa=cpa, session=SESSION)
+    ctx.state.data["clip"].update(clip or {})
+    _speakers(ctx, *labels)
+    return ctx, cpa, si.pick_title(ctx)
+
+
+def test_the_stop_says_how_many_of_the_lines_step_4_gave_her(tmp_path):
+    _, _, picked = _pick_labelled(tmp_path, ["连线", "李豆沙", "连线"], **_roles("旁观", "旁观", "旁观"))
+    assert isinstance(picked, StepOutcome) and picked.reason == "NOT_ABOUT_HOST", picked
+    assert "合并：旁观；她的句子 1/3）" in picked.note
+
+
+def test_no_line_labelled_hers_is_step_4s_problem_not_a_verdict_on_the_clip(tmp_path):
+    """In her own stream not one line hers: the reading only followed the labels, so the stop sends the operator to
+    step 4 (NO_HOST_LINES) instead of calling the clip not about her."""
+    _, cpa, picked = _pick_labelled(tmp_path, ["连线", "连线", "连线"], **_roles("旁观", "参与", "旁观"))
+    assert isinstance(picked, StepOutcome) and picked.reason == "NO_HOST_LINES", picked
+    assert "0/3 句" in picked.note and "先查第 4 步的说话人" in picked.note and picked.note == picked.process[0]
+    assert cpa.calls == UNDERSTANDING_CALLS
+
+
+def _selection(tmp_path, cid, **entry):
+    path = tmp_path / "discover" / f"{cid}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"input_pool": [dict(cid=cid, **entry)]}, ensure_ascii=False), encoding="utf-8")
+    return str(path)
+
+
+def test_a_clip_seated_for_the_owners_mark_in_the_chat_goes_on_to_the_title(tmp_path):
+    """He marked that stretch in the chat to have it cut (owner_marks): what it is about is his call."""
+    sel = _selection(tmp_path, "clip", owner_mark={"uid": 1, "text": "标记", "at_ms": 12_000})
+    ctx, cpa, picked = _pick_labelled(tmp_path, ["连线", "李豆沙", "连线"], clip={"selection_file": sel},
+                                      **_roles("旁观", "旁观", "旁观"))
+    assert not isinstance(picked, StepOutcome), picked
+    assert "title" in cpa.calls and (ctx.clip_dir / "title/title.txt").is_file()
+
+
+def test_a_selected_clip_without_the_owners_mark_is_still_stopped(tmp_path):
+    sel = _selection(tmp_path, "clip", hook="别人的事")
+    _, _, picked = _pick_labelled(tmp_path, ["连线", "李豆沙", "连线"], clip={"selection_file": sel},
+                                  **_roles("旁观", "旁观", "旁观"))
+    assert isinstance(picked, StepOutcome) and picked.reason == "NOT_ABOUT_HOST", picked
+
+
+def test_a_title_the_owner_chose_or_a_draw_he_named_is_not_stopped(tmp_path):
+    from src.autoslice.manual_lane import step6_title, subtitle_track
+
+    ctx = make_ctx(tmp_path, remote=FakeRemote(), cpa=FakeCpa([]), session=SESSION)
+    _speakers(ctx, "连线", "连线", "李豆沙")
+    found = {"readings": [{"host_role": "旁观"}, {"host_role": "旁观"}],
+             "merged": {"host_role": "旁观", "host_role_why": "", "main_line": "别人的事"}}
+    track = subtitle_track.read_track(ctx.clip_dir)
+    assert step6_title._host_stop(ctx, found, track, owner_chose=True, cpa_calls=[]) is None
+    stop = step6_title._host_stop(ctx, found, track, owner_chose=False, cpa_calls=[])
+    assert stop is not None and stop.reason == "NOT_ABOUT_HOST" and "她的句子 1/3" in stop.note
+
+
+def test_host_lines_counts_her_label_and_reads_an_unlabelled_clip_as_all_hers():
+    assert title_understanding.host_lines([None, None]) == (2, 2)
+    assert title_understanding.host_lines(["李豆沙", "连线", None]) == (1, 3)
+    assert title_understanding.host_lines(["连线", "连线"]) == (0, 2)
+    assert title_understanding.host_lines([]) == (0, 0)
+
+
+def test_the_owners_mark_is_read_from_the_selection_file_the_clip_was_made_from(tmp_path):
+    from src.autoslice.manual_lane import clip_init
+    from src.autoslice.manual_lane.state import StateError
+
+    marked = _selection(tmp_path, "semantictalk_1_2", owner_mark={"uid": 1})
+    assert clip_init.owner_marked({"cid": "semantictalk_1_2_11231200", "selection_file": marked})   # lane cid suffix
+    assert not clip_init.owner_marked({"cid": "x"})                                                   # made by hand
+    assert not clip_init.owner_marked({"cid": "y", "selection_file": _selection(tmp_path, "y", hook="h")})
+    with pytest.raises(StateError, match="not found"):
+        clip_init.owner_marked({"cid": "z", "selection_file": marked})
+
+
+@pytest.mark.parametrize("role", [None, "", "路人", "旁观者"])
+def test_a_reading_without_a_known_host_role_is_asked_again_then_unreadable(tmp_path, role):
+    reading = dict(json.loads(READING))
+    if role is None:
+        del reading["host_role"]
+    else:
+        reading["host_role"] = role
+    _, cpa, picked = _pick(tmp_path, [], readings=json.dumps(reading, ensure_ascii=False))
+    assert isinstance(picked, StepOutcome) and picked.reason == "CPA_RESPONSE_UNPARSEABLE"
+    assert "host_role must be one of 主角/参与/旁观" in picked.note and "title-merge" not in cpa.calls
+
+
+def test_both_prompts_ask_where_she_stands_and_say_a_reaction_is_hers(tmp_path):
+    _, cpa, _ = _pick(tmp_path, [_answer(_cand("她半分钟后真的破防了"))])
+    for prompt in (cpa.prompts[0], cpa.prompts[cpa.calls.index("title-merge")]):
+        assert '"host_role": "主角/参与/旁观 三选一"' in prompt and "她的反应就是主线" in prompt
+        assert "光接话、回应别人的求助不算参与" in prompt and "只读她的句子，看得出这段在讲什么吗" in prompt
+        assert "真分不清参与还是旁观时选" in prompt and "李豆沙在" in prompt and "{host}" not in prompt
+
 
 # ----- the channel's basic facts ----------------------------------------------------------------------------------
 def test_basic_facts_are_the_persona_without_its_cover_section_and_keep_sections_after_it():

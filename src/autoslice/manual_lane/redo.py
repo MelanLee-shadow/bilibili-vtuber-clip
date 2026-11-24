@@ -15,7 +15,14 @@ transitive closure), so the next `run` makes them again; nothing is run here and
    when it also holds the tags: those tags are made again, and step 7 would otherwise apply to them what an earlier review
    chose on other materials (11-18: a recut clip lost 「养」 again, removed by the review before the cut was redone);
 4. deletes the files the forgotten steps recorded as products (inside the clip directory, never under import/ or
-   import_cover/), and for the package step the directories it builds by "reuse when present" (pkg, fmr, fmr_source).
+   import_cover/), and the directories a step builds and reuses when present: the package's pkg, fmr, fmr_source; the
+   review is forgotten by `stage_package.forget_review`, the one function every path that forgets the review calls,
+   which also deletes what the review resumes from on disk: its post-review listening rounds (wide_held.ROOT: the
+   snapshot it takes before listening is kept when present and each round's listening is read back from its file, so a
+   redo that left them replayed the old run's review text and rounds on the new subtitles -- 11-24 316670, redone on
+   11-24, carried the 11-23 report that called the collab a solo session and never listened again to its five held
+   lines) and the focused review calls' saved questions (cpa/: a question with no record naming it is resumed as a
+   request in flight, so with the rounds gone the review still asked 11-23's question and got 11-23's answer back).
 
 Why deleted, not left to be overwritten: the runner reuses a step when its record is DONE and its products exist, and a few
 steps keep a file they find (step 8's local copy of the cut), so a file left from the old run could stand in for the new
@@ -37,7 +44,7 @@ from typing import TYPE_CHECKING, TypedDict, cast
 from . import compilation, cover_import, package_guards
 from .reselect import SUPERSEDED
 from .runner import Ctx, Step
-from .stage_package import package_dir
+from .stage_package import forget_review, package_dir
 from .stages import DEPENDS, STEPS
 from .state import ClipState, StateError
 from .step_import import IMPORT_DIR
@@ -46,8 +53,7 @@ from .trim_run import AdaptersFor
 if TYPE_CHECKING:
     from src.autoslice.cpa_gemini_client import JsonValue
 
-REVIEW_STATE_KEYS = ("review", "rewind", "revisions")       # state keys that belong to the review step's products
-RESIDUE_DIRS = {"package": ("pkg", "fmr", "fmr_source")}      # built by the step, found and reused by it, not recorded
+RESIDUE_DIRS = {"package": ("pkg", "fmr", "fmr_source")}     # built by the step, found and reused by it, not recorded
 KEPT_DIRS = (IMPORT_DIR, cover_import.IMPORT_DIR)             # the owner's finished subtitles and cover
 
 
@@ -132,8 +138,9 @@ def redo_clip(*, task: Path, cid: str, start: str, adapters_for: AdaptersFor) ->
     for key in cleared:
         state.data["steps"].pop(key)
     if "review" in keys:
-        for name in (*REVIEW_STATE_KEYS, *(("reviewed_tags",) if "tags" in keys else ())):
-            cast("MutableMapping[str, JsonValue]", state.data).pop(name, None)
+        deleted += forget_review(state, clip_dir)
+        if "tags" in keys:
+            cast("MutableMapping[str, JsonValue]", state.data).pop("reviewed_tags", None)
     state.save()
     with (clip_dir / "PROCESS.md").open("a", encoding="utf-8") as fh:
         fh.write(f"\n## 重做 · 从 {keys[0]} · {stamp}\n\n- {summary}；"
