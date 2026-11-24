@@ -170,9 +170,10 @@ def test_with_more_than_two_people_moss_does_not_label_and_v8_does(tmp_path):
             {"status": "OK", "segments": [dict(s, text="x") for s in _segs()]}), encoding="utf-8")
     rows, _calls, process = si._speaker_clusters(ctx, [{"text": "a"}, {"text": "b"}, {"text": "c"}], _cues(), _v8_rows())
     assert embedded == []                                                   # not named by the voiceprint at all
-    assert all(r["label_from"] == "v8" and "moss" not in r["clusters"] for r in rows)
+    assert all(r.get("label_from", "v8") == "v8" and not r.get("clusters") for r in rows)   # neither MOSS nor MAI
     assert rows[2]["speaker"] == sv.GUEST_LABEL                              # v8's guest stays the guest
-    assert any("本场 3 人（MOSS 分出 2 组" in p and "标签用 v8（主播声纹逐句判）" in p for p in process)
+    assert any("本场 3 人（MOSS 分出 2 组" in p and "标签用 v8（主播声纹逐句判）" in p and "MAI 的分簇都不参与" in p
+               for p in process)
 
 
 def test_three_people_and_three_moss_clusters_still_label_by_v8(tmp_path):
@@ -193,5 +194,111 @@ def test_three_people_and_three_moss_clusters_still_label_by_v8(tmp_path):
 
     ctx.adapters.cpa = Cpa()
     rows, _calls, process = si._speaker_clusters(ctx, [{"text": "a"}, {"text": "b"}, {"text": "c"}], _cues(), _v8_rows())
-    assert all(r["label_from"] == "v8" for r in rows)
+    assert all(r.get("label_from", "v8") == "v8" for r in rows)
     assert any("本场 3 人（MOSS 分出 3 组" in p for p in process)
+
+
+class _AskedCpa:
+    def __init__(self):
+        self.asked = []
+
+    def ask(self, *, call_id, prompt_text, model, effort, remote_dir):
+        self.asked.append(call_id)
+        return {"call_id": call_id, "model": model, "effort": effort, "rc": 0, "elapsed_s": 0.1,
+                "response_text": "[]", "stderr_tail": ""}    # the reading cannot tell: no answer for any cue
+
+
+def _trio_case(tmp_path, participants, mai_segs, rows):
+    session = dict(SESSION, participants=participants)
+    cpa = _AskedCpa()
+    ctx = make_ctx(tmp_path, remote=FakeRemote(), cpa=cpa, session=session)
+    (ctx.clip_dir / "witness").mkdir(parents=True)
+    (ctx.clip_dir / "witness/mai.json").write_text(json.dumps(
+        {"status": "OK", "segments": [dict(s, text="x") for s in mai_segs]}), encoding="utf-8")
+    cues = [{"start_ms": r["start_ms"], "end_ms": r["end_ms"]} for r in rows]
+    out, _calls, process = si._speaker_clusters(ctx, [{"text": "x"} for _ in rows], cues, rows)
+    return out, process, cpa
+
+
+def test_with_more_than_two_people_a_mai_cluster_does_not_tie_the_hosts_lines_away(tmp_path):
+    """, 850930 (李豆沙×礼墨Sumi×安晚awa): v8 heard the host on 6 lines (up to 0.99), but MAI named its
+    clusters by the v8 label of most of their time; the host is the minority of every mixed cluster, so every cluster
+    was the guest, each of her lines split v8 against MAI -- a tie -- and the reading, unable to tell, made it the
+    guest: the clip had no line of hers.  Replayed on 维护者's 11-23 trio labels: v8 alone 18 of 173 wrong, with the
+    MAI tie 52.  With more than two people MAI's clusters do not vote; her line stays hers, nothing is asked."""
+    rows = [{"start_ms": 0, "end_ms": 2000, "speaker": sv.HOST, "conf": 0.95, "units": 1},
+            {"start_ms": 2000, "end_ms": 6000, "speaker": sv.GUEST_LABEL, "conf": 0.9, "units": 3},
+            {"start_ms": 6000, "end_ms": 8000, "speaker": sv.GUEST_LABEL, "conf": 0.9, "units": 1}]
+    mixed = [{"start_ms": 0, "end_ms": 6000, "speaker": "S1"}, {"start_ms": 6000, "end_ms": 8000, "speaker": "S2"}]
+    trio = [["李豆沙"], ["礼墨Sumi"], ["安晚awa"]]
+    out, process, cpa = _trio_case(tmp_path / "trio", trio, mixed, rows)
+    assert [r["speaker"] for r in out] == [sv.HOST, sv.GUEST_LABEL, sv.GUEST_LABEL] and cpa.asked == []
+    assert any("MAI 的分簇都不参与" in p for p in process)
+    # control: two people, the same MAI clusters still flag and the tie still goes to the reading (unchanged)
+    out, process, cpa = _trio_case(tmp_path / "duo", [["李豆沙"], ["礼墨Sumi"]], mixed, rows)
+    assert cpa.asked and out[0]["speaker"] == sv.GUEST_LABEL and out[0]["speaker_how"] == "打平，拿不准按嘉宾色"
+    assert any("MAI 簇（按 v8 重叠定名）只作辅助信号" in p for p in process)
+
+
+def test_an_unnamed_guest_or_a_recorded_speaker_count_is_a_person_for_the_three_person_rule(tmp_path):
+    """Review of the fix : "more than two" counted only named participants, while the thresholds and the
+    review count participant groups (speaker_v8.people) -- a trio with an unnamed 连线, or a session recording
+    speaker_count 3, kept MAI voting and tied the host's line away again."""
+    rows = [{"start_ms": 0, "end_ms": 2000, "speaker": sv.HOST, "conf": 0.95, "units": 1},
+            {"start_ms": 2000, "end_ms": 6000, "speaker": sv.GUEST_LABEL, "conf": 0.9, "units": 3},
+            {"start_ms": 6000, "end_ms": 8000, "speaker": sv.GUEST_LABEL, "conf": 0.9, "units": 1}]
+    mixed = [{"start_ms": 0, "end_ms": 6000, "speaker": "S1"}, {"start_ms": 6000, "end_ms": 8000, "speaker": "S2"}]
+    for i, parts in enumerate(([["李豆沙"], ["礼墨Sumi"], ["连线"]], [["李豆沙"], ["连线"], ["连线"]])):
+        out, process, cpa = _trio_case(tmp_path / str(i), parts, mixed, rows)
+        assert out[0]["speaker"] == sv.HOST and cpa.asked == [], parts
+        assert any("本场 3 人" in p and "MAI 的分簇都不参与" in p for p in process)
+    session = dict(SESSION, participants=[["李豆沙"], ["礼墨Sumi"]], speaker_count=3)
+    cpa = _AskedCpa()
+    ctx = make_ctx(tmp_path / "count", remote=FakeRemote(), cpa=cpa, session=session)
+    (ctx.clip_dir / "witness").mkdir(parents=True)
+    (ctx.clip_dir / "witness/mai.json").write_text(json.dumps(
+        {"status": "OK", "segments": [dict(s, text="x") for s in mixed]}), encoding="utf-8")
+    out, _calls, _process = si._speaker_clusters(ctx, [{"text": "x"} for _ in rows],
+                                                 [{"start_ms": r["start_ms"], "end_ms": r["end_ms"]} for r in rows], rows)
+    assert out[0]["speaker"] == sv.HOST and cpa.asked == []
+
+
+def test_a_single_mai_cluster_beside_moss_does_not_tie_a_line_moss_leaves_to_v8(tmp_path):
+    """Two people, MOSS labels by its voiceprint-named clusters but does not cover the last line, where v8 hears the
+    host; MAI heard one cluster for the whole clip (the guest's, who talks most).  On that line the routes are v8 and
+    MAI only: the one name may not tie it away."""
+    def script(name, body, remote):
+        from src.autoslice.manual_lane.adapters import RemoteResult
+        if name == "s4-moss-voiceprint":
+            remote.files[f"{si.SPEAKER_V8_ROOT}/clip-moss/out/centroids.json"] = json.dumps(
+                {"S1": {"n": 1, "dur_ms": 2000, "cos": 0.71}, "S2": {"n": 1, "dur_ms": 4000, "cos": 0.22}}).encode()
+            return RemoteResult(0, "CLUSTER_COS_DONE\n", "")
+        return RemoteResult(0, "", "")
+
+    rows = [{"start_ms": 0, "end_ms": 2000, "speaker": sv.HOST, "conf": 0.95, "units": 1},
+            {"start_ms": 2000, "end_ms": 6000, "speaker": sv.GUEST_LABEL, "conf": 0.9, "units": 3},
+            {"start_ms": 6000, "end_ms": 8000, "speaker": sv.HOST, "conf": 0.95, "units": 1}]
+    cpa = _AskedCpa()
+    ctx = make_ctx(tmp_path, remote=FakeRemote(on_script=script), cpa=cpa,
+                   session=dict(SESSION, participants=[["李豆沙"], ["礼墨Sumi"]]))
+    (ctx.clip_dir / "witness").mkdir(parents=True)
+    moss = [{"start_ms": 0, "end_ms": 2000, "speaker": "S1"}, {"start_ms": 2000, "end_ms": 6000, "speaker": "S2"}]
+    for name, segs in (("moss", moss), ("mai", [{"start_ms": 0, "end_ms": 8000, "speaker": "S1"}])):
+        (ctx.clip_dir / f"witness/{name}.json").write_text(json.dumps(
+            {"status": "OK", "segments": [dict(s, text="x") for s in segs]}), encoding="utf-8")
+    out, _calls, process = si._speaker_clusters(ctx, [{"text": "x"} for _ in rows],
+                                                [{"start_ms": r["start_ms"], "end_ms": r["end_ms"]} for r in rows], rows)
+    assert out[2]["speaker"] == sv.HOST and "mai" not in out[2]["clusters"]
+    assert out[0]["label_from"] == "moss" and "mai" in out[0]["clusters"]       # MAI still the third route there
+    assert any("MAI 只分出一组，只在 MOSS 给标签的句上作辅助信号" in p for p in process)
+
+
+def test_a_single_mai_cluster_does_not_vote_against_v8(tmp_path):
+    """MAI hearing one cluster names everyone alike: where v8 labels (no MOSS) that one name can only tie the other
+    person's lines, so it does not vote."""
+    rows = [{"start_ms": 0, "end_ms": 2000, "speaker": sv.HOST, "conf": 0.95, "units": 1},
+            {"start_ms": 2000, "end_ms": 6000, "speaker": sv.GUEST_LABEL, "conf": 0.9, "units": 3}]
+    one = [{"start_ms": 0, "end_ms": 6000, "speaker": "S1"}]
+    out, process, cpa = _trio_case(tmp_path, [["李豆沙"], ["礼墨Sumi"]], one, rows)
+    assert [r["speaker"] for r in out] == [sv.HOST, sv.GUEST_LABEL] and cpa.asked == []
+    assert any("MAI 只分出一组" in p for p in process)

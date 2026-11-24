@@ -247,7 +247,8 @@ def _speaker_from_preds(ctx: Ctx, units: Sequence[speaker_v8.SpeakerChunk],
     decision = _local(ctx, "speaker/decision.json")
     # mode: MOSS/MAI clusters gave the labels (8c1), or v8 alone with its mid band read by CPA, or v8 alone
     mid_review = any(d.get("review_route") == speaker_v8.MID_REVIEW for d in decided)
-    mode = "linked_v8_mid_review" if mid_review else "linked_v8_clusters" if cluster_process else "linked_v8"
+    mode = ("linked_v8_mid_review" if mid_review else
+            "linked_v8_clusters" if any(d.get("clusters") for d in decided) else "linked_v8")
     if video is not None:
         mode = OTHER_VOICES_MODE
     elif heard is not None:
@@ -309,7 +310,7 @@ def _moss_voiceprint_names(ctx: Ctx, segs: Sequence[speaker_v8.EngineSegment]) -
     units = [{"id": f"m{i}", "seg": cid, "s": int(sg["start_ms"]), "e": int(sg["end_ms"]), "lw": int(sg["end_ms"])}
              for i, sg in enumerate(segs)]
     index = [{"id": f"m{i}", "cluster": str(sg["speaker"])} for i, sg in enumerate(segs)]
-    if len({r["cluster"] for r in index}) < 2 or len(participant_names(ctx.session)) > 2:
+    if len({r["cluster"] for r in index}) < 2 or speaker_v8.people(ctx.session) > 2:
         return None     # one cluster, or more than two people: v8 labels (moss_short_of_people)
     units_local, index_local = _local(ctx, "speaker/moss-units.json"), _local(ctx, "speaker/moss-index.json")
     cent_local = _local(ctx, "speaker/moss-centroids.json")
@@ -339,6 +340,8 @@ class _Clusters:
     named: dict[str, dict[str, speaker_v8.ClusterName]] = field(default_factory=dict)
     segments: dict[str, list[speaker_v8.EngineSegment]] = field(default_factory=dict)
     short_of_people: tuple[int, int] | None = None     # (MOSS clusters, people of the session) when more than two people
+    many_people: int = 0                                # the session's people when more than two: no engine clusters
+    mai_one_cluster: bool = False                      # MAI heard one cluster: it cannot tell anyone apart
 
 
 class WitnessDocument(TypedDict, total=False):
@@ -349,8 +352,22 @@ class WitnessDocument(TypedDict, total=False):
 def _witness_clusters(ctx: Ctx, cues: Sequence[speaker_v8.MillisecondSpan],
                       decided: Sequence[speaker_v8.SpeakerDecision]) -> _Clusters:
     """MOSS clusters named by the host's voiceprint (v8 overlap when it cannot), MAI's named by v8 overlap; MOSS
-    without a voiceprint naming is dropped (v8 labels, MAI flags)."""
+    without a voiceprint naming is dropped (v8 labels, MAI flags).
+
+    A cluster votes only where it can be one person.  With more than two people neither engine's clusters take part
+    (8c1 and the MAI naming were validated on two-person collabs; three people in two or three clusters mix): the
+    review counts the routes, and with v8 and MAI alone one MAI vote against v8 is a tie that an unsure reading turns
+    into the guest.  MAI names a cluster by the v8 label of most of its time, and the host is the minority of every
+    mixed cluster, so every MAI cluster was the guest in all three of 维护者's 11-23 trio clips and in 850930: replayed
+    on his 173 labelled lines (53 the host's), v8 alone is wrong on 18, v8 with MAI's vote and an unsure review on 52
+    -- 1493180, 1627860, 397290 and 850930 came out with no line of the host's at all .  The same holds
+    for MAI hearing a single cluster on any line v8 labels (no MOSS, or a line MOSS does not cover): one name for
+    everyone can only tie the other person's lines.  Beside a MOSS label MAI stays the third route as before (three
+    routes never tie).  "More than two" is speaker_v8.people, the count the thresholds and the review use: an unnamed
+    guest (连线) or a recorded speaker_count is a person too."""
     cl = _Clusters()
+    if speaker_v8.people(ctx.session) > 2:     # the count the thresholds use: an unnamed guest (连线) is a person too
+        cl.many_people = speaker_v8.people(ctx.session)
     for name in ("moss", "mai"):
         path = _local(ctx, f"witness/{name}.json")
         try:
@@ -366,10 +383,29 @@ def _witness_clusters(ctx: Ctx, cues: Sequence[speaker_v8.MillisecondSpan],
         cl.segments[name] = segs
     if "moss" in cl.named and not any("cos" in v for v in cl.named["moss"].values()):
         cl.engines.pop("moss")   # MOSS without a voiceprint naming (one cluster, embedding failed): v8 labels, MAI flags
-        found, people = len({str(sg["speaker"]) for sg in cl.segments["moss"]}), len(participant_names(ctx.session))
+        found, people = len({str(sg["speaker"]) for sg in cl.segments["moss"]}), speaker_v8.people(ctx.session)
         if found >= 2 and people > 2:
             cl.short_of_people = (found, people)
+    one = "mai" in cl.engines and len({str(sg["speaker"]) for sg in cl.segments["mai"]}) < 2
+    if "mai" in cl.engines and (cl.many_people or (one and "moss" not in cl.engines)):
+        cl.engines.pop("mai")
+        cl.mai_one_cluster = not cl.many_people
+    elif one:   # beside MOSS: the single cluster stays the third route only on the lines MOSS labels
+        cl.engines["mai"] = [m if lead is not None else None for m, lead in zip(cl.engines["mai"], cl.engines["moss"])]
+        cl.mai_one_cluster = True
     return cl
+
+
+def _no_cluster_line(cl: _Clusters) -> str:
+    """Why no engine's clusters take part (_witness_clusters), for PROCESS; empty when nothing was set aside."""
+    if cl.many_people:
+        moss = f"MOSS 分出 {cl.short_of_people[0]} 组；" if cl.short_of_people else ""
+        return (f"本场 {cl.many_people} 人（{moss}按组定名只在两人联动上验证过，三人以上一组可能混两个人），"
+                "标签用 v8（主播声纹逐句判）；MOSS、MAI 的分簇都不参与：MAI 按 v8 重叠给每组定名，"
+                f"{channel.HOST}在混着人的组里都占少数，每组都成了嘉宾，v8 判为{channel.HOST}的句会被它打成平局")
+    if cl.mai_one_cluster:
+        return "MAI 只分出一组（分不出人），标签按 v8 的句它不参与"
+    return ""
 
 
 def _cluster_line(cl: _Clusters, fused: Sequence[speaker_v8.SpeakerDecision], low: Sequence[int]) -> str:
@@ -377,10 +413,10 @@ def _cluster_line(cl: _Clusters, fused: Sequence[speaker_v8.SpeakerDecision], lo
         f"{e.upper()} " + "，".join(f"{c}→{v['speaker']}" + (f"（与主播登记声纹余弦 {v['cos']}）" if "cos" in v else "")
                                     for c, v in cl.named[e].items()) for e in cl.engines)
             + (f"；标签用 MOSS 簇（8c1：余弦最高的一簇是{channel.HOST}，其余是嘉宾）" if "moss" in cl.engines else
-               f"；本场 {cl.short_of_people[1]} 人（MOSS 分出 {cl.short_of_people[0]} 组；按组定名只在两人联动上验证过，"
-               f"三人以上一组可能混两个人），标签用 v8（主播声纹逐句判）"
-               if cl.short_of_people else "；MOSS 无可用簇，标签用 v8")
-            + "，MAI 簇（按 v8 重叠定名）只作辅助信号"
+               "；MOSS 无可用簇，标签用 v8")
+            + ("" if "mai" not in cl.engines else
+               "，MAI 只分出一组，只在 MOSS 给标签的句上作辅助信号" if cl.mai_one_cluster else
+               "，MAI 簇（按 v8 重叠定名）只作辅助信号")
             + f"；与 v8、MAI 都一致 {len(fused) - len(low)} 句，不一致或句内两人、待 CPA 复核 {len(low)} 句")
 
 
@@ -500,10 +536,11 @@ def _speaker_clusters(ctx: Ctx, final_cues: Sequence[SrtCue], cues: Sequence[spe
     if not cl.engines:
         fused = _v8_mid_rows(decided)
         low = [i for i, r in enumerate(fused) if r["speaker_confidence"] == "低"]
+        aside = [line for line in (_no_cluster_line(cl),) if line]
         if not low:
-            return [cast(speaker_v8.SpeakerDecision, dict(d)) for d in decided], [], []
-        process = [f"v8 中间带（e05 §10 第3款，lane_rules speaker）：{len(low)} 句交 CPA 复核"
-                   f"（两人场按语境与轮次，拿不准按嘉宾色；三人以上只认明确的内容证据）"]
+            return [cast(speaker_v8.SpeakerDecision, dict(d)) for d in decided], [], aside
+        process = [*aside, f"v8 中间带（e05 §10 第3款，lane_rules speaker）：{len(low)} 句交 CPA 复核"
+                           f"（两人场按语境与轮次，拿不准按嘉宾色；三人以上只认明确的内容证据）"]
     else:
         fused = speaker_v8.fuse(decided, cl.engines)
         for row, before in zip(fused, decided, strict=True):
