@@ -8,9 +8,10 @@ from __future__ import annotations
 import json
 
 import pytest
+from fakes import ACCEPTED_JUDGE, quality_fail
 from test_fmr_calls import Recorder, _patch, _prepared
 
-from src.autoslice.manual_lane import package_guards, title_acceptance, title_history
+from src.autoslice.manual_lane import package_guards, title_acceptance, title_authority, title_history
 from src.autoslice.manual_lane import stage_package as sp
 from src.autoslice.manual_lane.adapters import RemoteResult
 
@@ -357,3 +358,55 @@ def test_the_owners_own_title_and_an_accepted_title_pass_the_title_guard(tmp_pat
     assert title_acceptance.problem(ctx.clip_dir) == ""
     with pytest.raises(ValueError):
         title_acceptance.write(ctx.clip_dir, "【李豆沙】标题", "forced", None)
+
+
+
+# ----- a title judged by another version of the skill is judged by the current one (owner, U471) ----------
+OLDER_SKILL = [{"name": "lidousha-title-cover/SKILL.md", "path": "SKILL.md", "sha256": "0" * 64}]
+
+
+def _judged_by_older_skill(ctx, by="step6"):
+    """The receipt 316670 and 673640 carried after skill 230a913: both judges passed, reading the version before."""
+    title_acceptance.write(ctx.clip_dir, "【李豆沙】标题", by, {**ACCEPTED_JUDGE, "authorities": OLDER_SKILL})
+
+
+def test_a_title_judged_by_an_older_skill_is_judged_again_and_goes_on_when_both_judges_pass(tmp_path, monkeypatch):
+    ctx = _clip(tmp_path, FINAL, None)
+    _judged_by_older_skill(ctx)
+    out, rec = _title_refused(ctx, monkeypatch)
+    assert out.ok, out.note
+    asked = [c for c in ctx.adapters.cpa.calls if "current-title-judge" in c]
+    assert sorted(asked) == ["current-title-judge-1", "current-title-judge-2", "current-title-judge-q1", "current-title-judge-q2"]
+    receipt = json.loads((ctx.clip_dir / title_acceptance.RECEIPT).read_text(encoding="utf-8"))
+    assert receipt["by"] == "step6" and receipt["judge"]["authorities"] == title_authority.judge_authorities()
+    assert any("按现行技能重判" in line for line in out.process) and len(out.cpa) == 4
+
+
+def test_a_title_the_current_skill_fails_stops_step_8_before_anything_is_built(tmp_path, monkeypatch):
+    ctx = _clip(tmp_path, FINAL, None)
+    _judged_by_older_skill(ctx)
+    ctx.adapters.cpa.quality = [quality_fail("流水账")]
+    out, rec = _title_refused(ctx, monkeypatch)
+    assert not out.ok and out.reason == "TITLE_NOT_ACCEPTED"
+    assert "另一版标题技能" in out.note and "从第 6 步重做" in out.note
+    assert rec.calls == [] and not (ctx.clip_dir / "pkg/final.mp4").exists()
+    assert json.loads((ctx.clip_dir / title_acceptance.RECEIPT).read_text(encoding="utf-8"))["judge"]["authorities"] == OLDER_SKILL
+
+
+def test_a_title_judged_by_the_current_skill_or_the_owners_own_is_not_judged_again(tmp_path, monkeypatch):
+    ctx = _clip(tmp_path / "current", FINAL, None)
+    out, _rec = _title_refused(ctx, monkeypatch)
+    assert out.ok and not [c for c in ctx.adapters.cpa.calls if "title-judge" in c]
+    owner = _clip(tmp_path / "owner", FINAL, None)
+    title_acceptance.write(owner.clip_dir, "【李豆沙】标题", "owner", None)
+    out, _rec = _title_refused(owner, monkeypatch)
+    assert out.ok and not [c for c in owner.adapters.cpa.calls if "title-judge" in c]
+
+
+def test_a_kept_published_title_is_judged_again_by_the_writing_judge_alone(tmp_path, monkeypatch):
+    ctx = _clip(tmp_path, FINAL, None)
+    _judged_by_older_skill(ctx, by="online")
+    out, _rec = _title_refused(ctx, monkeypatch)
+    assert out.ok, out.note
+    assert sorted(c for c in ctx.adapters.cpa.calls if "title-judge" in c) == ["current-title-judge-q1", "current-title-judge-q2"]
+    assert json.loads((ctx.clip_dir / title_acceptance.RECEIPT).read_text(encoding="utf-8"))["by"] == "online"

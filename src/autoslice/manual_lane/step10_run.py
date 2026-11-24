@@ -25,7 +25,7 @@ import re
 import shutil
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from . import step10_commands as commands
 from . import step10_readback as readback
@@ -37,6 +37,9 @@ from .step10_route import FIRST, NONE, Route, RouteRefused
 from .step10_rules import RULES_UNSET, UploadRules, UploadRulesUnset
 from .step10_rules import load as load_rules
 from .step_io import _fail, _run_remote
+
+if TYPE_CHECKING:
+    from .state import CpaEvent
 
 STATE_FILE, ONLINE_FILE, SCHEMA = "upload_state.json", "online.json", "manual-lane.upload-state.v1"
 COMMAND_FAILED = "UPLOAD_COMMAND_FAILED"
@@ -70,6 +73,21 @@ class _Run:
         self.job: commands.Job
         self.state: dict[str, Any] = {"commands": []}
         self.last = RemoteResult(0, "", "")
+        self.cpa: list[CpaEvent] = []
+        self.notes: list[str] = []
+
+    def _title_current(self) -> None:
+        """Before anything is sent (no upload started, no formal plan made): the title judged by the skill as it is now
+        (step6_title.title_current), so a skill changed after step 8 does not let an older verdict through."""
+        if self.state.get("upload_started_at") or "plan" in self.state["done"]:
+            return
+        from .step6_title import title_current
+
+        said = title_current(self.ctx, self.cpa)
+        if isinstance(said, StepOutcome):
+            stop(said.reason or "TITLE_NOT_ACCEPTED", said.note)
+        if said:
+            self.notes.append(said)
 
     # ----- state and commands ------------------------------------------------------------------------------------------
     def _save(self) -> None:
@@ -299,7 +317,7 @@ class _Run:
     def process(self) -> list[str]:
         route = self.route
         lines = [f"路线：{route.why}", *(f"【注意·不拦】{flag}" for flag in route.flags)] if route else []
-        return lines + [f"{c['command']}：返回码 {c['rc']}，{c['started']} → {c['finished']}" for c in self.state["commands"]]
+        return lines + self.notes + [f"{c['command']}：返回码 {c['rc']}，{c['started']} → {c['finished']}" for c in self.state["commands"]]
 
     def execute(self) -> StepOutcome:
         try:
@@ -313,6 +331,7 @@ class _Run:
             path = self._online(route, record=None, problems=[])
             return StepOutcome(True, products={"online": str(path)}, note=f"无需上线：{route.why}", process=self.process())
         cover_material(self.ctx)
+        self._title_current()
         self.job = self._job(route)
         if "audit" not in self.state["done"]:
             self._audit()
@@ -328,7 +347,7 @@ class _Run:
         if problems:
             stop(READBACK_MISMATCH, "回读与应上线的内容不一致（线上已改，不回滚；online.json 记下了读到的）：" + "；".join(problems))
         self._mark("readback")
-        return StepOutcome(True, products={"online": str(path)}, process=self.process(),
+        return StepOutcome(True, products={"online": str(path)}, process=self.process(), cpa=self.cpa,
                            note=f"已上线并回读核对：{route.kind}，{self.job.bvid}；{self._streak()}")
 
     def _streak(self) -> str:

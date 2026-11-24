@@ -4,7 +4,9 @@ Every writer of title/title.txt that sends a title out writes `title/accepted.js
 revision keeping the published title it re-judged (`online`), the review's rewrite (`review`), or the channel owner's own
 title (`owner`, which no judge overrules).  Step 8 refuses a title that has no receipt, whose receipt names another title,
 or whose judges did not both pass (the fact judge, skill 八.3, and the writing judge, 八.4).  A writer added later that
-forgets the receipt stops at step 8 instead of publishing an unjudged title.
+forgets the receipt stops at step 8 instead of publishing an unjudged title.  A receipt whose judges read another version
+of the skill (`stale`) is judged again by the current one at step 8 and before step 10 sends anything
+(step6_title.title_current); a title the current skill fails stops there.
 
 Owner (U471): 「你看看这标题起的，遵循了标题skill吗遵循标题原则吗？昨天刚刚强调的」 — the 11-23 collab titles
 went out with only the fact judge passed, and two were chosen with no judge passed at all (`forced`)."""
@@ -12,7 +14,7 @@ went out with only the fact judge passed, and two were chosen with no judge pass
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 RECEIPT = "title/accepted.json"
@@ -28,6 +30,27 @@ def write(clip_dir: Path, title: str, by: str, judge: Mapping[str, object] | Non
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"title": title.strip(), "by": by, "judge": dict(judge) if judge else None},
                                ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def stale(clip_dir: Path, current: Sequence[Mapping[str, object]]) -> dict[str, object] | None:
+    """The receipt, when its judges read other files than `current` (the skill and its two judge prompts as they are
+    now: title_authority.judge_authorities); None when it was judged by the current skill, is the owner's own title, or
+    there is no readable receipt (problem() reports that).  Owner (U471): a title goes out only if it follows
+    the skill — the skill as it is when the title goes out, not the one it was judged by before the skill changed
+    (316670 and 673640, redone from step 9 after skill 230a913, still carried titles judged by the version before)."""
+    try:
+        receipt = json.loads((clip_dir / RECEIPT).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(receipt, dict) or receipt.get("by") not in BY or receipt["by"] == "owner":
+        return None
+    judge = receipt.get("judge")
+    judged = judge.get("authorities") if isinstance(judge, dict) else None
+    return receipt if not isinstance(judged, list) or _files(judged) != _files(current) else None
+
+
+def _files(records: Sequence[object]) -> set[tuple[str, str]]:
+    return {(str(r.get("path")), str(r.get("sha256"))) for r in records if isinstance(r, Mapping)}
 
 
 def problem(clip_dir: Path) -> str:

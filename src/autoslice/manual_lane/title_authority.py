@@ -215,6 +215,14 @@ def speaker_srt(track: Sequence[TrackCue], rename: Mapping[str, str]) -> str:
 JUDGE_RUNS = 2   # judge-prompt.md: 每条标题跑两次
 
 
+def judge_authorities() -> list[SourceRecord]:
+    """The files the two judges read now (the skill, the fact judge's and the writing judge's prompts), as
+    step6_title.title_judge records them in a title's receipt: a receipt naming other hashes was judged by another
+    version of the skill."""
+    editorial = load_title_editorial_method()
+    return [s.as_dict() for s in dict.fromkeys((editorial.sources[0], editorial.judge_source, editorial.quality_source))]
+
+
 def judge_prompt(track_lines: str, title: str, cover_lines: Sequence[str]) -> tuple[str, tuple[Source, ...]]:
     """judge-prompt.md's template (the text after its first `---` line) with @@RULES@@ = section 八 item 3 verbatim,
     @@SUBTITLE@@ = the final subtitles with speakers, and the title's prefix, body and two cover lines."""
