@@ -28,6 +28,7 @@ from . import (
     text_overlap,
     title_authority,
     title_history,
+    title_acceptance,
     title_names,
     title_person,
     title_pick,
@@ -70,6 +71,8 @@ if TYPE_CHECKING:
 
 
 TITLE_MAX_REGEN = 2                              # regeneration rounds after the first candidate round
+JUDGED_PER_ROUND = 3     # candidates of a round sent to the judges in turn (owner-taste order) before the round is rewritten
+REWRITE_ONLY = {"cover_lines_too_long"}   # failed checks repaired after the pick (cover_retry): the last round judges them
 TITLE_RULES = ("banned", "prefix", "on_stage_known", "named", "involved_named", "prefix_names", "swap", "punchline",
                "person", "quotes", "canonical_names", "publish_gate", "published_duplicate", "batch_opener",
                "label_as_name", "first_person_speaker")
@@ -90,7 +93,8 @@ class JudgeRun(title_authority.JudgeVerdict):
 class TitleJudge(TypedDict):
     overall: str
     fail_reasons: list[str]
-    runs: list[JudgeRun]
+    runs: list[JudgeRun]                       # the fact judge (skill 八.3)
+    quality: list[JudgeRun]                    # the writing judge (skill 八.4: section 四)
     authorities: list[title_authority.SourceRecord]
 
 
@@ -247,15 +251,20 @@ def title_checks(cand: TitleCandidate, names: Sequence[str], subtitles: str, *,
 
 
 ONLINE_RECHECK = ("quotes", "first_person_speaker", "person", "label_as_name")   # what a revision's subtitles decide
-TITLE_RECEIPT_HINT = "authorized_upload.py title-repair，再 manual_lane record-title-receipt"
+TITLE_RECEIPT_HINT = ("lane_publish.py metadata-plan / metadata-run / metadata-verify-live（第 90 步；改后登记表改绑这条稿件），"
+                      "再 manual_lane redo --from 8 重建修订依据")
 
 
-def online_title_breaks(ctx: Ctx, names: Sequence[str], online: str) -> list[str]:
-    """Why the published title a revision would keep is wrong on the revision's subtitles and speakers: the rules that
-    read the subtitles (ONLINE_RECHECK); [] when it still holds.  Owner 11-23 (U467), after the speakers of three collab
-    clips were redone from his labels: 「所以这个标题可能需要重起，你去看一眼」 — 625460's title quoted a line the
-    labels gave to two people, and the revision had kept it without looking."""
-    _track, _lines, srt_text = title_inputs(ctx, names)
+def online_title_breaks(ctx: Ctx, names: Sequence[str], online: str, cpa_calls: list[CpaEvent]
+                        ) -> tuple[list[str], TitleJudge | None] | StepOutcome:
+    """Why the published title a revision would keep is wrong on the revision's subtitles and speakers, and the judges'
+    verdict on it: the rules that read the subtitles (ONLINE_RECHECK), then the writing judge (skill 八.4) when they hold;
+    ([], verdict) when it still holds.  Owner 11-23 (U467), after the speakers of three collab clips were redone from his
+    labels: 「所以这个标题可能需要重起，你去看一眼」 — 625460's title quoted a line the labels gave to two people, and the
+    revision had kept it without looking; 11-24 (U471): 897000's revision kept 「挖矿找不到暂停决定退出，…玩爽了」, which
+    only the writing judge would have stopped.  The fact judge is not asked: the cover the title was published with is
+    not this round's, and the subtitles' facts are what ONLINE_RECHECK reads."""
+    _track, lines, srt_text = title_inputs(ctx, names)
     checks = title_checks(cast(TitleCandidate, {"title": online, "on_stage": list(names)}), names, srt_text,
                           self_report=False)
     why, at = {}, 0
@@ -263,7 +272,13 @@ def online_title_breaks(ctx: Ctx, names: Sequence[str], online: str) -> list[str
         width = len(publish_gate_violations(online)) if key == "publish_gate" else 1
         why[key] = "；".join(checks["reasons"][at:at + width])
         at += width
-    return [why[k] for k in ONLINE_RECHECK if k in why]
+    breaks = [why[k] for k in ONLINE_RECHECK if k in why]
+    if breaks:
+        return breaks, None
+    judged = title_judge(ctx, "title-judge-online", lines, online, (), cpa_calls, facts=False)
+    if isinstance(judged, StepOutcome):
+        return judged
+    return (["线上标题不合 skill 第四节：" + "；".join(judged["fail_reasons"])] if judged["overall"] != "PASS" else []), judged
 
 
 def checks_on(ctx: Ctx, title: str) -> TitleChecks:
@@ -311,21 +326,28 @@ def _round_order(parsed: TitleAnswer, cands: Sequence[TitleCandidate]) -> list[i
 
 
 def title_judge(ctx: Ctx, call_id: str, track_lines: str, title: str, cover_lines: Sequence[str],
-                cpa_calls: list[CpaEvent]) -> TitleJudge | StepOutcome:
-    """The skill's acceptance judge (section 8 item 3 through references/judge-prompt.md), run JUDGE_RUNS times as
-    judge-prompt.md says; PASS only when every run says PASS.  Returns the verdict (each run, the authority hashes),
-    or the failed outcome when CPA cannot be reached.
+                cpa_calls: list[CpaEvent], *, facts: bool = True) -> TitleJudge | StepOutcome:
+    """The skill's acceptance judges, the one interface every title that goes out passes (step 6's pick, a revision's
+    published title it would keep, the review's rewrite): the fact judge (section 八 item 3, references/judge-prompt.md,
+    JUDGE_RUNS runs) and the writing judge (八 item 4: section 四, references/quality-judge-prompt.md, QUALITY_RUNS
+    runs, each verdict recomputed from its items).  PASS only when every run of both says PASS.  Returns the verdict
+    (each run, the authority hashes), or the failed outcome when CPA cannot be reached.
 
-    TASK-31: the runs are independent answers to the same prompt (each has its own cache entry, `run`), so they are
-    asked at once (parallel.run, bound lane_rules concurrency.cpa); runs and records are reported in run order."""
+    Owner (U471): 「你看看这标题起的，遵循了标题skill吗遵循标题原则吗？」 — the 11-23 collab titles
+    passed the fact judge, the only judge then, and broke section 四 (no mishap, a narrator's 流水账, a 我 nobody could
+    place).  TASK-31: the runs are independent answers (each its own cache entry, `run`), asked at once (parallel.run,
+    bound lane_rules concurrency.cpa); runs and records are reported in run order.  `facts=False` asks the writing
+    judge alone (a published title a revision would keep, whose facts ONLINE_RECHECK reads)."""
     prompt, sources = title_authority.judge_prompt(track_lines, title, cover_lines)
-    numbers = list(range(1, title_authority.JUDGE_RUNS + 1))
-    records = parallel.run(numbers,
-                           lambda run: _ask_cpa(ctx, f"{call_id}-{run}", prompt, run=run,
-                                                purpose="title-judge"),
-                           provider="cpa")
+    q_prompt, q_sources = title_authority.quality_prompt(track_lines, title)
+    asks = [(f"{call_id}-{run}", prompt, run, title_authority.judge_verdict)
+            for run in range(1, title_authority.JUDGE_RUNS + 1) if facts]
+    asks += [(f"{call_id}-q{run}", q_prompt, run, title_authority.quality_verdict)
+             for run in range(1, title_authority.QUALITY_RUNS + 1)]
+    records = parallel.run(asks, lambda a: _ask_cpa(ctx, a[0], a[1], run=a[2], purpose="title-judge"), provider="cpa")
     runs: list[JudgeRun] = []
-    for run, record in zip(numbers, records, strict=True):
+    quality: list[JudgeRun] = []
+    for (cid, _prompt, _run, verdict), record in zip(asks, records, strict=True):
         cpa_calls.append(_log(record))
         if not _cpa_ok(record):
             return _fail("CPA_CALL_FAILED", record.get("stderr_tail", ""), cpa=cpa_calls)
@@ -333,11 +355,15 @@ def title_judge(ctx: Ctx, call_id: str, track_lines: str, title: str, cover_line
             parsed = _json_from_text(record["response_text"])
         except ValueError:
             parsed = None
-        runs.append(cast(JudgeRun, dict(title_authority.judge_verdict(parsed), call_id=f"{call_id}-{run}")))
+        (quality if verdict is title_authority.quality_verdict else runs).append(
+            cast(JudgeRun, dict(verdict(parsed), call_id=cid)))
     failed = [r for r in runs if r["overall"] != "PASS"]
-    return {"overall": "FAIL" if failed else "PASS",
-            "fail_reasons": list(dict.fromkeys(x for r in failed for x in r["fail_reasons"])),
-            "runs": runs, "authorities": [s.as_dict() for s in sources]}
+    q_failed = [r for r in quality if r["overall"] != "PASS"]
+    reasons = [*(x for r in failed for x in r["fail_reasons"]),
+               *("写法（第四节）：" + x for r in q_failed for x in r["fail_reasons"])]
+    return {"overall": "FAIL" if failed or q_failed else "PASS", "fail_reasons": list(dict.fromkeys(reasons)),
+            "runs": runs, "quality": quality,
+            "authorities": [s.as_dict() for s in dict.fromkeys([*sources, *q_sources])]}
 
 
 def title_inputs(ctx: Ctx, names: Sequence[str]) -> tuple[list[TrackCue], str, str]:
@@ -424,9 +450,10 @@ def _title_rounds(ctx: Ctx, names: Sequence[str], cpa_calls: list[CpaEvent]
                              title_understanding.Understanding, title_verdicts.OwnerVerdicts,
                              circle_context.CircleContext] | StepOutcome:
     """Round 0 is the first candidate round; then up to TITLE_MAX_REGEN regenerations with the failed checks and the
-    judge's reasons as feedback, until a candidate passes both.  In each round the first candidate (in the owner-taste
-    order of title_pick) that passes the deterministic checks goes to the judge, unless that order puts a predicted 差
-    first; a judged PASS ends the rounds.  Returns the rounds and the method the prompt carried (with the owner
+    judge's reasons as feedback, until a candidate passes both.  In each round the candidates that pass the deterministic
+    checks go to the judges (title_judge: facts and writing) one after another in the owner-taste order of title_pick,
+    leaving out one predicted 差, at most JUDGED_PER_ROUND of them, none when that order puts a predicted 差 first; a
+    judged PASS ends the rounds.  Returns the rounds and the method the prompt carried (with the owner
     verdicts' hash apart), the reading of the clip the prompt was built on (title_understanding), the owner's
     verdicts the prompt carried and the circle background looked up for it (circle_context), or the failed outcome.
     When he did, the candidate whose body is that body (after canon_text and the formal-name case fix) is the only one
@@ -562,16 +589,27 @@ def _title_rounds(ctx: Ctx, names: Sequence[str], cpa_calls: list[CpaEvent]
             candidates[index]["pick"] = item
         rounds.append({"call_id": call_id, "parsed": parsed_answer, "candidates": candidates, "order": pick.order,
                        "pick_call": pick.call})
-        first = next((candidates[i] for i in pick.order if candidates[i]["checks"]["ok"]
-                      and (not approved or candidates[i].get("owner_approved"))), None)
-        if first is not None and not pick.top_is_bad:       # a first predicted 差 is not sent to the judge: rewrite
-            judged = title_judge(ctx, f"title-judge-r{round_no}", lines, first["title"], cover, cpa_calls)
+        # The last round has no rewrite after it, so what only asks for a rewrite no longer keeps a candidate from the
+        # judges: a first predicted 差 (the round is rewritten, none judged) and a cover text too long (cover_retry
+        # shortens it after the pick).  Before 11-24 the best of the rounds was taken anyway (forced); now that nothing
+        # is chosen by score, a clip would otherwise stop with titles no judge ever read (review).
+        last = round_no == TITLE_MAX_REGEN
+        tries = [] if pick.top_is_bad and not last else [
+            candidates[i] for i in pick.order
+            if (candidates[i]["checks"]["ok"] or (last and set(candidates[i]["checks"]["failed"]) <= REWRITE_ONLY))
+            and (not approved or candidates[i].get("owner_approved"))
+            and not title_pick.predicted_bad(candidates[i].get("pick"))][:JUDGED_PER_ROUND]
+        for k, cand in enumerate(tries):      # in the owner-taste order; one predicted 差 is not sent to the judges
+            judged = title_judge(ctx, f"title-judge-r{round_no}" + (f"c{k + 1}" if k else ""), lines, cand["title"],
+                                 cover, cpa_calls)
             if isinstance(judged, StepOutcome):
                 return judged
-            first["judge"] = judged
-            first["accepted"] = judged["overall"] == "PASS"
-            if first["accepted"]:
+            cand["judge"] = judged
+            cand["accepted"] = judged["overall"] == "PASS"
+            if cand["accepted"]:
                 break
+        if any(c["accepted"] for c in tries):
+            break
         feedback = _feedback_text(candidates)
         if approved:
             feedback += "\n第一条候选的 title_body 必须逐字是：" + approved["title_body"]
@@ -701,7 +739,13 @@ def _pick_title(ctx: Ctx) -> tuple[str, list[str], list[str], list[CpaEvent], Pa
     edited = (title_history.edited_title(ctx, publication_cid(str(ctx.state.data["clip"].get("cid") or ctx.clip_dir.name)))
               if revises and not (approved or retitle) else None)
     online = None if approved or retitle else title_online(ctx.clip_dir, ctx.state, edited)   # a revision keeps the title online
-    stale = online_title_breaks(ctx, names, online) if online else []
+    stale: list[str] = []
+    online_judge: TitleJudge | None = None
+    if online:
+        rechecked = online_title_breaks(ctx, names, online, cpa_calls)
+        if isinstance(rechecked, StepOutcome):
+            return rechecked
+        stale, online_judge = rechecked
     if stale:                       # the revision's subtitles show the published title wrong: it is not kept silently
         online = None
     title = online or title
@@ -717,16 +761,19 @@ def _pick_title(ctx: Ctx) -> tuple[str, list[str], list[str], list[CpaEvent], Pa
                           "batch": history.batch, "notes": history.notes},
         "cover_lines": cover_lines}, ensure_ascii=False, indent=2), encoding="utf-8")
     judge = chosen.get("judge") or cast(TitleJudge, {})
+    stops = forced and not online and not chosen.get("owner_approved")     # skill 八.4: no title is chosen by score
     process = [f"标题候选：{len(rounds)} 轮，共 {sum(len(r['candidates']) for r in rounds)} 个；"
-               f"采用：{title}（自检 {chosen['checks']['score']}/{len(TITLE_RULES)}，"
-               f"判官 {judge.get('overall', '未判')}）",
+               + ("没有采用（没有一条过两位判官）；自检得分最高的一条：" if stops else "采用：")
+               + f"{title}（自检 {chosen['checks']['score']}/{len(TITLE_RULES)}，判官 {judge.get('overall', '未判')}）"
+               + ("：" + "；".join([*chosen["checks"]["reasons"], *(judge.get("fail_reasons") or ["未送判官"])])[:600]
+                  if stops else ""),
                "标题提示词读取的权威：" + "；".join(f"{s['name']} {s['sha256'][:12]}" for s in authorities)]
     process.append(canon_line)
     if online:
         process.append(f"修订沿用线上标题：{online}（已发布稿件的修订不改题；改题走改题回执，本轮候选只用来定封面字）")
     elif stale:
         process.append("线上标题对不上本轮字幕，不沿用：" + "；".join(stale)
-                       + f"；改用本轮选出的标题，发布前须先用只改标题的工具改题并登记回执（{TITLE_RECEIPT_HINT}）")
+                       + f"；改用本轮选出的标题，发布前须先把线上标题改成它（{TITLE_RECEIPT_HINT}）")
     elif retitle and not approved:
         process.append(f"频道主要求换标题（原话：{retitle['evidence']}），修订不沿用线上标题，用本轮选出的标题；"
                        f"标题与封面字按他说的看点写（笑点：{retitle['punchline']}），不按模型自己读出的主线")
@@ -740,12 +787,16 @@ def _pick_title(ctx: Ctx) -> tuple[str, list[str], list[str], list[CpaEvent], Pa
         process.append("频道主选定的标题未过检查：" + "；".join([*chosen["checks"]["reasons"],
                                                        *(judge.get("fail_reasons") or ["未送判官"])])
                        + "（仍采用它，行政亲审前请处理）")
-    elif forced:
-        process.append("候选全部未通过自检与判官（两轮重写之后），按得分取最高的一条继续；未过的项：" +
-                       "；".join([*chosen["checks"]["reasons"], *(judge.get("fail_reasons") or ["未送判官"])])
-                       + "（行政亲审前请处理）")
+    elif forced and online:
+        process.append("本轮候选没有一条过两位判官，沿用的线上标题已重判通过；本轮候选只用来定封面字")
+    if stops:
+        return _fail(title_acceptance.NOT_ACCEPTED, f"{len(rounds)} 轮候选没有一条过两位判官（事实、写法），不按得分硬选："
+                     + "；".join([*chosen["checks"]["reasons"], *(judge.get("fail_reasons") or ["未送判官"])])[:600],
+                     cpa=cpa_calls, process=process)
     title_path = _local(ctx, "title/title.txt")
     title_path.write_text(title + "\n", encoding="utf-8")
+    title_acceptance.write(ctx.clip_dir, title, "online" if online else "owner" if chosen.get("owner_approved") and forced
+                           else "step6", online_judge if online else None if forced else judge)
     if not _cover_lines_shape_ok(cover_lines) and cover_import.imported_cover(ctx) is None:      # an imported cover brings its own lines
         return _fail("COVER_LINES_INVALID", f"cover_lines={cover_lines}", cpa=cpa_calls)
     process.append(f"封面文字（CPA）：{' / '.join(cover_lines)}")

@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from fakes import FakeCpa, FakeRemote, make_ctx, pick_answer, srt
+from fakes import FakeCpa, FakeRemote, make_ctx, pick_answer, quality_fail, srt
 
 from src.autoslice.manual_lane import stage_impl as si
 from src.autoslice.manual_lane import title_pick, title_verdicts
@@ -184,15 +184,63 @@ def test_a_first_ranked_candidate_predicted_bad_is_rewritten_not_judged(tmp_path
     assert [c["round"] for c in _record(ctx)["candidates"]] == [0, 0, 0, 1, 1, 1]
 
 
-def test_rewrites_used_up_keep_the_best_ranked_of_the_candidates_that_can_be_used(tmp_path):
+def test_rewrites_used_up_stop_the_step_instead_of_taking_the_best_ranked(tmp_path):
+    """Skill 八.4: three rounds with no title both judges pass mean no title, not the best-scored one (owner,
+    U471: two of the 11-23 collab titles went out chosen this way, with no judge passed).  The old code took round 0's
+    best ranked and went on."""
+    rounds = [[f"第{r}轮的{b}" for b in BODIES] for r in range(3)]
+    ctx, cpa, picked = _run(tmp_path, [_answer(*map(_cand, bodies)) for bodies in rounds],
+                            pick=[pick_answer([2, 0, 1], {2: "差"}) for _ in range(3)], quality=[quality_fail()] * 6)
+    assert isinstance(picked, StepOutcome) and picked.reason == "TITLE_NOT_ACCEPTED", picked
+    assert "不按得分硬选" in picked.note
+    judged = sorted({c.rsplit("-", 1)[0] for c in cpa.calls if c.startswith("title-judge")})
+    assert judged == ["title-judge-r2", "title-judge-r2c2"]          # only the last round, where no rewrite follows
+    assert not (ctx.clip_dir / "title/title.txt").exists() and not (ctx.clip_dir / "title/accepted.json").exists()
+
+
+def test_the_last_round_judges_the_others_when_its_first_ranked_is_predicted_bad(tmp_path):
+    """A first predicted 差 rewrites the round unjudged; the last round has no rewrite after it, so its other candidates
+    still go to the judges (review the clip stopped with titles no judge read)."""
     rounds = [[f"第{r}轮的{b}" for b in BODIES] for r in range(3)]
     ctx, cpa, picked = _run(tmp_path, [_answer(*map(_cand, bodies)) for bodies in rounds],
                             pick=[pick_answer([2, 0, 1], {2: "差"}) for _ in range(3)])
     assert not isinstance(picked, StepOutcome), picked
-    assert not any(c.startswith("title-judge") for c in cpa.calls)
-    assert picked[0] == f"【李豆沙】{rounds[0][2]}"                    # the first round's best ranked
-    assert _record(ctx)["forced"] is True
-    assert any("候选全部未通过" in line and "未送判官" in line for line in picked[2])
+    assert picked[0] == f"【李豆沙】第2轮的{BODIES[0]}"
+    assert sorted({c.rsplit("-", 1)[0] for c in cpa.calls if c.startswith("title-judge")}) == ["title-judge-r2"]
+    receipt = json.loads((ctx.clip_dir / "title/accepted.json").read_text(encoding="utf-8"))
+    assert receipt["by"] == "step6" and receipt["judge"]["overall"] == "PASS"
+
+
+def test_a_candidate_the_writing_judge_fails_is_not_taken_and_the_next_ranked_is_judged(tmp_path):
+    """Owner (U471): the fact judge alone passed 「游戏结算问完怎么没拿第一和MVP，自己接出…」, a 流水账 section
+    四 rejects.  Now each judged candidate also goes to the writing judge (skill 八.4); the old code asked the fact judge
+    only and took the first ranked candidate it passed."""
+    ctx, cpa, picked = _run(tmp_path, [_answer(*map(_cand, BODIES))], pick=[pick_answer([0, 1, 2])],
+                            quality=[quality_fail("流水账：问完……接出……")])
+    assert not isinstance(picked, StepOutcome), picked
+    assert picked[0] == f"【李豆沙】{BODIES[1]}"                     # the second ranked, in the same round
+    record = _record(ctx)
+    first, second = record["candidates"][0], record["candidates"][1]
+    assert first["accepted"] is False and all(r["overall"] == "PASS" for r in first["judge"]["runs"])   # facts held
+    assert "写法（第四节）：流水账：问完……接出……" in first["judge"]["fail_reasons"]
+    assert second["accepted"] is True and record["rounds"] == ["title"] and not record["forced"]
+    assert [c for c in cpa.calls if c.startswith("title-judge")] == [
+        "title-judge-r0-1", "title-judge-r0-2", "title-judge-r0-q1", "title-judge-r0-q2",
+        "title-judge-r0c2-1", "title-judge-r0c2-2", "title-judge-r0c2-q1", "title-judge-r0c2-q2"]
+    receipt = json.loads((ctx.clip_dir / "title/accepted.json").read_text(encoding="utf-8"))
+    assert receipt["by"] == "step6" and receipt["title"] == picked[0] and receipt["judge"]["overall"] == "PASS"
+    assert len(receipt["judge"]["quality"]) == 2
+
+
+def test_at_most_three_candidates_of_a_round_are_judged_before_it_is_rewritten(tmp_path):
+    bodies = [*BODIES, "她第四条候选也照样破防了"]
+    rounds = [[f"第{r}轮的{b}" for b in bodies] for r in range(3)]
+    ctx, cpa, picked = _run(tmp_path, [_answer(*map(_cand, b)) for b in rounds],
+                            pick=[pick_answer([0, 1, 2, 3]) for _ in range(3)], quality=[quality_fail()] * 9)
+    assert isinstance(picked, StepOutcome) and picked.reason == "TITLE_NOT_ACCEPTED"
+    judged = sorted({c.rsplit("-", 1)[0] for c in cpa.calls if c.startswith("title-judge")})
+    assert judged == ["title-judge-r0", "title-judge-r0c2", "title-judge-r0c3", "title-judge-r1", "title-judge-r1c2",
+                      "title-judge-r1c3", "title-judge-r2", "title-judge-r2c2", "title-judge-r2c3"]
 
 
 # ----- a ranking that cannot be had ---------------------------------------------------------------------------------
@@ -217,6 +265,9 @@ def test_a_ranking_that_fails_or_never_fits_falls_back_to_the_models_recommendat
                for line in picked[2])
     assert all("pick" not in c for c in _record(ctx)["candidates"])
     assert len(_judged_titles(cpa)) == 1 and BODIES[1] in _judged_titles(cpa)[0]
+    # the step went on without the ranking: its record says so, and no other call's record does (auto_run.provider_failed)
+    assert {c["call_id"].startswith("title-pick") for c in picked[3] if c.get("tolerated")} == {True}
+    assert any(c["call_id"].startswith("title-pick") and c.get("tolerated") for c in picked[3])
 
 
 def test_a_bad_answer_is_asked_again_and_the_good_one_after_it_is_used(tmp_path):

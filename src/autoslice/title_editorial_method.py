@@ -12,6 +12,7 @@ from typing import TypedDict
 SKILL_FILE = "SKILL.md"
 EXAMPLES_FILE = "references/examples.md"
 JUDGE_FILE = "references/judge-prompt.md"
+QUALITY_FILE = "references/quality-judge-prompt.md"     # section 八 item 4: how the title is written (section 四)
 SKILL_TITLE_SECTIONS = (("## 四、", "## 五、"), ("## 五、", "## 六、"))
 JUDGE_RULES_START = "3. **意思**"
 JUDGE_RULES_LAST = "**判官守则**"
@@ -45,6 +46,8 @@ class ProjectionData(TypedDict):
     sources: list[SourceRecord]
     judge_template: str
     judge_source: SourceRecord
+    quality_template: str
+    quality_source: SourceRecord
 
 
 @dataclass(frozen=True)
@@ -92,11 +95,12 @@ def judge_rules(skill_text: str) -> str:
     return "\n".join(lines[i:j + 1]).strip()
 
 
-def judge_template(judge_file_text: str) -> str:
-    """The acceptance judge's template: judge-prompt.md after its first `---` line, which must carry @@RULES@@."""
+def judge_template(judge_file_text: str, name: str = "judge-prompt.md") -> str:
+    """A judge's template: the file after its first `---` line, which must carry @@RULES@@ (judge-prompt.md, the fact
+    judge of section 八 item 3; quality-judge-prompt.md, the writing judge of item 4)."""
     parts = judge_file_text.split("\n---\n", 1)
     if len(parts) != 2 or JUDGE_TEMPLATE_SLOT not in parts[1]:
-        raise AuthorityError(f"judge-prompt.md: template after '---' with {JUDGE_TEMPLATE_SLOT} not found")
+        raise AuthorityError(f"{name}: template after '---' with {JUDGE_TEMPLATE_SLOT} not found")
     return parts[1].strip()
 
 
@@ -108,6 +112,16 @@ class EditorialMethod:
     sources: tuple[Source, Source]    # the files the ordinary title prompt carries: SKILL.md, examples.md
     judge_template: str           # references/judge-prompt.md after `---`
     judge_source: Source          # judge-prompt.md, recorded with the judge's prompt but not part of `sources`
+    quality_template: str         # references/quality-judge-prompt.md after `---`: section 四 judged (八 item 4)
+    quality_source: Source
+
+
+def title_rules(method: EditorialMethod) -> str:
+    """Skill section 四 (titles) alone: the head of `sections`, what the writing judge is given verbatim."""
+    head, found, _ = method.sections.partition("\n\n" + SKILL_TITLE_SECTIONS[1][0])
+    if not found:
+        raise AuthorityError("title editorial method: section 五 not found in sections")
+    return head.strip()
 
 
 def cover_text(method: EditorialMethod) -> str:
@@ -125,6 +139,7 @@ def extract_title_editorial_method(root: Path) -> EditorialMethod:
     skill, s_skill = _read(f"{name}/{SKILL_FILE}", root / SKILL_FILE)
     examples, s_examples = _read(f"{name}/{EXAMPLES_FILE}", root / EXAMPLES_FILE)
     judge, s_judge = _read(f"{name}/{JUDGE_FILE}", root / JUDGE_FILE)
+    quality, s_quality = _read(f"{name}/{QUALITY_FILE}", root / QUALITY_FILE)
     return EditorialMethod(
         sections="\n\n".join(_between(skill, a, b, where="SKILL.md") for a, b in SKILL_TITLE_SECTIONS),
         judge_rules=judge_rules(skill),
@@ -132,6 +147,8 @@ def extract_title_editorial_method(root: Path) -> EditorialMethod:
         sources=(s_skill, s_examples),
         judge_template=judge_template(judge),
         judge_source=s_judge,
+        quality_template=judge_template(quality, "quality-judge-prompt.md"),
+        quality_source=s_quality,
     )
 
 
@@ -151,8 +168,11 @@ def projection_data(method: EditorialMethod) -> ProjectionData:
     ]
     judge_source: SourceRecord = {"name": method.judge_source.name, "path": JUDGE_FILE,
                                   "sha256": method.judge_source.sha256}
+    quality_source: SourceRecord = {"name": method.quality_source.name, "path": QUALITY_FILE,
+                                    "sha256": method.quality_source.sha256}
     return {"sections": method.sections, "judge_rules": method.judge_rules, "examples": method.examples,
-            "sources": sources, "judge_template": method.judge_template, "judge_source": judge_source}
+            "sources": sources, "judge_template": method.judge_template, "judge_source": judge_source,
+            "quality_template": method.quality_template, "quality_source": quality_source}
 
 
 def _source_record(source: object, skill: str | None, source_path: str, path: Path) -> Source:
@@ -174,16 +194,17 @@ def load_title_editorial_method() -> EditorialMethod:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise AuthorityError(f"title editorial method unreadable: {path}: {exc}") from exc
-    keys = {"sections", "judge_rules", "examples", "sources", "judge_template", "judge_source"}
+    keys = {"sections", "judge_rules", "examples", "sources", "judge_template", "judge_source", "quality_template",
+            "quality_source"}
     if not isinstance(payload, dict) or set(payload) != keys:
         raise AuthorityError(f"title editorial method malformed: {path}: expected {', '.join(sorted(keys))}")
-    sections, rules, examples, template = (payload[key] for key in ("sections", "judge_rules", "examples",
-                                                                     "judge_template"))
-    if (not all(isinstance(value, str) and value.strip() for value in (sections, rules, examples, template))
+    sections, rules, examples, template, quality = (payload[key] for key in ("sections", "judge_rules", "examples",
+                                                                              "judge_template", "quality_template"))
+    if (not all(isinstance(value, str) and value.strip() for value in (sections, rules, examples, template, quality))
             or not sections.startswith(SKILL_TITLE_SECTIONS[0][0])
             or f"\n\n{SKILL_TITLE_SECTIONS[1][0]}" not in sections
             or not rules.startswith(JUDGE_RULES_START) or JUDGE_RULES_LAST not in rules
-            or JUDGE_TEMPLATE_SLOT not in template):
+            or JUDGE_TEMPLATE_SLOT not in template or JUDGE_TEMPLATE_SLOT not in quality):
         raise AuthorityError(f"title editorial method malformed: {path}: missing required editorial text")
     raw_sources = payload["sources"]
     if not isinstance(raw_sources, list) or len(raw_sources) != 2:
@@ -192,4 +213,5 @@ def load_title_editorial_method() -> EditorialMethod:
     skill = first.name.split("/", 1)[0]
     second = _source_record(raw_sources[1], skill, EXAMPLES_FILE, path)
     judge_source = _source_record(payload["judge_source"], skill, JUDGE_FILE, path)
-    return EditorialMethod(sections, rules, examples, (first, second), template, judge_source)
+    quality_source = _source_record(payload["quality_source"], skill, QUALITY_FILE, path)
+    return EditorialMethod(sections, rules, examples, (first, second), template, judge_source, quality, quality_source)

@@ -216,6 +216,7 @@ def _explain(ctx: Ctx, pending: list[TermContext], numbered: dict[int, str], cpa
     answer: object = None
     try:
         answer, reason = ask_json(ctx, call_id, prompt, purpose=PURPOSE, shape=SHAPE_REASON, cpa_calls=cpa_calls,
+                                  goes_on=True,
                                   problem=lambda value: _answer_problem(value, terms))
     except Exception as exc:  # noqa: BLE001 - recorded as the reason; the step is never blocked by this call
         reason = f"{type(exc).__name__}: {str(exc)[:200]}"

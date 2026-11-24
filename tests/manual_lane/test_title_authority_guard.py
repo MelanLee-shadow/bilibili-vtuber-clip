@@ -114,8 +114,15 @@ def test_the_title_prompt_carries_the_skill_the_style_note_and_the_corpus_with_t
     template = (skill / "references/judge-prompt.md").read_text(encoding="utf-8").split("\n---\n", 1)[1]
     assert template.strip().splitlines()[0] in judge and "@@" not in judge
     chosen = json.loads((ctx.clip_dir / "title/candidates.json").read_text(encoding="utf-8"))["chosen"]
-    assert {a["sha256"] for a in chosen["judge"]["authorities"]} == {_sha(skill / "SKILL.md"),
-                                                                     _sha(skill / "references/judge-prompt.md")}
+    assert {a["sha256"] for a in chosen["judge"]["authorities"]} == {
+        _sha(skill / "SKILL.md"), _sha(skill / "references/judge-prompt.md"),
+        _sha(skill / "references/quality-judge-prompt.md")}
+    # the writing judge (skill 八.4) is its own template too, with section 四 verbatim in its rules slot
+    writing = cpa.prompts[cpa.calls.index("title-judge-r0-q1")]
+    q_template = (skill / "references/quality-judge-prompt.md").read_text(encoding="utf-8").split("\n---\n", 1)[1]
+    assert q_template.strip().splitlines()[0] in writing and "@@" not in writing
+    assert all(line in writing for line in _section(skill / "SKILL.md", "## 四、", "## 五、"))
+    assert not any(line in writing for line in _section(skill / "SKILL.md", "## 五、", "## 六、") if len(line) > 12)
     for line in _section(skill / "SKILL.md", "## 四、", "## 五、") + _section(skill / "SKILL.md", "## 五、", "## 六、"):
         assert line in prompt                                      # the skill's title and cover-text sections, verbatim
     assert all(line in prompt for line in _section(STYLE, "## 标题", "## "))
@@ -130,7 +137,8 @@ def _projection_of(skill, output):
     return output
 
 
-def _skill_copy(original, destination, names=("SKILL.md", "references/examples.md", "references/judge-prompt.md")):
+def _skill_copy(original, destination, names=("SKILL.md", "references/examples.md", "references/judge-prompt.md",
+                                              "references/quality-judge-prompt.md")):
     for name in names:
         target = destination / name
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -196,6 +204,9 @@ def test_the_title_step_reads_the_skill_text_from_the_projection_not_the_skill_d
     assert method.judge_rules in judge and "@@" not in judge and "标题：【李豆沙】标题" in judge
     assert judge.startswith(method.judge_template.split("@@")[0])
     assert [s.sha256 for s in judge_sources] == [method.sources[0].sha256, method.judge_source.sha256]
+    writing, writing_sources = authority.quality_prompt("1 0:00.00 [李豆沙] 句子", "【李豆沙】标题")
+    assert title_editorial_method.title_rules(method) in writing and "@@" not in writing and "正文：标题" in writing
+    assert [s.sha256 for s in writing_sources] == [method.sources[0].sha256, method.quality_source.sha256]
     ctx, cpa, _ = _pick(tmp_path / "clip", [_answer(GOOD)])
     chosen = json.loads((ctx.clip_dir / "title/candidates.json").read_text(encoding="utf-8"))
     assert {a["sha256"] for a in chosen["authorities"]} >= {s.sha256 for s in method.sources}

@@ -10,7 +10,7 @@ import json
 import pytest
 from test_fmr_calls import Recorder, _patch, _prepared
 
-from src.autoslice.manual_lane import package_guards, title_history
+from src.autoslice.manual_lane import package_guards, title_acceptance, title_history
 from src.autoslice.manual_lane import stage_package as sp
 from src.autoslice.manual_lane.adapters import RemoteResult
 
@@ -311,3 +311,49 @@ def test_a_check_that_gave_no_result_stops_step_8_with_its_own_reason(tmp_path, 
     _patch(monkeypatch, Recorder())
     out = sp.step8_package(ctx)
     assert not out.ok and out.reason == "AUDIO_CHECK_FAILED" and "no audio stream" in out.note
+
+
+# ----- the title went out only if both judges passed (skill 八.3-4; owner, U471) ---------------------------
+def _title_refused(ctx, monkeypatch):
+    rec = Recorder()
+    _patch(monkeypatch, rec)
+    out = sp.step8_package(ctx)
+    return out, rec
+
+
+def test_a_title_with_no_acceptance_receipt_stops_step_8(tmp_path, monkeypatch):
+    """A writer of title.txt that skipped the judges (the old forced pick, a writer added later) stops here."""
+    ctx = _clip(tmp_path, FINAL, None)
+    (ctx.clip_dir / title_acceptance.RECEIPT).unlink()
+    out, rec = _title_refused(ctx, monkeypatch)
+    assert not out.ok and out.reason == "TITLE_NOT_ACCEPTED" and "从第 6 步重做" in out.note
+    assert rec.calls == [] and not (ctx.clip_dir / "pkg/final.mp4").exists()
+
+
+def test_a_title_changed_after_it_was_judged_stops_step_8(tmp_path, monkeypatch):
+    ctx = _clip(tmp_path, FINAL, None)
+    (ctx.clip_dir / "title/title.txt").write_text("【李豆沙】后来手改的标题\n", encoding="utf-8")
+    out, rec = _title_refused(ctx, monkeypatch)
+    assert out.reason == "TITLE_NOT_ACCEPTED" and "不是过判记录里的那条" in out.note and rec.calls == []
+
+
+@pytest.mark.parametrize("judge", [
+    {"overall": "FAIL", "fail_reasons": ["写法（第四节）：流水账"], "runs": [], "quality": []},
+    {"overall": "PASS", "fail_reasons": [], "runs": [{"overall": "PASS"}], "quality": []},          # no writing judge
+    {"overall": "PASS", "fail_reasons": [], "runs": [{"overall": "PASS"}],
+     "quality": [{"overall": "PASS"}, {"overall": "FAIL", "fail_reasons": ["流水账"]}]},
+])
+def test_a_title_the_judges_did_not_both_pass_stops_step_8(tmp_path, monkeypatch, judge):
+    ctx = _clip(tmp_path, FINAL, None)
+    title_acceptance.write(ctx.clip_dir, "【李豆沙】标题", "step6", judge)
+    out, rec = _title_refused(ctx, monkeypatch)
+    assert out.reason == "TITLE_NOT_ACCEPTED" and rec.calls == []
+
+
+def test_the_owners_own_title_and_an_accepted_title_pass_the_title_guard(tmp_path):
+    ctx = _clip(tmp_path, FINAL, None)
+    assert title_acceptance.problem(ctx.clip_dir) == ""
+    title_acceptance.write(ctx.clip_dir, "【李豆沙】标题", "owner", None)        # no judge overrules the owner
+    assert title_acceptance.problem(ctx.clip_dir) == ""
+    with pytest.raises(ValueError):
+        title_acceptance.write(ctx.clip_dir, "【李豆沙】标题", "forced", None)

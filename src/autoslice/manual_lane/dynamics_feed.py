@@ -56,7 +56,8 @@ def _text(value: object) -> str:
 
 
 def recent(uid: int) -> list[dict[str, str]]:
-    """The account's latest dynamics that carry text: [{"published_at" (UTC, ISO), "text"}], newest first; a picture-only
+    """The account's latest dynamics that carry text: [{"dynamic_id", "published_at" (UTC, ISO), "text"}], newest first
+    (the dynamics crawler's item fields; the news crawler judges them, news_event_crawler.post_batches); a picture-only
     post has no text and is left out."""
     data = _get(FEED.format(uid=int(uid)), referer=f"https://space.bilibili.com/{int(uid)}/dynamic").get("data")
     rows = data.get("items") if isinstance(data, dict) else None
@@ -70,5 +71,5 @@ def recent(uid: int) -> list[dict[str, str]]:
         text = _text(row.get("content")) if opus.isdigit() else ""
         if text:
             posted = dt.datetime.fromtimestamp((int(opus) >> 32) + EPOCH, dt.timezone.utc)
-            out.append({"published_at": posted.isoformat(timespec="seconds"), "text": text})
+            out.append({"dynamic_id": opus, "published_at": posted.isoformat(timespec="seconds"), "text": text})
     return out

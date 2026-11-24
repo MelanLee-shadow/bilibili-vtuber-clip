@@ -14,6 +14,7 @@ from src.autoslice import title_editorial_method, title_policy
 REPO = Path(__file__).resolve().parents[1]
 SRT = "1\n00:00:00,000 --> 00:00:02,000\n测试字幕\n"
 JUDGE_FILE_TEXT = "# 判官模板\n\n---\n@@RULES@@\n@@SUBTITLE@@\n"
+QUALITY_FILE_TEXT = "# 写法判官模板\n\n---\n@@RULES@@\n@@SUBTITLE@@\n@@TITLE@@\n"
 
 
 def _prompt(**overrides):
@@ -55,6 +56,7 @@ def test_new_source_reaches_builder_and_offline_transport(tmp_path, monkeypatch)
     )
     (skill / "references/examples.md").write_text("# 示范\n" + new_example + "\n", encoding="utf-8")
     (skill / "references/judge-prompt.md").write_text(JUDGE_FILE_TEXT, encoding="utf-8")
+    (skill / "references/quality-judge-prompt.md").write_text(QUALITY_FILE_TEXT, encoding="utf-8")
     outputs = [tmp_path / "projection.json", tmp_path / "projection-again.json"]
     for output in outputs:
         subprocess.run([sys.executable, str(REPO / "scripts/build_title_editorial_method.py"),
@@ -73,6 +75,10 @@ def test_new_source_reaches_builder_and_offline_transport(tmp_path, monkeypatch)
         "name": "new-skill/references/judge-prompt.md", "path": "references/judge-prompt.md",
         "sha256": hashlib.sha256((skill / "references/judge-prompt.md").read_bytes()).hexdigest()}
     assert payload["judge_template"] == "@@RULES@@\n@@SUBTITLE@@"
+    assert payload["quality_source"] == {
+        "name": "new-skill/references/quality-judge-prompt.md", "path": "references/quality-judge-prompt.md",
+        "sha256": hashlib.sha256((skill / "references/quality-judge-prompt.md").read_bytes()).hexdigest()}
+    assert payload["quality_template"] == "@@RULES@@\n@@SUBTITLE@@\n@@TITLE@@"
     assert str(tmp_path) not in outputs[0].read_text(encoding="utf-8")
     monkeypatch.setattr(title_editorial_method, "TITLE_EDITORIAL_METHOD", outputs[0])
     assert title_editorial_method.load_title_editorial_method().sources[0].name == "new-skill/SKILL.md"
@@ -90,7 +96,10 @@ def test_new_source_reaches_builder_and_offline_transport(tmp_path, monkeypatch)
 @pytest.mark.parametrize("contents", [None, "not json", "{}",
                                     '{"sections":"x","judge_rules":"x","examples":"x","sources":[]}',
                                     '{"sections":"x","judge_rules":"x","examples":"x","sources":[],'
-                                    '"judge_template":"x","judge_source":{}}'])
+                                    '"judge_template":"x","judge_source":{}}',
+                                    '{"sections":"x","judge_rules":"x","examples":"x","sources":[],'
+                                    '"judge_template":"x","judge_source":{},"quality_template":"x",'
+                                    '"quality_source":{}}'])
 def test_required_projection_missing_or_malformed_fails_closed(tmp_path, monkeypatch, contents):
     path = tmp_path / "projection.json"
     if contents is not None:
@@ -129,6 +138,7 @@ def test_builder_rejects_missing_or_incomplete_source(tmp_path):
     (skill / "SKILL.md").write_text("## 四、标题\n正文\n", encoding="utf-8")
     (skill / "references/examples.md").write_text("示例", encoding="utf-8")
     (skill / "references/judge-prompt.md").write_text(JUDGE_FILE_TEXT, encoding="utf-8")
+    (skill / "references/quality-judge-prompt.md").write_text(QUALITY_FILE_TEXT, encoding="utf-8")
     incomplete = subprocess.run(command, cwd=REPO, capture_output=True, text=True)
     assert incomplete.returncode != 0 and "section marker" in incomplete.stderr and not out.exists()
 
@@ -140,10 +150,26 @@ def test_builder_rejects_a_judge_template_without_the_rules_slot(tmp_path):
                                     "3. **意思**：x\n\n   **判官守则**：y\n", encoding="utf-8")
     (skill / "references/examples.md").write_text("示例", encoding="utf-8")
     (skill / "references/judge-prompt.md").write_text("# 模板\n没有分隔线\n@@RULES@@\n", encoding="utf-8")
-    run = subprocess.run([sys.executable, str(REPO / "scripts/build_title_editorial_method.py"),
-                          "--skill-root", str(skill), "--output", str(tmp_path / "out.json")],
-                         cwd=REPO, capture_output=True, text=True)
+    (skill / "references/quality-judge-prompt.md").write_text(QUALITY_FILE_TEXT, encoding="utf-8")
+    command = [sys.executable, str(REPO / "scripts/build_title_editorial_method.py"),
+               "--skill-root", str(skill), "--output", str(tmp_path / "out.json")]
+    run = subprocess.run(command, cwd=REPO, capture_output=True, text=True)
     assert run.returncode != 0 and "judge-prompt.md" in run.stderr and not (tmp_path / "out.json").exists()
+    # the writing judge (skill 八.4) is held to the same slot: without @@RULES@@ it would judge without section 四
+    (skill / "references/judge-prompt.md").write_text(JUDGE_FILE_TEXT, encoding="utf-8")
+    (skill / "references/quality-judge-prompt.md").write_text("# 模板\n\n---\n@@TITLE@@\n", encoding="utf-8")
+    run = subprocess.run(command, cwd=REPO, capture_output=True, text=True)
+    assert run.returncode != 0 and "quality-judge-prompt.md" in run.stderr and not (tmp_path / "out.json").exists()
+    (skill / "references/quality-judge-prompt.md").unlink()
+    run = subprocess.run(command, cwd=REPO, capture_output=True, text=True)
+    assert run.returncode != 0 and "quality-judge-prompt.md" in run.stderr and not (tmp_path / "out.json").exists()
+
+
+def test_title_rules_are_section_four_alone():
+    method = title_editorial_method.load_title_editorial_method()
+    rules = title_editorial_method.title_rules(method)
+    assert rules.startswith("## 四、") and "## 五、" not in rules and method.sections.startswith(rules)
+    assert "直接毙掉的写法" in rules
 
 
 def test_cover_text_is_section_five_alone():
@@ -164,7 +190,7 @@ def test_the_deployed_projection_matches_the_skill_source_it_was_built_from():
     """The projection is what every machine reads; it is only as current as its last build."""
     root = _skill_source()
     method = title_editorial_method.load_title_editorial_method()
-    recorded = {s.path: s.sha256 for s in (*method.sources, method.judge_source)}
+    recorded = {s.path: s.sha256 for s in (*method.sources, method.judge_source, method.quality_source)}
     current = {path: hashlib.sha256((root / path).read_bytes()).hexdigest() for path in recorded}
     assert recorded == current, (
         "技能改了要重新生成投影（skill changed: rebuild and commit the projection): "
@@ -180,7 +206,7 @@ def test_the_pinned_skill_commit_holds_the_text_the_projection_was_built_from():
         pytest.skip("the skill here is an installed copy, not the agent-toolkit repo (the test above compares it)")
     pin = json.loads((REPO / "config/title_skill_source.json").read_text(encoding="utf-8"))["agent_toolkit_commit"]
     method = title_editorial_method.load_title_editorial_method()
-    recorded = {s.path: s.sha256 for s in (*method.sources, method.judge_source)}
+    recorded = {s.path: s.sha256 for s in (*method.sources, method.judge_source, method.quality_source)}
     pinned = {path: hashlib.sha256(subprocess.check_output(
         ["git", "-C", str(root), "show", f"{pin}:./{path}"])).hexdigest() for path in recorded}
     assert recorded == pinned, "config/title_skill_source.json 与投影不是同一版技能：重新生成投影（会一并改钉子）"
@@ -194,6 +220,7 @@ def _git_skill(tmp_path):
                                     "3. **意思**：事实与修辞\n\n   **判官守则**：守则正文\n", encoding="utf-8")
     (skill / "references/examples.md").write_text("# 示范\n例\n", encoding="utf-8")
     (skill / "references/judge-prompt.md").write_text(JUDGE_FILE_TEXT, encoding="utf-8")
+    (skill / "references/quality-judge-prompt.md").write_text(QUALITY_FILE_TEXT, encoding="utf-8")
     git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
     subprocess.run([*git, "add", "-A"], check=True)
@@ -223,3 +250,49 @@ def test_uncommitted_skill_text_cannot_become_the_pinned_projection(tmp_path):
     assert done.returncode != 0 and "commit the skill" in done.stderr
     assert not (tmp_path / "out.json").exists()
     assert json.loads(pin.read_text(encoding="utf-8"))["agent_toolkit_commit"] == "0" * 40
+
+
+def _quality_answer(whose, banned):
+    item = {"ok": True, "why": ""}
+    return {"named": item, "mishap": {"ok": True, "words": "x", "why": ""}, "setup": item, "open": item,
+            "last_clause": {"text": "x", "whose": whose, "evidence": "3"}, "banned": dict.fromkeys(banned, ""),
+            "pronouns": [], "swap": {"holds_with_other_host": False, "why": ""}, "overall": "PASS", "fail_reasons": []}
+
+
+@pytest.mark.parametrize("channel,landing", [("lidousha", ("host", "to_host")),
+                                              ("sumi", ("host", "to_host", "material")),
+                                              ("huali", ("host", "to_host", "material")),
+                                              ("sumire", ("host", "to_host", "material"))])
+def test_each_channels_writing_judge_lets_only_its_own_section_four_endings_close_a_title(monkeypatch, channel, landing):
+    """Review the other channels and the public template carried lidousha's writing judge (kmx, endings
+    only hers or said to her), though their own section 四 also ends a title on a fan's line, a question or a verdict
+    made of the clip's material.  The endings allowed are the ones the channel's template offers."""
+    from src.autoslice.manual_lane import title_authority
+
+    if not (REPO / "profiles" / channel).is_dir():
+        pytest.skip(f"频道 {channel} 不在这棵树里（公开快照只带默认频道和模板）")
+    path = REPO / "assets" / channel / "title_editorial_method.json"
+    monkeypatch.setattr(title_editorial_method, "TITLE_EDITORIAL_METHOD", path)
+    template = json.loads(path.read_text(encoding="utf-8"))["quality_template"]
+    shape = title_authority.quality_shape(template)
+    assert shape.landing == landing and "catalog" in shape.banned and "flow_list" in shape.banned
+    for whose in ("host", "to_host", "material", "others", "editor"):
+        verdict = title_authority.quality_verdict(_quality_answer(whose, shape.banned))
+        assert (verdict["overall"] == "PASS") == (whose in landing), (whose, verdict)
+    # a judge that leaves one of the banned styles unanswered has not judged it: FAIL, not a pass by omission
+    verdict = title_authority.quality_verdict(_quality_answer("host", shape.banned[1:]))
+    assert verdict["overall"] == "FAIL" and "没有逐项判" in verdict["fail_reasons"][-1]
+
+
+def test_the_template_channels_carry_the_public_templates_writing_judge():
+    from src.autoslice.manual_lane import title_authority
+
+    # the template's source lives under docs/oss/ here; the public snapshot ships it as assets/_template/
+    rel = "assets/_template/title_method/references/quality-judge-prompt.md"
+    source = REPO / "docs/oss" / rel
+    public = (source if source.is_file() else REPO / rel).read_bytes()
+    assert "kmx" not in public.decode() and "李豆沙" not in public.decode()
+    assert title_authority.quality_shape(public.decode()).landing == ("host", "to_host", "material")
+    for channel in ("sumi", "huali", "sumire"):
+        if (REPO / "profiles" / channel).is_dir():
+            assert (REPO / "assets" / channel / "title_method/references/quality-judge-prompt.md").read_bytes() == public

@@ -713,7 +713,10 @@ def _title_fix(ctx: Ctx, title: str, skipped: list[str], cpa_calls: list[CpaEven
     if judged["overall"] != "PASS":
         skipped.append("review title fails the skill judge: " + "；".join(judged["fail_reasons"])[:300])
         return False
+    from . import title_acceptance
+
     (ctx.clip_dir / "title/title.txt").write_text(canon_title + "\n", encoding="utf-8")
+    title_acceptance.write(ctx.clip_dir, canon_title, "review", judged)
     return True
 
 

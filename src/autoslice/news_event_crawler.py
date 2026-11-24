@@ -3,7 +3,9 @@
 Seeds come from data the pipeline already has (news_event_seeds); the Search Router's `free_search` finds recent pages
 about each seed (reusing the manual lane's `WebLookup` client and its address from the channel profile); CPA decides
 which results show an event / project / alliance / collaboration, who takes part and how (news_event_judge); the
-answer becomes status=candidate nodes and edges in the format of `knowledge_graph` (news_event_graph).  A run that
+answer becomes status=candidate nodes and edges in the format of `knowledge_graph` (news_event_graph).  The recent
+dynamics of the owner and of the registry accounts are judged too, as results of their own (`post_batches`: owner
+, U468, 「这个联动完全可以直接从新闻Crawler把这个动态一抓就知道了，看看新闻就知道了」).  A run that
 cannot do its job raises `NewsEventError` (the entry point exits non-zero and the timer unit shows it): no search
 succeeded, CPA answered nothing, or the graph did not validate.  Partial failure is counted in the report.
 """
@@ -15,7 +17,7 @@ import re
 import time
 import urllib.error
 from collections import Counter
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol
@@ -28,7 +30,7 @@ from src.autoslice import news_event_judge as judge
 from src.autoslice.knowledge_graph import GraphError, JsonValue, load_graph
 from src.autoslice.llm_client import LlmCallError
 from src.autoslice.manual_lane.work_lookup import LookupRow
-from src.autoslice.news_event_seeds import Dynamics, Registry, Seed, derive_seeds, dynamics_texts
+from src.autoslice.news_event_seeds import Dynamics, Registry, Seed, derive_seeds, dynamics_texts, plain_text
 from src.autoslice.structured_output import call_json
 
 _call_json: Callable[[Callable[[str], str], str], str] = call_json  # structured_output.call_json is untyped
@@ -43,6 +45,12 @@ MAX_WAIT_S = 120.0
 MAX_ERRORS_LISTED = 20
 RETRY_QUERY = "{seed} 联动 企划"
 OWNER_QUERY = "{owner} 联动 企划 最新"   # a seed is searched as "<seed> <owner>": extra topic words pull in unrelated pages
+POST_DAYS = 3                # a dynamic posted this many days before the run or later is read as news (runs are daily)
+POST_SEED = "B站动态·{name}"  # the seed of an account's own dynamics; news_event_judge.judge_prompt rule 8 reads it
+OPUS_URL = "https://www.bilibili.com/opus/{id}"
+_BEIJING = dt.timezone(dt.timedelta(hours=8))
+
+Posts = Mapping[str, Sequence[Mapping[str, str]]]   # account -> [{"dynamic_id", "published_at", "text"}]
 
 
 class SearchBackend(Protocol):
@@ -210,6 +218,34 @@ def _search_all(report: Report, search: RouterSearch, seeds: Sequence[Seed], own
     return found
 
 
+def post_batches(owner: str, dynamics: Dynamics | None, peers: Posts, now: dt.datetime
+                 ) -> list[tuple[str, list[judge.Row]]]:
+    """The owner's dynamics (the dynamics crawler's snapshot) and the registry accounts' (`peers`, the accounts step 6
+    reads when it asks who is in a call) posted from POST_DAYS before `now`, as results to judge: one seed per account,
+    a row per dynamic with its Beijing date in the title and its opus page as url.  A collab the host announces and her
+    guests post about is news no web search finds: 11-23 the host wrote 「明天晚上八点的女大矿工见」, 安晚awa
+    「矿工是对的但我要晕倒了」, and the search had 0 results for 女大矿工."""
+    since = now - dt.timedelta(days=POST_DAYS)
+    accounts: dict[str, Sequence[Mapping[str, str]]] = {owner: list(dynamics["items"]) if dynamics else []}
+    accounts.update((name, items) for name, items in peers.items() if name != owner)
+    out: list[tuple[str, list[judge.Row]]] = []
+    for name, items in accounts.items():
+        rows: list[judge.Row] = []
+        for item in items:
+            ident, text = str(item.get("dynamic_id") or ""), plain_text(str(item.get("text") or ""))
+            try:
+                posted = dt.datetime.fromisoformat(str(item.get("published_at") or "").replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if ident.isdigit() and text and posted.tzinfo is not None and posted >= since:
+                day = posted.astimezone(_BEIJING).date().isoformat()
+                rows.append(judge.Row(title=f"{name} 自己发的 B 站动态（发布于 {day}）", url=OPUS_URL.format(id=ident),
+                                      snippet=text))
+        if rows:
+            out.append((POST_SEED.format(name=name), rows))
+    return out
+
+
 def _in_window(findings: Sequence[judge.Finding], window: CrawlWindow) -> tuple[list[judge.Finding], int]:
     """The findings whose time as news overlaps the window, and how many fell outside it."""
     kept = [f for f in findings if window.holds(f.valid_from, f.valid_until)]
@@ -249,7 +285,7 @@ def _date_undated(report: Report, previous: store.Candidates, llm_call: Callable
 
 def crawl(*, owner: str, repo_root: Path, runtime_root: Path, registry: Registry | None,
           dynamics: Dynamics | None, search: RouterSearch, llm_call: Callable[[str], str], now: dt.datetime,
-          max_seeds: int = MAX_SEEDS, clock: Callable[[], float] = time.monotonic,
+          peer_posts: Posts | None = None, max_seeds: int = MAX_SEEDS, clock: Callable[[], float] = time.monotonic,
           notes: Sequence[str] = (), clip_names: Sequence[str] = (),
           community: names.Community | None = None,
           name_videos: Callable[[str], Sequence[names.Video]] | None = None,
@@ -258,8 +294,8 @@ def crawl(*, owner: str, repo_root: Path, runtime_root: Path, registry: Registry
     stamp = now.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     window = CrawlWindow.around(now.date())
     repo = load_graph(repo_root)
-    report = Report(stamp, owner, {"registry": registry is not None, "dynamics": dynamics is not None},
-                    errors=list(notes))
+    report = Report(stamp, owner, {"registry": registry is not None, "dynamics": dynamics is not None,
+                                   "peer_posts": peer_posts is not None}, errors=list(notes))
     texts = dynamics_texts(dynamics)
     seeds = derive_seeds(owner=owner, graph=repo, registry=registry, dynamics=dynamics,
                          extracted=_extract_seeds(report, owner, texts, llm_call), day=now.toordinal(),
@@ -279,8 +315,15 @@ def crawl(*, owner: str, repo_root: Path, runtime_root: Path, registry: Registry
     known = store.with_candidates(repo, previous)
     repo_edges = {e.id for e in repo.edges}
     fresh: store.Candidates = ({}, {})
-    for start in range(0, len(found), SEEDS_PER_JUDGE_CALL):
-        batch = found[start:start + SEEDS_PER_JUDGE_CALL]
+    posts = post_batches(owner, dynamics, peer_posts or {}, now)
+    for seed, rows in posts:
+        report.per_seed[seed] = {"rows": len(rows), "findings": 0}
+    report.search["post_rows"] = sum(len(rows) for _, rows in posts)
+    # every account's dynamics in one call, so posts of several people about one collab are read side by side
+    batches = ([("posts", posts)] if posts else []) + [
+        (f"judge batch {start // SEEDS_PER_JUDGE_CALL}", found[start:start + SEEDS_PER_JUDGE_CALL])
+        for start in range(0, len(found), SEEDS_PER_JUDGE_CALL)]
+    for label, batch in batches:
         if clock() >= search.deadline:
             report.error("judge stopped: the run's time budget is spent")
             break
@@ -290,7 +333,7 @@ def crawl(*, owner: str, repo_root: Path, runtime_root: Path, registry: Registry
             got, bad = judge.parse_judgement(_call_json(llm_call, prompt), batch)
         except (LlmCallError, judge.JudgeError) as exc:
             report.cpa["judge_failed"] += 1
-            report.error(f"judge batch {start // SEEDS_PER_JUDGE_CALL}: {type(exc).__name__}: {str(exc)[:200]}")
+            report.error(f"{label}: {type(exc).__name__}: {str(exc)[:200]}")
             continue
         report.cpa["judge_ok"] += 1
         report.rejected.update(bad)
@@ -302,8 +345,9 @@ def crawl(*, owner: str, repo_root: Path, runtime_root: Path, registry: Registry
         report.left_out += left_out
         fresh = store.merge(fresh, added)
         known = store.with_candidates(known, added)  # later batches can point at what earlier ones found
-    if found and not report.cpa["judge_ok"]:
-        raise NewsEventError("cpa_unavailable", f"CPA judged none of {len(found)} searched seeds "
+    if batches and not report.cpa["judge_ok"]:
+        raise NewsEventError("cpa_unavailable", f"CPA judged none of {len(found)} searched seeds and {len(posts)} "
+                             "accounts' dynamics "
                              f"({report.cpa['judge_failed']} failed, {report.cpa['judge_attempted']} attempted)",
                              report)
     report.cpa["rejected_items"] = sum(report.rejected.values())

@@ -70,11 +70,16 @@ def _key(text: str) -> str:
     return "".join(ch for ch in text.casefold() if ch.isalnum())
 
 
+def plain_text(text: str) -> str:
+    """A dynamic's prose with the platform's emote tags (`[name_emote]`) removed."""
+    return " ".join(_EMOTE.sub(" ", text).split())
+
+
 def dynamics_texts(dynamics: Dynamics | None) -> list[str]:
-    """The prose of each dynamic, with the platform's emote tags (`[name_emote]`) removed."""
+    """The prose of each dynamic (`plain_text`)."""
     if not dynamics:
         return []
-    return [" ".join(_EMOTE.sub(" ", item["text"]).split()) for item in dynamics["items"]]
+    return [plain_text(item["text"]) for item in dynamics["items"]]
 
 
 def _mentioned(surface: str, haystacks: Iterable[str]) -> bool:

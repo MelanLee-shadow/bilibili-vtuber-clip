@@ -108,8 +108,36 @@ def test_a_revision_does_not_keep_a_published_title_its_subtitles_show_wrong(mon
     from src.autoslice.manual_lane import step6_title
 
     monkeypatch.setattr(step6_title, "title_inputs", lambda ctx, names: ([], "", CLIP_625460))
+    asked = []
+
+    def judges(verdict, reasons=()):
+        def fake(ctx, call_id, lines, title, cover, cpa_calls, *, facts=True):
+            asked.append((call_id, title, facts))
+            return {"overall": verdict, "fail_reasons": list(reasons), "runs": [],
+                    "quality": [{"overall": verdict, "fail_reasons": list(reasons)}], "authorities": []}
+        return fake
+
+    monkeypatch.setattr(step6_title, "title_judge", judges("PASS"))
     online = "【李豆沙×安晚awa×礼墨Sumi】队友嫌游戏石头没什么好抢的，却喊帮忙勾，“你要勾哪？哦，勾到了。我要笑。”"
-    breaks = step6_title.online_title_breaks(object(), TRIO, online)
+    breaks, verdict = step6_title.online_title_breaks(object(), TRIO, online, [])
     assert any("引号核对未过" in b for b in breaks) and any("「我」分不清是谁" in b for b in breaks)
+    assert verdict is None and asked == []                  # wrong on the subtitles already: no judge is asked
     kept = "【李豆沙×安晚awa×礼墨Sumi】礼墨喊“快点帮我勾一下”，勾到了又说“我要笑”"
-    assert step6_title.online_title_breaks(object(), TRIO, kept) == []
+    breaks, verdict = step6_title.online_title_breaks(object(), TRIO, kept, [])
+    assert breaks == [] and verdict["overall"] == "PASS"
+    assert asked == [("title-judge-online", kept, False)]   # the writing judge alone (skill 八.4)
+
+
+def test_a_revision_does_not_keep_a_published_title_the_writing_judge_fails(monkeypatch):
+    """Owner (U471): 897000's revision kept 「挖矿找不到暂停决定退出，…玩爽了」 — it held on the subtitles,
+    so the old recheck (subtitle rules only) kept it; section 四 of the skill rejects it (a 流水账, no mishap)."""
+    from src.autoslice.manual_lane import step6_title
+
+    monkeypatch.setattr(step6_title, "title_inputs", lambda ctx, names: ([], "", CLIP_625460))
+    why = "写法（第四节）：流水账：挖矿找不到暂停决定退出"
+    monkeypatch.setattr(step6_title, "title_judge", lambda *a, **k: {
+        "overall": "FAIL", "fail_reasons": [why], "runs": [], "quality": [{"overall": "FAIL", "fail_reasons": [why]}],
+        "authorities": []})
+    kept = "【李豆沙×安晚awa×礼墨Sumi】礼墨喊“快点帮我勾一下”，勾到了又说“我要笑”"
+    breaks, verdict = step6_title.online_title_breaks(object(), TRIO, kept, [])
+    assert breaks == ["线上标题不合 skill 第四节：" + why] and verdict["overall"] == "FAIL"

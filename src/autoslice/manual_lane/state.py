@@ -104,6 +104,7 @@ class CpaEvent(TypedDict, total=False):
     purpose: str
     rejected_answers: list[RejectedAnswer]
     requests: int
+    tolerated: bool          # the step went on without this call's answer (step_io.ask_json goes_on=True)
     attempted_models: list[str] | None
     reported_model: str | None
     status: str | None

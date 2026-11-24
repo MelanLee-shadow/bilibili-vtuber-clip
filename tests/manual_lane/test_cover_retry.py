@@ -43,7 +43,7 @@ def test_too_long_cover_text_is_shortened_by_cpa_and_rendered_again(tmp_path):
                     answers=[json.dumps({"cover_lines": ["不会饿死"]}, ensure_ascii=False)])
     out = si.step6_title_cover(ctx)
     assert out.ok, out.note
-    assert cpa.calls == [*UNDERSTANDING_CALLS, "title", "title-judge-r0-1", "title-judge-r0-2", "cover-brief", "cover-emote", "cover-emote", "title-cover-retry-1"]
+    assert cpa.calls == [*UNDERSTANDING_CALLS, "title", "title-judge-r0-1", "title-judge-r0-2", "title-judge-r0-q1", "title-judge-r0-q2", "cover-brief", "cover-emote", "cover-emote", "title-cover-retry-1"]
     cands = json.loads((ctx.clip_dir / "title" / "candidates.json").read_text(encoding="utf-8"))
     assert cands["cover_lines"] == ["不会饿死"]
     assert any("封面文字缩短（第 1 次）" in line for line in out.process)
@@ -55,7 +55,7 @@ def test_retries_are_bounded_and_the_last_failure_stops_the_step(tmp_path):
                     answers=[json.dumps({"cover_lines": ["甲"]}), json.dumps({"cover_lines": ["乙"]})])
     out = si.step6_title_cover(ctx)
     assert not out.ok and out.reason == "COVER_RENDER_FAILED_RC23"
-    assert cpa.calls == [*UNDERSTANDING_CALLS, "title", "title-judge-r0-1", "title-judge-r0-2", "cover-brief", *["cover-emote"] * 3, "title-cover-retry-1", "title-cover-retry-2"]
+    assert cpa.calls == [*UNDERSTANDING_CALLS, "title", "title-judge-r0-1", "title-judge-r0-2", "title-judge-r0-q1", "title-judge-r0-q2", "cover-brief", *["cover-emote"] * 3, "title-cover-retry-1", "title-cover-retry-2"]
 
 
 def test_shortening_cannot_reintroduce_an_anonymous_label_as_a_name(tmp_path):

@@ -139,6 +139,7 @@ def _spot(ctx: Ctx, numbered: dict[int, str], cpa_calls: list[CpaEvent]) -> tupl
     prompt = _render("reference_spot.md", persona=channel_facts.spoken(), max_terms=str(most), lines="\n".join(numbered.values()))
     try:
         answer, reason = ask_json(ctx, SPOT_CALL, prompt, purpose=SPOT_CALL, shape="REFERENCE_SPOT_SHAPE", cpa_calls=cpa_calls,
+                                  goes_on=True,
                                   problem=_spot_problem)
     except Exception as exc:  # noqa: BLE001 - a lead for the agent, never a reason to stop the step
         return [], f"{type(exc).__name__}: {str(exc)[:160]}"

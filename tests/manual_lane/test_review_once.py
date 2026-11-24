@@ -15,7 +15,7 @@ import subprocess
 from itertools import pairwise
 
 import pytest
-from fakes import UNDERSTANDING_CALLS, FakeCpa, FakeRemote, make_ctx, serial_order
+from fakes import UNDERSTANDING_CALLS, FakeCpa, FakeRemote, is_quality, make_ctx, quality_fail, serial_order
 from test_pipeline_fake_e2e import ScriptedCpa, _fake_fmr, _remote
 
 from src.autoslice.manual_lane import doubt_policy, normalize, speaker_v8
@@ -84,7 +84,7 @@ def test_a_subtitle_fix_is_adopted_once_and_only_burn_tags_and_package_are_rebui
     ctx, remote, report = _run(tmp_path, monkeypatch, cpa)
     assert report.stopped_at is None, (report.stopped_at, report.reason)
     assert report.rewinds == SUBS_REWIND
-    assert _nonadj(cpa) == ["boundary", *UNDERSTANDING_CALLS, "title", "title-judge-r0-1", "title-judge-r0-2", "cover-brief", "cover-emote", "review"]          # the review and the title are asked once
+    assert _nonadj(cpa) == ["boundary", *UNDERSTANDING_CALLS, "title", "title-judge-r0-1", "title-judge-r0-2", "title-judge-r0-q1", "title-judge-r0-q2", "cover-brief", "cover-emote", "review"]          # the review and the title are asked once
     names = [n for n, _ in remote.scripts]
     assert names.count("s4-speaker-v8") == 1 and names.count("s5-burn") == 2 and names.count("s7-tags") == 2
     assert _cues(ctx, "subs/final.srt")[1]["text"] == "改后的句子"
@@ -159,9 +159,34 @@ def test_a_title_fix_rebuilds_only_the_tags_and_the_package(tmp_path, monkeypatc
                        "review": [_review({"title": "【李豆沙】她半分钟后真的破防了"})]})   # a title the publish gate passes
     ctx, _, report = _run(tmp_path, monkeypatch, cpa)
     assert report.stopped_at is None and report.rewinds == TITLE_REWIND
-    assert _nonadj(cpa) == ["boundary", *UNDERSTANDING_CALLS, "title", "title-judge-r0-1", "title-judge-r0-2", "cover-brief", "cover-emote", "review",
-                            "review-title-judge-1", "review-title-judge-2"]   # the review's title goes to the judge too
+    assert _nonadj(cpa) == ["boundary", *UNDERSTANDING_CALLS, "title", "title-judge-r0-1", "title-judge-r0-2", "title-judge-r0-q1", "title-judge-r0-q2", "cover-brief", "cover-emote", "review",
+                            "review-title-judge-1", "review-title-judge-2", "review-title-judge-q1",
+                            "review-title-judge-q2"]   # the review's title goes to both judges too (skill 八.3, 八.4)
     assert (ctx.clip_dir / "title/title.txt").read_text(encoding="utf-8").strip() == "【李豆沙】她半分钟后真的破防了"
+
+
+def test_a_review_title_the_writing_judge_fails_is_not_adopted(tmp_path, monkeypatch):
+    """Skill 八.4: the review's rewrite goes through the same two judges as step 6's pick (owner, U471); the
+    old code asked the fact judge only.  The step-6 title and its receipt stay."""
+    class WritingFails(ScriptedCpa):
+        def ask(self, *, call_id, prompt_text, model, effort, remote_dir):
+            if call_id.startswith("review-title-judge") and is_quality(call_id):
+                with self._lock:
+                    self._rows.append((call_id, prompt_text))
+                return {"call_id": call_id, "model": model, "effort": effort, "rc": 0, "elapsed_s": 0.1,
+                        "response_text": quality_fail("流水账：先……又……"), "stderr_tail": ""}
+            return super().ask(call_id=call_id, prompt_text=prompt_text, model=model, effort=effort,
+                               remote_dir=remote_dir)
+
+    cpa = WritingFails({"boundary": BOUNDARY, "title": [TITLE],
+                        "review": [_review({"title": "【李豆沙】她半分钟后真的破防了"})]})
+    ctx, _, report = _run(tmp_path, monkeypatch, cpa)
+    assert report.stopped_at is None and report.rewinds == []
+    title = (ctx.clip_dir / "title/title.txt").read_text(encoding="utf-8").strip()
+    assert title != "【李豆沙】她半分钟后真的破防了"
+    receipt = json.loads((ctx.clip_dir / "title/accepted.json").read_text(encoding="utf-8"))
+    assert receipt["by"] == "step6" and receipt["title"] == title
+    assert "写法（第四节）：流水账" in (ctx.clip_dir / "PROCESS.md").read_text(encoding="utf-8")
 
 
 def test_a_title_fix_that_breaks_reviewers_rule_is_not_adopted_and_nothing_loops(tmp_path, monkeypatch):

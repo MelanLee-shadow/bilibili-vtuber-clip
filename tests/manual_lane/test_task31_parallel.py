@@ -249,8 +249,9 @@ def test_the_title_judge_runs_are_asked_at_once(tmp_path, monkeypatch):
     ctx.adapters.remote.on_script = script
     out = si.step6_title_cover(ctx)
     assert out.ok, out.note
-    assert [c for c in cpa.calls if c.startswith("title-judge")] == ["title-judge-r0-1", "title-judge-r0-2"]
-    assert cpa.meter.peak > 1                            # both judge runs were open at the same time
+    assert [c for c in cpa.calls if c.startswith("title-judge")] == ["title-judge-r0-1", "title-judge-r0-2",
+                                                                      "title-judge-r0-q1", "title-judge-r0-q2"]
+    assert cpa.meter.peak > 1                            # the judge runs (facts and writing) were open at the same time
 
 
 # ----- helpers ----------------------------------------------------------------------------------------------------

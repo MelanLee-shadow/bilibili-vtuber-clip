@@ -127,7 +127,12 @@ def judge_prompt(owner: str, today: str, nodes: Sequence[Mapping[str, JsonValue]
         "写法不同，也要用同一个 name。\n"
         "7. participants 是参与者：relation 取 member_of（是某团体/联盟的成员）、founded（发起了它）、"
         "participates_in（参加了该事件/项目）、related_to（有关但不属于以上）；关系方向为“参与者 → 本项”。"
-        "参与者同样可填已知节点 id。\n\n"
+        "参与者同样可填已知节点 id。\n"
+        "8. 检索词以「B站动态·」开头的，结果是这个人自己发的 B 站动态原文，标题写着发布日期（date_basis 抄标题里"
+        "这段日期）。她在动态里预告、回顾或说到自己参加的联动、活动（例如「明天晚上八点的女大矿工见」），就按一项"
+        "活动输出；几个人同几天的动态写到同一件事（同一个少见的说法、互相点名）时，用同一个 name，每人的动态各输出"
+        "一项。每项的参与者只写这条动态的作者本人和动态里点了名的人，不按别人的动态替她补。只是问候、晒图、"
+        "转发、带货、日常的动态不输出。\n\n"
         f"已知节点：{json.dumps(nodes, ensure_ascii=False)}\n\n"
         f"检索材料：{json.dumps(material, ensure_ascii=False)}\n\n"
         '只输出 JSON：{"items": [{"url", "kind", "id"?, "name", "aliases"?, "summary"?, "valid_from", '

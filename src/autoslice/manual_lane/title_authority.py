@@ -37,6 +37,7 @@ from src.autoslice.title_editorial_method import (
     cover_text,
     format_title_editorial_method,
     load_title_editorial_method,
+    title_rules,
 )
 
 from . import channel
@@ -229,6 +230,96 @@ def judge_prompt(track_lines: str, title: str, cover_lines: Sequence[str]) -> tu
                        ("@@COVER2@@", lines[1]), ("@@SUBTITLE@@", track_lines), ("@@RULES@@", editorial.judge_rules)):
         text = text.replace(key, value)
     return text, (editorial.sources[0], editorial.judge_source)
+
+
+# ----- the writing judge (skill section 八 item 4, references/quality-judge-prompt.md) -------------------------------
+QUALITY_RUNS = 2   # 八.4: 每条标题跑两次，两次都 PASS 才算过
+QUALITY_OK = ("named", "mishap", "setup", "open")          # items answered {"ok": true|false}
+QUALITY_NOT_LANDING = ("others", "editor")   # last_clause.whose that never ends a title; the template's other values may
+QUALITY_ITEM = {"named": "没点名这件事涉及的人", "mishap": "第一眼没有第四节要的那一下（张力、她出事或她的狠话）", "setup": "只看标题看不出谁在干嘛",
+                "open": "把经过和结果讲完了，没有停在落点上"}
+QUALITY_BANNED = {"editor_comment": "编辑的评语", "editor_question": "编辑抬杠式的发问或感叹",
+                  "person_switch": "半路换人称", "flow_list": "流水账", "catalog": "把几段情节串成目录",
+                  "colon": "用了冒号", "news_tone": "新闻腔或旁白转述", "machine_words": "机器味词",
+                  "two_names": "同一个人两种叫法"}
+
+
+@dataclass(frozen=True)
+class QualityShape:
+    """What the channel's writing-judge template asks (its JSON line): the endings that may close a title (the
+    last_clause.whose values it offers, less others/editor) and the styles it bans outright (the keys of `banned`).
+    Each channel's section 四 says both (lidousha: hers or said to her; the template channels also a fan's line made
+    of the clip's material), and its template is written from it."""
+    landing: tuple[str, ...]
+    banned: tuple[str, ...]
+
+
+def quality_shape(template: str) -> QualityShape:
+    lines = [line for line in template.splitlines() if line.startswith('{"named"')]
+    try:
+        example = json.loads(lines[-1])
+        whose = str(example["last_clause"]["whose"]).split("|")
+        banned = tuple(example["banned"])
+    except (IndexError, ValueError, KeyError, TypeError) as exc:
+        raise AuthorityError(f"writing-judge template: its JSON line is missing or malformed: {exc}") from exc
+    landing = tuple(w for w in whose if w not in QUALITY_NOT_LANDING)
+    if not landing or not banned:
+        raise AuthorityError("writing-judge template: its JSON line offers no ending or bans nothing")
+    return QualityShape(landing, banned)
+
+
+def quality_prompt(track_lines: str, title: str) -> tuple[str, tuple[Source, ...]]:
+    """quality-judge-prompt.md's template (after its first `---`) with @@RULES@@ = section 四 verbatim, @@SUBTITLE@@ =
+    the final subtitles with speakers, and the title's prefix and body."""
+    from src.autoslice.channel_envelope import parse_talk_title
+
+    editorial = load_title_editorial_method()
+    env = parse_talk_title(title)
+    prefix, body = (env.prefix, env.body) if env is not None else ("", title)
+    text = editorial.quality_template
+    for key, value in (("@@PREFIX@@", prefix), ("@@TITLE@@", body), ("@@SUBTITLE@@", track_lines),
+                       ("@@RULES@@", title_rules(editorial))):
+        text = text.replace(key, value)
+    return text, (editorial.sources[0], editorial.quality_source)
+
+
+def _mapping(value: object) -> Mapping[str, object]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def quality_verdict(parsed: Any) -> JudgeVerdict:
+    """The writing judge's verdict recomputed from its items (八.4: whatever `overall` says, a failed item fails): any of
+    QUALITY_OK not ok, a last clause the channel's template does not allow to end a title (quality_shape), a banned
+    style hit or one left unanswered, a 我/她/自己 nobody can place, or a title that holds with another host.  The judge's own fail_reasons come first; a malformed answer FAILs."""
+    if not isinstance(parsed, Mapping):
+        return {"overall": "FAIL", "fail_reasons": ["写法判官回包不是规定的 JSON"]}
+    why: list[str] = []
+    for key in QUALITY_OK:
+        item = parsed.get(key)
+        if not (isinstance(item, Mapping) and item.get("ok") is True):
+            why.append(QUALITY_ITEM[key] + (f"（{item.get('why')}）" if isinstance(item, Mapping) and item.get("why") else ""))
+    shape = quality_shape(load_title_editorial_method().quality_template)
+    last = _mapping(parsed.get("last_clause"))
+    if last.get("whose") not in shape.landing:
+        why.append(f"最后一个分句「{last.get('text', '')}」不是这个频道第四节允许的收尾（{last.get('whose')}）")
+    banned = parsed.get("banned") if isinstance(parsed.get("banned"), Mapping) else None
+    if banned is None or any(not isinstance(banned.get(k), str) for k in shape.banned):
+        why.append("写法判官没有逐项判直接毙掉的写法（" + "、".join(shape.banned) + "）")
+    else:
+        why += [f"{QUALITY_BANNED.get(k, k)}：{v}" for k, v in banned.items() if isinstance(v, str) and v.strip()]
+    pronouns = parsed.get("pronouns")
+    if not isinstance(pronouns, list):
+        why.append("写法判官没有逐个判“我/她/自己”指谁")
+    else:
+        why += [f"「{p.get('word')}」看不出指谁" for p in pronouns if isinstance(p, Mapping) and p.get("clear") is not True]
+    swap = _mapping(parsed.get("swap"))
+    if swap.get("holds_with_other_host") is not False:
+        why.append("换成别的主播照样成立（只剩一个换谁都一样的话题）")
+    own = [str(r) for r in (parsed.get("fail_reasons") or []) if str(r).strip()]
+    if str(parsed.get("overall") or "").upper() != "PASS" and not why:
+        why.append("写法判官判 FAIL")
+    return {"overall": "FAIL", "fail_reasons": list(dict.fromkeys([*own, *why]))} if why else \
+        {"overall": "PASS", "fail_reasons": []}
 
 
 def judge_verdict(parsed: Any) -> JudgeVerdict:

@@ -10,7 +10,7 @@ import threading
 from pathlib import Path
 
 from fakes import fmr_check_wrote
-from fakes import (COVER_BRIEF, COVER_EMOTE, JUDGE_PASS, UNDERSTANDING_CALLS, FakeRemote, IdCpa, fake_cover, is_judge, make_ctx,
+from fakes import (COVER_BRIEF, COVER_EMOTE, JUDGE_PASS, judge_pass, UNDERSTANDING_CALLS, FakeRemote, IdCpa, fake_cover, is_judge, make_ctx,
                    serial_order, srt, understanding_answer)
 
 from src.autoslice.manual_lane import stage_impl as si
@@ -51,7 +51,7 @@ class ScriptedCpa:
                     "response_text": reading, "stderr_tail": ""}
         if is_judge(call_id):   # the skill's title judge (step 6, twice; step 9 on a review title)
             return {"call_id": call_id, "model": model, "effort": effort, "rc": 0, "elapsed_s": 0.1,
-                    "response_text": JUDGE_PASS, "stderr_tail": ""}
+                    "response_text": judge_pass(call_id), "stderr_tail": ""}
         if key == "adjudicate":   # every cue is a doubt now: keep each one (IdCpa answers by the ids in the prompt)
             return IdCpa().ask(call_id=call_id, prompt_text=prompt_text, model=model, effort=effort,
                                remote_dir=remote_dir)
@@ -124,7 +124,7 @@ def test_steps_1_to_9_run_in_order_on_fakes_and_step_10_stays_behind_the_switch(
     assert report.stopped_at is None, (report.stopped_at, report.reason)
     assert report.passed == [1, 0, 2, 3, 4, 5, 6, 7, 8, 9]
     assert report.halted_before_upload is True
-    assert [c for c in cpa.calls if not c.startswith("adjudicate")] == ["boundary", *UNDERSTANDING_CALLS, "title", "title-judge-r0-1", "title-judge-r0-2", "cover-brief", "cover-emote", "review"]
+    assert [c for c in cpa.calls if not c.startswith("adjudicate")] == ["boundary", *UNDERSTANDING_CALLS, "title", "title-judge-r0-1", "title-judge-r0-2", "title-judge-r0-q1", "title-judge-r0-q2", "cover-brief", "cover-emote", "review"]
     assert (ctx.clip_dir / "pkg" / "clip.member.json").exists()
     assert (ctx.clip_dir / "pkg" / "REVIEW.md").read_text(encoding="utf-8").startswith("复审通过。\n\n## 流水线采用记录")
     process = (ctx.clip_dir / "PROCESS.md").read_text(encoding="utf-8")
@@ -133,7 +133,7 @@ def test_steps_1_to_9_run_in_order_on_fakes_and_step_10_stays_behind_the_switch(
 
     again = run_clip(ctx, STEPS)
     assert again.passed == [] and again.stopped_at is None and len(again.reused) == 10
-    assert [c for c in cpa.calls if not c.startswith("adjudicate")] == ["boundary", *UNDERSTANDING_CALLS, "title", "title-judge-r0-1", "title-judge-r0-2", "cover-brief", "cover-emote", "review"]   # nothing re-asked
+    assert [c for c in cpa.calls if not c.startswith("adjudicate")] == ["boundary", *UNDERSTANDING_CALLS, "title", "title-judge-r0-1", "title-judge-r0-2", "title-judge-r0-q1", "title-judge-r0-q2", "cover-brief", "cover-emote", "review"]   # nothing re-asked
 
 
 def _covering(total, covered, unmatched_seconds, **video):
