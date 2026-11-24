@@ -92,13 +92,17 @@ def import_redo(state: ClipState, clip_dir: Path, src: Path, *, verbatim: bool =
     return "review_only" if same else "from_step_3"
 
 
-def forget_steps(state: ClipState, *, review_only: bool = False) -> None:
+def forget_steps(state: ClipState, clip_dir: Path, *, review_only: bool = False) -> None:
     """Forget what an import (or an owner-authorised edit of it) invalidates: step 3 and everything after it, or with
-    `review_only` just the review and the upload; plus the review's rewind and revision keys."""
+    `review_only` just the review and the upload; the review itself by stage_package.forget_review (its state keys and
+    what it resumes from on disk)."""
+    from .stage_package import forget_review
+
     for key in ("review", "upload") if review_only else IMPORT_REDO:
         state.data["steps"].pop(key, None)
-    for key in ("review", "rewind", "revisions") if review_only else ("review", "rewind", "revisions", "manual_import"):
-        cast("MutableMapping[str, JsonValue]", state.data).pop(key, None)
+    forget_review(state, clip_dir)
+    if not review_only:
+        cast("MutableMapping[str, JsonValue]", state.data).pop("manual_import", None)
 
 
 def record_import(state: ClipState, clip_dir: Path, src: Path, *, source: str, authority: str,
@@ -158,7 +162,7 @@ def record_import(state: ClipState, clip_dir: Path, src: Path, *, source: str, a
 
         rec["owner_edited"] = list(owner_edited) if owner_edited is not None else pushed_edits(
             src / IMPORT_FILES["final.srt"], src / IMPORT_FILES["speaker.srt"], src / IMPORT_FILES["baseline.srt"])
-    forget_steps(state, review_only=review_only)
+    forget_steps(state, clip_dir, review_only=review_only)
     state.data.pop("dissent", None)     # the review's objections to the old text are not the new import's
     state.data["imported"] = rec
     state.save()

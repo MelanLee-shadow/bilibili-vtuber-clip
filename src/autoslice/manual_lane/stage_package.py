@@ -42,7 +42,7 @@ from .stage_impl import _ask_cpa, _cpa_ok, _fail, _json_from_text, _log, _render
 if TYPE_CHECKING:
     from src.autoslice.cpa_gemini_client import JsonValue
     from .review_owner import Dissent
-    from .state import CpaEvent
+    from .state import ClipState, CpaEvent
     from .wide_held import WideProgress, WideRound
 
 
@@ -953,6 +953,31 @@ def _saved_review(record: ReviewRecord, call_id: str | None = None) -> CpaEvent 
                              "response_text": raw["response_text"], "cached": True})
 
 
+# The focused review calls' saved questions under cpa/: a prompt file with no record is resumed as a request in flight
+# (_prepare_focused_call), so they go with the review (11-24 316670 and 673640 replayed 11-23's question).
+FOCUSED_CALL_FILES = ("review-held.*", "review-wide-held-*")
+REVIEW_STATE_KEYS = ("review", "rewind", "revisions")       # state keys that belong to the review step's products
+
+
+def forget_review(state: ClipState, clip_dir: Path) -> int:
+    """Forget the review wherever it is forgotten (redo, a subtitle import, a dissent applied, a cover imported or
+    withdrawn): its state keys, and what it would otherwise resume from on disk -- the post-review listening rounds
+    (wide_held.ROOT: its snapshot and each round's listening are read back from their files) and the focused calls'
+    saved questions.  Returns the number of files deleted.  The state is not saved here."""
+    from . import wide_held
+
+    for key in REVIEW_STATE_KEYS:
+        cast("MutableMapping[str, object]", state.data).pop(key, None)
+    shutil.rmtree(clip_dir / wide_held.ROOT, ignore_errors=True)
+    root, deleted = clip_dir.resolve(), 0
+    for pattern in FOCUSED_CALL_FILES:
+        for path in (clip_dir / "cpa").glob(pattern):
+            if path.is_file() and path.resolve().is_relative_to(root):
+                path.unlink()
+                deleted += 1
+    return deleted
+
+
 def _prepare_focused_call(ctx: Ctx, record: ReviewRecord, held_ids: list[str],
                           call_id: str, *, target_key: str = "held_ids",
                           addition: str = "") -> tuple[CpaEvent, bool] | StepOutcome | None:
@@ -1164,7 +1189,9 @@ def _review_process(ctx: Ctx, record: ReviewRecord, applied: ReviewApplied, *, r
 
 def _wide_round_snapshot(ctx: Ctx, number: int, *, restore: bool) -> None:
     """Restore a partially applied review to its pre-application text before replaying its saved terminal."""
-    root = ctx.clip_dir / f"listen/wide-held/round-{number}"
+    from . import wide_held
+
+    root = ctx.clip_dir / wide_held.ROOT / f"round-{number}"
     for rel in ("subs/final.srt", "subs/doubts.json", "speaker/speaker.srt", "pkg/REVIEW.md"):
         current, saved = ctx.clip_dir / rel, root / rel
         if restore:
@@ -1177,7 +1204,9 @@ def _wide_round_snapshot(ctx: Ctx, number: int, *, restore: bool) -> None:
 
 
 def _write_wide_review(ctx: Ctx, wide: WideProgress) -> None:
-    before = ctx.clip_dir / "listen/wide-held/before/pkg/REVIEW.md"
+    from . import wide_held
+
+    before = ctx.clip_dir / wide_held.ROOT / "before/pkg/REVIEW.md"
     lines = [before.read_text(encoding="utf-8").rstrip(), "", "## 复审后加长窗口的疑点处置"]
     for number, row in enumerate(wide["rounds"], 1):
         if row.get("phase") == "applied":

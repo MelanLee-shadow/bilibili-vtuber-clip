@@ -87,7 +87,7 @@ def resolve_dissent(task: Path, cid: str, *, item: int, how: str, by: str, reaso
         _edit_import(clip_dir, done, pushed, index)
         if rec.get("owner_edited") is not None:
             rec["owner_edited"] = sorted({*(rec.get("owner_edited") or []), index + 1})
-        forget_steps(state)
+        forget_steps(state, clip_dir)
     state.save()
     _process(clip_dir, done)
     return {"cid": cid, "item": item, "how": how, "redo": "from_step_3" if how == "apply" else "none",

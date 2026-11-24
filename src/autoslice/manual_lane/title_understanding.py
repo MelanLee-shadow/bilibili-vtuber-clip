@@ -4,9 +4,18 @@ The channel owner found the biggest title error was a title not built on the cli
 as the subject, a reference turned around).  So the title prompt is given a checked reading of the clip first:
 
 - two independent readings of the whole final subtitles (the same prompt, `run` 1 and 2, asked at once), each with
-  the main line, the punchline, who/what the easily confused references mean, and the side topics;
+  the main line, the punchline, who/what the easily confused references mean, the side topics, and how the host figures
+  in the main line (`host_role`, one of ROLES);
 - one merge that checks both readings against the subtitles, anchored on the selection reason written when the clip
   was chosen (`clip.hook`; empty for a compilation or a trimmed successor), and settles where they differ.
+
+A clip whose main line is other people's business, the host only chiming in (the merge says BYSTANDER and at least
+one reading said so too), is not the channel's clip: step 6 stops it as NOT_ABOUT_HOST before any title is written
+(`not_about_host`).  Selection cannot see who speaks (no speaker labels before step 4), so this is the first place the
+lane can tell.  Owner: selection is 「围绕李豆沙」; reaction clips (her reactions to someone else's video are the main
+line) and collab clips where she is one of the parties are not this case.  The reading rests on step 4's labels: the
+note carries her share of the lines, and when no line at all is labelled hers the stop is NO_HOST_LINES (step 4 is to
+be looked at), not a verdict on the content.
 
 No audio is read and no recognition is run; the selection reason only picks which event is the main line, every fact
 is the subtitles'.  The result goes into title/candidates.json (`understanding`), a PROCESS line, and the title prompt
@@ -34,11 +43,16 @@ READ_PURPOSE = "title-read"
 MERGE_PURPOSE = "title-merge"
 SHAPE_REASON = "TITLE_UNDERSTANDING_SHAPE"
 NO_HOOK = "（无）"
+LEAD, PARTY, BYSTANDER = "主角", "参与", "旁观"     # how the host figures in the main line (the prompts' words)
+ROLES = (LEAD, PARTY, BYSTANDER)
+NOT_ABOUT_HOST = "NOT_ABOUT_HOST"
+NO_HOST_LINES = "NO_HOST_LINES"     # the same stop when step 4 labelled none of the lines hers
 
 
 class ReadingBrief(TypedDict):
     main_line: str
     punchline: str
+    host_role: str          # one of ROLES
 
 
 class Referent(TypedDict):
@@ -61,6 +75,7 @@ class Merged(ReadingBrief):
     hook_holds: NotRequired[object]   # whether the selection reason holds in the subtitles (true/false/null)
     conflicts: NotRequired[list[str]]
     unexplained: NotRequired[list[Unexplained]]   # missing = none (answers cached before the field existed)
+    host_role_why: NotRequired[str]   # the merge's one sentence behind host_role, with cue numbers
 
 
 class Understanding(TypedDict):
@@ -80,10 +95,14 @@ def _filled(value: Any, key: str) -> bool:
 
 
 def reading_problem(value: Any) -> str:
-    """Why a reading is not usable, or "": an object whose main_line and punchline are non-empty strings."""
+    """Why a reading is not usable, or "": an object whose main_line and punchline are non-empty strings and whose
+    host_role is one of ROLES."""
     if not isinstance(value, dict):
         return "not an object"
-    return next((f"{key} missing" for key in ("main_line", "punchline") if not _filled(value, key)), "")
+    missing = next((f"{key} missing" for key in ("main_line", "punchline") if not _filled(value, key)), "")
+    if missing:
+        return missing
+    return "" if value.get("host_role") in ROLES else f"host_role must be one of {'/'.join(ROLES)}"
 
 
 def merge_problem(value: Any) -> str:
@@ -160,8 +179,37 @@ def understand(ctx: Ctx, lines: str, cpa_calls: list[CpaEvent]) -> Understanding
                               accepts=_contract(merge_problem)), cpa_calls)
     if isinstance(merged, StepOutcome):
         return merged
-    return {"readings": [{"main_line": r["main_line"], "punchline": r["punchline"]} for r in readings],
+    return {"readings": [{"main_line": r["main_line"], "punchline": r["punchline"], "host_role": r["host_role"]}
+                         for r in readings],
             "merged": cast(Merged, merged), "hook": hook}
+
+
+def host_lines(speakers: Sequence[str | None]) -> tuple[int, int]:
+    """(lines labelled the host's, lines) for the speaker label of each line; lines with no label at all are a clip
+    without speakers (a solo clip), all hers."""
+    if not any(speakers):
+        return len(speakers), len(speakers)
+    return sum(s == channel.HOST_LABEL for s in speakers), len(speakers)
+
+
+def not_about_host(found: Understanding, speakers: Sequence[str | None]) -> tuple[str, str] | None:
+    """(stop reason, note) when the clip is not about the host, else None: the merge settled on BYSTANDER (the main
+    line is between others, the host only chimes in) and at least one reading said so too; a merge that overrules two
+    readings agreeing she is in the main line does not stop the clip.  `speakers` is each subtitle line's speaker label:
+    her share goes into the note, and with no line labelled hers the reason is NO_HOST_LINES.  The note is also the
+    stop's PROCESS line."""
+    merged = found["merged"]
+    roles = [r["host_role"] for r in found["readings"]]
+    if merged["host_role"] != BYSTANDER or BYSTANDER not in roles:
+        return None
+    mine, total = host_lines(speakers)
+    why = str(merged.get("host_role_why") or "").strip().rstrip("。；")
+    if mine == 0:
+        return NO_HOST_LINES, (f"第 4 步没有把任何一句标成{channel.HOST}（0/{total} 句），读片按标签判她「{BYSTANDER}」；"
+                               f"在她自己的直播里一句都不是她，先查第 4 步的说话人，不按内容下结论。第 6 步不写标题，这条不发")
+    return NOT_ABOUT_HOST, (f"本片主线不围绕{channel.HOST}：她在主线里是「{BYSTANDER}」（两份阅读：{'、'.join(roles)}；"
+                            f"合并：{BYSTANDER}；她的句子 {mine}/{total}）" + (f"——{why}" if why else "")
+                            + f"；本片主线：{merged['main_line'].strip().rstrip('。')}。第 6 步不写标题，这条不发")
 
 
 def _joined(items: Sequence[str]) -> str:

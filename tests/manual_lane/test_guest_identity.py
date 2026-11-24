@@ -1,6 +1,7 @@
 """A collab with two named guests: a guest line is told to be one of them only through the witnesses' speaker groups and
 a cited line that holds (11-23 443680: 「果然awawa就是这种幕后黑手的人」 → 「我我我不是，不要瞎说。」 is 安晚awa, and so is
-the bomb proposal in the same MOSS group)."""
+the bomb proposal in the same MOSS group), the channel owner's own labels, or a confident voiceprint of a guest the
+classifier knows (A12)."""
 
 from __future__ import annotations
 
@@ -109,3 +110,166 @@ def test_names_in_an_import_he_did_not_decide_are_not_his(tmp_path):
     ctx, _ = _clip(tmp_path, 'h')
     _owner(ctx, {2: "礼墨Sumi", 3: "礼墨Sumi", 4: "礼墨Sumi", 6: "礼墨Sumi"}, decided_by=None)
     assert _identify(ctx) == {2: "安晚awa", 3: "安晚awa"}
+
+
+# ----- the voiceprint's own guest classes (A12, U467; lane_rules guest_voiceprint) --------------------------------------
+CLASSES = ["李豆沙", "礼墨Sumi", "安晚awa"]
+SUMI = {"李豆沙": 0.01, "礼墨Sumi": 0.97, "安晚awa": 0.02}          # host 0.01, her share of the guests 0.98
+AWA = {"李豆沙": 0.01, "礼墨Sumi": 0.02, "安晚awa": 0.97}
+
+
+def _chunks(ctx, spans, *, classes=CLASSES, extra=None):
+    """speaker/chunks-units.json + chunks-pred.json for [(start_ms, end_ms, probs, ok)] (step 3's ~1.2 s chunk run)."""
+    units = [{"id": f"u{i}", "s": s, "e": e, "lw": e, "cue": i, "seg": "x"} for i, (s, e, _p, _ok) in enumerate(spans)]
+    preds = [{"id": f"u{i}", "probs": p, "ok": ok} for i, (_s, _e, p, ok) in enumerate(spans)]
+    (ctx.clip_dir / 'speaker').mkdir(exist_ok=True)
+    (ctx.clip_dir / guest_identity.VOICE_UNITS).write_text(json.dumps({"units": units}))
+    (ctx.clip_dir / guest_identity.VOICE_PREDS).write_text(json.dumps(
+        {"classes": classes, "temperature": 0.95, "predictions": preds, **(extra or {})}, ensure_ascii=False))
+
+
+def _line(n, probs, ok=True):
+    """Two chunks covering line n (1-based) of LINES: 2.0*(n-1) .. +1.8 s."""
+    a = 2000 * (n - 1)
+    return [(a, a + 900, probs, ok), (a + 900, a + 1800, probs, ok)]
+
+
+def _voice(ctx, track=None):
+    track = track if track is not None else subtitle_track.read_track(ctx.clip_dir)
+    return guest_identity.voiceprint_lines(ctx, track, ["安晚awa", "礼墨Sumi"])
+
+
+def test_a_confident_guest_line_is_named_by_the_voiceprint_and_names_no_group(tmp_path):
+    ctx, _ = _clip(tmp_path, 'v1')
+    _chunks(ctx, [*_line(4, SUMI), *_line(5, {"李豆沙": 0.95, "礼墨Sumi": 0.04, "安晚awa": 0.01})])
+    got = _identify(ctx)                      # the model names line 2 安晚awa and her MOSS group (line 3)
+    assert got == {2: "安晚awa", 3: "安晚awa", 4: "礼墨Sumi"}     # line 6 shares MOSS S02 with 4 but stays unnamed
+    assert json.loads((ctx.clip_dir / guest_identity.PATH).read_text())["voice"] == {"4": "礼墨Sumi"}
+    _track, lines, _srt = step6_title.title_inputs(ctx, ['李豆沙', '安晚awa', '礼墨Sumi'])
+    assert '[礼墨Sumi] 好好可怕' in lines and '[连线] 这个是什么必杀技吗' in lines
+
+
+def test_host_share_duration_and_coverage_gates_each_block(tmp_path):
+    ctx, _ = _clip(tmp_path, 'v2')
+    _chunks(ctx, [*_line(2, {"李豆沙": 0.2, "礼墨Sumi": 0.78, "安晚awa": 0.02}),     # host 0.2 > host_max
+                  *_line(3, {"李豆沙": 0.01, "礼墨Sumi": 0.79, "安晚awa": 0.2}),     # her share 0.8 < share_min
+                  (6000, 6900, SUMI, True), (6900, 7800, SUMI, False),           # line 4: half heard (one chunk not ok)
+                  *_line(6, AWA)])
+    assert _voice(ctx) == {6: "安晚awa"}
+    short = [{"start_s": 10.0, "end_s": 10.8, "text": "怎么办", "speaker": "连线"}]   # shorter than min_duration_s
+    assert _voice(ctx, short) == {}
+    assert _voice(ctx, [dict(short[0], end_s=11.8)]) == {1: "安晚awa"}              # the same chunks, long enough
+    host_line = [dict(short[0], end_s=11.8, speaker="李豆沙")]                       # only [连线] lines are named
+    assert _voice(ctx, host_line) == {}
+
+
+def test_a_guest_the_classifier_does_not_know_turns_the_voiceprint_off(tmp_path):
+    ctx, _ = _clip(tmp_path, 'v3', guests=(["安晚awa"], ["露医生"]))
+    _chunks(ctx, [*_line(4, SUMI), *_line(6, AWA)])
+    assert _voice(ctx) == {}
+    ctx, _ = _clip(tmp_path, 'v4')
+    _chunks(ctx, [*_line(4, SUMI), *_line(6, AWA)], classes=["李豆沙", "礼墨Sumi"])   # a participant is no class
+    assert _voice(ctx) == {}
+
+
+def test_the_owners_label_stands_over_the_voiceprint_and_together_they_spare_the_model(tmp_path):
+    ctx, _ = _clip(tmp_path, 'v5')
+    _chunks(ctx, [*_line(4, SUMI), *_line(6, SUMI)])
+    _owner(ctx, {2: "安晚awa", 3: "安晚awa", 4: "安晚awa", 6: "未知"})
+    asked = []
+    assert _identify(ctx, answer=None, asked=asked) == {2: "安晚awa", 3: "安晚awa", 4: "安晚awa", 6: "礼墨Sumi"}
+    assert asked == []
+    saved = json.loads((ctx.clip_dir / guest_identity.PATH).read_text())
+    assert saved["voice"] == {"4": "礼墨Sumi", "6": "礼墨Sumi"} and saved["answer"] is None
+
+
+def test_a_changed_chunk_run_is_not_answered_from_the_old_record(tmp_path):
+    ctx, _ = _clip(tmp_path, 'v6')
+    _chunks(ctx, _line(4, SUMI))
+    assert _identify(ctx)[4] == "礼墨Sumi"
+    first = json.loads((ctx.clip_dir / guest_identity.PATH).read_text())["key"]
+    _chunks(ctx, _line(4, SUMI), extra={"temperature": 1.0})     # same names, another run: still a new key
+    asked = []
+    _identify(ctx, asked=asked)
+    assert asked and json.loads((ctx.clip_dir / guest_identity.PATH).read_text())["key"] != first
+    _chunks(ctx, _line(4, AWA))
+    assert _identify(ctx)[4] == "安晚awa"
+
+
+def test_a_failed_call_leaves_the_title_this_runs_names_not_an_older_tracks(tmp_path):
+    # the title reads the record (saved_lines), not identify's return: an older track's record must not label this one
+    ctx, _ = _clip(tmp_path, 'v9')
+    assert _identify(ctx) == {2: "安晚awa", 3: "安晚awa"}           # a record of an earlier run
+    _chunks(ctx, _line(4, SUMI))                                     # the chunk run changes: a new key
+    assert _identify(ctx, answer=None) == {4: "礼墨Sumi"}
+    assert guest_identity.saved_lines(ctx) == {4: "礼墨Sumi"}
+    _track, lines, _srt = step6_title.title_inputs(ctx, ['李豆沙', '安晚awa', '礼墨Sumi'])
+    assert '[连线] 我我我不是' in lines and '[礼墨Sumi] 好好可怕' in lines
+    asked = []
+    assert _identify(ctx, asked=asked) == {2: "安晚awa", 3: "安晚awa", 4: "礼墨Sumi"} and asked   # asked again
+
+
+def test_the_process_says_which_evidence_named_the_lines(tmp_path):
+    ctx, _ = _clip(tmp_path, 'v10')
+    _chunks(ctx, [*_line(4, SUMI), *_line(6, SUMI)])
+    _owner(ctx, {2: "安晚awa", 3: "安晚awa", 4: "安晚awa", 6: "未知"})
+    got = _identify(ctx, answer=None)                                # no model: his labels and the voiceprint
+    note = step6_title._identity_process(ctx, got, asked=False)
+    assert note.startswith("嘉宾是谁：4 句") and "频道主标注 3 句" in note and "声纹 1 句" in note
+    assert "对话证据" not in note
+
+
+def test_without_chunk_files_the_voiceprint_names_nothing_and_the_rest_stands(tmp_path):
+    ctx, _ = _clip(tmp_path, 'v7')                # a revision _r* clip has no chunk run
+    assert _voice(ctx) == {}
+    assert _identify(ctx) == {2: "安晚awa", 3: "安晚awa"}
+    assert json.loads((ctx.clip_dir / guest_identity.PATH).read_text())["voice"] == {}
+    ctx, _ = _clip(tmp_path, 'v8')
+    (ctx.clip_dir / 'speaker').mkdir(exist_ok=True)
+    (ctx.clip_dir / guest_identity.VOICE_PREDS).write_text("{not json")
+    assert _voice(ctx) == {}
+
+
+def test_her_own_words_naming_her_stand_over_the_voiceprint(tmp_path):
+    # review of 3e282d614: a verbatim self-naming the citation check kept is stronger than a 0.95 voiceprint
+    ctx, _ = _clip(tmp_path, 'v11')
+    _chunks(ctx, _line(6, AWA))
+    said = {"anchors": [*ANSWER["anchors"], {"line": 6, "name": "礼墨Sumi", "kind": "自称", "quote": "必杀技"}]}
+    assert _identify(ctx, said)[6] == "礼墨Sumi"
+    assert json.loads((ctx.clip_dir / guest_identity.PATH).read_text())["voice"] == {"6": "安晚awa"}
+
+
+def test_the_process_names_the_model_answer_also_when_it_is_reused(tmp_path):
+    ctx, _ = _clip(tmp_path, 'v12')
+    got = _identify(ctx)
+    assert "识别器分组＋对话证据；" in step6_title._identity_process(ctx, got, asked=True)
+    again = step6_title._identity_process(ctx, _identify(ctx), asked=False)
+    assert "沿用上次的回答" in again and "（；" not in again
+    ctx, _ = _clip(tmp_path, 'v13')
+    _chunks(ctx, _line(4, SUMI))
+    _identify(ctx, answer=None)
+    assert "调用失败" in step6_title._identity_process(ctx, {4: "礼墨Sumi"}, asked=True)
+
+
+def test_a_failed_chunk_run_leaves_no_reading_of_other_chunks(tmp_path):
+    # review of 3e282d614: new chunk units written, the classifier run failed, the old predictions stayed beside them
+    from types import SimpleNamespace
+
+    from fakes import make_ctx
+
+    from src.autoslice.manual_lane import step4_speaker
+
+    class FailingRemote:
+        def put(self, *_a, **_k):
+            return None
+
+        def run_script(self, **_k):
+            return SimpleNamespace(rc=1, stdout="", stderr="boom")
+
+    ctx = make_ctx(tmp_path, remote=FailingRemote(), cpa=None)
+    (ctx.clip_dir / 'speaker').mkdir(parents=True, exist_ok=True)
+    (ctx.clip_dir / guest_identity.VOICE_UNITS).write_text(json.dumps({"units": []}))
+    (ctx.clip_dir / guest_identity.VOICE_PREDS).write_text(json.dumps({"classes": CLASSES, "predictions": []}))
+    got, note = step4_speaker.voice_chunks(ctx, [{"id": 1, "start_s": 0.0, "end_s": 2.0, "text": "x"}])
+    assert got == {} and "失败" in note
+    assert not (ctx.clip_dir / guest_identity.VOICE_PREDS).exists()

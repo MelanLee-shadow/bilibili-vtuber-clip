@@ -445,6 +445,24 @@ def _raw_title_candidates(answer: TitleAnswer) -> list[TitleCandidate]:
     return candidates
 
 
+def _host_stop(ctx: Ctx, understanding: title_understanding.Understanding, track: Sequence[TrackCue], *,
+               owner_chose: bool, cpa_calls: list[CpaEvent]) -> StepOutcome | None:
+    """The stop of a clip the reading finds is not about the host (title_understanding.not_about_host: NOT_ABOUT_HOST,
+    or NO_HOST_LINES when step 4 labelled none of its lines hers), or None.  Clips the owner asked for go on: he chose
+    its title or said its draw (`owner_chose`), or it was seated for his mark in the chat (clip_init.owner_marked).  So
+    does the revision of a published clip (`revised_from`): it is already out and whether it stays is the owner's call,
+    not this reading's (agent's choice, 11-24)."""
+    from .clip_init import owner_marked
+
+    if owner_chose or isinstance(ctx.state.data.get("revised_from"), dict):
+        return None
+    found = title_understanding.not_about_host(understanding, [c.get("speaker") for c in track])
+    if found is None or owner_marked(ctx.state.data["clip"]):
+        return None
+    reason, note = found
+    return _fail(reason, note, cpa=cpa_calls, process=[note])
+
+
 def _title_rounds(ctx: Ctx, names: Sequence[str], cpa_calls: list[CpaEvent]
                   ) -> tuple[list[TitleRound], title_authority.TitleMethod, title_history.TitleHistory,
                              title_understanding.Understanding, title_verdicts.OwnerVerdicts,
@@ -458,7 +476,8 @@ def _title_rounds(ctx: Ctx, names: Sequence[str], cpa_calls: list[CpaEvent]
     verdicts the prompt carried and the circle background looked up for it (circle_context), or the failed outcome.
     When he did, the candidate whose body is that body (after canon_text and the formal-name case fix) is the only one
     tried, with no ranking call; a round without it is rewritten, and rounds used up without it fail as
-    TITLE_APPROVED_NOT_REPRODUCED."""
+    TITLE_APPROVED_NOT_REPRODUCED.  A clip the reading finds is not about the host stops before any title round
+    (_host_stop)."""
     try:
         cid = str(ctx.state.data["clip"].get("cid") or "")
         method = title_authority.title_method(exclude_candidate=cid)
@@ -471,7 +490,10 @@ def _title_rounds(ctx: Ctx, names: Sequence[str], cpa_calls: list[CpaEvent]
     understanding = title_understanding.understand(ctx, lines, cpa_calls)
     if isinstance(understanding, StepOutcome):
         return understanding
-    if (retitle := verdicts.retitle(cid)) and not approved:   # he said what the clip's draw is: titles are written from it
+    retitle = verdicts.retitle(cid)
+    if stop := _host_stop(ctx, understanding, track, owner_chose=bool(approved or retitle), cpa_calls=cpa_calls):
+        return stop
+    if retitle and not approved:   # he said what the clip's draw is: titles are written from it
         understanding["merged"]["main_line"] = retitle["main_line"]
         understanding["merged"]["punchline"] = retitle["punchline"]
     formal = title_names.canonical_names(title_authority.subtitle_text(track), names)
@@ -836,6 +858,23 @@ def _identify_guests(ctx: Ctx) -> tuple[dict[int, str], list[CpaEvent]]:
     return guest_identity.identify(ctx, subtitle_track.read_track(ctx.clip_dir), _asker(ctx, calls)), calls
 
 
+def _identity_process(ctx: Ctx, identified: Mapping[int, str], *, asked: bool) -> str:
+    """The PROCESS line of guest_identity: how many guest lines were named, and by which evidence."""
+    from . import guest_identity
+
+    saved = json.loads((ctx.clip_dir / guest_identity.PATH).read_text(encoding="utf-8")) \
+        if (ctx.clip_dir / guest_identity.PATH).exists() else {}
+    owner = len(saved.get("owner") or {})
+    voice_only = len(set(saved.get("voice") or {}) - set(saved.get("owner") or {}))
+    how = [f"频道主标注 {owner} 句"] if owner else []
+    how += [f"声纹 {voice_only} 句"] if voice_only else []
+    if saved.get("failed"):
+        how.append("识别器分组＋对话证据：调用失败，没用上")
+    elif saved.get("answer") is not None:
+        how.append("识别器分组＋对话证据" + ("" if asked else "（沿用上次的回答）"))
+    return f"嘉宾是谁：{len(identified)} 句连线定到具体的人（{'；'.join([*how, 'guest_identity.json'])}）"
+
+
 def step6_title_cover(ctx: Ctx) -> StepOutcome:
     final_srt = (ctx.clip_dir / "subs/final.srt").read_text(encoding="utf-8")
     cues = parse_srt(final_srt)
@@ -854,8 +893,8 @@ def step6_title_cover(ctx: Ctx) -> StepOutcome:
     if guests:
         process.insert(0, f"本场连线：{'、'.join(guests)}（场次没写、声纹听出别人，按整场弹幕认出；"
                           f"{collab_guests.CACHE.format(date=ctx.session.get('recording_date'))}）")
-    if identity_calls:
-        process.insert(0, f"嘉宾是谁：{len(identified)} 句连线定到具体的人（识别器分组＋对话证据，guest_identity.json）")
+    if identified or identity_calls:
+        process.insert(0, _identity_process(ctx, identified, asked=bool(identity_calls)))
     if (imported := cover_import.imported_cover(ctx)) is not None:      # the decided cover: nothing is drawn or looked at
         return cover_import.adopt(ctx, imported, title=title, process=process, cpa=cpa_calls)
     if (kept := cover_import.published_cover(ctx, title)) is not None:     # a subtitle revision keeps the published cover

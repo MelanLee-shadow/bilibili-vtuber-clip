@@ -136,6 +136,19 @@ def test_a_failed_call_the_step_went_on_without_does_not_make_a_stop_wait_for_th
     assert [s["cid"] for s in rounds[-1][0]["stuck"]] == ["unranked"]
 
 
+def test_a_clip_that_is_not_about_the_host_is_not_waiting_for_the_model_and_ends_up_stuck(tmp_path):
+    """Step 6's NOT_ABOUT_HOST (title_understanding.not_about_host) comes with every call answered: like
+    TITLE_NOT_ACCEPTED it is the clip's own stop, run again until STUCK_AFTER and then listed, never waiting_provider."""
+    clip(tmp_path, "others")
+    def run(cid):
+        calls = [{"call_id": c, "rc": 0} for c in ("title-read-1", "title-read-2", "title-merge")]
+        stop(tmp_path, cid, "title_cover", "NOT_ABOUT_HOST", cpa=calls)
+    rounds = [round_(tmp_path, run) for _ in range(4)]
+    assert [calls for _, calls in rounds] == [[["others"]]] * 3 + [[]]
+    assert all(result["waiting_provider"] == [] for result, _ in rounds)
+    assert [(s["cid"], s["reason"]) for s in rounds[-1][0]["stuck"]] == [("others", "NOT_ABOUT_HOST")]
+
+
 def test_a_second_round_at_the_same_time_leaves_at_once(tmp_path):
     clip(tmp_path, "slow")
     inner = []

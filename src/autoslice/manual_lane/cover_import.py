@@ -96,16 +96,17 @@ def import_cover(state: ClipState, clip_dir: Path, src: Path, *, decided_by: str
         "source": str(src), "files": {"cover.png": str(dest / "cover.png"), "cover.json": str(dest / "cover.json")},
         "png_sha256": hashlib.sha256((dest / "cover.png").read_bytes()).hexdigest(), "lines": lines,
         "decided_by": decided_by, "authority": authority, "note": str(meta.get("note") or ""), "at": utc_now()}
+    from .stage_package import forget_review
+
     for key in REDO:
         state.data["steps"].pop(key, None)
-    for key in ("review", "rewind", "revisions"):
-        cast("MutableMapping[str, JsonValue]", state.data).pop(key, None)
+    forget_review(state, clip_dir)
     state.data["imported_cover"] = rec
     state.save()
     return rec
 
 
-def withdraw(state: ClipState, *, decided_by: str, reason: str) -> dict[str, object]:
+def withdraw(state: ClipState, clip_dir: Path, *, decided_by: str, reason: str) -> dict[str, object]:
     """`import-cover --withdraw`: the clip's decided cover is no longer decided.  The record moves to state["withdrawn_covers"]
     with who withdrew it, when and why; the imported files are kept.  Step 6 and later steps are forgotten as an import does it
     (REDO, the review's state keys): the next `run` makes the cover by the ordinary step 6.  StateError when the clip has none."""
@@ -118,10 +119,11 @@ def withdraw(state: ClipState, *, decided_by: str, reason: str) -> dict[str, obj
         raise StateError(f"{state.data['clip']['cid']} has no imported cover to withdraw")
     withdrawal: dict[str, object] = {"withdrawn_by": decided_by, "reason": reason.strip(), "at": utc_now(),
                                      "forgotten_steps": [key for key in REDO if key in state.data["steps"]], "cover": rec}
+    from .stage_package import forget_review
+
     for key in REDO:
         state.data["steps"].pop(key, None)
-    for key in ("review", "rewind", "revisions"):
-        cast("MutableMapping[str, JsonValue]", state.data).pop(key, None)
+    forget_review(state, clip_dir)
     cast("MutableMapping[str, JsonValue]", state.data).pop("imported_cover")
     state.data.setdefault("withdrawn_covers", []).append(withdrawal)        # type: ignore[typeddict-item]
     state.save()

@@ -16,7 +16,20 @@ Before any of that, the channel owner's own labels: a clip whose subtitles he de
 owner`) and whose push brought speakers.json (scripts/speaker_label_page.py apply: his label of every line, by name) has
 its guest lines named by him (`owner_lines`). His names stand over every citation and group; they also name the groups
 they fall in, which names his unlabelled lines; the model is asked only when some guest line is left without his name
-(11-24 625460: he labelled 「哦，勾到了。我要笑。」 礼墨Sumi, the lane kept only 连线, and the title had to say 队友)."""
+(11-24 625460: he labelled 「哦，勾到了。我要笑。」 礼墨Sumi, the lane kept only 连线, and the title had to say 队友).
+
+Next to his labels, the voiceprint itself (`voiceprint_lines`, U467: 「我」 in a collab title must be someone the viewer can
+tell; A12). The frozen classifier of step 4 already scores every ~1.2 s chunk of a linked clip for each of its own
+people (speaker/chunks-pred.json); step 4 reads only the host's probability. When every participant of the session is
+one of its classes (speaker_v8.known_participants), a guest line is that guest when, over the chunks it overlaps
+(weighted by overlap), the host's probability is at most host_max, the top guest holds at least share_min of the guests'
+mass, the line lasts at least min_duration_s and the chunks heard at least min_heard of it (lane_rules guest_voiceprint).
+On 公开规则's 11-24 names of three 11-23 clips this named 20 of the 62 guest lines the lane labelled 连线, all right;
+leave-one-clip-out 26 of 27 right; looser lines put the host's words in a guest's mouth (host 0.086 and 0.100 with a
+guest share of 0.97 were his). The voiceprint's names stand over the groups and citations but never name a group
+(in a three-person session one group can hold two people); his labels stand over the voiceprint; the model is asked
+only when his labels and the voiceprint together leave a guest line unnamed. A clip without chunk files (a revision
+_r*) or with a guest the classifier does not know is named as before."""
 
 from __future__ import annotations
 
@@ -168,6 +181,63 @@ def owner_lines(ctx: Ctx, track: Sequence[TrackCue], guests: Sequence[str]) -> d
             if cue.get("speaker") == GUEST_LABEL and n in guests}
 
 
+VOICE_UNITS = "speaker/chunks-units.json"      # step 3/4's ~1.2 s chunks of the clip (step4_speaker.voice_chunks)
+VOICE_PREDS = "speaker/chunks-pred.json"       # the frozen classifier's probabilities of every class for each chunk
+
+
+def _voice_files(ctx: Ctx) -> tuple[list[dict[str, Any]], dict[str, Any]] | None:
+    """(units, predictions doc), or None where the clip has no chunk run (a revision _r* clip, a one-participant clip)
+    or the files cannot be read."""
+    try:
+        pred = json.loads((ctx.clip_dir / VOICE_PREDS).read_text(encoding="utf-8"))
+        units = json.loads((ctx.clip_dir / VOICE_UNITS).read_text(encoding="utf-8"))["units"]
+    except (OSError, ValueError):
+        return None
+    return cast("list[dict[str, Any]]", units), cast("dict[str, Any]", pred)
+
+
+def voiceprint_lines(ctx: Ctx, track: Sequence[TrackCue], guests: Sequence[str]) -> dict[int, str]:
+    """{line: guest} for the guest lines the voiceprint's own guest classes name with confidence (see the module
+    docstring; the numbers are lane_rules guest_voiceprint).  {} when the clip has no chunk files or some participant
+    of the session is no class of the classifier."""
+    from .lane_rules import rules
+    from .speaker_v8 import known_participants
+
+    got = _voice_files(ctx)
+    if got is None:
+        return {}
+    units, pred = got
+    classes = [str(c) for c in pred.get("classes") or []]
+    if not known_participants(ctx.session, classes):
+        return {}
+    cfg = cast("Mapping[str, float]", rules("guest_voiceprint"))
+    host_max, share_min = float(cfg["host_max"]), float(cfg["share_min"])
+    min_ms, min_heard = float(cfg["min_duration_s"]) * 1000, float(cfg["min_heard"])
+    probs = {str(r["id"]): r["probs"] for r in pred.get("predictions") or [] if r.get("ok") and r.get("probs")}
+    out: dict[int, str] = {}
+    for i, cue in enumerate(track, 1):
+        a, b = float(cue["start_s"]) * 1000, float(cue["end_s"]) * 1000
+        if cue.get("speaker") != GUEST_LABEL or b - a < min_ms:
+            continue
+        heard, mass = 0.0, dict.fromkeys(classes, 0.0)
+        for unit in units:
+            p = probs.get(str(unit["id"]))
+            ov = min(b, float(unit["e"])) - max(a, float(unit["s"]))
+            if p is None or ov <= 0:
+                continue
+            heard += ov
+            for name in classes:
+                mass[name] += ov * float(p.get(name, 0.0))
+        others = [n for n in classes if n != HOST]
+        guest_mass = sum(mass[n] for n in others)
+        if heard < min_heard * (b - a) or guest_mass <= 0:
+            continue
+        top = max(others, key=mass.__getitem__)
+        if top in guests and mass[HOST] / heard <= host_max and mass[top] / guest_mass >= share_min:
+            out[i] = top
+    return out
+
+
 def _prompt_lines(track: Sequence[TrackCue], groups: Mapping[str, Sequence[str | None]]) -> str:
     from .subtitle_track import plain_text
 
@@ -186,23 +256,28 @@ def _prompt_lines(track: Sequence[TrackCue], groups: Mapping[str, Sequence[str |
 
 def identify(ctx: Ctx, track: Sequence[TrackCue], ask: Callable[[str, str], dict[str, Any] | None]) -> dict[int, str]:
     """{line: guest} for the clip's guest lines, kept in PATH; {} when there is nothing to tell apart.  `ask` sends the
-    prompt and returns the parsed answer (None: the call failed, nothing is named and nothing is kept)."""
+    prompt and returns the parsed answer (None: the call failed; only the owner's and the voiceprint's names are
+    returned and nothing is kept)."""
     from .step_io import _render
 
     guests = needed(ctx, track)
     if not guests:
         return {}
     owner = owner_lines(ctx, track, guests)
+    voice = voiceprint_lines(ctx, track, guests)
+    preds_path = ctx.clip_dir / VOICE_PREDS
+    voice_file = hashlib.sha256(preds_path.read_bytes()).hexdigest() if preds_path.exists() else None
     groups = _groups(ctx, track)
     lines_text = _prompt_lines(track, groups)
-    key = hashlib.sha256(json.dumps([lines_text, guests, groups, sorted(owner.items())], ensure_ascii=False).encode()).hexdigest()
+    key = hashlib.sha256(json.dumps([lines_text, guests, groups, sorted(owner.items()), voice_file, sorted(voice.items())],
+                                    ensure_ascii=False).encode()).hexdigest()
     path = ctx.clip_dir / PATH
     if path.exists():
         saved = json.loads(path.read_text(encoding="utf-8"))
         if saved.get("key") == key:
             return {int(k): v for k, v in saved["lines"].items()}
     marks = [{"line": i, "name": n} for i, n in sorted(owner.items())]      # his names, as citations that always hold
-    if owner and all(i in owner for i, c in enumerate(track, 1) if c.get("speaker") == GUEST_LABEL):
+    if all(i in owner or i in voice for i, c in enumerate(track, 1) if c.get("speaker") == GUEST_LABEL):
         answer: dict[str, Any] | None = None
         anchors: list[dict[str, Any]] = []
     else:
@@ -215,16 +290,32 @@ def identify(ctx: Ctx, track: Sequence[TrackCue], ask: Callable[[str, str], dict
         prompt = _render("guest_identity.md", host=HOST, guests="、".join(guests), lines=lines_text)
         answer = ask("guest-identity", prompt)
         if answer is None:
-            return owner
+            # title_inputs reads the record, not this return: it must hold these names, not an older track's, and its
+            # key must not match, so that the next run asks again
+            failed = {**voice, **owner}
+            _write_record(path, {"key": None, "failed": True, "guests": guests, "owner": _str_keys(owner),
+                                 "voice": _str_keys(voice), "lines": _str_keys(failed)})
+            return failed
         anchors = kept_anchors(answer, track, guests, known)
     lines, names = resolve(track, groups, [*marks, *anchors])
+    lines.update(voice)          # a confident voiceprint stands over a group's name, never names a group itself
+    lines.update({int(a["line"]): str(a["name"]) for a in anchors if a.get("kind") == "自称"})   # her own words name her
     lines.update(owner)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"key": key, "guests": guests, "owner": {str(k): v for k, v in sorted(owner.items())},
-                                "answer": answer, "anchors": anchors, "groups": names,
-                                "lines": {str(k): v for k, v in sorted(lines.items())}},
-                               ensure_ascii=False, indent=1), encoding="utf-8")
+    _write_record(path, {"key": key, "guests": guests, "owner": _str_keys(owner), "voice": _str_keys(voice),
+                         "answer": answer, "anchors": anchors, "groups": names, "lines": _str_keys(lines)})
     return lines
+
+
+def _str_keys(lines: Mapping[int, str]) -> dict[str, str]:
+    return {str(k): v for k, v in sorted(lines.items())}
+
+
+def _write_record(path: Path, record: Mapping[str, Any]) -> None:
+    """Written whole or not at all: title_inputs and the PROCESS note read it while another run may be writing."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(path)
 
 
 def saved_lines(ctx: Ctx) -> dict[int, str]:
