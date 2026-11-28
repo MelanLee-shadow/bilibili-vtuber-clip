@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Literal
 
 from src.autoslice.channel_profile import ChannelProfile, load_channel_profile
 
 
 UPLOAD_TAG_POLICY_SCHEMA = "vtuber-slice.upload-tag-policy.v2"
 REPO_ROOT = Path(__file__).resolve().parents[2]
-# Circle-wide term rules every channel's policy gets after its own (U430: 「标签也可以加上嗦面」 is the genre's way).
+# Circle-wide term rules every channel's policy gets after its own (the channel's request is the genre's way).
 CIRCLE_TERMS = REPO_ROOT / "assets" / "manual_lane" / "upload_tag_circle_terms.json"
 
 
@@ -258,3 +259,182 @@ def load_selected_upload_tag_policy(
 ) -> UploadTagPolicy:
     selected = profile or load_channel_profile(REPO_ROOT)
     return load_upload_tag_policy(selected.asset_file("upload_tag_policy"))
+
+
+@dataclass(frozen=True)
+class TagPolicyResult:
+    """Outcome of enforcing upload tag policy on a post-step-7 tag list."""
+
+    tags: tuple[str, ...]
+    ok: bool
+    reasons: tuple[str, ...] = ()
+    dropped: tuple[str, ...] = ()
+    restored_base: tuple[str, ...] = ()
+
+
+def apply_tag_policy(
+    proposed: object,
+    *,
+    previous: Sequence[str] | None = None,
+    base_tags: Sequence[str] | None = None,
+    priority_tags: Sequence[str] = (),
+    policy: UploadTagPolicy | None = None,
+    on_overflow: Literal["evict", "refuse"] = "evict",
+    prefer_new: bool = False,
+) -> TagPolicyResult:
+    """Enforce the step-7 tag policy on any tag list added or changed after step 7.
+
+    Guarantees cap (min(policy.max_tags_default, PLATFORM_MAX_TAGS)), case-insensitive
+    de-duplication, per-tag length/separator validity, and retention of fixed base tags.
+    In ``evict`` mode, one unified eviction order applies in both merge modes: fixed base
+    tags are never evicted; priority/proper-noun tags are evicted only when no general
+    tag remains; among general tags, ``prefer_new=True`` (review path) keeps new tags over
+    existing ones, while ``prefer_new=False`` (step-7 re-run merge) keeps earlier
+    (reviewed-kept) tags over trailing regenerated ones, evicting rightmost-first within
+    each tier.
+    In ``refuse`` mode, any overflow, duplicate, missing fixed base tag, or invalid tag
+    is refused with stated reasons.
+    """
+    from src.autoslice.authorized_upload_metadata import (
+        PLATFORM_MAX_TAG_CHARS,
+        PLATFORM_MAX_TAGS,
+        validate_tags,
+    )
+
+    if (
+        not isinstance(proposed, Sequence)
+        or isinstance(proposed, (str, bytes))
+        or not proposed
+    ):
+        return TagPolicyResult(
+            tags=(), ok=False, reasons=("tags must be a non-empty list of strings",)
+        )
+    if any(not isinstance(item, str) for item in proposed):
+        return TagPolicyResult(
+            tags=(), ok=False, reasons=("tags must be a list of strings",)
+        )
+
+    active = policy or load_selected_upload_tag_policy()
+    cap = min(active.max_tags_default, PLATFORM_MAX_TAGS)
+    max_chars = min(active.max_tag_chars, PLATFORM_MAX_TAG_CHARS)
+
+    items = [item.strip() for item in proposed]
+    structural_errors: list[str] = []
+    if any(not item for item in items):
+        structural_errors.append("tags contain an empty item")
+    for item in items:
+        if len(item) > max_chars:
+            structural_errors.append(f"tag too long (>{max_chars} chars): {item!r}")
+        if any(ch in item for ch in ",，\n\t"):
+            structural_errors.append(f"tag contains a separator character: {item!r}")
+    if structural_errors:
+        return TagPolicyResult(tags=(), ok=False, reasons=tuple(structural_errors))
+
+    prev_keys = (
+        {item.strip().casefold() for item in previous if isinstance(item, str) and item.strip()}
+        if previous is not None
+        else set()
+    )
+    if base_tags is not None:
+        raw_base = tuple(item.strip() for item in base_tags if isinstance(item, str) and item.strip())
+    elif previous is not None:
+        raw_base = tuple(item for item in active.base_tags if item.casefold() in prev_keys)
+    else:
+        raw_base = active.base_tags
+
+    base_kept: list[str] = []
+    base_keys: set[str] = set()
+    for item in raw_base:
+        key = item.casefold()
+        if key not in base_keys:
+            base_keys.add(key)
+            base_kept.append(item)
+
+    if len(base_kept) > cap:
+        return TagPolicyResult(
+            tags=(),
+            ok=False,
+            reasons=(f"{len(base_kept)} fixed base tags exceed the cap of {cap}",),
+        )
+
+    deduped: list[str] = []
+    seen_keys: set[str] = set()
+    duplicate_items: list[str] = []
+    for item in items:
+        key = item.casefold()
+        if key in seen_keys:
+            duplicate_items.append(item)
+            continue
+        seen_keys.add(key)
+        deduped.append(item)
+
+    missing_base = tuple(item for item in base_kept if item.casefold() not in seen_keys)
+
+    if on_overflow == "refuse":
+        refusals: list[str] = []
+        if duplicate_items:
+            refusals.append(f"tags contain duplicates: {', '.join(duplicate_items)}")
+        if missing_base:
+            refusals.append(f"missing fixed base tags: {', '.join(missing_base)}")
+        if len(items) > cap:
+            refusals.append(f"{len(items)} tags exceed the cap of {cap}")
+        for problem in validate_tags(items, policy=active):
+            if problem not in refusals and not (
+                problem == "tags contain duplicates" and duplicate_items
+            ):
+                refusals.append(problem)
+        if refusals:
+            return TagPolicyResult(tags=(), ok=False, reasons=tuple(refusals))
+        return TagPolicyResult(tags=tuple(items), ok=True)
+
+    reasons: list[str] = []
+    if duplicate_items:
+        reasons.append(f"去重重复标签：{', '.join(duplicate_items)}")
+    if missing_base:
+        reasons.append(f"保留固定基础标签：{', '.join(missing_base)}")
+
+    non_base = [item for item in deduped if item.casefold() not in base_keys]
+    budget = cap - len(base_kept)
+    dropped: tuple[str, ...] = ()
+    if len(non_base) > budget:
+        excess = len(non_base) - budget
+        prio_keys = {
+            item.strip().casefold()
+            for item in priority_tags
+            if isinstance(item, str) and item.strip()
+        }
+
+        def _evict_rank(entry: tuple[int, str]) -> tuple[int, int, int]:
+            idx, value = entry
+            key = value.casefold()
+            is_general = 0 if key in prio_keys else 1
+            is_lower_group = (
+                1 if (prefer_new and previous is not None and key in prev_keys) else 0
+            )
+            return (is_general, is_lower_group, idx)
+
+        ranked = sorted(enumerate(non_base), key=_evict_rank, reverse=True)
+        evict_indices = {idx for idx, _value in ranked[:excess]}
+        dropped = tuple(
+            value for idx, value in enumerate(non_base) if idx in evict_indices
+        )
+        non_base = [
+            value for idx, value in enumerate(non_base) if idx not in evict_indices
+        ]
+        reasons.append(f"超过上限 {cap} 个，按规则让出内容标签：{', '.join(dropped)}")
+
+    settled = (*base_kept, *non_base)
+    if not settled:
+        return TagPolicyResult(
+            tags=(), ok=False, reasons=("tags must be a non-empty list of strings",)
+        )
+    problems = validate_tags(list(settled), policy=active)
+    if problems:
+        return TagPolicyResult(tags=(), ok=False, reasons=tuple(problems))
+    return TagPolicyResult(
+        tags=settled,
+        ok=True,
+        reasons=tuple(reasons),
+        dropped=dropped,
+        restored_base=missing_base,
+    )

@@ -22,7 +22,8 @@ def may_resume_focused(event: CpaEvent) -> bool:
     # guessing from the total here would block a mixture of quota refusals and unknown outcomes.
     reason = str(event.get("reason") or "")
     return ((budget is None and reason == "CPA_TEXT_RETRY_EXHAUSTED")
-            or reason.startswith("CPA_QUOTA_REFUSED") or classify_provider_failure(reason) in (SERVICE, QUOTA)
+            or reason.startswith(("CPA_QUOTA_REFUSED", "CPA_FALLBACK_FAILED"))
+            or classify_provider_failure(reason) in (SERVICE, QUOTA)
             or reason == "EMPTY_ANSWER" or reason.startswith("NO_TERMINAL_EVENT"))
 
 

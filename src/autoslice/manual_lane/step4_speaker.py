@@ -16,9 +16,12 @@ from typing import TYPE_CHECKING, TypedDict, cast
 
 from . import channel
 from . import (
+    arrival,
     channel_facts,
+    collab_guests,
     gates,
     normalize,
+    session_voices,
     speaker_v8,
     step4_other_voices as ov,
 )
@@ -39,6 +42,7 @@ from .step_io import (
     _log,
     _render,
     _run_remote,
+    json_asker,
     linked_session,
 )
 
@@ -76,8 +80,10 @@ def _reviewer_speaker_rows(ctx: Ctx) -> list[speaker_v8.IvanSpeakerLabel]:
 
 
 SPEAKER_V8_ROOT = layout().speaker_v8_root   # per-clip v8 workspaces on the media host (one directory per clip)
-# the frozen v8 workspace (code, classifier, CAM++ venv and model, scorer), handed to the shell tools by name
-SPEAKER_V8_ENV = "".join(f"SPEAKER_V8_{k.upper()}={v} " for k, v in layout().speaker_v8.items())
+# the frozen v8 workspace (code, classifier, CAM++ venv and model, scorer), handed to the shell tools by name; a linked
+# clip's voiceprint runs take session_voices.v8_env instead (the frozen v8, or its session's classifier)
+SPEAKER_V8_ENV = session_voices.env_line(layout().speaker_v8)
+CHUNKS_ENV = "speaker/chunks-env.txt"        # the SPEAKER_V8_* settings the chunk run was made with
 SPEAKER_V8_SCRIPT = REMOTE_TOOLS / "speaker_v8_run.sh"
 
 
@@ -113,9 +119,13 @@ def voice_chunks(ctx: Ctx, bcut: Sequence[SrtCue]) -> tuple[dict[int, list[speak
     units = [u for c in bcut for u in speaker_v8.cue_chunks(int(c["id"]), round(c["start_s"] * 1000),
                                                              round(c["end_s"] * 1000), cid)]
     units_doc = {"units": [dict(u, seg=cid) for u in units]}
+    try:
+        env = session_voices.v8_env(ctx)
+    except session_voices.SessionVoicesError as exc:
+        return {}, f"本场分类器训练失败（不影响本步）：{exc}"
     units_local, pred_local = _local(ctx, "speaker/chunks-units.json"), _local(ctx, "speaker/chunks-pred.json")
     same = units_local.exists() and json.loads(units_local.read_text(encoding="utf-8")) == units_doc
-    if not (same and pred_local.exists()):
+    if not (same and pred_local.exists() and chunks_env(ctx) == env):
         rd = ctx.remote_dir
         pred_local.unlink(missing_ok=True)      # never paired with other chunks: a failed run below leaves no reading
         units_local.write_text(json.dumps(units_doc, ensure_ascii=False), encoding="utf-8")
@@ -123,7 +133,7 @@ def voice_chunks(ctx: Ctx, bcut: Sequence[SrtCue]) -> tuple[dict[int, list[speak
         ctx.adapters.remote.put(SPEAKER_V8_SCRIPT, f"{rd}/speaker/speaker_v8_run.sh")
         workdir = f"{SPEAKER_V8_ROOT}/{cid}-chunks"
         res = _run_remote(ctx, "s3-speaker-chunks",
-                          f"{SPEAKER_V8_ENV}bash {rd}/speaker/speaker_v8_run.sh {cid} {rd}/cut/cut.mp4 "
+                          f"{env}bash {rd}/speaker/speaker_v8_run.sh {cid} {rd}/cut/cut.mp4 "
                           f"{workdir} {rd}/speaker/chunks-units.json\n", timeout=3600)
         if "SPEAKER_V8_DONE" not in res.stdout:
             return {}, f"声纹分段失败（不影响本步）：rc={res.rc} {res.stdout[-120:]} {res.stderr[-120:]}"
@@ -131,6 +141,7 @@ def voice_chunks(ctx: Ctx, bcut: Sequence[SrtCue]) -> tuple[dict[int, list[speak
             ctx.adapters.remote.get(f"{workdir}/out/pred.json", pred_local)
         except RuntimeError as exc:
             return {}, f"声纹分段结果取回失败（不影响本步）：{exc}"
+        _local(ctx, CHUNKS_ENV).write_text(env, encoding="utf-8")
     pred_rows = cast("list[speaker_v8.PredictionWithId]",
                      json.loads(pred_local.read_text(encoding="utf-8")).get("predictions", []))
     preds = {str(r["id"]): r for r in pred_rows}
@@ -141,6 +152,13 @@ def voice_chunks(ctx: Ctx, bcut: Sequence[SrtCue]) -> tuple[dict[int, list[speak
             out.setdefault(int(u["cue"]), []).append(
                 {"s": u["s"], "e": u["e"], "host_prob": float(dict(p.get("probs") or {}).get(speaker_v8.HOST, 0.0))})
     return out, ""
+
+
+def chunks_env(ctx: Ctx) -> str:
+    """The SPEAKER_V8_* settings the clip's chunk run was made with; a run from before they were recorded was the
+    frozen v8's (no other classifier existed then)."""
+    path = _local(ctx, CHUNKS_ENV)
+    return path.read_text(encoding="utf-8") if path.is_file() else SPEAKER_V8_ENV
 
 
 def _mixed_by_cue(chunks: Mapping[int, Sequence[speaker_v8.ChunkPrediction]]) -> dict[int, speaker_v8.MixedSpeakers]:
@@ -164,7 +182,15 @@ def _v8_predictions(ctx: Ctx) -> tuple[Sequence[speaker_v8.SpeakerChunk], Mappin
     rd = ctx.remote_dir
     cid = ctx.state.data["clip"]["cid"]
     bcut = parse_srt(_local(ctx, "asr/bcut.srt").read_text(encoding="utf-8"))
+    try:
+        env = session_voices.v8_env(ctx)     # the frozen v8, or the session's classifier (switch rule)
+    except session_voices.SessionVoicesError as exc:
+        return _fail("SESSION_VOICES_FAILED", str(exc))
     chunk_units, chunk_preds = _local(ctx, "speaker/chunks-units.json"), _local(ctx, "speaker/chunks-pred.json")
+    if chunk_units.exists() and chunk_preds.exists() and chunks_env(ctx) != env:
+        _chunks, err = voice_chunks(ctx, bcut)    # made with another classifier: again with this one
+        if err:
+            return _fail("SPEAKER_V8_FAILED", err)
     if chunk_units.exists() and chunk_preds.exists():
         # step 3 already scored ~1.2 s chunks of every cue (U129): a line takes the chunks it overlaps, so an
         # interjection line split off a sentence gets its own speaker (training: 107 -> 110 of 125, cue units vs chunks)
@@ -182,7 +208,7 @@ def _v8_predictions(ctx: Ctx) -> tuple[Sequence[speaker_v8.SpeakerChunk], Mappin
     ctx.adapters.remote.put(units_local, f"{rd}/speaker/units.json")
     ctx.adapters.remote.put(SPEAKER_V8_SCRIPT, f"{rd}/speaker/speaker_v8_run.sh")
     workdir = f"{SPEAKER_V8_ROOT}/{cid}"
-    body = (f"{SPEAKER_V8_ENV}bash {rd}/speaker/speaker_v8_run.sh {cid} {rd}/cut/cut.mp4 {workdir} "
+    body = (f"{env}bash {rd}/speaker/speaker_v8_run.sh {cid} {rd}/cut/cut.mp4 {workdir} "
             f"{rd}/speaker/units.json\n")
     res = _run_remote(ctx, "s4-speaker-v8", body, timeout=3600)
     if "SPEAKER_V8_DONE" not in res.stdout:
@@ -233,16 +259,39 @@ def _speaker_from_preds(ctx: Ctx, units: Sequence[speaker_v8.SpeakerChunk],
 
     track = st.read_track(ctx.clip_dir)
     cuts = {i: d["split"] for i, d in enumerate(decided) if d.get("split")}
-    if cuts and len(track) == len(decided):   # a cue CPA split between two speakers at the engine's switch (U150)
+    # a line the arrival met with its neighbour where its speaker stops (arrival._switch)
+    moved = {i for i, (d, c) in enumerate(zip(decided, cues, strict=True)) if (d["start_ms"], d["end_ms"]) != (c["start_ms"], c["end_ms"])}
+    # what someone said into another person's sentence that the review let go unsubtitled (_adopt_interjections)
+    drops = {i: [r for r in d.get("interjections") or [] if r["action"] == "dropped"] for i, d in enumerate(decided)}
+    drops = {i: rows for i, rows in drops.items() if rows}
+    if drops and len(track) != len(decided):
+        raise ValueError(f"speaker rows {len(decided)} do not match the subtitle track {len(track)}")
+    left_out: list[dict[str, object]] = []
+    if (cuts or moved or drops) and len(track) == len(decided):   # a cue split between two speakers: by CPA at the engine's switch (U150), by the arrival at their words
         cut_track: list[TrackCue] = []
         for i, cue in enumerate(track):
-            cut_track.extend([{"start_s": p["start_ms"] / 1000, "end_s": p["end_ms"] / 1000, "text": p["text"],
-                               "speaker": p["speaker"]} for p in cuts[i]] if i in cuts else [cue])
+            if i in drops:
+                kept = _without(plain_text_of(final_cues[i]["text"]), drops[i])
+                left_out += [{"start_s": cues[i]["start_ms"] / 1000, "end_s": cues[i]["end_ms"] / 1000, "text": str(r["phrase"]),
+                              "reason": f"{r['by'] or '另一人'}插在{r['main']}的话里的{r['kind']}"} for r in drops[i] if r["whole"]]
+                if kept:
+                    line: TrackCue = {**cue, "text": kept}
+                    if i in moved:
+                        line["start_s"], line["end_s"] = decided[i]["start_ms"] / 1000, decided[i]["end_ms"] / 1000
+                    cut_track.append(line)
+            elif i in cuts:
+                cut_track.extend({"start_s": p["start_ms"] / 1000, "end_s": p["end_ms"] / 1000, "text": p["text"],
+                                  "speaker": p["speaker"]} for p in cuts[i])
+            elif i in moved:
+                cut_track.append({**cue, "start_s": decided[i]["start_ms"] / 1000, "end_s": decided[i]["end_ms"] / 1000})
+            else:
+                cut_track.append(cue)
         track = normalize.shape_cues(cut_track)
     joined, lone = normalize.join_lone_chars(normalize._sequence(track))
-    if lone or cuts:
+    if lone or cuts or moved or drops:
         st.write_track(ctx.clip_dir, joined, speakers=True)
     record_lone(ctx.clip_dir, lone, fresh=False)
+    _record_interjections(ctx, decided, cues, left_out)
     host_n = sum(1 for d in decided if d["speaker"] == speaker_v8.HOST)
     no_unit = sum(1 for d in decided if d["units"] == 0)
     decision = _local(ctx, "speaker/decision.json")
@@ -267,9 +316,39 @@ def _speaker_from_preds(ctx: Ctx, units: Sequence[speaker_v8.SpeakerChunk],
     return StepOutcome(True, products={"speaker_srt": str(speaker), "decision": str(decision)},
                        note=f"{kind} host={host_n} guest={len(decided) - host_n} no_unit={no_unit}", cpa=cluster_cpa,
                        process=[f"{lead}：{channel.HOST} {host_n} 句，嘉宾 {len(decided) - host_n} 句（其中无可用证人 {no_unit} 句，"
-                                f"按嘉宾色）；分类器 v8 冻结，{channel.HOST}阈值 {host_min}（{n_people} 人，lane_rules speaker，e05 §10）；"
+                                f"按嘉宾色）；{session_voices.note(ctx)}，{channel.HOST}阈值 {host_min}（{n_people} 人，lane_rules speaker，e05 §10）；"
                                 f"声纹单元：{unit_kind}",
                                 *cluster_process, lone_char_line(lone)])
+
+
+def _without(text: str, rows: Sequence[Mapping[str, object]]) -> str:
+    """The line's text without the phrases the review let go (their `span`s, text positions of the plain text)."""
+    out = text
+    for r in sorted(rows, key=lambda r: -cast("list[int]", r["span"])[0]):
+        s0, s1 = cast("list[int]", r["span"])
+        out = out[:s0] + out[s1:]
+    return out.strip(" ，,、")
+
+
+INTERJECTIONS = "speaker/interjections.json"
+
+
+def _record_interjections(ctx: Ctx, decided: Sequence[speaker_v8.SpeakerDecision], cues: Sequence[speaker_v8.MillisecondSpan],
+                          left_out: list[dict[str, object]]) -> None:
+    """speaker/interjections.json: every candidate the review read, with the line, the phrase, whose sentence it was said
+    into and by whom, the review's kind and reason and what was done (dropped / split / kept); a whole line not
+    subtitled is recorded as a decided gap for step 8's check of speech without subtitles (package_guards)."""
+    from . import package_guards
+
+    rows = [{"line": i + 1, "start_s": cues[i]["start_ms"] / 1000, "end_s": cues[i]["end_ms"] / 1000, **r}
+            for i, d in enumerate(decided) for r in d.get("interjections") or []]
+    path = _local(ctx, INTERJECTIONS)
+    if rows:
+        path.write_text(json.dumps(rows, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    else:
+        path.unlink(missing_ok=True)
+    if left_out:
+        package_guards.record_left_out(ctx.clip_dir, left_out, '第 4 步：主要说话人以外的插话不出字幕（公开规则）')
 
 
 PERSONA = channel.asset("persona.md")
@@ -299,14 +378,13 @@ SPEAKER_CLUSTER_SCRIPT = REMOTE_TOOLS / "speaker_cluster_cos.sh"
 
 def _moss_voiceprint_names(ctx: Ctx, segs: Sequence[speaker_v8.EngineSegment]) -> dict[str, speaker_v8.ClusterName] | None:
     """MOSS clusters named by the host's enrolled voiceprint on OCI3 (speaker_cluster_cos.sh, v8's CAM++ copy):
- speaker_v8.name_by_voiceprint. Reused while the segments are unchanged. None when it cannot name them (one cluster,
- or the embedding failed: recorded by the caller as v8 labels), and when the session has more than two people. 8c1
- was validated on two-person collabs only; with three people a cluster can hold two of them and naming the whole
- cluster by its closest centroid labels a guest as the host (11-23, a three-person voice collab: MOSS found two
- clusters in 583860, 897000 and 625460, the host's cluster also held 礼墨Sumi, and every published line of that
- cluster was burned as 李豆沙 although v8 heard a guest; 公开规则：上传的视频字幕归属全是错的). v8 there is the
- host voiceprint judged cue by cue, the speaker prefill 公开规则corrected on 10-31 (101/115 right; 公开规则11-23: 「为什么
- 不用之前那种预填的做法呢？」)."""
+    speaker_v8.name_by_voiceprint.  Reused while the segments are unchanged.  None when it cannot name them (one cluster,
+    or the embedding failed: recorded by the caller as v8 labels), and when the session has more than two people.  8c1
+    was validated on two-person collabs only; with three people a cluster can hold two of them and naming the whole
+    cluster by its closest centroid labels a guest as the host (11-23, a three-person voice collab: MOSS found two
+    clusters in 583860, 897000 and 625460, the host's cluster also held 礼墨Sumi, and every published line of that
+    cluster was burned as 李豆沙 although v8 heard a guest; the channel's request).  v8 there is the
+    host voiceprint judged cue by cue, the speaker prefill 维护者 corrected on 10-31 (101/115 right; the channel's request)."""
     rd, cid = ctx.remote_dir, ctx.state.data["clip"]["cid"]
     units = [{"id": f"m{i}", "seg": cid, "s": int(sg["start_ms"]), "e": int(sg["end_ms"]), "lw": int(sg["end_ms"])}
              for i, sg in enumerate(segs)]
@@ -343,6 +421,9 @@ class _Clusters:
     short_of_people: tuple[int, int] | None = None     # (MOSS clusters, people of the session) when more than two people
     many_people: int = 0                                # the session's people when more than two: no engine clusters
     mai_one_cluster: bool = False                      # MAI heard one cluster: it cannot tell anyone apart
+    arrival_line: str = ""                             # what the arrival evidence found (arrival.for_clip), for PROCESS
+    interjections: list[arrival.Interjection] = field(default_factory=list)    # arrival.interjections, for the review
+    labels: dict[str, str] = field(default_factory=dict)                        # {an arrival person: host or guest label}
 
 
 class WitnessDocument(TypedDict, total=False):
@@ -350,7 +431,7 @@ class WitnessDocument(TypedDict, total=False):
     segments: list[speaker_v8.EngineSegment]
 
 
-def _witness_clusters(ctx: Ctx, cues: Sequence[speaker_v8.MillisecondSpan],
+def _witness_clusters(ctx: Ctx, final_cues: Sequence[SrtCue], cues: Sequence[speaker_v8.MillisecondSpan],
                       decided: Sequence[speaker_v8.SpeakerDecision]) -> _Clusters:
     """MOSS clusters named by the host's voiceprint (v8 overlap when it cannot), MAI's named by v8 overlap; MOSS
     without a voiceprint naming is dropped (v8 labels, MAI flags).
@@ -367,6 +448,15 @@ def _witness_clusters(ctx: Ctx, cues: Sequence[speaker_v8.MillisecondSpan],
     routes never tie).  "More than two" is speaker_v8.people, the count the thresholds and the review use: an unnamed
     guest (连线) or a recorded speaker_count is a person too."""
     cl = _Clusters()
+    evidence, cl.arrival_line = arrival.for_clip(ctx, decided)
+    if evidence is not None:    # the arrival groups given to the host or to a guests' sound path: the label engine, whatever the people count
+        cl.named[arrival.ENGINE] = evidence["named"]
+        cl.segments[arrival.ENGINE] = evidence["segments"]
+        lines: list[arrival.TextSpan] = [{**c, "text": plain_text_of(f["text"])} for c, f in zip(cues, final_cues, strict=True)]
+        cl.engines[arrival.ENGINE] = arrival.cue_clusters(lines, evidence["segments"], evidence["named"], evidence["persons"],
+                                                          evidence.get("letters") or {})
+        cl.interjections = arrival.interjections(lines, evidence["segments"], evidence["persons"], evidence.get("letters") or {})
+        cl.labels = {p: evidence["named"][g]["speaker"] for g, p in evidence["persons"].items()}
     if speaker_v8.people(ctx.session) > 2:     # the count the thresholds use: an unnamed guest (连线) is a person too
         cl.many_people = speaker_v8.people(ctx.session)
     for name in ("moss", "mai"):
@@ -392,7 +482,7 @@ def _witness_clusters(ctx: Ctx, cues: Sequence[speaker_v8.MillisecondSpan],
         cl.engines.pop("mai")
         cl.mai_one_cluster = not cl.many_people
     elif one:   # beside MOSS: the single cluster stays the third route only on the lines MOSS labels
-        cl.engines["mai"] = [m if lead is not None else None for m, lead in zip(cl.engines["mai"], cl.engines["moss"])]
+        cl.engines["mai"] = [m if lead is not None else None for m, lead in zip(cl.engines["mai"], cl.engines["moss"], strict=True)]
         cl.mai_one_cluster = True
     return cl
 
@@ -421,6 +511,37 @@ def _cluster_line(cl: _Clusters, fused: Sequence[speaker_v8.SpeakerDecision], lo
             + f"；与 v8、MAI 都一致 {len(fused) - len(low)} 句，不一致或句内两人、待 CPA 复核 {len(low)} 句")
 
 
+def _by_words(fused: list[speaker_v8.SpeakerDecision], rows: Sequence[speaker_v8.ClusterCue | None],
+              decided: Sequence[speaker_v8.SpeakerDecision]) -> None:
+    """What the arrival reads from the words (arrival.cue_clusters) beyond a label: a line whose words are two people's,
+    one after the other, is cut at their words (`split`, each part labelled by its own person); two lines of two people
+    whose boundary the recognition put before the first one stopped meet where they stop (start_ms / end_ms).  Not on a
+    line the owner labelled, nor a boundary beside one."""
+    维护者 = [d.get("source") == "维护者" for d in decided]
+    for i, row in enumerate(rows):
+        if row is None or 维护者[i]:
+            continue
+        if row.get("parts"):
+            fused[i]["split"] = row["parts"]
+        times = row.get("times")
+        if times and times[1] != fused[i]["end_ms"] and i + 1 < len(fused) and not 维护者[i + 1]:
+            fused[i]["end_ms"] = fused[i + 1]["start_ms"] = times[1]
+
+
+def _arrival_line(fused: Sequence[speaker_v8.SpeakerDecision], low: Sequence[int]) -> str:
+    by = [r for r in fused if r.get("label_from") == arrival.ENGINE]
+    against = sum(1 for i in low if fused[i].get("label_from") == arrival.ENGINE and len(speaker_v8.acoustic_votes(fused[i])) > 1)
+    cut = sum(1 for r in by if r.get("split"))
+    return (f"说话人按到达时间：{len(by)} 句由它定（{channel.HOST} {sum(1 for r in by if r['speaker'] == speaker_v8.HOST)} 句；"
+            f"字分成先后两人的按字拆成两句 {cut} 句），它没听到或没定下是谁的 {len(fused) - len(by)} 句按 v8；"
+            f"待 CPA 复核 {len(low)} 句：字和时间都定不下的（写明这句里先后是谁、各几秒，字落在谁那里）、它没定的，和它判嘉宾"
+            f"而主播声纹判{channel.HOST}的 {against} 句（{channel.HOST}的短句会被嘉宾那边同时的声音盖过，这种句两路打平按语境）；"
+            "其余声纹和分簇不与它争")
+
+
+ENGINE_NAMES = {arrival.ENGINE: "到达时间"}
+
+
 def _switch_note(row: speaker_v8.SpeakerDecision, cue: speaker_v8.MillisecondSpan, cl: _Clusters) -> str:
     """The label engine's change points inside the cue: where a cut may fall and who is on each side."""
     name, notes = row.get("switch_engine"), []
@@ -429,12 +550,13 @@ def _switch_note(row: speaker_v8.SpeakerDecision, cue: speaker_v8.MillisecondSpa
         sides = speaker_v8.switch_sides(cue, t, cl.segments[cast(str, name)], cl.named[cast(str, name)])
         if sides and sides[0] != sides[1]:
             notes.append(f"第 {(t - c0) / 1000:.1f} 秒处由{sides[0]}换成{sides[1]}")
-    return (f"。给出标签的 {str(name).upper()} 在本句（共 {(c1 - c0) / 1000:.1f} 秒）里换人：" + "、".join(notes)
+    return (f"。给出标签的 {ENGINE_NAMES.get(str(name), str(name).upper())} 在本句（共 {(c1 - c0) / 1000:.1f} 秒）里换人：" + "、".join(notes)
             + "；语境也表明前后是两个人时可以在这里切分") if notes else ""
 
 
 def _review_prompt(ctx: Ctx, fused: list[speaker_v8.SpeakerDecision], low: Sequence[int], final_cues: Sequence[SrtCue],
-                   cues: Sequence[speaker_v8.MillisecondSpan], cl: _Clusters) -> str:
+                   cues: Sequence[speaker_v8.MillisecondSpan], cl: _Clusters,
+                   asked: Sequence[arrival.Interjection] = ()) -> str:
     """The CPA reading of the pending cues with the whole clip's lines.  Marks on each pending row where the label
     engine hears the speaker change inside the cue (the only places a cue may be cut; MAI only flags, so its switches
     do not cut, TASK-18)."""
@@ -444,8 +566,10 @@ def _review_prompt(ctx: Ctx, fused: list[speaker_v8.SpeakerDecision], low: Seque
             switches = speaker_v8.switch_times(cues[i], cl.segments[name], cl.named[name])
             if switches:
                 fused[i]["switches_ms"], fused[i]["switch_engine"] = switches, name
-    # a mid-band tie shows no label: v8's coin toss would anchor the reading (TASK-29 ruling 5)
-    lines = "\n".join(f"{i + 1} [{'?' if speaker_v8.mid_tie(r) else r['speaker']}] {final_cues[i]['text']}"
+    # a mid-band tie shows no label: v8's coin toss would anchor the reading (TASK-29 ruling 5); a line the arrival cut
+    # by its words is shown as its parts, each with its own label (_by_words)
+    lines = "\n".join(f"{i + 1} " + (" ".join(f"[{p['speaker']}] {p['text']}" for p in r["split"]) if r.get("split") else
+                                     f"[{'?' if speaker_v8.mid_tie(r) else r['speaker']}] {final_cues[i]['text']}")
                       for i, r in enumerate(fused))
     pending = "\n".join(f"{i + 1}「{final_cues[i]['text']}」：{fused[i]['speaker_why']}。" + (
         "声音证据打平，可以按语境选一方" if speaker_v8.acoustic_tie(fused[i])
@@ -454,7 +578,86 @@ def _review_prompt(ctx: Ctx, fused: list[speaker_v8.SpeakerDecision], low: Seque
     names, fans = speaker_context_lines(ctx)
     who, evidence = _review_setting(ctx, fused)
     return _render("speaker_review.md", host=speaker_v8.HOST, guest=speaker_v8.GUEST_LABEL, lines=lines,
-                   pending=pending, names=names, fans=fans, who=who, evidence=evidence)
+                   pending=pending or "（没有）", names=names, fans=fans, who=who, evidence=evidence,
+                   interjections="\n".join(_interjection_row(k, c, final_cues) for k, c in enumerate(asked, 1)) or "（没有）")
+
+
+# ----- what someone says into another person's sentence (owner) ------------------------------------------
+INTERJECTION_DROP = ("附和", "感叹", "无实义", "半句")       # the kinds the owner lets go unsubtitled
+INTERJECTION_OWN_LINE = "另一人的话"                        # the other person's own line: cut off when it is at an edge
+INTERJECTION_KEEP = ("主说话人的话", "异口同声", "拿不准")
+
+
+def _interjection_row(k: int, c: arrival.Interjection, final_cues: Sequence[SrtCue]) -> str:
+    """One candidate as the review reads it: where it is, who says the sentence around it, who is heard in it, and
+    whether it was said while the main speaker talks (only then may it go unsubtitled)."""
+    i = c["line"]
+    by = f"同时听到{c['by']}"
+    where = "整句" if c["whole"] else f"第 {i + 1} 句「{plain_text_of(final_cues[i]['text'])}」里的「{c['text']}」"
+    when = (f"{c['main']}说这几个字的时候也在说话（同时说）" if c["together"] else
+            f"这几个字是{c['main']}停下以后说的，不是同时说（一个说完另一个接）：不会去掉，只看它是不是另一个人自己的一句话")
+    return (f"插{k}：{where}（第 {i + 1} 句，{c['at'][0] / 1000:.1f}–{c['at'][1] / 1000:.1f} 秒）。前后是{c['main']}的话，"
+            f"这几个字不落在{c['main']}说话的时间里，{by}；{when}。这段时间里：{c['heard']}"
+            + ("。如果是另一个人自己的一句话，会在这里拆成两句" if c["cut"] is not None else ""))
+
+
+def _question(c: arrival.Interjection, final_cues: Sequence[SrtCue]) -> bool:
+    """The candidate is a question (its words end on a question mark in its line): kept, never left out -- the main
+    speaker goes on right after it, and a question the next words take up has a meaning of its own (1064220 「是吗？」,
+    answered 「哦哦，还真是」)."""
+    taken = plain_text_of(final_cues[c["line"]]["text"])[slice(*c["span"])]
+    return any(m in taken for m in "？?")
+
+
+def _interjection_answers(record: CpaEvent) -> dict[int, Mapping[str, object]]:
+    """The review's rows on the candidates, by candidate number (「插」: 2, or 「插2」 as the prompt labels it — every one
+    of the three replayed answers on 897000 「挖矿挖的」 wrote "插1"); an unreadable answer is no answer: kept."""
+    out: dict[int, Mapping[str, object]] = {}
+    try:
+        for row in _json_from_text(record["response_text"]):
+            k = _as_int(str(row.get("插")).strip().removeprefix("插")) if isinstance(row, dict) else None
+            if k is not None:
+                out[k - 1] = row
+    except ValueError:
+        return {}
+    return out
+
+
+def _adopt_interjections(fused: list[speaker_v8.SpeakerDecision], asked: Sequence[arrival.Interjection],
+                         answers: Mapping[int, Mapping[str, object]], final_cues: Sequence[SrtCue], cl: _Clusters) -> str:
+    """The review's reading of each candidate (owner): 附和、感叹、无实义 or 半句 said into another person's
+    sentence while that person talks (`together`; one said after the other stops is a turn of its own) is not subtitled (`interjection` on the line's row, applied to the track by _speaker_from_preds);
+    another person's own line at an edge of the line is cut off (`split`, as the arrival's cut by words); anything
+    else, or no answer, keeps the words.  Not dropped from inside a line whose label is no longer the main speaker's
+    (the review of the pending rows moved it), nor from a line cut meanwhile.  Returns the PROCESS line."""
+    done: dict[str, int] = {}
+    for k, c in enumerate(asked):
+        i, answer = c["line"], answers.get(k) or {}
+        kind, reason = str(answer.get("kind") or "").strip(), str(answer.get("reason") or "")[:120]
+        main = cl.labels.get(c["main"])
+        row = {"phrase": c["text"], "span": list(c["span"]), "whole": c["whole"], "main": c["main"], "by": c["by"],
+               "at_ms": list(c["at"]), "kind": kind or "没答", "reason": reason}
+        if kind in INTERJECTION_DROP and c["together"] and not _question(c, final_cues) \
+                and (c["whole"] or fused[i]["speaker"] == main) and not fused[i].get("split"):
+            row["action"] = action = "dropped"
+        elif kind == INTERJECTION_OWN_LINE and c["cut"] is not None and main and not fused[i].get("split") \
+                and fused[i]["speaker"] == main and c["by"] in cl.labels:
+            text, (s0, s1) = plain_text_of(final_cues[i]["text"]), c["span"]
+            first, second = (text[:s0].strip(), text[s0:].strip()) if s0 else (text[:s1].strip(), text[s1:].strip())
+            labels = (main, cl.labels[c["by"]]) if s0 else (cl.labels[c["by"]], main)
+            fused[i]["split"] = [{"start_ms": fused[i]["start_ms"], "end_ms": c["cut"], "text": first, "speaker": labels[0]},
+                                 {"start_ms": c["cut"], "end_ms": fused[i]["end_ms"], "text": second, "speaker": labels[1]}]
+            row["action"] = action = "split"
+            row["persons"] = [c["main"], c["by"]] if s0 else [c["by"], c["main"]]
+        else:
+            row["action"] = action = "kept"
+        done[action] = done.get(action, 0) + 1
+        fused[i].setdefault("interjections", []).append(row)
+    together = sum(1 for c in asked if c["together"])
+    return (f"插话（公开规则：主要说话人说话期间别人插的附和、感叹、无实义的话和说了半句的话可以不出字幕）：候选 {len(asked)} 处"
+ f"（和主要说话人同时说的 {together} 处，其余是一个说完另一个接、只可能拆句），"
+ f"CPA 判为附和、感叹、无实义或半句而不出字幕 {done.get('dropped', 0)} 处，"
+ f"判为另一个人自己的话、在句首或句尾拆开 {done.get('split', 0)} 处，保留 {done.get('kept', 0)} 处（有实义、问句、异口同声、拿不准或没答都保留）")
 
 
 def _review_setting(ctx: Ctx, fused: Sequence[speaker_v8.SpeakerDecision]) -> tuple[str, str]:
@@ -463,9 +666,18 @@ def _review_setting(ctx: Ctx, fused: Sequence[speaker_v8.SpeakerDecision]) -> tu
     labels were v8's and three people spoke, so the reader was told the wrong setting."""
     host, guest = speaker_v8.HOST, speaker_v8.GUEST_LABEL
     n = speaker_v8.people(ctx.session)
-    who = (f"说话的有 {n} 位：主播「{host}」和 {n - 1} 位连线嘉宾；字幕只分两种颜色，主播标「{host}」，"
-           f"其他每一位都标「{guest}」。" if n >= 3 else f"说话的有两位：主播「{host}」和连线嘉宾（标签写「{guest}」）。")
-    if all(r.get("label_from", "v8") == "v8" for r in fused):
+    who = (f"说话的有 {n} 位：主播「{host}」和 {n - 1} 位连线嘉宾；这一步的标签只分两种，主播标「{host}」，"
+           f"其他每一位都标「{guest}」（是哪一位嘉宾另有一步定）。" if n >= 3 else f"说话的有两位：主播「{host}」和连线嘉宾（标签写「{guest}」）。")
+    if any(r.get("label_from") == arrival.ENGINE for r in fused):
+        evidence = (f"每一句按到达时间定：同一句话在说话人自己的直播里先出现，对照嘉宾的公开录播，时间差分成几组，"
+                    f"每组是一路声音，主播声纹认出的组是{host}，认出是别人的组是{guest}。一句话归它的字落在谁说话的时间里的那个人"
+                    f"（字的时间来自识别稿，句子起止常偏早偏晚，字比句子的起止准）；字分成先后两段、各属一人的句子已经在字的分界处"
+                    f"拆成两句（上面全片的句子里显示成两段，各带自己的标签）；它没听到、或落在声纹认不出的组里的句子按 v8（按主播声纹逐段判断）。待定的句子写了这一句的时间里先后"
+                    f"是谁、各几秒，以及哪几个字落在谁说话的时间里（“识别稿里没对上”是识别稿里找不到这几个字的时间，"
+                    f"“没听到人声”是那一刻到达时间没听出是谁；写着“前后句对上的字占掉了…”的，是这句自己的字没对上时间，"
+                    f"去掉前后句的字占掉的那一头后按剩下的时间定的标签，整段时间里还有别人，所以待定）。"
+                    f"到达时间是物理证据，一般比声纹可靠；已知的例外：{host}的短句和嘉宾那边的声音同时出现时，它会把这句算给{guest}，这种句主播声纹判为{host}的列在待定里，两路打平。")
+    elif all(r.get("label_from", "v8") == "v8" for r in fused):
         evidence = f"每一句按主播声纹（v8，按主播声纹逐段判断）定是不是{host}，把握不够的算{guest}。"
     else:
         evidence = (f"MOSS 把整片分成几个说话人，与主播登记声纹最像的那一个算{host}，其余算{guest}；"
@@ -533,33 +745,50 @@ def _speaker_clusters(ctx: Ctx, final_cues: Sequence[SrtCue], cues: Sequence[spe
     only at the label engine's switch and each part takes that engine's label.  A cue 维护者 labelled keeps his label.
     Without clusters (a witness missing or without speakers) v8 stands.  Returns (rows, CPA records, PROCESS lines);
     rows is None when the CPA call failed (the step stops: a tool failure, never a silent default)."""
-    cl = _witness_clusters(ctx, cues, decided)
+    cl = _witness_clusters(ctx, final_cues, cues, decided)
     if not cl.engines:
         fused = _v8_mid_rows(decided)
         low = [i for i, r in enumerate(fused) if r["speaker_confidence"] == "低"]
-        aside = [line for line in (_no_cluster_line(cl),) if line]
+        aside = [line for line in (cl.arrival_line, _no_cluster_line(cl)) if line]
         if not low:
             return [cast(speaker_v8.SpeakerDecision, dict(d)) for d in decided], [], aside
         process = [*aside, f"v8 中间带（e05 §10 第3款，lane_rules speaker）：{len(low)} 句交 CPA 复核"
                            f"（两人场按语境与轮次，拿不准按嘉宾色；三人以上只认明确的内容证据）"]
     else:
-        fused = speaker_v8.fuse(decided, cl.engines)
+        by_arrival = arrival.ENGINE in cl.engines
+        fused = speaker_v8.fuse(decided, cl.engines, primary=arrival.ENGINE if by_arrival else "moss")
         for row, before in zip(fused, decided, strict=True):
             if before.get("source") == "维护者":
                 row["speaker"] = before["speaker"]
                 row["speaker_confidence"] = "高"
                 row["speaker_why"] = "维护者 标注"
+        if by_arrival:
+            _by_words(fused, cl.engines[arrival.ENGINE], decided)
         low = [i for i, r in enumerate(fused) if r["speaker_confidence"] == "低"]
-        process = [_cluster_line(cl, fused, low)]
+        process = ([cl.arrival_line, _arrival_line(fused, low)] if by_arrival else
+                   [line for line in (cl.arrival_line, _cluster_line(cl, fused, low)) if line])
+    # not in a clip the owner labelled (his labels lock the whole clip: listen-import's, or by name as the guest names
+    # and the session samples read them, guest_identity.state_owner_rows), nor on a line the arrival cut between two
+    # people by their words
+    from . import guest_identity
+
+    owner = (any(d.get("source") == "维护者" for d in decided) or bool(_reviewer_speaker_rows(ctx))
+             or bool(guest_identity.state_owner_rows(ctx.state)))
+    asked = [] if owner else [c for c in cl.interjections if not fused[c["line"]].get("split")]
+    if owner and cl.interjections:
+        process.append(f"插话：这条片有频道主的标注，整条片不按插话规则删字、拆句（到达时间找到的 {len(cl.interjections)} 处候选不交复核）")
     calls: list[CpaEvent] = []
-    if not low:
+    if not low and not asked:
         return fused, calls, process
-    record = _ask_cpa(ctx, "speaker-review", _review_prompt(ctx, fused, low, final_cues, cues, cl),
+    record = _ask_cpa(ctx, "speaker-review", _review_prompt(ctx, fused, low, final_cues, cues, cl, asked),
                   purpose="speaker-review")
     calls.append(record)
     if not _cpa_ok(record):
         return None, calls, process
-    process.append(_adopt_answers(fused, low, _review_answers(record), final_cues, cues, cl))
+    if low:
+        process.append(_adopt_answers(fused, low, _review_answers(record), final_cues, cues, cl))
+    if asked:
+        process.append(_adopt_interjections(fused, asked, _interjection_answers(record), final_cues, cl))
     return fused, calls, process
 
 
@@ -823,7 +1052,73 @@ def guests_heard(ctx: Ctx) -> dict[str, object] | None:
     return heard if float(share) >= float(cfg["guests_min_share"]) or int(run) >= int(cfg["guests_min_run"]) else None
 
 
+def _name_guests(ctx: Ctx) -> tuple[list[str], list[CpaEvent]] | StepOutcome:
+    """collab_guests for a clip of a session that names no guest and in which others are heard: (the day's guests now
+    in the session, the judge's call when this clip was the day's first to ask), or the stopped outcome when the judge
+    did not answer (the next round asks again, rather than labelling a collab as the host and "the others")."""
+    calls: list[CpaEvent] = []
+    try:
+        return collab_guests.name_guests(ctx, json_asker(ctx, calls), heard=True), calls
+    except collab_guests.GuestsUnknown as exc:
+        return _fail("CPA_CALL_FAILED", str(exc), cpa=calls)
+
+
+PERSONS = "speaker/persons.json"     # who says each line, by name: the burn's colours and the title's names read it
+
+
+def _name_persons(ctx: Ctx) -> tuple[list[CpaEvent], str] | StepOutcome:
+    """speaker/persons.json, [{start_s, end_s, text, speaker, person}] per line of the labelled track: the host's lines
+    are the host's; a guest line is the guest guest_identity names (two or more named guests: the owner's labels, the
+    arrival, the voiceprint, the review of the recognisers' groups; step 6 reads the same record), or the one named
+    guest when the session has one and nobody unnamed; null otherwise.  Written again by every run of this step (a
+    stale file is removed); a failed naming call stops the step, so the burn and the title never name from two
+    different answers.  Returns (CPA records, PROCESS line)."""
+    from . import guest_identity
+    from . import subtitle_track as st
+
+    path = _local(ctx, PERSONS)
+    path.unlink(missing_ok=True)
+    track = st.read_track(ctx.clip_dir)
+    names = participant_names(ctx.session)
+    guests = [n for n in names if n != speaker_v8.HOST]
+    calls: list[CpaEvent] = []
+    if guest_identity.needed(ctx, track):
+        named = guest_identity.identify(ctx, track, json_asker(ctx, calls))
+        record = json.loads((ctx.clip_dir / guest_identity.PATH).read_text(encoding="utf-8"))
+        if record.get("failed"):
+            return _fail("CPA_CALL_FAILED", "guest-identity: 嘉宾是谁这一问没有答复", cpa=calls)
+        how = "嘉宾各句是谁按 guest_identity（频道主标注、到达时间、声纹、识别器分组与对话证据）"
+    elif len(guests) == 1 and speaker_v8.people(ctx.session) == len(names) and any(
+            c.get("speaker") == speaker_v8.GUEST_LABEL for c in track):
+        named = {i: guests[0] for i, c in enumerate(track, 1) if c.get("speaker") == speaker_v8.GUEST_LABEL}
+        how = f"本场只登记了一位嘉宾、没有未具名的人：嘉宾句都是{guests[0]}"
+    else:
+        return calls, ""
+    rows = [{"start_s": c["start_s"], "end_s": c["end_s"], "text": c["text"], "speaker": c.get("speaker"),
+             "person": speaker_v8.HOST if c.get("speaker") == speaker_v8.HOST else named.get(i)}
+            for i, c in enumerate(track, 1)]
+    path.write_text(json.dumps(rows, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    guest_rows = [r for r in rows if r["speaker"] == speaker_v8.GUEST_LABEL]
+    counts = "、".join(f"{p} {sum(1 for r in guest_rows if r['person'] == p)} 句" for p in guests
+                      if any(r["person"] == p for r in guest_rows))
+    return calls, (f"谁说的（{PERSONS}，烧录颜色与标题封面同用）：{how}；嘉宾 {len(guest_rows)} 句里定到人的 "
+                   f"{sum(1 for r in guest_rows if r['person'])} 句（{counts or '无'}），其余按通用嘉宾样式")
+
+
 def step4_speaker(ctx: Ctx) -> StepOutcome:
+    out = _step4_labels(ctx)
+    if not out.ok:
+        _local(ctx, PERSONS).unlink(missing_ok=True)
+        return out
+    named = _name_persons(ctx)
+    if isinstance(named, StepOutcome):
+        return StepOutcome(False, reason=named.reason, note=named.note, cpa=[*out.cpa, *named.cpa], process=out.process)
+    calls, line = named
+    return StepOutcome(True, products=out.products, note=out.note, cpa=[*out.cpa, *calls], rewind=out.rewind,
+                       process=[*out.process, *([line] if line else [])])
+
+
+def _step4_labels(ctx: Ctx) -> StepOutcome:
     rec = imported(ctx)
     if rec:
         outcome = _speaker_import(ctx, rec)
@@ -848,14 +1143,24 @@ def step4_speaker(ctx: Ctx) -> StepOutcome:
     if ov.video_playing(screen.frames):
         return _speaker_other_voices(ctx, screen)
     heard = guests_heard(ctx)
-    if heard is not None:   # nobody named a guest, but the voiceprint hears others talk: host and the others, two people
+    if heard is not None:   # nobody named a guest, but the voiceprint hears others talk
+        named = _name_guests(ctx)        # who the day's record says they are, before the speakers are told apart
+        if isinstance(named, StepOutcome):
+            return named
+        guests, guest_calls = named
+        if guests:                       # a linked clip from here on: the people count, the thresholds and the arrival evidence are its own
+            out = _speaker_v8(ctx)
+            return StepOutcome(out.ok, reason=out.reason, products=out.products, note=out.note,
+                               cpa=[*screen.calls, *guest_calls, *out.cpa],
+                               process=[*([screen.line] if screen.frames else []), collab_guests.process_line(ctx, guests), *out.process])
+        # host and the others, two people
         got = _v8_predictions(ctx)
         if isinstance(got, StepOutcome):
             return got
         units, preds, unit_kind = got
         out = _speaker_from_preds(ctx, units, preds, unit_kind=unit_kind, heard=heard)
         return StepOutcome(out.ok, reason=out.reason, products=out.products, note=out.note,
-                           cpa=[*screen.calls, *out.cpa], process=[*([screen.line] if screen.frames else []), *out.process])
+                           cpa=[*screen.calls, *guest_calls, *out.cpa], process=[*([screen.line] if screen.frames else []), *out.process])
     speaker = _local(ctx, "speaker/speaker.srt")
     speaker.write_text(_label_host_lines(ctx.clip_dir / "subs/final.srt"), encoding="utf-8")
     return StepOutcome(True, products={"speaker_srt": str(speaker), "decision": str(decision)},

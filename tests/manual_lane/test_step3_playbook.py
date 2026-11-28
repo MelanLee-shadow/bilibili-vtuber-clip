@@ -73,25 +73,25 @@ def test_free_asr_real_word_schema():
 
 
 def test_cpa_final_text_and_bcut_grid_preserved(tmp_path):
-    from src.autoslice.manual_lane.step3_doubts import write_subtitles
+    from src.autoslice.manual_lane.step3_doubts import decided_cues, write_subtitles
     ctx = make_ctx(tmp_path, remote=FakeRemote(), cpa=IdCpa())
     cue = {'id': 1, 'start_s': 0., 'end_s': 2., 'text': '他'}
     d = {'id': 'd001', 'cue_id': 1, 'state': 'ADOPT', 'current': '他', 'final_text': '他，呃',
          'confidence': '高', 'affects_meaning': False}
-    _, final, _ = write_subtitles(ctx, [cue], [d], preserve_decisions=True)
+    _, final, _ = write_subtitles(ctx, [cue], [d], decided=decided_cues([cue], [d])[0])
     assert '他，呃' in final.read_text() and '00:00:00,000 --> 00:00:02,000' in final.read_text()
 
 
 def test_cpa_decision_is_word_safely_shaped_without_changing_spoken_text(tmp_path):
     from src.autoslice.manual_lane import subtitle_track
-    from src.autoslice.manual_lane.step3_doubts import write_subtitles
+    from src.autoslice.manual_lane.step3_doubts import decided_cues, write_subtitles
 
     ctx = make_ctx(tmp_path, remote=FakeRemote(), cpa=IdCpa())
     text = '他们打算在10月21号一起看《晚风中的花园》，然后回大学校园找Mujica的朋友'
     cue = {'id': 1, 'start_s': 0., 'end_s': 6., 'text': '原文'}
     decision = {'id': 'd001', 'cue_id': 1, 'state': 'ADOPT', 'current': '原文', 'final_text': text,
                 'confidence': '高', 'affects_meaning': False}
-    _, final, _ = write_subtitles(ctx, [cue], [decision], preserve_decisions=True)
+    _, final, _ = write_subtitles(ctx, [cue], [decision], decided=decided_cues([cue], [decision])[0])
     shaped = subtitle_track.parse_blocks(final.read_text(encoding='utf-8'))
     assert ''.join(''.join(c['text'].split()) for c in shaped) == ''.join(text.split())
     assert shaped[0]['start_s'] == 0. and shaped[-1]['end_s'] == 6.

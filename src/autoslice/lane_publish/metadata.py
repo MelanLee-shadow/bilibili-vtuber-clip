@@ -29,6 +29,7 @@ from typing import Any
 from src.autoslice.manual_lane import receipt_chain
 from src.autoslice.manual_lane.title_history import same_clip
 from src.autoslice.upload_description import EXPECTED_SOURCE
+from src.autoslice.upload_tag_policy import apply_tag_policy
 
 from . import bili, registry
 from .common import FAILED, GATE, NOT_YET, OK, REFUSED, Config, Refused, bind, now, read_json, sha256, write_json
@@ -37,7 +38,7 @@ PLAN_SCHEMA = "lane-publish-same-bv-metadata-edit-plan.v1"
 COMPLETED = receipt_chain.METADATA_COMPLETED
 ROW_STATUS = "VERIFIED_SAME_BV_METADATA"
 HOLD = "hold_pending_review"
-TITLE_MAX, TAG_MAX, TAGS_MAX, DESC_MAX = 80, 20, 12, 2000      # the creator centre's own limits
+TITLE_MAX, DESC_MAX = 80, 2000                                   # the creator centre's own limits (tags follow upload_tag_policy)
 PREFIX = re.compile(r"^【[^】]+】")                              # the channel's envelope of a title (【花礼】...)
 
 
@@ -86,18 +87,25 @@ def _row(*, bvid: str | None, cid: str | None) -> dict[str, Any]:
     return row
 
 
-def _tags(text: str) -> list[str]:
+def _parse_tags(text: str) -> list[str]:
     tags = [t.strip() for t in text.split(",")]
     if not tags or any(not t for t in tags):
         raise Refused(REFUSED, f"标签要用英文逗号分隔、不能有空的：{text!r}")
-    if len(set(tags)) != len(tags) or len(tags) > TAGS_MAX or any(len(t) > TAG_MAX for t in tags):
-        raise Refused(REFUSED, f"标签重复、多于 {TAGS_MAX} 个或有超过 {TAG_MAX} 字的：{tags}")
     return tags
+
+
+def _tags(text: str, *, live_tags: list[str] | None = None) -> list[str]:
+    tags = _parse_tags(text)
+    settled = apply_tag_policy(tags, previous=live_tags, on_overflow="refuse")
+    if not settled.ok:
+        raise Refused(REFUSED, f"标签不符合策略（{'；'.join(settled.reasons)}）：{tags}")
+    return list(settled.tags)
 
 
 def collapse_source_line(desc: str) -> str:
     """The description with a repeated leading source line left once (what Bilibili itself puts ahead of a reposted archive's
-    description, sent along too by the first publications of 11-15 to 11-18)."""
+    description, sent along too by the first publications of 11-15 to 11-18).  Only archives published as reposts (what the
+    pipeline posted before) have the line; one published without a declared type has none and is left as it is."""
     head = EXPECTED_SOURCE + "\n"
     while desc.startswith(head + head):
         desc = desc[len(head):]
@@ -127,14 +135,19 @@ def plan(*, bvid: str | None, cid: str | None, title: str | None, tags: str | No
     videos = creator.get("videos") or []
     if len(videos) != 1 or len(public.get("pages") or []) != 1:
         raise Refused(GATE, f"{bvid} 不是单 P 稿件（创作中心 {len(videos)} P）：不改")
-    live_tags = [t for t in str(archive.get("tag") or "").split(",") if t]
+    live_tags = [t.strip() for t in str(archive.get("tag") or "").split(",") if t.strip()]
     live_desc = str(archive.get("desc") or "")
     if desc_file is not None and fix_source_line:
         raise Refused(REFUSED, "--desc-file 和 --fix-source-line 只能给一个")
     target_desc = (desc_file.read_text(encoding="utf-8").rstrip("\n") if desc_file is not None
                    else collapse_source_line(live_desc) if fix_source_line else live_desc)
+    if tags is None:
+        target_tags = live_tags
+    else:
+        parsed_tags = _parse_tags(tags)
+        target_tags = live_tags if parsed_tags == live_tags else _tags(tags, live_tags=live_tags)
     target = {"title": (title if title is not None else str(archive.get("title") or "")).strip(),
-              "tags": _tags(tags) if tags is not None else live_tags, "desc": target_desc}
+              "tags": target_tags, "desc": target_desc}
     if not target["title"] or len(target["title"]) > TITLE_MAX or len(target["desc"]) > DESC_MAX:
         raise Refused(REFUSED, f"标题为空或超过 {TITLE_MAX} 字、或简介超过 {DESC_MAX} 字")
     prefix = PREFIX.match(str(archive.get("title") or ""))
@@ -221,7 +234,7 @@ def run(*, plan_path: Path, journal: Path, dry_run: bool) -> int:
             if [v.get("cid") for v in current.get("videos") or []] != value["before"]["creator"]["cids"]:
                 raise Refused(GATE, f"计划之后 {bvid} 的分 P 变了：按现在的线上重新建计划")
             already = (archive.get("title") == target["title"] and _same(archive.get("desc"), target["desc"])
-                       and [t for t in str(archive.get("tag") or "").split(",") if t] == target["tags"])
+                       and [t.strip() for t in str(archive.get("tag") or "").split(",") if t.strip()] == target["tags"])
             last = _last(rows, "edit_started", "edit_failed")
             if not already and last is not None and last["event"] == "edit_started":
                 raise Refused(GATE, f"上次编辑 {bvid} 发出后没有结果记录，创作中心也不是计划的样子：先人工看创作中心再决定，"

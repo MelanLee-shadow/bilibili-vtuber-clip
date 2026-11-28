@@ -18,6 +18,13 @@ AXES = ("people", "hook_fit", "clean_layers", "identity", "source_faithful", "no
 
 SAFE_FLAGS = ("clean_layers", "identity", "source_faithful", "no_fabrication")
 
+# The share of a face box the judge read (its `face`, the other people's faces in `keep`) the cover's text may cover before
+# it counts as covering that face.  The judge's boxes are its estimates: on the split screens of the replay of
+# eleven collaboration clips (main, the same pack pictures) every one of the 8 candidates vetoed so was a judge box reaching
+# 12-94 px above the face the tool had placed (hair, a forehead) into a line that kept clear of that face, covering 0.4-3.0 %
+# of the box; no face was covered (the skill: 头发和熊猫耳可以被字压住，脸不行).  A line over the eyes covers a quarter or more.
+TEXT_ON_FACE_MAX_SHARE = 0.05
+
 
 def strict_file(root: Path, relative: object) -> Path:
     if not isinstance(relative, str) or not relative or Path(relative).is_absolute():
@@ -91,11 +98,13 @@ def score_candidate(row: Mapping[Any, Any], *, participants: list[str], recent: 
         ):
             vetoes.append("CPA_KEEP_BOX_INVALID")
             continue
-        for line in measured:
-            if max(line["x"], box[0]) < min(line["x"] + line["w"], box[2]) and max(
-                line["y"], box[1]
-            ) < min(line["y"] + line["h"], box[3]):
-                vetoes.append("FINAL_TEXT_OVERLAPS_OBSERVED_FACE_OR_IDENTITY")
+        covered = sum(
+            max(0, min(line["x"] + line["w"], box[2]) - max(line["x"], box[0]))
+            * max(0, min(line["y"] + line["h"], box[3]) - max(line["y"], box[1]))
+            for line in measured
+        )
+        if covered > TEXT_ON_FACE_MAX_SHARE * (box[2] - box[0]) * (box[3] - box[1]):
+            vetoes.append("FINAL_TEXT_OVERLAPS_OBSERVED_FACE_OR_IDENTITY")
     size = row.get("punch_font_size")
     if type(size) is not int or size < 120:
         vetoes.append("PUNCH_BELOW_120")

@@ -39,7 +39,8 @@ def renderer(monkeypatch):
 
 
 def _spec(**kwargs):
-    return {"face": [1100, 300, 1600, 760], "lines": [{"text": "测试"}], **kwargs}
+    # a written layout: these tests are about the style rotation (the composition rotation: tests/test_cover_layout_rotation.py)
+    return {"face": [1100, 300, 1600, 760], "lines": [{"text": "测试"}], "layout": "top", **kwargs}
 
 
 def _attempt(failures=None):
@@ -102,7 +103,7 @@ def test_copied_renderer_without_rotation_source_reports_the_missing_dependency(
 
 @pytest.mark.skipif(not (FONT.is_file() and COVER_RENDERER.is_file()), reason="private font or skill renderer not present")
 def test_local_cli_witness_and_forced_style_with_overrides(tmp_path):
-    spec = {"id": "witness", "bg": ["#101010", "#101010"], "face": [1100, 300, 1600, 760],
+    spec = {"id": "witness", "bg": ["#101010", "#101010"], "face": [1100, 300, 1600, 760], "layout": "auto",
             "lines": [{"text": "测试2"}, {"text": "怎么回事"}]}
     spec_path = tmp_path / "spec.json"
     spec_path.write_text(json.dumps(spec, ensure_ascii=False), encoding="utf-8")

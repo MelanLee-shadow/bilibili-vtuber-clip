@@ -605,6 +605,9 @@ class CompletedReviewCheckpoint:
                     or not isinstance(answered['models'][0], str) or not answered['models'][0]
                     or not isinstance(digest, str) or len(digest) != 64):
                 raise ValueError('invalid requested response')
+            from .cpa_model_ladder import is_quota_fallback_redirect
+            if is_quota_fallback_redirect(self._binding_view()['provider']['routing'], answered):
+                return None
             return type(self)(root, self._answer_binding(answered), self.prompt), digest
         except (KeyError, TypeError, ValueError) as exc:
             raise CompletedReviewCheckpointError('COMPLETED_REVIEW_REQUEST_RESPONSE_DRIFT') from exc
@@ -794,12 +797,12 @@ class CompletedReviewCheckpoint:
         routing = self._binding_view().get('provider', {}).get('routing', {})
         answered = completion_identity(routing, self.raw)
         if answered != routing:
+            from .cpa_model_ladder import is_quota_fallback_redirect
             from .cpa_request_lifecycle import completed_response_scope
             scope = completed_response_scope(self.raw, self.prompt)
-            physical = self._binding_view().get('stage') == 'cpa-text-physical'
+            physical = self._binding_view().get('stage') == 'cpa-text-physical' and not is_quota_fallback_redirect(routing, answered)
             root = (self.root / 'requested-model-responses' / self.directory.name if physical
-                    else self.root / 'dispatch-observations' / scope if scope is not None
-                    else self.root)
+                    else self.root / 'dispatch-observations' / scope if scope is not None else self.root)
             actual = type(self)(root, self._answer_binding(answered), self.prompt)
             actual.raw = self.raw
             actual.save()
@@ -810,15 +813,10 @@ class CompletedReviewCheckpoint:
                 owner['volatile'][str(self.directory)] = self.raw
                 return
             from .argon_escalation_storage import immutable
-            record = {
-                'schema_version': 'requested-model-response.v1',
-                'requested_binding': self._binding_view(), 'request': self.prompt,
-                'answering_identity': answered,
-                'response_sha256': _sha(self.raw.encode()),
-            }
             from .review_evidence_store import project_document
-            immutable(root / 'response.json', _canonical(project_document(record, root)
-                                                        if _large_graph(record) else record))
+            record = {'schema_version': 'requested-model-response.v1', 'requested_binding': self._binding_view(),
+                      'request': self.prompt, 'answering_identity': answered, 'response_sha256': _sha(self.raw.encode())}
+            immutable(root / 'response.json', _canonical(project_document(record, root) if _large_graph(record) else record))
             return
         owner = _owner_context.get()
         if owner and not all(guard(self.raw) for guard in owner['guards']):

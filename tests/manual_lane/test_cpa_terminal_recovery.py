@@ -117,7 +117,7 @@ def test_real_adapter_recovers_matching_terminal_without_dispatch_and_preserves_
     local_prompt = (ctx.clip_dir / 'cpa/review-held.prompt.txt').read_bytes().decode('utf-8')
     assert wire_before == (local_prompt + '\n').encode('utf-8')
     assert payload['prompt_sha256'] == hashlib.sha256(wire_before.decode().replace('\r\n', '\n').replace('\r', '\n').encode()).hexdigest()
-    assert (payload['model'], payload['effort'], payload['stream']) == ('gpt-6.1-sol', 'high', True)
+    assert (payload['model'], payload['effort'], payload['stream']) == ('gpt-6.2-sol', 'high', True)
     (ctx.clip_dir / 'pkg/description.txt').write_text('恢复时材料变化', encoding='utf-8')
     resumed = run_clip(ctx, steps)
     assert resumed.stopped_at is None and len(remote.requests) == 2 and not doubt_policy.is_hold(_row(ctx))
@@ -191,7 +191,7 @@ def test_only_definitely_absent_remote_terminal_resumes_original_question(tmp_pa
     result = run_clip(ctx, steps)
     assert result.stopped_at is None and len(remote.requests) == 3 and not doubt_policy.is_hold(_row(ctx))
     assert remote.requests[-1]['input'] == saved_prompt + '\n'
-    assert remote.requests[-1]['model'] == 'gpt-6.1-sol' and remote.requests[-1]['reasoning']['effort'] == 'high'
+    assert remote.requests[-1]['model'] == 'gpt-6.2-sol' and remote.requests[-1]['reasoning']['effort'] == 'high'
 
 
 def test_interrupted_before_dispatch_resumes_once_using_same_real_adapter(tmp_path, monkeypatch):
@@ -206,7 +206,7 @@ def test_interrupted_before_dispatch_resumes_once_using_same_real_adapter(tmp_pa
     assert '/r/clip/cpa/review-held.out.json' not in remote.files
     assert run_clip(ctx, steps).stopped_at is None and len(remote.requests) == 2
     assert remote.requests[-1]['input'] == prompt + '\n'
-    assert remote.requests[-1]['model'] == 'gpt-6.1-sol' and remote.requests[-1]['reasoning']['effort'] == 'high'
+    assert remote.requests[-1]['model'] == 'gpt-6.2-sol' and remote.requests[-1]['reasoning']['effort'] == 'high'
     assert not doubt_policy.is_hold(_row(ctx))
 
 
@@ -287,12 +287,12 @@ def test_remote_read_script_uses_exact_wire_and_preserves_files(tmp_path):
     prompt_file = directory / 'cpa/review-held.prompt.txt'
     out_file = directory / 'cpa/review-held.out.json'
     prompt_file.write_bytes(wire)
-    payload = {'model': 'gpt-6.1-sol', 'effort': 'high', 'stream': True,
+    payload = {'model': 'gpt-6.2-sol', 'effort': 'high', 'stream': True,
                'prompt_sha256': hashlib.sha256((prompt.replace('\r\n', '\n') + '\n').encode()).hexdigest(),
                'complete': True, 'text': '合成完整终态', 'attempts': 1}
     out_file.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
     originals = (prompt_file.read_bytes(), out_file.read_bytes())
-    arguments = dict(call_id='review-held', prompt_text=prompt, model='gpt-6.1-sol', effort='high',
+    arguments = dict(call_id='review-held', prompt_text=prompt, model='gpt-6.2-sol', effort='high',
                      remote_dir=str(directory))
     result = adapters.recover_cpa_terminal(remote, **arguments)
     assert result is not None and result['complete'] and result['response_text'] == payload['text']

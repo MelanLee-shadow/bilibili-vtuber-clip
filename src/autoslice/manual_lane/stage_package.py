@@ -25,9 +25,10 @@ from src.autoslice.channel_envelope import EnvelopeError
 from src.autoslice.finished_media_review.common import AUTO_CHECKS_NAME, EVIDENCE_DIR
 from src.autoslice.upload_description import description_for_title
 
-from . import (channel, compilation, cover_import, dissent_register, doubt_policy, focused_retry, gates, normalize, package_guards,
-               publication_id, read_aloud_copy, review_owner, revision_authority, speaker_v8, step10_run, subtitle_track, title_authority, writing_canon)
-from .adapters import CPA_JUDGE_MODEL, recover_cpa_terminal
+from . import (channel, compilation, cover_import, dissent_register, doubt_policy, focused_retry, gates, guest_identity, normalize,
+               package_guards, person_colours, publication_id, read_aloud_copy, review_owner, revision_authority, speaker_v8,
+               step10_run, step_io, subtitle_track, title_authority, writing_canon)
+from .adapters import recover_cpa_terminal
 from .compilation import MemberPiece
 from .config import participant_description, participant_names, placeholder_as_person
 from .runner import Ctx, StepOutcome
@@ -35,8 +36,9 @@ from .srt_text import SrtCue
 from .review_owner import cue_number as _cue_number
 from .review_owner import subtitle_edits as _subtitle_edits
 from .state import bcut_source_zero_ms
+from .step_import import owner_decided
 from .step7_tags import review_tags
-from .step_io import _cache_cpa_answer, _cpa_cache_path, _effort_of, _record_cpa_files, _write_atomic
+from .step_io import _cache_cpa_answer, _cpa_cache_path, _cpa_settings_of, _record_cpa_files, _write_atomic, focused_route_valid
 from .stage_impl import _ask_cpa, _cpa_ok, _fail, _json_from_text, _log, _render, linked_session, parse_srt
 
 if TYPE_CHECKING:
@@ -211,7 +213,11 @@ class MemberDuplicate(TypedDict):
     result_json: str
 
 
-class Member(TypedDict):
+class MemberNames(TypedDict, total=False):
+    speaker_names: dict[str, str]     # speaker.srt cue number -> who says it by name (a linked clip)
+
+
+class Member(MemberNames):
     schema_version: str
     member_slug: str
     recording_date: str
@@ -223,6 +229,8 @@ class Member(TypedDict):
     cover_claims: MemberCoverClaims
     speaker_claims: list[str]
     duplicate_check: MemberDuplicate
+    owner_cue_numbers: list[int]
+    subtitle_duration_ms: int
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FMR_SCRIPT = REPO_ROOT / "scripts" / "finished_media_review.py"
@@ -245,8 +253,8 @@ def maker_id(ctx: Ctx) -> str:
     return f"{MAKER_PREFIX}-{ctx.state.data['clip']['cid']}"
 
 
-def reviewer_id() -> str:
-    return f"{REVIEWER_PREFIX}-{CPA_JUDGE_MODEL}"
+def reviewer_id(model: str | None = None) -> str:
+    return f"{REVIEWER_PREFIX}-{model or _cpa_settings_of('review')[0]}"
 
 
 def _pkg(ctx: Ctx) -> Path:
@@ -287,7 +295,9 @@ def _fmr_flags(text: str) -> list[str]:
 
 
 def description_text(title: str) -> str:
-    """The publish description exactly as the uploader renders it (src/autoslice/upload_description.description_for_title, which the uploader uses too).
+    """The publish description exactly as the uploader renders it (src/autoslice/upload_description.description_for_title, which the uploader uses too):
+    the lines of an archive posted without a declared type, which has no source line.  A successor of a manuscript published as a repost carries the
+    same lines, and the upload tool keeps that archive's own source line ahead of them (lane_publish.repair.stored_description).
     The FMR A9 check and the uploader's own drift check recompute the same bytes, so the package carries them too.
     Partners resolve from the reviewed registry (assets/lidousha/streamer_registry_sources.v1.json); a partner the
     reviewed registry does not know raises EnvelopeError, which the uploader refuses as well."""
@@ -355,7 +365,16 @@ def _member(ctx: Ctx, *, files: dict[str, str], cover_lines: list[str], dedup: D
             piece["recording_context_srt"] = {
                 "path": str(compilation.recording_bcut_path(ctx.clip_dir, recording)),
                 "source_zero_srt_ms": -recording["bcut_source_zero_ms"]}
+    names = (guest_identity.speaker_names(ctx.clip_dir, subtitle_track.read_track(ctx.clip_dir))
+             if linked_session(ctx.session) else [])
+    owned: list[int] = []
+    if owner_decided(ctx):
+        track = subtitle_track.read_track(ctx.clip_dir)
+        numbers_owned = review_owner._owner_numbers(ctx, track)
+        owned = sorted(numbers_owned if numbers_owned is not None else range(1, len(track) + 1))
+    name_fields: MemberNames = {"speaker_names": {str(i): n for i, n in enumerate(names, 1) if n}} if any(names) else {}
     return {
+        **name_fields,
         "schema_version": "finished-media-member.v1", "member_slug": member_slug(clip["cid"]),
         "recording_date": ctx.session["recording_date"],
         "maker": {"kind": "AGENT", "id": maker_id(ctx)},
@@ -371,6 +390,8 @@ def _member(ctx: Ctx, *, files: dict[str, str], cover_lines: list[str], dedup: D
                    for d in doubts],
         "cover_claims": {"lines": cover_lines},
         "speaker_claims": [],
+        "owner_cue_numbers": owned,
+        "subtitle_duration_ms": duration_ms,
         "duplicate_check": {"status": dedup.get("decision"), "block_upload": bool(dedup.get("block_upload")),
                             "reason": dedup.get("reason"), "result_json": str(ctx.clip_dir / "dedup/result.json")},
     }
@@ -486,9 +507,12 @@ def _review_doubts(doubts: Sequence[ReviewDoubt], numbers: dict[str, list[int]])
     return out
 
 
-def _track_lines(cues: Sequence[subtitle_track.TrackCue], *, speakers: bool) -> str:
+def _track_lines(cues: Sequence[subtitle_track.TrackCue], labels: Sequence[str | None] | None) -> str:
+    """`序号 时间 [说话人] 文字`, the speaker by name where `labels` names one (guest_identity.speaker_names), else the
+    cue's own label; no speaker when `labels` is None (a single-speaker session)."""
     return "\n".join(f"{i} {subtitle_track.fmt_ts(float(c['start_s']))} "
-                     + (f"[{c.get('speaker') or '?'}] " if speakers else "") + subtitle_track.plain_text(c["text"])
+                     + (f"[{labels[i - 1] or c.get('speaker') or '?'}] " if labels is not None else "")
+                     + subtitle_track.plain_text(c["text"])
                      for i, c in enumerate(cues, 1))
 
 
@@ -524,14 +548,23 @@ def _review_materials(ctx: Ctx) -> tuple[str, str, str]:
     linked = linked_session(ctx.session)
     track = subtitle_track.read_track(ctx.clip_dir)
     names = participant_description(ctx.session)
+    labels: list[str | None] | None = None
     if linked:
-        session_line = (f"本场是联动，参与者：{names}。字幕带说话人标签：[{speaker_v8.HOST}] 是{channel.HOST}本人，"
-                        f"[{speaker_v8.GUEST_LABEL}] 是不是{channel.HOST}的另一个人（不辨是谁）。要按上下文复审说话人。")
+        guests = [n for n in participant_names(ctx.session) if n != speaker_v8.HOST]
+        labels = guest_identity.speaker_names(ctx.clip_dir, track)
+        session_line = (f"本场是联动，参与者：{names}。最终字幕每句前写着说话人：[{speaker_v8.HOST}] 是{channel.HOST}本人；"
+                        + (f"[{'] / ['.join(guests)}] 是第 4 步定到这位嘉宾的句子；" if guests else "")
+                        + f"[{speaker_v8.GUEST_LABEL}] 是定不到具体哪位的嘉宾句。这份说话人就是烧进成片的那份，"
+                        + person_colours.legend(speaker_v8.HOST, guests) + "。标题、封面字里谁说了什么，也按这份人名核对。"
+                        + ("本片的说话人是频道主逐句标过的，是定论：你对某句的说话人有不同看法，照样写进 fixes.speakers"
+                           "（写出依据），它只记成异议交给频道主，不改字幕。" if guest_identity.state_owner_rows(ctx.state) else "")
+                        + "要按上下文复审说话人。")
         speaker_item = ("2. 说话人：标签来自声音证据（第 4 步已按语境复核过声音打平的句子），是默认值。只有这一句里有明确的"
                         "内容证据才写进 fixes.speakers：说话人自称、自报身份，或者说的是只有这一方才会说的、关于自己的事；"
                         f"evidence 写「{'」或「'.join(speaker_v8.EVIDENCE_KINDS)}」，quote 从这一句原文里逐字摘出说话人说自己"
                         "的那几个字。称呼某人、谁在提问谁在回答、前后句是谁、评论或调侃的口吻、用第三人称提到某人、念弹幕，"
-                        "都可能另有解释，不能据此改。拿不准不写（说话人不确定不拦）。")
+                        "都可能另有解释，不能据此改。拿不准不写（说话人不确定不拦）。speaker 写主播名、嘉宾的名字，"
+                        f"或者定不到是哪位嘉宾时写 {speaker_v8.GUEST_LABEL}。")
     else:
         session_line = f"本场只有主播一人（{names}），所有台词都是主播，不分说话人。"
         speaker_item = "2. 说话人：单人场次，不查。"
@@ -553,7 +586,7 @@ def _review_materials(ctx: Ctx) -> tuple[str, str, str]:
         "## 标签\n" + review_tags(json.loads((pkg / "tags.json").read_text(encoding="utf-8"))),
         "## 字幕疑点（final_cues 是最终字幕里的序号）\n" + json.dumps(_review_doubts(doubts, numbers), ensure_ascii=False,
                                                                 indent=1),
-        "## 最终字幕（序号 时间 " + ("[说话人] " if linked else "") + "文字）\n" + _track_lines(track, speakers=linked),
+        "## 最终字幕（序号 时间 " + ("[说话人] " if linked else "") + "文字）\n" + _track_lines(track, labels),
     ])
     return session_line, speaker_item, materials
 
@@ -619,7 +652,9 @@ def apply_fixes(ctx: Ctx, review: ReviewAnswer) -> ReviewApplied:
         changed["read_aloud"] = read_aloud
     edited = writing_canon.settle_edits(ctx, edited, track, changed)    # type: ignore[arg-type]
     if linked and has_speakers:
-        changed["speakers"] = _speaker_edits(fixes.get("speakers") or [], track, edited, changed["skipped"])
+        changed["speakers"] = _speaker_edits(fixes.get("speakers") or [], track, edited, changed["skipped"],
+                                             guest_identity.speaker_names(ctx.clip_dir, track),
+                                             [n for n in participant_names(ctx.session) if n != speaker_v8.HOST])
     if edited:
         changed["subtitles"] = _write_edits(ctx, track, edited, linked=linked, has_speakers=has_speakers)
         if adopted := review_owner.adopted_lines(ctx, track, edited):
@@ -630,21 +665,29 @@ def apply_fixes(ctx: Ctx, review: ReviewAnswer) -> ReviewApplied:
     if "doubt_decisions" in review:
         changed["decisions"] = _apply_doubt_decisions(ctx, review["doubt_decisions"], changed["skipped"])
     changed["title"] = _title_fix(ctx, str(fixes.get("title") or "").strip(), changed["skipped"], changed["cpa"])
-    changed["tags"] = _tags_fix(ctx, fixes["tags"]) if "tags" in fixes else False
+    changed["tags"] = _tags_fix(ctx, fixes["tags"], changed["skipped"]) if "tags" in fixes else False
     return changed
 
 
 def _speaker_edits(fixes: Sequence[ReviewFix | None], track: Sequence[subtitle_track.TrackCue],
-                   edited: dict[int, subtitle_track.TrackCue],
-                   skipped: list[str]) -> int:
+                   edited: dict[int, subtitle_track.TrackCue], skipped: list[str], names: Sequence[str | None],
+                   guests: Sequence[str]) -> int:
     """The review's speaker fixes, added to `edited`; returns how many speakers changed.  The acoustic label stands
-    without content evidence (TASK-18)."""
+    without content evidence (TASK-18).  The review reads the lines by name (`names`, guest_identity.speaker_names) and may
+    answer with a guest's name: that is the guest label on the line; a guest line it gives to another guest than the
+    one named there is not changed here (who among the guests is step 4's, guest_identity), only reported."""
     for fix in fixes:
         n = _cue_number((fix or {}).get("cue_id"), len(track))
         label = str((fix or {}).get("speaker") or "").strip()
-        if n is None or label not in {speaker_v8.HOST, speaker_v8.GUEST_LABEL}:
+        if n is None or label not in {speaker_v8.HOST, speaker_v8.GUEST_LABEL, *guests}:
             skipped.append(f"speaker fix not applied (no such cue or unknown label): {fix!r}"[:160])
             continue
+        if label in guests:
+            if track[n - 1].get("speaker") == speaker_v8.GUEST_LABEL and names[n - 1] not in (None, label):
+                skipped.append(f"speaker fix not applied (第 {n} 句复审认为是{label}，第 4 步定的是{names[n - 1]}；"
+                               f"嘉宾之间是谁不在复审里改): {fix!r}"[:200])
+                continue
+            label = speaker_v8.GUEST_LABEL
         why = speaker_v8.content_evidence(fix, subtitle_track.plain_text(track[n - 1]["text"]))
         if track[n - 1].get("speaker") != label and why:
             skipped.append(f"speaker fix not applied ({why}): {fix!r}"[:160])
@@ -685,7 +728,8 @@ def _title_fix(ctx: Ctx, title: str, skipped: list[str], cpa_calls: list[CpaEven
     the review's title no longer skips them): 维护者's banned words, the publish gate, the quote check against the
     final subtitles with speakers, and the skill's judge on the title with the package's cover lines."""
     from .revise_run import keeps_title
-    from .step6_title import checks_on, publish_gate_violations, title_inputs, title_judge
+    from .step6_title import (checks_on, cover_lines_on_cover, judged_whole, publish_gate_violations, title_inputs,
+                              title_judge, with_cover_of)
 
     current_title = (ctx.clip_dir / "title/title.txt").read_text(encoding="utf-8").strip()
     if not title:
@@ -705,31 +749,35 @@ def _title_fix(ctx: Ctx, title: str, skipped: list[str], cpa_calls: list[CpaEven
         skipped.append(f"review title fails the publish gate {gate}")
         return False
     names = participant_names(ctx.session)
-    _track, lines, srt_text = title_inputs(ctx, names)
+    _track, lines, _srt = title_inputs(ctx, names)
     checks = checks_on(ctx, canon_title)
     if not checks["ok"]:
         skipped.append("review title fails step 6's title checks " + str(checks["failed"]) + "："
                        + "；".join(checks["reasons"])[:300])
         return False
-    cands_path = ctx.clip_dir / "title/candidates.json"
-    cover = (json.loads(cands_path.read_text(encoding="utf-8")).get("cover_lines") or []) if cands_path.exists() else []
-    judged = title_judge(ctx, "review-title-judge", lines, canon_title, cover, cpa_calls)
+    cover = cover_lines_on_cover(ctx)
+    judged = title_judge(ctx, "review-title-judge", lines, canon_title, cover or [], cpa_calls)
     if isinstance(judged, StepOutcome):
         skipped.append(f"review title not judged (CPA call failed): {judged.note}"[:200])
         return False
-    if judged["overall"] != "PASS":
-        skipped.append("review title fails the skill judge: " + "；".join(judged["fail_reasons"])[:300])
+    judged = with_cover_of(judged, cover)
+    if why := judged_whole(judged):      # the cover is already rendered: the title goes out only if both hold
+        skipped.append("review title fails the skill judge: " + "；".join(why)[:300])
         return False
     from . import title_acceptance
 
+    prior_receipt = title_acceptance.load_receipt(ctx.clip_dir).receipt
+    saved_cover = cover if (cover and isinstance(judged.get("cover"), dict) and judged["cover"].get("overall") == "PASS") else None
+    raw_involved = prior_receipt.get("involved") if prior_receipt else None
+    involved = [x for x in raw_involved if isinstance(x, str)] if isinstance(raw_involved, list) else None
     (ctx.clip_dir / "title/title.txt").write_text(canon_title + "\n", encoding="utf-8")
-    title_acceptance.write(ctx.clip_dir, canon_title, "review", judged)
+    title_acceptance.write(ctx.clip_dir, canon_title, "review", judged, cover_lines=saved_cover, involved=involved)
     return True
 
 
-def _tags_fix(ctx: Ctx, tags: Any) -> bool:
+def _tags_fix(ctx: Ctx, tags: Any, skipped: list[str]) -> bool:
     from .step7_tags import apply_review_tags
-    return apply_review_tags(ctx, tags)
+    return apply_review_tags(ctx, tags, skipped=skipped)
 
 
 def _record_text_fixes(ctx: Ctx, texts: dict[int, str], track: Sequence[subtitle_track.TrackCue]) -> None:
@@ -919,21 +967,20 @@ def _write_review_md(ctx: Ctx, review: ReviewAnswer, record: ReviewRecord,
     doubts, numbers = current_doubts(ctx)
     held = doubt_policy.holds(doubts)
     applied = record["applied"]
-    if focused is None:
-        lines = [str(review.get("review_md") or "").strip()]
-    else:
-        lines = ["## 既有复审（历史记录，未含本次遗留疑点处置）", str(review.get("review_md") or "").strip(),
-                 "", "## 遗留疑点处置（仅指定疑点）", str(focused.get("review_md") or "").strip()]
-    lines += ["", "## 流水线采用记录",
-             f"- 本次执行实际变更：字幕 {applied['subtitles']} 条，说话人 {applied['speakers']} 条，"
-             f"标题{'已改' if applied['title'] else '未改'}，标签{'已改' if applied['tags'] else '未改'}；复审新增定不下 "
-             f"{applied['holds']} 句；明确处置疑点 {applied['decisions']} 条",
-             *(f"- 未采用：{s}" for s in record["skipped"]),
-             f"- 定不下且影响意思：{len(held)} 句" + ("" if not held else "：" + doubt_policy.held_summary(held, numbers)),
-             *doubt_policy.overruled_review_lines(doubts, held), *(f"- 最终疑点判断 {d['id']}：confidence={d.get('confidence')}，"
-               f"affects_meaning={d.get('affects_meaning')}；{d.get('review_note')}"
-               for d in doubts if str(d.get("review_note") or "").startswith("复审最终判断：")),
-             *(f"- 记录：{n.get('item', '')} 第 {n.get('cue_id', '-')} 句 {n.get('text', '')}" for n in record["notes"])]
+    lines = [*step_io.review_fallback_lines(record["cpa"]), *(
+        [str(review.get("review_md") or "").strip()] if focused is None else
+        ["## 既有复审（历史记录，未含本次遗留疑点处置）", str(review.get("review_md") or "").strip(),
+         "", "## 遗留疑点处置（仅指定疑点）", str(focused.get("review_md") or "").strip()]),
+        "", "## 流水线采用记录",
+        f"- 本次执行实际变更：字幕 {applied['subtitles']} 条，说话人 {applied['speakers']} 条，"
+        f"标题{'已改' if applied['title'] else '未改'}，标签{'已改' if applied['tags'] else '未改'}；复审新增定不下 "
+        f"{applied['holds']} 句；明确处置疑点 {applied['decisions']} 条",
+        *(f"- 未采用：{s}" for s in record["skipped"]),
+        f"- 定不下且影响意思：{len(held)} 句" + ("" if not held else "：" + doubt_policy.held_summary(held, numbers)),
+        *doubt_policy.overruled_review_lines(doubts, held),
+        *(f"- 最终疑点判断 {d['id']}：confidence={d.get('confidence')}，affects_meaning={d.get('affects_meaning')}；{d.get('review_note')}"
+          for d in doubts if str(d.get("review_note") or "").startswith("复审最终判断：")),
+        *(f"- 记录：{n.get('item', '')} 第 {n.get('cue_id', '-')} 句 {n.get('text', '')}" for n in record["notes"])]
     path = _pkg(ctx) / "REVIEW.md"
     path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
     return path
@@ -1024,9 +1071,9 @@ def _prepare_focused_call(ctx: Ctx, record: ReviewRecord, held_ids: list[str],
                 return _fail("CPA_CALL_FAILED", "focused review targets are invalid")
             prompt = review_held_prompt(ctx, targets) + addition
             _write_atomic(prompt_path, prompt)
-        effort, _note = _effort_of("review")
-        cache = _cpa_cache_path(ctx, prompt, effort=effort)
-        event: CpaEvent = {"call_id": call_id, "model": CPA_JUDGE_MODEL, "effort": effort, "stream": True,
+        primary_model, effort, _, _note = _cpa_settings_of("review")
+        cache = _cpa_cache_path(ctx, prompt, effort=effort, model=primary_model)
+        event: CpaEvent = {"call_id": call_id, "model": primary_model, "effort": effort, "stream": True,
                            "purpose": "review", "file": str(ctx.clip_dir / "cpa" / call_id), "cache_path": str(cache)}
         targets_store[target_key] = targets
         record["cpa"].append(event)
@@ -1048,19 +1095,16 @@ def _focused_terminal(ctx: Ctx, record: ReviewRecord, held_ids: list[str], *, ca
     if Path(cache_path).exists() or event.get("complete") is True:
         return _saved_review(record, call_id)
     if "rc" in event and not focused_retry.may_resume_focused(event):
-        return _fail("CPA_CALL_FAILED", event.get("stderr_tail") or str(event.get("reason") or "focused call failed"),
-                     cpa=[event])
+        return _fail("CPA_CALL_FAILED", event.get("stderr_tail") or str(event.get("reason") or "focused call failed"), cpa=[event])
     if not prompt_path.is_file():
         return _fail("CPA_CALL_FAILED", "prepared focused review prompt is missing", cpa=[event])
-    prompt = prompt_path.read_bytes().decode("utf-8")
-    effort, _note = _effort_of("review")
-    if (event.get("effort") != effort or event.get("model") != CPA_JUDGE_MODEL or event.get("stream") is not True
-            or str(_cpa_cache_path(ctx, prompt, effort=effort)) != cache_path):
+    prompt, (primary_model, effort, _, _note) = prompt_path.read_bytes().decode("utf-8"), _cpa_settings_of("review")
+    if not focused_route_valid(ctx, event, prompt, cache_path, primary_model, effort):
         return _fail("CPA_CALL_FAILED", "prepared focused review prompt or route changed", cpa=[event])
     if recovering_request and "rc" not in event:
         try:
             recovered = recover_cpa_terminal(ctx.adapters.remote, call_id=call_id, prompt_text=prompt,
-                                             model=CPA_JUDGE_MODEL, effort=effort, remote_dir=ctx.remote_dir)
+                                             model=primary_model, effort=effort, remote_dir=ctx.remote_dir)
             if recovered is not None:
                 answer = cast("CpaEvent", {**recovered, "cached": True, "purpose": "review"})
                 _record_cpa_files(ctx, call_id, prompt, answer, Path(cache_path), only_missing=True)
@@ -1175,14 +1219,16 @@ def _review_rewind(ctx: Ctx, applied: ReviewApplied, before_grades: dict[str, st
 def _review_process(ctx: Ctx, record: ReviewRecord, applied: ReviewApplied, *, recovering: bool,
                     focused_call: CpaEvent | None, had_focused: bool) -> list[str]:
     """Describe the adopted review and the provenance of any focused disposition."""
-    process = [f"CPA 复审（{CPA_JUDGE_MODEL}，一次）：字幕修改 {applied['subtitles']} 条，说话人修改 {applied['speakers']} 条，"
+    main_call = next((c for c in record.get("cpa", []) if c.get("call_id") == record.get("call")), None) or {}
+    fb_note = f"；{main_call['fallback_note']}，待人工抽查" if main_call.get("fallback_note") else ""
+    process = [f"CPA 复审（{main_call.get('model') or _cpa_settings_of('review')[0]}{fb_note}，一次）：字幕修改 {applied['subtitles']} 条，说话人修改 {applied['speakers']} 条，"
                f"标题{'已改' if applied['title'] else '未改'}，标签{'已改' if applied['tags'] else '未改'}，"
                f"新增定不下且影响意思 {applied['holds']} 句（修改直接采用）"]
     if recovering:
         process.insert(0, "复用已记录的 CPA 复审终态（cached，未再次请求；新补材料未进入原复审）")
     if focused_call is not None:
-        process.append("遗留疑点缺项处置：" + ("复用原 focused 终态" if had_focused or focused_call.get("cached")
-                                               else "新增一次 focused 请求") + "；范围仅指定疑点")
+        foc_fb = f"（{focused_call['fallback_note']}，待人工抽查）" if focused_call.get("fallback_note") else ""
+        process.append("遗留疑点缺项处置：" + ("复用原 focused 终态" if had_focused or focused_call.get("cached") else "新增一次 focused 请求") + f"；范围仅指定疑点{foc_fb}")
     process.append(f"CPA 明确处置既有疑点 {applied['decisions']} 条")
     process += [f"最终疑点判断 {d['id']}：confidence={d.get('confidence')}，"
                 f"affects_meaning={d.get('affects_meaning')}；{d.get('review_note')}"
@@ -1213,8 +1259,10 @@ def _wide_round_snapshot(ctx: Ctx, number: int, *, restore: bool) -> None:
 def _write_wide_review(ctx: Ctx, wide: WideProgress) -> None:
     from . import wide_held
 
-    before = ctx.clip_dir / wide_held.ROOT / "before/pkg/REVIEW.md"
-    lines = [before.read_text(encoding="utf-8").rstrip(), "", "## 复审后加长窗口的疑点处置"]
+    before = (ctx.clip_dir / wide_held.ROOT / "before/pkg/REVIEW.md").read_text(encoding="utf-8").rstrip()
+    review = ctx.state.data.get("review")
+    fb = step_io.review_fallback_lines((review.get("cpa") if review else None) or ())
+    lines = ([*(line for line in fb if line and line not in before), ""] if fb and any(line and line not in before for line in fb) else []) + [before, "", "## 复审后加长窗口的疑点处置"]
     for number, row in enumerate(wide["rounds"], 1):
         if row.get("phase") == "applied":
             lines += [f"\n### 第 {number} 轮（仅指定疑点）", str(row.get("review_md") or "").strip(),
@@ -1384,9 +1432,10 @@ def _finish(ctx: Ctx, *, cpa: list[CpaEvent], process: list[str]) -> StepOutcome
         process = process + [f"定不下且影响意思 {len(held)} 句：成片包已完成，不 attest、不封存，保留待处理：{lines}"]
         return StepOutcome(True, products=products, cpa=cpa, process=process,
                            note=f"复审扣留：定不下且影响意思 {len(held)} 句，未封存：{lines}")
+    rid = reviewer_id(step_io.review_effective_model(cpa))
     attest = _fmr("attest", "--package", str(package), "--review", str(review_md),
-                  "--reviewer-id", reviewer_id(), "--verdict", "PASS", "--reviewer-kind", "AGENT")
-    process = process + [f"FMR attest（reviewer {reviewer_id()}，制作人 {maker_id(ctx)}）rc={attest.returncode}"]
+                  "--reviewer-id", rid, "--verdict", "PASS", "--reviewer-kind", "AGENT")
+    process = process + [f"FMR attest（reviewer {rid}，制作人 {maker_id(ctx)}）rc={attest.returncode}"]
     if attest.returncode == 2:
         return _fail("FMR_ATTEST_REFUSED", "复审放行（无扣留句），FMR attest 拒绝：" + (attest.stdout + attest.stderr)[-400:],
                      cpa=cpa, process=process)

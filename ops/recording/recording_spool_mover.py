@@ -170,8 +170,8 @@ class Mover:
                  lane_root: Path | None = None):
         self.spool, self.archive_root, self.mount = spool, archive_root, mount
         self.lane_root = lane_root
-
-
+        # the channel's request. With a backup root, every artifact
+        # is also copied to 123 and local bytes stay until both are verified.
         self.backup_root = backup_root
         self.state_path, self.archive_path = state_path, archive_path
         self.client, self.observations = client, observations
@@ -441,11 +441,10 @@ class Mover:
     def lane_wants(self, relative: str, row: dict[str, Any]) -> set[str]:
         """The FLV/XML of this segment the clip lane still lacks (oci3_lane_spool_copy.sh).
 
- 公开规则：边录边传有个坏处是下播后才开始选片，原始录播文件已经不见了，还得重新下;
- 「为什么一份文件要占这么多」— the host keeps one copy of a recording. While the
- stream is live the copy waits, and eviction hands these files to the lane by renaming them
- (same disk, no second copy) instead of deleting them. A day the lane does not copy (no day
- directory) or takes from another source (`.source` not "spool") wants nothing."""
+        the channel's request— the host keeps one copy of a recording.  While the
+        stream is live the copy waits, and eviction hands these files to the lane by renaming them
+        (same disk, no second copy) instead of deleting them.  A day the lane does not copy (no day
+        directory) or takes from another source (`.source` not "spool") wants nothing."""
         if self.lane_root is None:
             return set()
         day = self.lane_root / Path(relative).parent
@@ -648,10 +647,10 @@ class Mover:
                     rechecked = True
                 else:
                     rechecked = False
-
-
-
-
+                # the channel's request— 123 starts only once 115 holds this
+                # segment and no other 115 upload is still in flight, so the two never
+                # share the uplink. Files already evicted (before the backup existed)
+                # cannot be copied and are not required.
                 if self.backup_root is not None and not self.archive_upload_in_flight(state):
                     for name in live:
                         item = row["files"][name]

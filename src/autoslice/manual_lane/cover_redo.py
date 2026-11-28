@@ -10,9 +10,12 @@ budget, `step6_cover.COVER_RETRIES`):
 - a drawn route (sticker, scene) is generated again with the reviewer's own words about the last picture in its prompt;
 - every route is made in a work directory of its own, so a redo never reuses the picture it is redoing.
 
-Only after the budget is spent does the fallback choose, and only among candidates not vetoed on their material; when every
-candidate is, the one with the fewest vetoes is taken and the record carries a loud, non-blocking flag for the finished-media
-review (`material_flag`).  Each round's candidates and the reasons for the next round are kept (`RedoLog.rounds`)."""
+Only after the budget is spent does the fallback choose, and only among candidates not vetoed on their material and not
+leaving out a guest the cover must show (`ROSTER`: cover_guests.roster_vetoes; review: the fallback's look could
+take a cover the judge sees without one of the guests, and it went out as fit); when every candidate is one of those, the one
+with the fewest vetoes is taken and the record carries a loud flag (`material_flag`) that step 10 sends nothing on.  A cover
+without a guest is not made again for that (another frame or another drawing of the host does not bring her onto it).  Each
+round's candidates and the reasons for the next round are kept (`RedoLog.rounds`)."""
 
 from __future__ import annotations
 
@@ -32,6 +35,7 @@ JUDGE_AXES = ("identity", "source_faithful", "no_fabrication")
 NO_FACE = frozenset({"HOST_FACE_NOT_FOUND", "HOST_FACE_NOT_IN_FRAME", "HOST_FACE_NOT_ON_HER_FIGURE",
                      "STICKER_HOST_FACE_UNAVAILABLE", "PEOPLE_FACE_OUTSIDE_MASK", "PEOPLE_LAYERS_UNAVAILABLE"})
 MATERIAL = frozenset({"HOST_MISSING", *(f"CPA_VETO:{axis}" for axis in JUDGE_AXES)})
+ROSTER = "ROSTER_INCOMPLETE"      # cover_guests.ROSTER_INCOMPLETE: a guest the cover must show is not on it
 DRAWN = ("ai_sticker", "ai_scene")             # the routes whose prompt can carry the reviewer's words
 NOT_REDONE = ("emote",)                        # an official picture: another frame or another draw changes nothing
 FEEDBACK = ("A previous attempt at this picture was rejected by the reviewer for the reasons quoted below, verbatim. "
@@ -107,10 +111,15 @@ def redo_routes(current: Sequence[CoverCandidate], everything: Sequence[CoverCan
             if route in latest and route not in NOT_REDONE and material_vetoes(latest[route])}
 
 
+def unfit_vetoes(row: Mapping[str, object]) -> list[str]:
+    """The fallback cannot wave through material, dirty layers, or a guest left off (ROSTER)."""
+    return [v for v in vetoes_of(row) if is_material(v) or v == "CPA_VETO:clean_layers" or v.split(":", 1)[0] == ROSTER]
+
+
 def fallback_pool(rows: Sequence[CoverCandidate]) -> tuple[list[CoverCandidate], list[CoverCandidate]]:
-    """(rendered candidates not vetoed on their material, every rendered candidate)."""
+    """(rendered candidates the fallback may choose: none of unfit_vetoes, every rendered candidate)."""
     rendered = [r for r in rows if r["status"] == "RENDERED"]
-    return [r for r in rendered if not material_vetoes(r)], rendered
+    return [r for r in rendered if not unfit_vetoes(r)], rendered
 
 
 def fewest_vetoes(rows: Sequence[CoverCandidate]) -> CoverCandidate:
@@ -119,13 +128,14 @@ def fewest_vetoes(rows: Sequence[CoverCandidate]) -> CoverCandidate:
 
 
 def material_flag(row: CoverCandidate) -> dict[str, object]:
-    """The loud, non-blocking record of a cover chosen although its material was vetoed."""
-    return {"id": row["id"], "route": row["route"], "axes": material_vetoes(row), "judge_words": rejection_text(row),
+    """The loud record of a cover chosen although its material was vetoed or it leaves out a guest (step 10 sends
+    nothing while it is there: step10_check.cover_material)."""
+    return {"id": row["id"], "route": row["route"], "axes": unfit_vetoes(row), "judge_words": rejection_text(row),
             "all_vetoes": vetoes_of(row)}
 
 
 def flag_line(flag: Mapping[str, object]) -> str:
-    return (f"【封面素材被否决·非阻塞·须成品审查与上线前核对】所有候选都被素材类否决，取否决项最少的 {flag['id']}："
+    return (f"【封面素材被否决·上线前停下·须重做封面】所有候选都被素材类否决或漏了该上封面的嘉宾，取否决项最少的 {flag['id']}："
             f"{'、'.join(cast('list[str]', flag['axes']))}；判官原话：{flag['judge_words']}")
 
 

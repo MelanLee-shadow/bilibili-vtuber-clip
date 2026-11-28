@@ -23,6 +23,7 @@ from . import (
     name_consistency,
     parallel,
     read_aloud_copy,
+    sound_events,
     variant_c,
     work_lookup,
     writing_canon,
@@ -86,7 +87,7 @@ def step3_subtitles(ctx: Ctx) -> StepOutcome:
     """Step 3 for every adjudication mode, then the words of subs/final.srt written in the table's canonical form
     (writing_canon: an imported push too; a verbatim push takes over its source clip's verdicts).  Before that, on the
     lane's own subtitles, the read-aloud records copied (read_aloud_copy) and the game's or the software's own words
-    taken out (game_sound, U469)."""
+    taken out (game_sound, U469).  Last, the sounds worth watching that are no words (sound_events)."""
     rec = imported(ctx)
     outcome = _step3_decided(ctx)
     if outcome.ok:
@@ -96,7 +97,10 @@ def step3_subtitles(ctx: Ctx) -> StepOutcome:
         stop = game_sound.settle(ctx, outcome.process)
         if stop is not None:
             return dataclasses.replace(outcome, ok=False, reason=stop[0], note=stop[1])
-    return writing_canon.settle_step3(ctx, outcome, verbatim=bool(rec and rec.get("verbatim")))
+    outcome = writing_canon.settle_step3(ctx, outcome, verbatim=bool(rec and rec.get("verbatim")))
+    if outcome.ok:          # beside the decided subtitles, which it does not change
+        sound_events.settle(ctx, outcome.process)
+    return outcome
 
 
 def _chat_product(ctx: Ctx, process: list[str]) -> None:

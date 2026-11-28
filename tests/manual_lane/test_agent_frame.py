@@ -11,6 +11,7 @@ from agent_fakes import AgentCpa
 from fakes import FakeRemote, make_ctx
 from src.autoslice.manual_lane import agent_frame, playbook_step3 as pb, step3_subtitles as step
 from src.autoslice.manual_lane.adapters import RemoteResult
+from src.autoslice.manual_lane.step_io import vision_models
 
 LOOK_USAGE = {"input_tokens": 900, "output_tokens": 30, "total_tokens": 930}
 ASK = {"tool": "frame", "t": 1.0, "question": "她头上戴着什么"}
@@ -24,8 +25,9 @@ def look_remote(answer="头上戴着一副很大的墨镜", *, seen=True, ok=Tru
         request = json.loads(remote.files[frames_json])
         rows = [dict(f, ok=ok, **({"seen": seen, "answer": answer} if ok else {"error": "CalledProcessError"}))
                 for f in request["frames"]]
-        doc = {"question": request["question"], "model": "gpt-6.1-sol", "frames": rows,
-               "calls": [{"kind": "look", "t": f["t"], "model": "gpt-6.1-sol", "effort": "low", "rc": 0,
+        model, _, _ = vision_models()
+        doc = {"question": request["question"], "model": model, "frames": rows,
+               "calls": [{"kind": "look", "t": f["t"], "model": model, "effort": "low", "rc": 0,
                           "usage": LOOK_USAGE} for f in request["frames"]]}
         remote.files[out] = json.dumps(doc, ensure_ascii=False).encode()
         return RemoteResult(0, "", "")
@@ -119,6 +121,27 @@ def test_the_same_question_at_the_same_moment_is_read_once(tmp_path, monkeypatch
     assert again["frames"] == first["frames"] and "cpa" not in again
 
 
+@pytest.mark.parametrize("mixed", [False, True])
+def test_a_fallback_reading_is_not_reused_as_a_primary_reading(tmp_path, monkeypatch, mixed):
+    remote = look_remote()
+    ctx = agent_ctx(tmp_path, remote, AgentCpa(rows()), monkeypatch)
+    paid = []
+    agent_frame.look(ctx, ASK, 2.0, "", paid.append)
+    primary, fallback, _ = vision_models()
+    cache, = (ctx.clip_dir / "speaker").glob("look-*-readings.json")
+    cached = json.loads(cache.read_text(encoding="utf-8"))
+    cached["model"] = primary if mixed else fallback
+    cached["calls"][0]["model"] = fallback
+    if mixed:
+        cached["calls"][0]["fallback_from"] = primary
+    cache.write_text(json.dumps(cached), encoding="utf-8")
+
+    recovered = agent_frame.look(ctx, ASK, 2.0, "", paid.append)
+    again = agent_frame.look(ctx, ASK, 2.0, "", paid.append)
+    assert len(looks(remote)) == 2 and len(paid) == 2
+    assert recovered["cpa"][0]["model"] == primary and "cpa" not in again
+
+
 def test_the_remote_reader_keeps_only_an_answer_that_says_whether_it_was_seen():
     spec = importlib.util.spec_from_file_location("look_at_frames", agent_frame.SCRIPT)
     module = importlib.util.module_from_spec(spec)
@@ -130,3 +153,33 @@ def test_the_remote_reader_keeps_only_an_answer_that_says_whether_it_was_seen():
     assert module.read_answer('```json\n{"seen": true, "answer": " 大墨镜 "}\n```') == {"seen": True, "answer": "大墨镜"}
     assert module.read_answer('{"seen": "yes", "answer": "x"}') is None and module.read_answer("看不出") is None
     assert "{question}" not in module.WRAP.format(question="q") and "问题：q" in module.WRAP.format(question="q")
+
+
+def test_visual_reference_hint_leads_to_frame_reading_with_sticker_captions_and_character(tmp_path, monkeypatch):
+    sticker_desc = "画面左上角贴着戴带护目镜军帽的黑发双马尾Q版角色表情包，竖排配字「没有和你们混熟的打算」「我要一个人去…」"
+    remote = look_remote(sticker_desc)
+    tools = [
+        {"tool": "hints"},
+        {"tool": "frame", "t": 1.0, "question": "画面上展示的表情包角色和上面的文字是什么"},
+    ]
+    cpa = AgentCpa(
+        [{"id": "d001", "state": "ADOPT", "final_text": "我发个这个", "confidence": "高", "affects_meaning": False}],
+        tools=tools,
+    )
+    ctx = make_ctx(tmp_path, remote=remote, cpa=cpa)
+    ctx.session["participants"] = [["single speaker"]]
+    for name in ("bcut", "jianying"):
+        path = ctx.clip_dir / f"asr/{name}.srt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("1\n00:00:00,000 --> 00:00:02,000\n我发个这个\n\n", encoding="utf-8")
+    monkeypatch.setenv("MANUAL_LANE_ADJUDICATE_MODE", "C")
+    assert step._step3_body(ctx).ok
+    assert "各来源一致时也看该刻画面" in cpa.prompts[0]
+    hint = next(
+        e["result"]["hints"][0]
+        for e in trace_of(ctx)["events"]
+        if e["event"] == "tool_result" and e["request"].get("tool") == "hints"
+    )
+    assert hint["visual_reference"]["t"] == 1.0
+    result = frame_result(ctx)
+    assert result["frames"] == [{"t": 1.0, "seen": True, "answer": sticker_desc}]

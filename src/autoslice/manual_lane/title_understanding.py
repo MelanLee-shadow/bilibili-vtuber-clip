@@ -4,21 +4,27 @@ The channel owner found the biggest title error was a title not built on the cli
 as the subject, a reference turned around).  So the title prompt is given a checked reading of the clip first:
 
 - two independent readings of the whole final subtitles (the same prompt, `run` 1 and 2, asked at once), each with
-  the main line, the punchline, who/what the easily confused references mean, the side topics, and how the host figures
-  in the main line (`host_role`, one of ROLES);
-- one merge that checks both readings against the subtitles, anchored on the selection reason written when the clip
-  was chosen (`clip.hook`; empty for a compilation or a trimmed successor), and settles where they differ.
+  the main line, the landings (the few moments that could carry the title), who/what the easily confused references
+  mean, the side topics, and how the host figures in the main line (`host_role`, one of ROLES);
+- one merge that checks both readings against the subtitles, anchored on what the selection wrote when the clip was
+  chosen (clip_init.selection_notes: the hook, the detailed reason, the peaks), and settles where they differ.
+
+The landings are a group, not one punchline (标题没落在最关键的那一下，就是流水线的问题):
+on 11-23/24 the one punchline step 6 settled left every other good moment under "side topics", which the title prompt
+forbade, and the moment the selection had pointed at was never written (0 of 8 to 0 of 48 candidates).  Each moment the
+selection pointed at is a landing (`picked`), then the readers' own most unusual lines; side topics are only what has
+nothing to do with the main line.  All three prompts (reading, merge, title) see the selection's notes.
 
 A clip whose main line is other people's business, the host only chiming in (the merge says BYSTANDER and at least
 one reading said so too), is not the channel's clip: step 6 stops it as NOT_ABOUT_HOST before any title is written
 (`not_about_host`).  Selection cannot see who speaks (no speaker labels before step 4), so this is the first place the
-lane can tell.  Owner: selection is 「围绕李豆沙」; reaction clips (her reactions to someone else's video are the main
+lane can tell.  selection is about the host herself; reaction clips (her reactions to someone else's video are the main
 line) and collab clips where she is one of the parties are not this case.  The reading rests on step 4's labels: the
 note carries her share of the lines, and when no line at all is labelled hers the stop is NO_HOST_LINES (step 4 is to
 be looked at), not a verdict on the content.
 
-No audio is read and no recognition is run; the selection reason only picks which event is the main line, every fact
-is the subtitles'.  The result goes into title/candidates.json (`understanding`), a PROCESS line, and the title prompt
+No audio is read and no recognition is run; the selection's notes only say which event is the main line and which
+moments it chose, every fact is the subtitles'.  The result goes into title/candidates.json (`understanding`), a PROCESS line, and the title prompt
 (assets/manual_lane/prompts/title_mainline.md).
 """
 
@@ -28,7 +34,8 @@ import json
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, cast
 
-from . import channel, channel_facts, parallel
+from . import channel, channel_facts, parallel, title_authority
+from .clip_init import SelectionNotes, selection_notes
 from .runner import Ctx, StepOutcome
 from .srt_text import _json_from_text
 from .step_io import _ask_cpa, _cpa_ok, _fail, _log, _render
@@ -43,15 +50,27 @@ READ_PURPOSE = "title-read"
 MERGE_PURPOSE = "title-merge"
 SHAPE_REASON = "TITLE_UNDERSTANDING_SHAPE"
 NO_HOOK = "（无）"
+LANDINGS_MAX = 4
 LEAD, PARTY, BYSTANDER = "主角", "参与", "旁观"     # how the host figures in the main line (the prompts' words)
 ROLES = (LEAD, PARTY, BYSTANDER)
 NOT_ABOUT_HOST = "NOT_ABOUT_HOST"
 NO_HOST_LINES = "NO_HOST_LINES"     # the same stop when step 4 labelled none of the lines hers
 
 
+class Landing(TypedDict):
+    """One moment of the clip that could carry the title."""
+    quote: str                    # the words as the subtitles have them ("" for the owner's own statement of the draw)
+    who: str                      # who says them, as the speaker label has it ("" without labels)
+    cues: list[int]
+    why: str                      # what is out of the ordinary in it
+    picked: NotRequired[bool]     # the selection pointed at this moment
+    owner: NotRequired[bool]      # the channel owner said this is the clip's draw (title_verdicts.retitle)
+
+
 class ReadingBrief(TypedDict):
     main_line: str
-    punchline: str
+    landings: list[Landing]
+    punchline: str          # the landings as one line (landings_line), for the consumers that take one string
     host_role: str          # one of ROLES
 
 
@@ -79,9 +98,10 @@ class Merged(ReadingBrief):
 
 
 class Understanding(TypedDict):
-    readings: list[ReadingBrief]      # each reading's main_line and punchline
+    readings: list[ReadingBrief]      # each reading's main_line and landings
     merged: Merged
     hook: str                         # the selection reason as written (may be empty)
+    selection: SelectionNotes         # what the selection wrote of the clip, as the prompts carried it
 
 
 def persona_basics(text: str | None = None) -> str:
@@ -94,20 +114,81 @@ def _filled(value: Any, key: str) -> bool:
     return isinstance(value, dict) and isinstance(value.get(key), str) and bool(value[key].strip())
 
 
+def _landing_ok(value: Any) -> bool:
+    return (_filled(value, "quote") and isinstance(value.get("who"), str) and isinstance(value.get("why"), str)
+            and isinstance(value.get("cues"), list)
+            and all(isinstance(c, int) and not isinstance(c, bool) for c in value["cues"]))
+
+
 def reading_problem(value: Any) -> str:
-    """Why a reading is not usable, or "": an object whose main_line and punchline are non-empty strings and whose
-    host_role is one of ROLES."""
+    """Why a reading is not usable, or "": an object whose main_line is a non-empty string, whose landings are one or
+    more objects with a quote (non-empty), who, cues (integers) and why, and whose host_role is one of ROLES.  More than
+    LANDINGS_MAX landings is not a shape error: they come in priority order and `_capped` keeps the first ones."""
     if not isinstance(value, dict):
         return "not an object"
-    missing = next((f"{key} missing" for key in ("main_line", "punchline") if not _filled(value, key)), "")
-    if missing:
-        return missing
+    if not _filled(value, "main_line"):
+        return "main_line missing"
+    landings = value.get("landings")
+    if not isinstance(landings, list) or not landings or not all(map(_landing_ok, landings)):
+        return "landings must be one or more objects with quote, who, cues (integers) and why"
     return "" if value.get("host_role") in ROLES else f"host_role must be one of {'/'.join(ROLES)}"
 
 
+def _capped(answer: ReadingBrief | Merged) -> list[str]:
+    """Keep the first LANDINGS_MAX landings of a reading or the merge (the prompts list them most important first);
+    returns one line per landing left out, for the merge's conflicts and PROCESS.  11-23 1493180: the selection had
+    marked six beats, the merge listed all six as the prompt said, and ten answers in a row were rejected as a shape
+    error, stopping the clip."""
+    dropped = answer["landings"][LANDINGS_MAX:]
+    answer["landings"] = answer["landings"][:LANDINGS_MAX]
+    return [f"落点超过 {LANDINGS_MAX} 处，按先后没列：{landing_text(x)}" for x in dropped]
+
+
+def landing_text(landing: Landing) -> str:
+    """One landing as the prompts and PROCESS show it."""
+    if not landing["quote"]:
+        return landing["why"] + ("〔频道主说的看点〕" if landing.get("owner") else "")
+    who = f"[{landing['who']}] " if landing["who"] else ""
+    cues = f"（第 {'、'.join(map(str, landing['cues']))} 句）" if landing["cues"] else ""
+    return (f"{who}“{landing['quote']}”{cues}" + (f"——{landing['why']}" if landing["why"] else "")
+            + ("〔选片点出〕" if landing.get("picked") else ""))
+
+
+def landings_line(landings: Sequence[Landing]) -> str:
+    return "；".join(f"{n}. {landing_text(x)}" for n, x in enumerate(landings, 1))
+
+
+def owner_landing(draw: str) -> list[Landing]:
+    """The landings of a clip whose draw the channel owner stated himself: that one, in his words."""
+    return [{"quote": "", "who": "", "cues": [], "why": draw, "owner": True}]
+
+
+def selection_block(notes: SelectionNotes) -> str:
+    """What the selection wrote of the clip, as the reading, merge and title prompts carry it.  It says which moments
+    were chosen; every fact of a title is still the subtitles'."""
+    if not (notes["hook"].strip() or notes["reason"].strip() or notes["peaks"]):
+        return "选片时写下的“为什么选这段”：" + NO_HOOK
+    lines = ["选片时写下的“为什么选这段”（只用来确定选的是哪几下；人名和原话是转写稿的写法，会有错字和夸张，事实以字幕为准）：",
+             f"- 一句话：{notes['hook'].strip() or NO_HOOK}"]
+    if notes["reason"].strip():
+        lines.append(f"- 看点说明：{notes['reason'].strip()}")
+    if notes["peaks"]:
+        lines.append("- 选片点出的那几下（最该被看到的时刻）：")
+        lines += [f"  {n}. " + (f"[{p['who']}] " if p.get("who") else "") + f"“{p['quote']}”——{p['why']}"
+                  for n, p in enumerate(notes["peaks"], 1)]
+    else:
+        lines.append("- 选片没有单独列出“最该被看到的那几下”：上面两段里点到的每一拍（写着“必须保留”“落点”的）都算选片点出的。")
+    return "\n".join(lines)
+
+
+def _hooks_block() -> str:
+    rules = title_authority.hook_rules()
+    return ("编辑方法里讲“落点怎么找”的一节（原文；讲文件、截帧和封面的部分这里用不到）：\n" + rules) if rules else ""
+
+
 def merge_problem(value: Any) -> str:
-    """Why the merge is not usable, or "": a reading, plus who_is_who (objects with term and means) and side_topics
-    (strings) the title prompt is written from.  `unexplained` may be missing; when present it is a list of objects
+    """Why the merge is not usable, or "": a reading (main line, landings, host role), plus who_is_who (objects with
+    term and means) and side_topics (strings) the title prompt is written from.  `unexplained` may be missing; when present it is a list of objects
     with a term (non-empty string), cues (integers) and why (string)."""
     problem = reading_problem(value)
     if problem:
@@ -160,8 +241,13 @@ def understand(ctx: Ctx, lines: str, cpa_calls: list[CpaEvent]) -> Understanding
     except (OSError, KeyError) as exc:
         return _fail("TITLE_AUTHORITY_MISSING", f"selection tiers unreadable: {channel_facts.METRIC}: {exc!r}",
                      cpa=cpa_calls)
-    hook = str(ctx.state.data["clip"].get("hook") or "")
-    read_prompt = _render("title_understand.md", persona=persona, tiers=tiers, context=lines)
+    notes = selection_notes(ctx.state.data["clip"])
+    try:
+        selection, hooks = selection_block(notes), _hooks_block()
+    except title_authority.AuthorityError as exc:
+        return _fail("TITLE_AUTHORITY_MISSING", str(exc), cpa=cpa_calls)
+    read_prompt = _render("title_understand.md", persona=persona, tiers=tiers, selection=selection, hooks=hooks,
+                          landings_max=str(LANDINGS_MAX), context=lines)
     records = parallel.run(
         READ_RUNS, lambda run: _ask_cpa(ctx, f"title-read-{run}", read_prompt, run=run, purpose=READ_PURPOSE,
                                         accepts=_contract(reading_problem)),
@@ -172,16 +258,22 @@ def understand(ctx: Ctx, lines: str, cpa_calls: list[CpaEvent]) -> Understanding
         if isinstance(reading, StepOutcome):
             return reading
         readings.append(cast(ReadingBrief, reading))
-    merge_prompt = _render("title_understand_merge.md", persona=persona, tiers=tiers, hook=hook.strip() or NO_HOOK,
+        _capped(readings[-1])
+    merge_prompt = _render("title_understand_merge.md", persona=persona, tiers=tiers, selection=selection, hooks=hooks,
+                           landings_max=str(LANDINGS_MAX),
                            reading_a=json.dumps(readings[0], ensure_ascii=False, indent=1),
                            reading_b=json.dumps(readings[1], ensure_ascii=False, indent=1), context=lines)
     merged = _answer(_ask_cpa(ctx, "title-merge", merge_prompt, purpose=MERGE_PURPOSE,
                               accepts=_contract(merge_problem)), cpa_calls)
     if isinstance(merged, StepOutcome):
         return merged
-    return {"readings": [{"main_line": r["main_line"], "punchline": r["punchline"], "host_role": r["host_role"]}
-                         for r in readings],
-            "merged": cast(Merged, merged), "hook": hook}
+    done = cast(Merged, merged)
+    if dropped := _capped(done):
+        done["conflicts"] = [*(done.get("conflicts") or []), *dropped]
+    done["punchline"] = landings_line(done["landings"])
+    return {"readings": [{"main_line": r["main_line"], "landings": r["landings"],
+                          "punchline": landings_line(r["landings"]), "host_role": r["host_role"]} for r in readings],
+            "merged": done, "hook": notes["hook"], "selection": notes}
 
 
 def host_lines(speakers: Sequence[str | None]) -> tuple[int, int]:
@@ -219,7 +311,9 @@ def _joined(items: Sequence[str]) -> str:
 def mainline_block(found: Understanding, canonical_names: str) -> str:
     """title_mainline.md filled: the block that ends the method text of every title round."""
     merged = found["merged"]
-    return _render("title_mainline.md", main_line=merged["main_line"], punchline=merged["punchline"],
+    return _render("title_mainline.md", main_line=merged["main_line"],
+                   landings="\n".join(f"  {n}. {landing_text(x)}" for n, x in enumerate(merged["landings"], 1)),
+                   selection=selection_block(found["selection"]),
                    who_is_who=_joined([f"{x['term']}＝{x['means']}" for x in merged["who_is_who"]]),
                    side_topics=_joined(merged["side_topics"]),
                    canonical_names=canonical_names).rstrip("\n")

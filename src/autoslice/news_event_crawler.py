@@ -4,14 +4,15 @@ Seeds come from data the pipeline already has (news_event_seeds); the Search Rou
 about each seed (reusing the manual lane's `WebLookup` client and its address from the channel profile); CPA decides
 which results show an event / project / alliance / collaboration, who takes part and how (news_event_judge); the
 answer becomes status=candidate nodes and edges in the format of `knowledge_graph` (news_event_graph).  The recent
-dynamics of the owner and of the registry accounts are judged too, as results of their own (`post_batches`: owner
-, U468, 「这个联动完全可以直接从新闻Crawler把这个动态一抓就知道了，看看新闻就知道了」).  A run that
+dynamics of the owner and of the registry accounts are judged too, as results of their own (`post_batches`: the channel's request).  A run that
 cannot do its job raises `NewsEventError` (the entry point exits non-zero and the timer unit shows it): no search
 succeeded, CPA answered nothing, or the graph did not validate.  Partial failure is counted in the report.
 """
 from __future__ import annotations
 
 import datetime as dt
+import inspect
+import json
 import random
 import re
 import time
@@ -20,22 +21,27 @@ from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 
 from src.autoslice import community_name_graph as names
 from src.autoslice import news_event_graph as store
 from src.autoslice.crawl_window import CrawlWindow
 from src.autoslice import clip_name_identity as identity
 from src.autoslice import news_event_judge as judge
-from src.autoslice.knowledge_graph import GraphError, JsonValue, load_graph
+from src.autoslice.infra_retry_policy import terminal_retry_scope
+from src.autoslice.knowledge_graph import Graph, GraphError, JsonValue, Node, load_graph
 from src.autoslice.llm_client import LlmCallError
 from src.autoslice.manual_lane.work_lookup import LookupRow
-from src.autoslice.news_event_seeds import Dynamics, Registry, Seed, derive_seeds, dynamics_texts, plain_text
+from src.autoslice.news_event_seeds import (
+    WORK_SEEDS_FILE, Dynamics, Registry, Seed, WorkSeed, derive_seeds, dynamics_texts, load_work_seeds, plain_text)
 from src.autoslice.structured_output import call_json
 
 _call_json: Callable[[Callable[[str], str], str], str] = call_json  # structured_output.call_json is untyped
 REPORT_SCHEMA = "vtuber-slice.news-event-crawl.v1"
 MAX_SEEDS = 40               # one run's searches; the roster part of the list rotates day by day
+MAX_WORK_SEEDS_PER_RUN = 6   # rotating subset of class work seeds searched for work/character nodes each run
+WORK_BUDGET_S = 300.0        # isolated budget for optional work seeds after the news write
+WORK_QUERY = "{work} 角色 登场人物"
 SEARCH_ROWS = 8
 SEEDS_PER_JUDGE_CALL = 4     # keeps one CPA prompt well below the community crawler's 16-card / 156 KiB incident
 MIN_INTERVAL_S = 1.0         # gap between searches; doubles after each rate-limited answer, relaxes on success
@@ -57,6 +63,26 @@ class SearchBackend(Protocol):
     def web(self, query: str, *, limit: int = ...) -> Sequence[LookupRow]: ...
 
 
+class _TimedSearchBackend(Protocol):
+    def web(self, query: str, *, limit: int = ..., timeout: float | None = ...) -> Sequence[LookupRow]: ...
+
+
+class _TimedSecondsLlm(Protocol):
+    def __call__(self, prompt: str, *, timeout_seconds: float | None = ...) -> str: ...
+
+
+class _TimedLlm(Protocol):
+    def __call__(self, prompt: str, *, timeout: float | None = ...) -> str: ...
+
+
+def _accepts_kwarg(fn: object, name: str) -> bool:
+    try:
+        params = inspect.signature(cast(Callable[..., object], fn)).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+
 @dataclass
 class Report:
     """What one run counted; `to_json` is the crawl_report.json written next to the graph."""
@@ -76,6 +102,7 @@ class Report:
     previous_discarded: str | None = None
     community: dict[str, JsonValue] | None = None
     clip_names: dict[str, JsonValue] | None = None
+    works: dict[str, JsonValue] | None = None
 
     def error(self, text: str) -> None:
         if len(self.errors) < MAX_ERRORS_LISTED:
@@ -98,6 +125,7 @@ class Report:
             "previous_discarded": self.previous_discarded}
         doc["community"] = self.community
         doc["clip_names"] = self.clip_names
+        doc["works"] = self.works
         return doc
 
 
@@ -108,6 +136,126 @@ class NewsEventError(RuntimeError):
         super().__init__(f"{code}: {detail}")
         self.code = code
         self.report = report
+
+
+def _work_is_covered(seed: WorkSeed, known: Graph, *, resolved: Node | None = None) -> bool:
+    """True when the seed resolves to a non-retired `work` node with at least one `character_of` edge."""
+    node = resolved if resolved is not None else store.resolve_work_seed(known, name=seed.name, aliases=seed.aliases)
+    if node is None or node.kind != "work":
+        return False
+    return any(
+        e.type == "character_of" and e.to_id == node.id
+        and e.from_id in known.nodes and known.nodes[e.from_id].kind == "character"
+        for e in known.edges
+    )
+
+
+def _load_work_cursor(runtime_root: Path) -> int:
+    """Read the persisted work-seed rotation cursor from the previous crawl report, or 0."""
+    try:
+        raw: JsonValue = json.loads((Path(runtime_root) / store.REPORT_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    works = raw.get("works") if isinstance(raw, dict) else None
+    cursor = works.get("next_cursor") if isinstance(works, dict) else None
+    return cursor if type(cursor) is int and cursor >= 0 else 0
+
+
+def _call_work_llm(llm_call: Callable[[str], str], prompt: str, *, deadline: float,
+                   clock: Callable[[], float], sleep: Callable[[float], None]) -> str:
+    """Run one work-seed CPA judgement bounded by the remaining work pass wall-clock budget.
+
+    Forwards the remaining budget both via `terminal_retry_scope` and via `timeout_seconds`/`timeout` when the
+    callable accepts it.  A call already in flight can still overrun `deadline` by at most its own per-call timeout.
+    """
+    remaining = deadline - clock()
+    if remaining <= 0:
+        raise NewsEventError("runtime_budget_exhausted", "the work-seed time budget ends before model judgement")
+    timed_call: Callable[[str], str] = llm_call
+    if _accepts_kwarg(llm_call, "timeout_seconds"):
+        def with_seconds(p: str) -> str:
+            return cast(_TimedSecondsLlm, llm_call)(p, timeout_seconds=remaining)
+        timed_call = with_seconds
+    elif _accepts_kwarg(llm_call, "timeout"):
+        def with_timeout(p: str) -> str:
+            return cast(_TimedLlm, llm_call)(p, timeout=remaining)
+        timed_call = with_timeout
+    with terminal_retry_scope(wallclock_seconds=remaining, clock=clock, sleeper=sleep):
+        return _call_json(timed_call, prompt)
+
+
+def _crawl_work_seeds(work_seeds: Sequence[WorkSeed], known: Graph, repo_edges: set[str], *, search: RouterSearch,
+                      llm_call: Callable[[str], str], report: Report, clock: Callable[[], float],
+                      deadline: float, start_cursor: int, stamp: str
+                      ) -> tuple[store.Candidates, dict[str, JsonValue]]:
+    """Crawl uncovered work seeds under an independent `WORK_BUDGET_S` wall-clock budget starting when the pass starts.
+
+    Checks `clock() < deadline` before each seed and hands remaining budget as timeout to search and model adapters
+    that accept one; a call already in flight can overrun `deadline` by at most its own per-call timeout.
+    """
+    total = len(work_seeds)
+    start = start_cursor % total
+    next_cursor = start
+    added: store.Candidates = ({}, {})
+    work_rejected: Counter[str] = Counter()
+    skipped = attempted = ok = failed = 0
+    for step in range(total):
+        idx = (start + step) % total
+        seed = work_seeds[idx]
+        resolved_work = store.resolve_work_seed(known, name=seed.name, aliases=seed.aliases)
+        if _work_is_covered(seed, known, resolved=resolved_work):
+            skipped += 1
+            next_cursor = (idx + 1) % total
+            continue
+        if attempted >= MAX_WORK_SEEDS_PER_RUN or clock() >= deadline:
+            break
+        attempted += 1
+        next_cursor = (idx + 1) % total
+        try:
+            rows = search.search(WORK_QUERY.format(work=seed.name))
+        except NewsEventError as exc:
+            report.error(f"work search stopped: {exc}")
+            break
+        except Exception as exc:  # noqa: BLE001 - per-seed search error is counted and logged
+            failed += 1
+            report.error(f"work search {seed.name!r}: {type(exc).__name__}: {str(exc)[:200]}")
+            continue
+        if not rows:
+            ok += 1
+            continue
+        try:
+            raw = _call_work_llm(
+                llm_call,
+                judge.work_prompt(seed.category, seed.name, seed.aliases, judge.work_catalog(known), rows),
+                deadline=deadline, clock=clock, sleep=search.sleep)
+            result, rejected = judge.parse_work_judgement(
+                raw, rows, seed_name=seed.name, seed_aliases=seed.aliases,
+                resolved_work_id=resolved_work.id if resolved_work is not None else None, known=known)
+        except NewsEventError as exc:
+            report.error(f"work judge stopped: {exc}")
+            break
+        except (LlmCallError, judge.JudgeError) as exc:
+            failed += 1
+            report.error(f"work judge {seed.name!r}: {type(exc).__name__}: {str(exc)[:200]}")
+            continue
+        ok += 1
+        report.rejected.update(rejected)
+        work_rejected.update(rejected)
+        if result is not None:
+            more, left_out = store.candidates_from_work(
+                result, known, repo_edges, now=stamp,
+                seed_name=seed.name, seed_aliases=seed.aliases, resolved_work=resolved_work)
+            report.left_out += left_out
+            added = store.merge(added, more)
+            known = store.with_candidates(known, more)
+    rejected_json: dict[str, JsonValue] = {k: v for k, v in work_rejected.items()}
+    stats: dict[str, JsonValue] = {
+        "total": total, "skipped_covered": skipped, "attempted": attempted,
+        "ok": ok, "failed": failed, "start_cursor": start, "next_cursor": next_cursor,
+        "rejected": rejected_json,
+        "new_nodes": list[JsonValue](sorted(added[0])), "new_edges": list[JsonValue](sorted(added[1])),
+    }
+    return added, stats
 
 
 class RouterSearch:
@@ -140,8 +288,14 @@ class RouterSearch:
         if self._last is not None and (gap := self.interval - (self.clock() - self._last)) > 0:
             self._pause(gap)
         for attempt in range(RATE_LIMIT_ATTEMPTS):
+            remaining = self.deadline - self.clock()
+            if remaining <= 0:
+                raise NewsEventError("runtime_budget_exhausted", "the run's time budget ends before the next search")
             try:
-                rows = self.lookup.web(query, limit=SEARCH_ROWS)
+                if _accepts_kwarg(self.lookup.web, "timeout"):
+                    rows = cast(_TimedSearchBackend, self.lookup).web(query, limit=SEARCH_ROWS, timeout=remaining)
+                else:
+                    rows = self.lookup.web(query, limit=SEARCH_ROWS)
             except Exception as exc:  # noqa: BLE001 - classified below; anything else is the caller's failure count
                 retry = self._rate_limited(exc)
                 if retry is None or attempt == RATE_LIMIT_ATTEMPTS - 1:
@@ -289,11 +443,12 @@ def crawl(*, owner: str, repo_root: Path, runtime_root: Path, registry: Registry
           notes: Sequence[str] = (), clip_names: Sequence[str] = (),
           community: names.Community | None = None,
           name_videos: Callable[[str], Sequence[names.Video]] | None = None,
-          origin_limit: int = names.ORIGIN_LIMIT) -> Report:
+          origin_limit: int = names.ORIGIN_LIMIT, work_budget_s: float = WORK_BUDGET_S) -> Report:
     """One run.  Returns the report that was written next to the graph; raises NewsEventError on failure."""
     stamp = now.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     window = CrawlWindow.around(now.date())
     repo = load_graph(repo_root)
+    prev_work_cursor = _load_work_cursor(runtime_root)
     report = Report(stamp, owner, {"registry": registry is not None, "dynamics": dynamics is not None,
                                    "peer_posts": peer_posts is not None}, errors=list(notes))
     texts = dynamics_texts(dynamics)
@@ -376,4 +531,33 @@ def crawl(*, owner: str, repo_root: Path, runtime_root: Path, registry: Registry
         store.write_runtime_graph(repo_root, runtime_root, merged, report.to_json())
     except (GraphError, OSError, ValueError) as exc:
         raise NewsEventError("validation_failed", f"{type(exc).__name__}: {str(exc)[:300]}", report) from exc
+
+    # Optional work-seed enrichment runs strictly after the main crawl's outputs are saved on disk,
+    # inside its own exception guard and independent wall-clock budget started here, so neither the news deadline
+    # nor any work-seed failure can harm news delivery.  A call already in flight can overrun by at most its timeout.
+    try:
+        if (repo_root / WORK_SEEDS_FILE).is_file():
+            work_seeds = load_work_seeds(repo_root)
+            if work_seeds:
+                work_deadline = clock() + max(0.0, work_budget_s)
+                work_search = RouterSearch(
+                    search.lookup, deadline=work_deadline, clock=clock, sleep=search.sleep, jitter=search.jitter)
+                work_added, report.works = _crawl_work_seeds(
+                    work_seeds, known, repo_edges, search=work_search, llm_call=llm_call,
+                    report=report, clock=clock, deadline=work_deadline,
+                    start_cursor=prev_work_cursor, stamp=stamp)
+                fresh = store.merge(fresh, work_added)
+                merged = store.accumulate(previous, fresh, repo=repo, now=stamp, window=window)
+                report.new_nodes = sorted(set(fresh[0]) - set(previous[0]))
+                report.new_edges = sorted(set(fresh[1]) - set(previous[1]))
+                report.candidates = {"nodes": len(merged[0]), "edges": len(merged[1])}
+                store.write_runtime_graph(repo_root, runtime_root, merged, report.to_json())
+    except Exception as exc:  # noqa: BLE001 - optional work seeds must never fail or abort the news run
+        msg = f"{type(exc).__name__}: {str(exc)[:200]}"
+        report.error(f"work_seeds: {msg}")
+        report.works = {"error": msg, "next_cursor": prev_work_cursor}
+        try:
+            store.write_runtime_graph(repo_root, runtime_root, merged, report.to_json())
+        except Exception:  # noqa: BLE001 - main news graph/report was already persisted above
+            pass
     return report

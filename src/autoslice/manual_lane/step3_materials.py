@@ -13,11 +13,14 @@ from .step_io import AGENT_PRINCIPLES, PRONOUN_RULE, PROMPTS
 
 
 def base_prompt(bcut, jianying, others, cut_len, clip, work, refs, task=None) -> str:
+    payload = {'bcut': list(bcut), 'jianying': list(jianying), **others,
+               'cut_duration_s': cut_len, 'work_context': work_context.agent_view(work),
+               'references': refs['leads'],
+               **({'reference_clues': refs['clues']} if refs.get('clues') else {}),
+               'hook': clip.get('hook')}
     return '\n'.join((
         *(channel.fill((PROMPTS / name).read_text(encoding='utf-8'))
           for name in ('subtitle_agent.md', 'subtitle_playbook.md', 'subtitle_playbook_rules.md')),
         PRONOUN_RULE, AGENT_PRINCIPLES,
         channel_facts.for_subtitles(task),
-        '初始转写与片长：' + json.dumps({'bcut': list(bcut), 'jianying': list(jianying), **others,
-                                         'cut_duration_s': cut_len, 'work_context': work_context.agent_view(work),
-                                         'references': refs['leads'], 'hook': clip.get('hook')}, ensure_ascii=False)))
+        '初始转写与片长：' + json.dumps(payload, ensure_ascii=False)))

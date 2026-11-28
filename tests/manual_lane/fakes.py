@@ -24,6 +24,7 @@ from src.autoslice.manual_lane import stage_impl as si
 from src.autoslice.manual_lane.adapters import Adapters, LocalRemote, RemoteResult
 from src.autoslice.manual_lane.runner import Ctx
 from src.autoslice.manual_lane.state import ClipState
+from src.autoslice.manual_lane.step_io import vision_models
 
 SESSION = {"recording_date": "2026-10-24", "speaker_mode": "uniform_host", "enablement_evidence": None,
            "participants": [["李豆沙"], ["雾深Girimi"]], "own_uploader_mids": [1]}
@@ -175,8 +176,8 @@ COVER_BRIEF = json.dumps({"quotes": [], "expression": "surprised", "action": "ta
                           "scene_reason": "", "setting": "", "on_fans": False}, ensure_ascii=False)
 # The skill judge's answer (references/judge-prompt.md output shape), PASS unless a test scripts its own.
 JUDGE_PASS = json.dumps({"fact_core": "x", "claims": [], "quotes": [], "rhetoric": [], "fabrication": {},
-                         "cover": [], "combined_reading": "不会", "overall": "PASS", "fail_reasons": []},
-                        ensure_ascii=False)
+                         "cover": [], "combined_reading": "不会", "title_overall": "PASS", "title_fail_reasons": [],
+                         "cover_overall": "PASS", "cover_fail_reasons": []}, ensure_ascii=False)
 
 
 # The writing judge's answer (references/quality-judge-prompt.md output shape), PASS unless a test scripts its own.
@@ -198,11 +199,12 @@ def quality_fail(*reasons, flow_list: str = "问完……接出……"):
 
 
 # The clip-understanding answers (title_understand.md / title_understand_merge.md output shape).
-READING = json.dumps({"main_line": "李豆沙讲了她的主线", "punchline": "她先嘴硬，接着自己拆台（序号 3）",
-                      "punchline_cues": [3], "who_is_who": [], "side_topics": [], "host_role": "主角"},
-                     ensure_ascii=False)
-MERGE = json.dumps({"agree": True, "main_line": "李豆沙讲了她的主线", "punchline": "她先嘴硬，接着自己拆台（序号 3）",
-                    "punchline_cues": [3], "who_is_who": [{"term": "它", "means": "她的小号", "cues": [2]}],
+LANDINGS = [{"quote": "我才不买呢，顶多买一点", "who": "李豆沙", "cues": [3], "why": "她先嘴硬，接着自己拆台", "picked": True},
+            {"quote": "那你知道我在直播还给我打电话", "who": "李豆沙", "cues": [5], "why": "她反过来问对方", "picked": False}]
+READING = json.dumps({"main_line": "李豆沙讲了她的主线", "landings": LANDINGS, "who_is_who": [], "side_topics": [],
+                      "host_role": "主角"}, ensure_ascii=False)
+MERGE = json.dumps({"agree": True, "main_line": "李豆沙讲了她的主线", "landings": LANDINGS,
+                    "who_is_who": [{"term": "它", "means": "她的小号", "cues": [2]}],
                     "side_topics": ["顺带聊了晚饭"], "hook_holds": True, "conflicts": [], "host_role": "主角"},
                    ensure_ascii=False)
 
@@ -285,7 +287,15 @@ def writing_canon_answer(prompt_text: str, same_word=()) -> str:
 
 
 def judge_fail(*reasons):
-    return json.dumps({"overall": "FAIL", "fail_reasons": list(reasons) or ["x"]}, ensure_ascii=False)
+    """The fact judge refuses the title (its cover verdict passes)."""
+    return json.dumps({"title_overall": "FAIL", "title_fail_reasons": list(reasons) or ["x"], "cover_overall": "PASS",
+                       "cover_fail_reasons": []}, ensure_ascii=False)
+
+
+def cover_fail(*reasons):
+    """The fact judge passes the title and refuses the cover lines."""
+    return json.dumps({"title_overall": "PASS", "title_fail_reasons": [], "cover_overall": "FAIL",
+                       "cover_fail_reasons": list(reasons) or ["封面字 x"]}, ensure_ascii=False)
 
 
 def is_judge(call_id: str) -> bool:
@@ -296,7 +306,8 @@ _QUALITY_RUN = re.compile(r"-q\d+$")
 
 
 ACCEPTED_JUDGE = {"overall": "PASS", "fail_reasons": [], "runs": [{"overall": "PASS", "fail_reasons": []}],
-                  "quality": [{"overall": "PASS", "fail_reasons": []}], "authorities": []}
+                  "quality": [{"overall": "PASS", "fail_reasons": []}], "cover": {"overall": "PASS", "fail_reasons": []},
+                  "authorities": []}
 
 
 def accept_title(clip_dir, title: str, by: str = "step6") -> None:
@@ -359,7 +370,7 @@ def fake_cover(remote, rd, rows=None, calls=None, body=None, extra=None):
         out.append({"id": name, "route": name, "status": "RENDERED", "note": name, "main_emote": None,
                     "guest_face_measured": guest if "雾深Girimi" in verdict["people"]["present"] else None,
                     "punch_font_size": 180, "render": {"measured_lines": [{"x": 300, "y": 40, "w": 600, "h": 180}],
-                                                       "layout": "top", "composition": "peers_equal"},
+                                                       "layout": "top", "composition": "peers_equal", "template_id": "top-two"},
                     "verdict": verdict, "answer": json.dumps(verdict, ensure_ascii=False),
                     "generation": ({name: {"model": "gpt-image-2.5", "reported_model": "UNKNOWN", "reused": False}}
                                    if name in ("cutout", "ai_sticker", "ai_scene") else {}), **((extra or {}).get(name) or {})})
@@ -636,6 +647,7 @@ def screen_remote(*, playing=True, subtitles=None, broken=(), no_output=(), on_o
         if mode in no_output:
             return RemoteResult(1, "", "tool failed")
         frames = json.loads(remote.files[f"/r/clip/speaker/{mode}-frames.json"])["frames"]
+        model, _, _ = vision_models()
         rows, calls = [], []
         for f in frames:
             if mode in broken:
@@ -645,9 +657,9 @@ def screen_remote(*, playing=True, subtitles=None, broken=(), no_output=(), on_o
                 rows.append({"id": f["id"], "t": f["t"], "ok": True, "video_playing": playing,
                              "video_subtitle": text if playing else "", "subtitle_language": "中文" if text else "无",
                              "other_text": ""})
-            calls.append({"kind": "subtitle", "t": f["t"], "model": "gpt-6.1-sol", "effort": "low", "rc": 0,
+            calls.append({"kind": "subtitle", "t": f["t"], "model": model, "effort": "low", "rc": 0,
                           "elapsed_s": 0.1, "usage": {"input_tokens": 1000, "output_tokens": 50}})
-        doc = {"question": "q", "model": "gpt-6.1-sol", "frames": rows, "calls": calls}
+        doc = {"question": "q", "model": model, "frames": rows, "calls": calls}
         remote.files[f"/r/clip/speaker/{mode}-out.json"] = json.dumps(doc, ensure_ascii=False).encode()
         return RemoteResult(0, "", "")
 

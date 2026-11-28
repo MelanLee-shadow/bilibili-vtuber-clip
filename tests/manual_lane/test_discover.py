@@ -97,6 +97,30 @@ def test_clips_already_built_keep_their_seats_and_are_not_seated_again():
     assert {r["cid"]: r["reason"] for r in seating.rejected} == {"clash": ds.OVERLAPS_SEATED, "new2": ds.QUOTA_FULL}
 
 
+
+def test_the_bursts_of_a_day_go_as_far_as_their_candidates_and_their_points_say_whom_they_seated_instead(monkeypatch):
+    """Every burst of the day, how far it got (found -> nominated -> past the gates -> seated -> made), and what the burst
+    points changed: the day seated again without them (the 11-25 「十个活男人／方大同」 was nominated and lost its seat to
+    QUOTA_FULL; which seat a burst takes, or does not, is said, not guessed)."""
+    monkeypatch.setattr(ds.core_draws, "burst_points", lambda e, asset=None: 100.0 if e.get("bursts") else 0.0)
+    pool = [entry("a0", "segA", 0, 500, level=4), entry("a1", "segB", 0, 500, level=4), entry("a2", "segC", 0, 500, level=3),
+            entry("a3", "segD", 0, 500, level=3), dict(entry("a4", "segH", 0, 500, level=2), bursts=["B4"]),
+            dict(entry("twin", "segH", 200, 400, level=1), bursts=["B5"]),
+            dict(entry("hot", "segH", 1000, 1500, level=1), bursts=["B1"]),
+            dict(entry("song", "segH", 2000, 2500, kind="song"), bursts=["B3"])]
+    seating = ds.seat_day(DATE, pool, built=[])
+    assert sorted(e["cid"] for e in seating.seated) == ["a0", "a1", "a2", "a4", "hot"]
+    assert ds.burst_swaps(DATE, pool, [], seating) == {"in": ["hot"], "out": ["a3"]}
+    held = {"disposition": ds.BURST_IN_CANDIDATE, "start_ms": 0, "end_ms": 30_000, "count": 9}
+    segments = [{"name": "segH", "bursts": [dict(held, id="B1"), dict(held, id="B2", disposition=ds.BURST_NOT_SELECTED, reason="打卡刷屏"),
+                                            dict(held, id="B3"), dict(held, id="B4"), dict(held, id="B5"),
+                                            dict(held, id="B6", disposition=ds.BURST_UNANSWERED)]}]
+    rows = ds.burst_funnel(segments, pool, seating, made={"hot"})
+    assert [(r["id"], r["stage"], r["cid"], r["why"]) for r in rows] == [
+        ("B1", ds.BURST_MADE, "hot", ""), ("B2", ds.BURST_NOT_SELECTED, None, "打卡刷屏"), ("B3", ds.BURST_GATED, "song", ds.NOT_TALK),
+        ("B4", ds.BURST_SEATED, "a4", ""), ("B5", ds.BURST_PAST_GATE, "twin", ds.OVERLAPS_SEATED), ("B6", ds.BURST_UNANSWERED, None, "")]
+    assert ds.burst_swaps(DATE, [{k: v for k, v in e.items() if k != "bursts"} for e in pool], [], seating) == {"in": [], "out": []}
+
 # ----- a whole day through a fake media host ---------------------------------------------------------------------
 
 SRT = "".join(f"{n}\n00:00:{n:02d},000 --> 00:00:{n + 1:02d},000\n第{n}句\n\n" for n in range(1, 7))
@@ -193,6 +217,102 @@ def test_running_again_recognises_nothing_twice_and_builds_nothing_twice(tmp_pat
     assert report.days[0]["built"] == 4 and report.days[0]["seated"] == 0
 
 
+def test_a_danmaku_burst_is_against_the_days_baseline_and_one_nobody_accounts_for_is_the_recordings_failure(tmp_path):
+    """the channel's request: the baseline is the day's, over every recording of it; a burst neither
+    in a candidate nor explained, asked about again, is the recording's failure -- named, not passed over -- and the others
+    are seated as before.  Asking a third time would not change it, so it does not keep the day open: a PARTIAL day is
+    never done, and its recordings would never be reclaimed (auto_run.recordings_released)."""
+    quiet = "".join(f'<d p="{30 * b + 1},1,25,16777215,0,0,7,0">路过</d>' for b in range(12))
+    xml = {"22966160_20261109-21-00-52": quiet,
+           "22966160_20261109-21-30-00": quiet + "".join(f'<d p="{301 + i},1,25,16777215,0,0,7,0">哈哈哈{i}</d>' for i in range(7))}
+
+    class Danmaku(Host):
+        def __call__(self, name, body, remote):
+            if name.startswith("disc-xml-"):
+                segment = name.split("-", 2)[2]
+                remote.files[f"{dm.layout().session_root(DATE)}/discover/{segment}/source.xml"] = f"<i>{xml.get(segment, '')}</i>".encode()
+                return RemoteResult(0, "", "")
+            return super().__call__(name, body, remote)
+
+    report = run(tmp_path, Danmaku(), dates=[DATE])
+    assert [(f["segment"][-8:], f["code"]) for f in report.failures] == [("21-30-00", ds.BURSTS_UNACCOUNTED)]
+    assert "B1 300-330s (8)" in report.failures[0]["detail"]
+    day = dv.load_ledger(tmp_path / "task")["days"][DATE]
+    bursts = {s["name"][-8:]: s.get("bursts") for s in day["segments"] if s["status"] == "SELECTED"}
+    assert bursts["21-00-52"] is None and [(b["id"], b["baseline"], b["disposition"]) for b in bursts["21-30-00"]] == [
+        ("B1", 1.0, ds.BURST_UNANSWERED)]
+    assert day["status"] == dv.COMPLETE and len(day["built"]) == 4
+    assert any("21-30-00 弹幕突发区没交代 B1" in line for line in dv.ledger_lines(tmp_path / "task"))
+
+
+def test_a_days_bursts_are_reported_as_a_funnel_and_the_shadow_counts_are_written_down(tmp_path):
+    """The ledger says, per burst, how far it got, and what the burst points changed; the two shadow counts' bursts are
+    written next to the recording's (recorded only: the model is not told of them, the seating does not see them)."""
+    quiet = "".join(f'<d p="{30 * b + 1},1,25,16777215,0,0,7,0">路过</d>' for b in range(12))
+    xml = {"22966160_20261109-21-00-52": quiet,
+           "22966160_20261109-21-30-00": quiet + "".join(f'<d p="{2 + i},1,25,16777215,0,0,{100 + i},0">哈哈哈{i}</d>' for i in range(7))}
+
+    class Danmaku(Host):
+        def __call__(self, name, body, remote):
+            if name.startswith("disc-xml-"):
+                segment = name.split("-", 2)[2]
+                remote.files[f"{dm.layout().session_root(DATE)}/discover/{segment}/source.xml"] = f"<i>{xml.get(segment, '')}</i>".encode()
+                return RemoteResult(0, "", "")
+            return super().__call__(name, body, remote)
+
+    report = run(tmp_path, Danmaku(), dates=[DATE])
+    assert not report.failures
+    day = dv.load_ledger(tmp_path / "task")["days"][DATE]
+    assert [(r["segment"][-8:], r["id"], r["stage"], r["cid"]) for r in day["selection"]["bursts"]] == [
+        ("21-30-00", "B1", ds.BURST_MADE, "semantictalk_2000_5000_11092130")]
+    assert day["selection"]["burst_swaps"] == {"in": [], "out": []}          # no draws asset here: no burst points
+    shadows = {s["name"][-8:]: s.get("shadow_bursts") for s in day["segments"] if s["status"] == "SELECTED"}
+    assert shadows["21-00-52"] == {"users": [], "laughs": []}
+    assert [(k, b["start_ms"], b["count"], b["main"], b["candidate_id"]) for k, found in shadows["21-30-00"].items() for b in found] == [
+        ("users", 0, 8, True, "semantictalk_2000_5000"), ("laughs", 0, 7, True, "semantictalk_2000_5000")]
+    lines = dv.ledger_lines(tmp_path / "task")
+    assert "    弹幕突发区 1：模型不选 0、没交代 0；提名 1 → 过门 1 → 入座 1 → 成片 1" in lines
+    assert any(line.strip().startswith("22966160_20261109-21-30-00 B1 00:00 8 条 成片") for line in lines)
+    assert "    必切：不占席 0 条，占席 0 条；主人标记 0 条" in lines
+    assert "    突发区加分换座：没有（不加也是这几席）" in lines and "    影子（只记下）：数人多出 0 个，数笑多出 0 个" in lines
+
+
+def test_a_burst_whose_second_question_fails_keeps_the_recordings_candidates_and_the_day_open(tmp_path):
+    """The second question about a burst comes after the recall has its candidates: when the model does not answer it, the
+    recording's candidates are seated as before and only the burst waits -- the day stays PARTIAL and the next round asks
+    it again; answered then (here: still silent), the day is done."""
+    from src.autoslice.llm_client import LlmCallError
+
+    quiet = "".join(f'<d p="{30 * b + 1},1,25,16777215,0,0,7,0">路过</d>' for b in range(12))
+    xml = {"22966160_20261109-21-00-52": quiet,
+           "22966160_20261109-21-30-00": quiet + "".join(f'<d p="{91 + i},1,25,16777215,0,0,7,0">哈哈哈{i}</d>' for i in range(7))}
+
+    class Danmaku(Host):
+        def __call__(self, name, body, remote):
+            if name.startswith("disc-xml-"):
+                segment = name.split("-", 2)[2]
+                remote.files[f"{dm.layout().session_root(DATE)}/discover/{segment}/source.xml"] = f"<i>{xml.get(segment, '')}</i>".encode()
+                return RemoteResult(0, "", "")
+            return super().__call__(name, body, remote)
+
+    down = [True]
+
+    def asking(cues, *, llm_call, max_candidates, danmaku_hints, danmaku_xml):
+        if danmaku_hints and max_candidates == 3 and down[0]:          # the second question, while the model is down
+            raise LlmCallError("semantic recall completion has no candidates array")
+        return selector(cues, llm_call=llm_call, max_candidates=max_candidates, danmaku_hints=danmaku_hints, danmaku_xml=danmaku_xml)
+
+    adapters = Adapters(remote=FakeRemote(on_script=Danmaku()), cpa=None, danmaku=FakeDanmaku())
+    report = dv.discover(task=tmp_path / "task", adapters=adapters, selector=asking, dates=[DATE])
+    assert [(f["segment"][-8:], f["code"]) for f in report.failures] == [("21-30-00", ds.BURST_REASK_FAILED)]
+    day = dv.load_ledger(tmp_path / "task")["days"][DATE]
+    assert day["status"] == dv.PARTIAL and len(day["built"]) == 4          # both recordings' candidates were seated
+    down[0] = False
+    report = dv.discover(task=tmp_path / "task", adapters=adapters, selector=asking, dates=[DATE])
+    assert [(f["segment"][-8:], f["code"]) for f in report.failures] == [("21-30-00", ds.BURSTS_UNACCOUNTED)]
+    assert dv.load_ledger(tmp_path / "task")["days"][DATE]["status"] == dv.COMPLETE
+
+
 def test_a_failed_recording_leaves_the_day_partial_and_the_others_go_on(tmp_path):
     host = Host()
     host.failing.add("22966160_20261109-21-30-00")
@@ -276,7 +396,7 @@ def test_a_finished_day_whose_recordings_were_reclaimed_is_not_rediscovered(tmp_
 
 
 def test_without_a_recorder_host_nothing_is_fetched_and_old_copies_are_still_pruned(tmp_path):
-
+    # the channel's request
     assert not dm.layout().recordings_direct_host and "N100" not in dm.layout().danmaku_host
     topology = json.loads(layout_module.TOPOLOGY_FILE.read_text(encoding="utf-8"))
     assert dm.archive_room() == f"{topology['archive_root']}/{dm.layout().room_id}"   # the media host's own archive, not the recorder's

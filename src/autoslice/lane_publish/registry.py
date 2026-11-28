@@ -136,3 +136,19 @@ def locked() -> Iterator[None]:
             yield
         finally:
             fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+@contextmanager
+def first_upload_locked() -> Iterator[None]:
+    """Take the lane lock and the legacy uploader's shared lock during a first-publication decision."""
+    with locked():
+        file = base() / "upload.lock"
+        with file.open("a") as handle:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise Refused(LOCK, f"REFUSE: {LOCK_BUSY}: {file}; retry after the active transaction finishes") from exc
+            try:
+                yield
+            finally:
+                fcntl.flock(handle, fcntl.LOCK_UN)

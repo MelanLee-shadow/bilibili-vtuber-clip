@@ -1,5 +1,5 @@
-"""Step 6 per the lidousha-title-cover skill: the title names the participants on stage, the punchline is Lidousha's
-own reaction, every candidate passes the swap test (recorded in candidates.json), the cover frame is chosen away from
+"""Step 6 per the lidousha-title-cover skill: the title names the participants on stage, the deterministic checks veto
+only what a machine can decide (how the title is written is the writing judge's), the cover frame is chosen away from
 unrelated pages, and the danmaku strip is blurred."""
 
 from __future__ import annotations
@@ -33,14 +33,75 @@ def test_a_named_guest_must_also_be_in_the_prefix():
     assert any("前缀未写出场者" in r for r in no_prefix["reasons"])
 
 
-def test_a_title_that_still_holds_with_another_host_is_rejected():
-    chk = si.title_checks(_cand("【李豆沙】她半分钟后真的破防了", ["李豆沙"], holds=True), NAMES, srt(3))
-    assert not chk["ok"] and any("换主播自检未通过" in r for r in chk["reasons"])
+def test_how_a_title_is_written_is_the_judges_and_no_check_vetoes_it():
+    """11-23/24: of 440 candidates 113 fell on the writer's own swap test and 37 on a first person.  What the writer
+    says of its candidate, her name beside 我, and a guest's 我 are the writing judge's (skill 八.4) to weigh."""
+    assert si.title_checks(_cand("【李豆沙】她半分钟后真的破防了", ["李豆沙"], holds=True, person=""), NAMES, srt(3))["ok"]
+    hers = "【李豆沙×雾深Girimi】不可以在跟李豆沙说话的时候走神，我会生气的"          # her own words: her name and 我
+    assert si.title_checks(_cand(hers, ["李豆沙", "雾深Girimi"]), NAMES, srt(3))["ok"]
+    assert set(si.TITLE_RULES) == {"banned", "prefix", "on_stage_known", "named", "involved_named", "prefix_names",
+                                   "quotes", "canonical_names", "publish_gate", "published_duplicate", "batch_opener",
+                                   "label_as_name"}
 
 
-def test_a_punchline_not_on_lidousha_herself_is_rejected():
-    chk = si.title_checks(_cand("【李豆沙】漫画里的人狼杀真的把人灭口了", ["李豆沙"], person=""), NAMES, srt(3))
-    assert not chk["ok"] and any("笑点未落在李豆沙本人身上" in r for r in chk["reasons"])
+def test_two_clips_of_a_batch_may_open_with_a_name_but_not_with_the_same_scene_words():
+    """11-24 1621740: both candidates on 「我有多难过吗」 opened 「礼墨Sumi，……」 like another clip's title and were
+    thrown out before any ranking; 11-23: eight of ten titles opened 「游戏里」."""
+    batch = ["【李豆沙×雾深Girimi】雾深Girimi为什么是李豆沙的宠物", "【李豆沙×雾深Girimi】游戏里抢到一块石头"]
+    named = _cand("【李豆沙×雾深Girimi】雾深Girimi，你知道我有多难过吗", ["李豆沙", "雾深Girimi"])
+    short = _cand("【李豆沙×雾深Girimi】雾深，你知道我有多难过吗", ["李豆沙", "雾深Girimi"])
+    assert si.title_checks(named, NAMES, srt(3), batch=batch)["ok"] and si.title_checks(short, NAMES, srt(3), batch=batch)["ok"]
+    scene = si.title_checks(_cand("【李豆沙×雾深Girimi】游戏里她半分钟后真的破防了", ["李豆沙", "雾深Girimi"]), NAMES, srt(3),
+                            batch=batch)
+    assert scene["failed"] == ["batch_opener"]
+
+
+def test_a_quotation_may_be_cut_down_from_one_speakers_lines_but_not_added_to_or_mixed():
+    """the channel's request; a quoted line is still what that person said."""
+    from src.autoslice.title_quote_check import check_title_quotes, find_condensed
+
+    text = "\n\n".join(f"{n}\n00:00:0{n},000 --> 00:00:0{n},900\n[{who}] {line}" for n, (who, line) in enumerate([
+        ("李豆沙", "呃，都可以"), ("李豆沙", "哦，不对"), ("连线", "啊？"), ("李豆沙", "你不能每天都来"),
+        ("李豆沙", "我也要跟礼墨单独播")], 1)) + "\n"
+    cut = check_title_quotes("【李豆沙】她说“不对，你不能每天来，我也要跟礼墨单独播”", text)
+    assert cut["status"] == "PASS" and cut["matches"][0]["match"] == "CONDENSED" and cut["matches"][0]["cues"] == ["2", "4", "5"]
+    assert cut["matches"][0]["speaker"] == "李豆沙"
+    assert check_title_quotes("【李豆沙】“你不能每天都来”", text)["matches"][0]["match"] == "VERBATIM"      # verbatim stays verbatim
+    for changed in ("你不能每天都来，我也想跟礼墨单独播", "啊？你不能每天都来", "你绝对不能每天都来"):     # a word swapped, two speakers, a word added
+        assert check_title_quotes(f"【李豆沙】“{changed}”", text)["reason_codes"] == ["TITLE_QUOTE_NOT_IN_FINAL_SUBTITLES"], changed
+    assert find_condensed("都可以，我也要跟礼墨单独播", text + "\n".join([]), speaker="连线") is None        # not that speaker's words
+
+
+def test_a_cut_may_not_leave_out_a_negation_the_kept_words_depend_on():
+    """Review 「我不是说你是猪啊」 passed as 李豆沙“我是猪” -- a cut that says the opposite."""
+    from src.autoslice.title_quote_check import check_title_quotes
+
+    text = "\n\n".join(f"{n}\n00:00:0{n},000 --> 00:00:0{n},900\n[{who}] {line}" for n, (who, line) in enumerate([
+        ("李豆沙", "我不是说你是猪啊"), ("李豆沙", "我没有把自己变绿"), ("李豆沙", "不是，这关这么难吗"),
+        ("李豆沙", "非常好吃，不过有点贵")], 1)) + "\n"
+    for flipped in ("我是猪", "说你是猪", "把自己变绿"):            # condensed, and a verbatim cut after the negation
+        assert check_title_quotes(f"【李豆沙】李豆沙“{flipped}”", text)["status"] == "FAIL", flipped
+    for kept in ("我不是说你是猪", "我没有变绿", "这关这么难吗", "好吃有点贵"):   # a clause left out whole; 非常 negates nothing
+        assert check_title_quotes(f"【李豆沙】李豆沙“{kept}”", text)["status"] == "PASS", kept
+
+
+def test_the_name_before_a_quotation_is_the_speaker_of_its_line():
+    """Short names (礼墨 for 礼墨Sumi, skill section 4) were not checked at all: 礼墨“我是猪” passed on anyone's words.
+    One name over a line nobody could tell whose (连线) is a guess; two names or 队友 are what section 4 asks for then."""
+    from src.autoslice.title_quote_check import check_title_quotes
+
+    text = "\n\n".join(f"{n}\n00:00:0{n},000 --> 00:00:0{n},900\n[{who}] {line}" for n, (who, line) in enumerate([
+        ("安晚awa", "这个不是竞争模式吗"), ("连线", "李豆沙变成绿豆沙了"), ("李豆沙", "我是团队")], 1)) + "\n"
+    trio, unknown = ("李豆沙", "礼墨Sumi", "安晚awa"), ("连线", "未具名嘉宾")
+
+    def status(body):
+        return check_title_quotes("【李豆沙×礼墨Sumi×安晚awa】" + body, text, unidentified=unknown, people=trio)["status"]
+
+    assert status("安晚“这个不是竞争模式吗”") == status("安晚awa“这个不是竞争模式吗”") == "PASS"
+    assert status("礼墨“这个不是竞争模式吗”") == status("礼墨“我是团队”") == "FAIL"
+    assert status("礼墨“李豆沙变成绿豆沙了”") == "FAIL"                                  # one name on 连线: a guess
+    assert status("礼墨安晚“李豆沙变成绿豆沙了”") == status("队友“李豆沙变成绿豆沙了”") == "PASS"
+    assert status("队友“我是团队”") == "FAIL"                                           # the host is no 队友
 
 
 def test_on_stage_names_must_come_from_the_participant_list():

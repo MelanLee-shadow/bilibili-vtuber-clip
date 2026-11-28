@@ -13,8 +13,9 @@ gates.  The semantic contract per candidate:
 - the window must include its own context trigger (the cue where the danmaku
   is read out, the topic starts, or the on-screen thing is introduced); if the
   trigger sits before the window, the LLM must extend the window start to it;
-- a viewer who never saw the stream must be able to follow the clip, or at
-  least reasonably infer the missing context from inside the clip.
+- a viewer who did not watch this stream but knows the streamers and the
+  circle's running jokes must be able to follow the clip, or at least
+  reasonably infer the missing context from inside the clip.
 """
 
 from __future__ import annotations
@@ -61,7 +62,7 @@ from src.autoslice.isolated_source_read import (
 )
 from src.autoslice.llm_client import LlmCall, LlmCallError, extract_json_object
 from src.autoslice.review_evidence import SourceCue
-from src.autoslice.selection_scorecard import normalize_selection_scorecard, selection_rank_key
+from src.autoslice.selection_scorecard import CURRENT_ADMISSION_POLICY, SELF_CONTAINED_IN_TIER_ONE, normalize_selection_scorecard, selection_rank_key
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
@@ -69,6 +70,18 @@ CHANNEL_PROFILE = load_channel_profile(REPO_ROOT)
 DEFAULT_MIN_TALK_WINDOW_MS = 60_000
 DEFAULT_MAX_TALK_WINDOW_MS = 300_000
 MAX_CONTEXT_BACKTRACK_MS = 120_000
+# 开头悬空（第一句以承接词开头，或指回片外的话）由规则查，不等模型自己报：、11-24 两场 32 条谈话候选
+# 模型一条都没往前挪，「试玩局被冻住」那条从「但是，但是刚刚那个试玩局……」起，前因在 124 秒之前。查到的候选连同
+# 起点前 DANGLING_LOOKBACK_MS 的字幕另问一次“这件事从哪一句开始”，只在合起来不超过谈话时长上限时前移。
+DANGLING_LOOKBACK_MS = 180_000
+DANGLING_HEAD_CUES = 6
+_DANGLING_LEAD_FILLER_RE = re.compile(r"^[\s，,。.、！!？?…~～啊哦嗯呃诶欸哎唉哈呀]+")
+_DANGLING_CONNECTIVES = (
+    "但是", "可是", "不过", "然后", "所以", "而且", "因为", "结果", "后来", "还有", "另外", "反正", "并且", "于是",
+    "那么", "那你", "那我", "那他", "那她", "对啊", "是啊", "就是说",
+)
+_DANGLING_BACK_REFERENCES = ("刚刚", "刚才", "前面", "之前说", "你说的", "他说的", "她说的", "你们说的")
+_BURST_ID_RE = re.compile(r"^(B\d+) ", re.MULTILINE)
 # Same-event windows stay one continuous candidate.  Gap-removal plans are a
 # legacy compatibility input for the filler lane, not something recall may
 # generate or subtract to make a candidate fit the duration gate.
@@ -159,6 +172,14 @@ def _normalize_chat_text(text: str) -> str:
 
 def _chat_content_length(text: str) -> int:
     return len(re.sub(r"[\W_]", "", text, flags=re.UNICODE))
+
+
+def chat_is_cheer(text: str) -> bool:
+    """A song call or a name chant: 打call (typed or the emote), 好听/安可, 666, the host's name three times.  It is the
+    heat of a song, not of something said (the channel's request)."""
+    normalized = _normalize_chat_text(text)
+    return (bool(_CHAT_SONG_CALL_RE.fullmatch(normalized)) or "打call" in normalized
+            or any(normalized.count(token) >= 3 for token in _CHAT_CALL_TOKENS))
 
 
 def _chat_is_non_trigger(text: str) -> bool:
@@ -510,11 +531,16 @@ def _census_recall_diagnostics(provenance: RecallClueProvenance) -> dict[str, st
 # 共用评分卡量化规则段：既是整场召回 prompt 的一部分，也是狍哥案有界重
 # 评分车道（``rescore_candidate_scorecard``）单候选提卡 prompt 的核心——
 # 两处必须逐字同一份规则，不许各自维护一份漂移的拷贝（design §3.5「复用」）。
-_SCORECARD_RUBRIC_BLOCK = """选片量化表（talk 必填，song 可省略；新卡使用 selection-scorecard-admission.v4）：
+# 新卡的准入版本按频道定（selection_scorecard.CURRENT_ADMISSION_POLICY）：选片自带“圈内观众看不看得懂”过/不过门的频道
+# 用 v5，Tier 1 不再要 self_contained>=3；没有那道门的频道仍是 v4，这条阈值就是它唯一的可读性门。
+_TIER_ONE_SELF_CONTAINED = "self_contained>=3、" if SELF_CONTAINED_IN_TIER_ONE else ""
+_NEW_CARD = CURRENT_ADMISSION_POLICY.rsplit(".", 1)[-1]
+_OLD_CARDS = "/".join(f"v{n}" for n in range(2, int(_NEW_CARD[1:])))
+_SCORECARD_RUBRIC_BLOCK = f"""选片量化表（talk 必填，song 可省略；新卡使用 {CURRENT_ADMISSION_POLICY}）：
 - tier 是硬层级 1/2/3。当前 Tier 1 先过共同实质内容门：candidate_quality 必须是
   watchability=STRONG、differentiation=DISTINCTIVE、production_disposition=PRODUCTION，
-  reason 非空且 evidence_cues 全在候选窗内；同时 audience_salience>=2、self_contained>=3、
-  comedic_payoff>=3。payoff 可以是明确观点、拒绝、关系变化、故事/游戏结果或表演收束，
+  reason 非空且 evidence_cues 全在候选窗内；同时 audience_salience>=2、{_TIER_ONE_SELF_CONTAINED}comedic_payoff>=3。
+  payoff 可以是明确观点、拒绝、关系变化、故事/游戏结果或表演收束，
   不要求每条都搞笑。缺质量判断或证据越窗时不得晋级 Tier 1。
 - 关系/CP/GL 只是有条件的 Tier 1 路径：tier_basis 为 relationship_chain /
   explicit_gl_stance / cp_positioning 时仍要 relationship_interaction>=3，且至少两个
@@ -537,20 +563,21 @@ _SCORECARD_RUBRIC_BLOCK = """选片量化表（talk 必填，song 可省略；�
   comedic_payoff 同时评价喜剧与情绪/观点兑现：2是明确但普通的收口，3是强且构成这个主事件主要看点的
   兑现，4须有不可替代的完整证据链。不搞笑不是扣落点的充分理由，有结尾也不自动给3；在 reason 中指出
   争论、情绪或题目怎样在窗口内得到兑现，不把同一关系关键词重复算作多个强项。
-  self_contained 只扣理解主事件必需而片内无法推出的背景，具体说明缺了谁、触发或回应；逐句声源尚未
-  验证另列为证据未知。没有听音/看帧、某个被提及人物是否现场参与，不自动等于路人看不懂；若声源未知
+  self_contained 按没看这场直播、但认识这些主播和圈内梗的观众来评：圈内都知道的人和梗不算缺背景，
+  只扣理解主事件必需而片内无法推出的背景，具体说明缺了谁、触发或回应；逐句声源尚未
+  验证另列为证据未知。没有听音/看帧、某个被提及人物是否现场参与，不自动等于观众看不懂；若声源未知
   确实改变主事件的主体或含义，说明这一实际理解缺口，不补造主体。
   播放、表演、朗读或转述中的词句，不能仅因使用“我”或由主播说出，就把被引用的立场算成主播本人当前
   立场；依实际声源、主语、时间和模态区分被引用内容与她的真实评价/回应。
 - uncertainty_penalty 0..15，证据/指代/身份不确定才扣；fatigue_penalty 0..10，同场高度同质才扣。
 - 系统按固定 25/20/15/15/10/10/5 权重计算 effective_score，confidence 不再代替内容价值。
-- 历史无 policy 字段及 v2/v3 卡按原准入规则验证并保留原字节；
-  不要把历史 Tier 或分数静默重算成 v4。只有本次新召回或明确 rescore 才生成 v4 卡。
+- 历史无 policy 字段及 {_OLD_CARDS} 卡按原准入规则验证并保留原字节；
+  不要把历史 Tier 或分数静默重算成 {_NEW_CARD}。只有本次新召回或明确 rescore 才生成 {_NEW_CARD} 卡。
 - 另为每个 talk 候选填写 candidate_quality。这是候选级的制作资格判断，不是第八个维度，不参与
-  七维算术或另加分；在 v4 中它属于 Tier 1 共同准入，准入结果可以改变 Tier，并因此改变最终排序：
+  七维算术或另加分；它属于 Tier 1 共同准入，准入结果可以改变 Tier，并因此改变最终排序：
   watchability 只能是 STRONG/ORDINARY/THIN，
   differentiation 只能是 DISTINCTIVE/ORDINARY/THIN，production_disposition 只能是
-  PRODUCTION/RESERVE/HOLD，reason 说明路人实际能看见的看点，evidence_cues 只能引用候选窗内 cue。
+  PRODUCTION/RESERVE/HOLD，reason 说明没看这场直播的圈内观众实际能看见的看点，evidence_cues 只能引用候选窗内 cue。
   production_disposition 判断该候选的内容是否值得制作，不宣称最终媒体 READY；已知有实质看点但字幕、
   声源或边界待验时，在 reason 保留具体未知及其影响，交后续对应 gate 验收。若未知使主事件本身无法
   成立，仍按受支持的内容判 RESERVE/HOLD；不得为了制作而假定未知已经解决。
@@ -587,7 +614,12 @@ def build_semantic_recall_prompt(
     semantic_chat_evidence_block: str | None = None,
     scope_note: str | None = None,
     _census_clue_block: str | None = None,
+    selection_focus: str | None = None,
+    reading_aids: str | None = None,
 ) -> str:
+    """`selection_focus`: the channel's own gates and order of what to pick (the caller renders it from the channel's
+    asset); without it the generic kinds below are used.  `reading_aids`: names, known mishearings and same-sound
+    spellings that help to read this transcript and its danmaku; they never change a subtitle."""
     lines = []
     for position, cue in enumerate(cues, start=1):
         text = " ".join(cue.text.split())
@@ -595,11 +627,19 @@ def build_semantic_recall_prompt(
     transcript = "\n".join(lines)
     important_ip_block = detect_important_content_ips(title="", body=transcript).prompt_block
     danmaku_block = ""
-    if danmaku_hints:
+    burst_ids = _BURST_ID_RE.findall(danmaku_hints or "")
+    if burst_ids:
+        danmaku_block = f"""
+观众弹幕突发区:这场直播里弹幕最密的时段(每半分钟的条数是这场平时的三倍以上;打 call、主播名应援和抽奖口令不计)。弹幕最密的地方很可能是高光,但不一定是;反过来,好片的弹幕也不一定多,别的时段照常找。每行:编号 [开始-结束] 条数(这场平时的条数);刷得最多的几句和条数;说了什么(样本取到突发结束后一分钟)。时间和字幕时间轴是同一个钟;观众的反应比那一下晚到,让弹幕刷起来的那句话常在突发区开始前一分钟以内。
+{danmaku_hints}
+每个突发区都必须在输出的 bursts 里交代一次:让观众刷起来的那一下进了你选的哪条候选(selected 填 true,写是哪条),或者这段弹幕在刷什么、为什么不成片(selected 填 false)。不成片的理由要具体,例如:在刷礼物、抽奖或打卡;是歌回的合唱应援;刷的东西和她这时说的话无关;这件事已经在别的候选里。窗口边界仍按字幕内容判断。
+"""
+    elif danmaku_hints:
         danmaku_block = f"""
 观众弹幕突发区(弹幕密度显著高于全场基线的时段,观众反应最强,大概率有值得切的内容;优先检查这些时段,但窗口边界仍要按字幕内容判断):
 {danmaku_hints}
 """
+    aids_block = f"\n{reading_aids}\n" if reading_aids else ""
     semantic_chat_block = ""
     if semantic_chat_evidence_block:
         semantic_chat_block = f"\n{semantic_chat_evidence_block}\n"
@@ -612,9 +652,27 @@ def build_semantic_recall_prompt(
     clue_text = _census_recall_input()[0] if _census_clue_block is None else _census_clue_block
     clue_block = f"\n{clue_text}\n" if clue_text else ""
     scope_block = f"\n召回范围说明:{scope_note}\n" if scope_note else ""
-    return f"""你是{CHANNEL_PROFILE.display_name}(B站虚拟主播)切片频道的选题编辑。下面是一场直播的完整字幕时间轴,每行格式是 #编号 [开始-结束] 文本。{danmaku_block}{semantic_chat_block}{metric_block}{clue_block}{scope_block}{important_ip_block}
+    host = CHANNEL_PROFILE.display_name
+    kinds_block = f"""值得选的片段类型(语义判断,不要机械找关键词):
+1. 讲故事/完整叙事:主播在讲一件事,有起因和结局。
+2. 弹幕互动打闹:某条弹幕起了头,主播读出/复述弹幕后接梗、吐槽、破防。读弹幕/复述问题的那句就是上下文起点,必须包含在片段里。
+3. 玩梗/绕口令/翻车/爆笑反应:包括对屏幕上正在看的图、玩的游戏的连续反应。
+4. 现场突发/第三方介入:有人闯入或串线、被当场点名或追问、被抓包、事故式的连锁反应。选它的前提是{host}是事件当事方且窗内有她本人的反应。候选必须同时包含三部分:触发(什么打破了原有进程)、她的反应、收束(包括事件结束后的议论,或之后又回到她身上的反应);收束依赖前面的铺垫时一并框入,不要只截最响的一句。
+5. {host}本人现场唱歌:kind 填 "song",范围大致覆盖整首歌即可(后续有专门的歌词边界+本人声纹硬门)。只播放原唱、片尾曲、待机/下播画面的音乐、游戏或视频背景音乐都不是歌切，禁止选为 song。"""
+    if selection_focus:
+        kinds_block = f"""{selection_focus}
+选的时候另外注意(语义判断,不要机械找关键词):
+- 弹幕起头的互动:某条弹幕起了头,主播读出/复述弹幕后接梗、吐槽、破防时,读弹幕/复述问题的那句就是上下文起点,必须包含在片段里。
+- 现场突发/第三方介入(有人闯入或串线、被当场点名或追问、被抓包):候选必须同时包含触发、她的反应、收束(包括事件结束后的议论,或之后又回到她身上的反应);收束依赖前面的铺垫时一并框入,不要只截最响的一句。
+- {host}本人现场唱歌:kind 填 "song",范围大致覆盖整首歌即可(后续有专门的歌词边界+本人声纹硬门)。只播放原唱、片尾曲、待机/下播画面的音乐、游戏或视频背景音乐都不是歌切，禁止选为 song。"""
+    bursts_schema = (
+        ', "bursts": [{"id": "突发区编号", "selected": true或false, "reason": "进了哪条候选;或这段在讲什么、为什么不选"}]'
+        if burst_ids
+        else ""
+    )
+    return f"""你是{CHANNEL_PROFILE.display_name}(B站虚拟主播)切片频道的选题编辑。下面是一场直播的完整字幕时间轴,每行格式是 #编号 [开始-结束] 文本。{danmaku_block}{semantic_chat_block}{aids_block}{metric_block}{clue_block}{scope_block}{important_ip_block}
 
-你的任务:站在一个没看过这场直播的普通观众视角,从整场里选出最值得做成切片的片段(最多 {max_candidates} 个)。
+你的任务:站在一个没看这场直播、但认识这些主播和圈内梗的观众的位置,从整场里选出最值得做成切片的片段(最多 {max_candidates} 个)。
 “最多”是上限，不是必须凑满的数量。**同一场连续事件只能占一个候选**：话题中间即使有短暂停顿、
 读别的弹幕、操作游戏或换了一个同类名字，只要后段仍在延续同一问题/分类/讨价还价，且后段笑点依赖
 前段铺垫，就必须从首次触发点一直框到最后 payoff，绝不能拆成两条来满足数量。给同一事件稳定填写相同
@@ -626,14 +684,9 @@ event_key（简短中文，如“妈感姐妹分类”）；不同事件的 even
 保留中间所有连续互动、观众反馈、有意义的重复、铺垫和笑点，不会把中间内容变成跳切或自动删除。
 合并后的连续窗口若超过 5 分钟就拒绝整个候选；不要靠标题核心、关键词或缩短故事来过时长门。
 
-值得选的片段类型(语义判断,不要机械找关键词):
-1. 讲故事/完整叙事:主播在讲一件事,有起因和结局。
-2. 弹幕互动打闹:某条弹幕起了头,主播读出/复述弹幕后接梗、吐槽、破防。读弹幕/复述问题的那句就是上下文起点,必须包含在片段里。
-3. 玩梗/绕口令/翻车/爆笑反应:包括对屏幕上正在看的图、玩的游戏的连续反应。
-4. 现场突发/第三方介入:有人闯入或串线、被当场点名或追问、被抓包、事故式的连锁反应。选它的前提是李豆沙是事件当事方且窗内有她本人的反应。候选必须同时包含三部分:触发(什么打破了原有进程)、她的反应、收束(包括事件结束后的议论,或之后又回到她身上的反应);收束依赖前面的铺垫时一并框入,不要只截最响的一句。
-5. {CHANNEL_PROFILE.display_name}本人现场唱歌:kind 填 "song",范围大致覆盖整首歌即可(后续有专门的歌词边界+本人声纹硬门)。只播放原唱、片尾曲、待机/下播画面的音乐、游戏或视频背景音乐都不是歌切，禁止选为 song。
+{kinds_block}
 
-对每个候选片段必须做上下文检查(观众视角):
+对每个候选片段必须做上下文检查(没看这场直播的圈内观众的视角;圈内都知道的人和梗不用在片内解释):
 - 如果片段开头是悬空的(接续语、回应某个看不到的东西),往前找触发点(弹幕、话题开始、开始看某个东西的时刻),把 start_cue 前移到触发点,或填 context_trigger_cue。
 - 如果观众能从片段内部合理推测出缺失的背景,可以接受,context_inferable 填 true。
 - 如果上下文既不在片段里、也推测不出来、也找不到触发点,不要选这个片段。
@@ -654,11 +707,11 @@ event_key（简短中文，如“妈感姐妹分类”）；不同事件的 even
 {_SCORECARD_RUBRIC_BLOCK}
 约束:
 - talk 片段有效内容必须长于 60 秒且不超过 5 分钟;song 不限。
-- 按有趣程度从高到低排序。confidence 是你对"路人观众会觉得有趣"的信心(0-1)。
+- 按有趣程度从高到低排序。confidence 是你对"没看这场直播的圈内观众会觉得有趣"的信心(0-1)。
 - hook 用一句中文概括这个片段的看点。
 
 只输出一个 JSON 对象,不要任何其他文字:
-{{"candidates": [{{"start_cue": 整数, "end_cue": 整数, "kind": "talk"或"song", "event_key": "同一事件稳定键", "hook": "一句话看点", "context_trigger_cue": 整数或null, "context_inferable": true或false, "confidence": 0到1小数, "selection_scorecard": {{"tier": 1或2或3, "tier_basis": "上述枚举", "tier_reason": "准入理由", "tier_evidence_cues": [整数], "dimensions": {{"lidousha_centrality": 0到4整数, "stance_intensity": 0到4整数, "audience_salience": 0到4整数, "relationship_interaction": 0到4整数, "persona_reversal": 0到4整数, "comedic_payoff": 0到4整数, "self_contained": 0到4整数}}, "uncertainty_penalty": 0到15, "fatigue_penalty": 0到10, "candidate_quality": {{"watchability": "STRONG"或"ORDINARY"或"THIN", "differentiation": "DISTINCTIVE"或"ORDINARY"或"THIN", "production_disposition": "PRODUCTION"或"RESERVE"或"HOLD", "reason": "片内具体看点和不足", "evidence_cues": [整数]}}}}, "filler_removals": [{{"mode": "remove_cues", "start_cue": 整数, "end_cue": 整数, "reason": "gift_thanks"或"unrelated_sc"或"housekeeping", "topic_relation": "incidental"或"unrelated", "bridge_coherent": true或false, "bridge": "左右可直连的理由", "contains_setup": false, "contains_cause": false, "contains_answer": false, "contains_punchline": false, "contains_referent_intro": false, "contains_correction": false, "contains_resolution": false, "later_dependency": false, "interaction_relevant": false, "meaning_or_stance_changed": false, "confidence": 0到1小数}}]}}]}}
+{{"candidates": [{{"start_cue": 整数, "end_cue": 整数, "kind": "talk"或"song", "event_key": "同一事件稳定键", "hook": "一句话看点", "context_trigger_cue": 整数或null, "context_inferable": true或false, "confidence": 0到1小数, "selection_scorecard": {{"tier": 1或2或3, "tier_basis": "上述枚举", "tier_reason": "准入理由", "tier_evidence_cues": [整数], "dimensions": {{"lidousha_centrality": 0到4整数, "stance_intensity": 0到4整数, "audience_salience": 0到4整数, "relationship_interaction": 0到4整数, "persona_reversal": 0到4整数, "comedic_payoff": 0到4整数, "self_contained": 0到4整数}}, "uncertainty_penalty": 0到15, "fatigue_penalty": 0到10, "candidate_quality": {{"watchability": "STRONG"或"ORDINARY"或"THIN", "differentiation": "DISTINCTIVE"或"ORDINARY"或"THIN", "production_disposition": "PRODUCTION"或"RESERVE"或"HOLD", "reason": "片内具体看点和不足", "evidence_cues": [整数]}}}}, "filler_removals": [{{"mode": "remove_cues", "start_cue": 整数, "end_cue": 整数, "reason": "gift_thanks"或"unrelated_sc"或"housekeeping", "topic_relation": "incidental"或"unrelated", "bridge_coherent": true或false, "bridge": "左右可直连的理由", "contains_setup": false, "contains_cause": false, "contains_answer": false, "contains_punchline": false, "contains_referent_intro": false, "contains_correction": false, "contains_resolution": false, "later_dependency": false, "interaction_relevant": false, "meaning_or_stance_changed": false, "confidence": 0到1小数}}]}}]{bursts_schema}}}
 
 字幕时间轴:
 {transcript}
@@ -721,6 +774,8 @@ def select_semantic_session_candidates(
     semantic_chat_evidence_receipt: Mapping[str, object] | None = None,
     scope_note: str | None = None,
     _census_input: tuple[str, RecallClueProvenance] | None = None,
+    selection_focus: str | None = None,
+    reading_aids: str | None = None,
 ) -> tuple[list[FullSessionCandidate], dict[str, object]]:
     """Semantic recall over the full session; returns (candidates, diagnostics).
 
@@ -741,12 +796,15 @@ def select_semantic_session_candidates(
         semantic_chat_evidence_block=semantic_chat_evidence_block,
         scope_note=scope_note,
         _census_clue_block=clue_block,
+        selection_focus=selection_focus,
+        reading_aids=reading_aids,
     )
     completion = call_json(llm_call, prompt, reuse=False)
     payload = extract_json_object(completion)
     raw_candidates = payload.get("candidates")
     if not isinstance(raw_candidates, list):
         raise LlmCallError("semantic recall completion has no candidates array")
+    burst_answers = _burst_answers(payload.get("bursts"), _BURST_ID_RE.findall(danmaku_hints or ""))
 
     skipped: list[dict[str, object]] = []
     parsed: list[tuple[float, dict[str, object]]] = []
@@ -808,6 +866,13 @@ def select_semantic_session_candidates(
                 },
             )
         )
+
+    dangling_openings = _pull_back_dangling_openings(
+        [spec for _, spec in parsed],
+        ordered,
+        llm_call=llm_call,
+        max_talk_window_ms=max_talk_window_ms,
+    )
 
     # Models occasionally return two non-overlapping windows for one event even
     # after being told not to.  event_key makes the invariant deterministic:
@@ -968,11 +1033,121 @@ def select_semantic_session_candidates(
         "filler_proposals": filler_proposals,
         "merge_gaps": merge_gap_plans,
         "skipped": skipped,
+        "burst_answers": burst_answers,
+        "dangling_openings": dangling_openings,
         **_census_recall_diagnostics(clue_provenance),
     }
     if semantic_chat_evidence_receipt is not None:
         diagnostics["semantic_chat_evidence"] = dict(semantic_chat_evidence_receipt)
     return selected, diagnostics
+
+
+def _burst_answers(raw: object, burst_ids: Sequence[str]) -> dict[str, dict[str, object]]:
+    """What the completion says of each numbered danmaku burst of the prompt: {id: {selected, reason}}.  A burst the
+    completion does not answer is simply absent; the caller, which knows the bursts and the final pool, reports it."""
+
+    answers: dict[str, dict[str, object]] = {}
+    for row in raw if isinstance(raw, list) else []:
+        if not isinstance(row, dict):
+            continue
+        burst_id = str(row.get("id") or "").strip()
+        reason = " ".join(str(row.get("reason") or "").split())[:300]
+        if burst_id in burst_ids and burst_id not in answers and isinstance(row.get("selected"), bool) and reason:
+            answers[burst_id] = {"selected": row["selected"], "reason": reason}
+    return answers
+
+
+def opens_dangling(text: str) -> bool:
+    """A first line that continues something said before the window: it begins with a connective, or points back."""
+
+    line = _DANGLING_LEAD_FILLER_RE.sub("", " ".join(text.split()))
+    return line.startswith(_DANGLING_CONNECTIVES) or any(word in line for word in _DANGLING_BACK_REFERENCES)
+
+
+def _pull_back_dangling_openings(
+    specs: Sequence[dict[str, object]],
+    ordered: Sequence[SourceCue],
+    *,
+    llm_call: LlmCall,
+    max_talk_window_ms: int,
+) -> list[dict[str, object]]:
+    """Move, in place, the start of every talk window whose first line dangles back to where its matter begins.
+
+    The check is a rule (`opens_dangling`); where the matter begins is asked once for all the dangling windows of this
+    recall, with the cues of the `DANGLING_LOOKBACK_MS` before each.  A start is moved only to a cue inside that
+    lookback and only while the window stays within the talk duration limit; every dangling window is reported with
+    what was done.  A failed or unusable answer raises ``LlmCallError`` like the recall itself."""
+
+    dangling = [
+        spec
+        for spec in specs
+        if spec["kind"] == "talk" and opens_dangling(ordered[int(spec["start_cue"]) - 1].text)
+    ]
+    if not dangling:
+        return []
+    blocks = []
+    floors: list[int] = []
+    for number, spec in enumerate(dangling, start=1):
+        start = int(spec["start_cue"])
+        floor_ms = ordered[start - 1].source_start_ms - DANGLING_LOOKBACK_MS
+        first = next(
+            position
+            for position in range(1, start + 1)
+            if ordered[position - 1].source_start_ms >= floor_ms
+        )
+        floors.append(first)
+        head_end = min(int(spec["end_cue"]), start + DANGLING_HEAD_CUES - 1)
+        before = "\n".join(
+            f"#{position} [{_mmss(ordered[position - 1].source_start_ms)}] {' '.join(ordered[position - 1].text.split())}"
+            for position in range(first, start)
+        )
+        head = "\n".join(
+            f"#{position} [{_mmss(ordered[position - 1].source_start_ms)}] {' '.join(ordered[position - 1].text.split())}"
+            for position in range(start, head_end + 1)
+        )
+        blocks.append(
+            f"片段 {number}（选片理由：{spec['hook']}）\n之前的字幕：\n{before or '（之前没有字幕）'}\n片段开头：\n{head}"
+        )
+    prompt = (
+        f"下面是{CHANNEL_PROFILE.display_name}直播里选出的几个切片片段的开头。它们的第一句都接着前面的话说（以承接词开头，"
+        "或指回片段之前说过的东西）。请对每个片段判断：只看这个片段的观众缺不缺前因？缺的话，这件事是从“之前的字幕”里哪一句"
+        "开始的（触发点：话题开始、读出那条弹幕、开始看那个东西的那一句）？\n"
+        "- 前面确实有这件事的起因，才给 trigger_cue（那一句的 #编号）；要给最早的、少了它就看不懂的那一句，不要多往前拿无关的话。\n"
+        "- 片段开头自己已经把前因交代清楚，或“之前的字幕”里找不到起因，trigger_cue 填 null，并在 why 里说明。\n\n"
+        + "\n\n".join(blocks)
+        + '\n\n只输出一个 JSON 对象：{"openings": [{"segment": 片段编号, "trigger_cue": 整数或null, "why": "一句话"}]}，每个片段恰好一条。'
+    )
+    payload = extract_json_object(call_json(llm_call, prompt, reuse=False))
+    rows = payload.get("openings")
+    answers = {
+        row.get("segment"): row
+        for row in (rows if isinstance(rows, list) else [])
+        if isinstance(row, dict) and isinstance(row.get("segment"), int) and not isinstance(row.get("segment"), bool)
+    }
+    if set(answers) != set(range(1, len(dangling) + 1)):
+        raise LlmCallError("dangling-opening completion does not answer every segment")
+    report: list[dict[str, object]] = []
+    for number, (spec, first) in enumerate(zip(dangling, floors), start=1):
+        start, end = int(spec["start_cue"]), int(spec["end_cue"])
+        row = answers[number]
+        trigger = _cue_position(row.get("trigger_cue"), len(ordered))
+        entry: dict[str, object] = {
+            "start_cue": start,
+            "first_line": " ".join(ordered[start - 1].text.split())[:80],
+            "trigger_cue": trigger,
+            "why": " ".join(str(row.get("why") or "").split())[:200],
+        }
+        if trigger is None:
+            entry["outcome"] = "kept_no_trigger"
+        elif not first <= trigger < start:
+            entry["outcome"] = "kept_trigger_outside_lookback"
+        elif ordered[end - 1].source_end_ms - ordered[trigger - 1].source_start_ms > max_talk_window_ms:
+            entry["outcome"] = "kept_would_exceed_talk_limit"
+        else:
+            spec["start_cue"] = trigger
+            entry["outcome"] = "moved"
+        report.append(entry)
+    return report
 
 
 def plan_semantic_recall_shards(
@@ -1047,6 +1222,8 @@ def select_semantic_session_candidates_covered(
     max_talk_window_ms: int = DEFAULT_MAX_TALK_WINDOW_MS,
     danmaku_hints: str | None = None,
     danmaku_xml: Path | str | None = None,
+    selection_focus: str | None = None,
+    reading_aids: str | None = None,
 ) -> tuple[list[FullSessionCandidate], dict[str, object]]:
     """Recall a whole session without letting long timelines starve later time.
 
@@ -1101,6 +1278,8 @@ def select_semantic_session_candidates_covered(
             semantic_chat_evidence_block=semantic_chat_block,
             semantic_chat_evidence_receipt=semantic_chat_receipt,
             _census_input=census_input,
+            selection_focus=selection_focus,
+            reading_aids=reading_aids,
         )
         diagnostics = dict(diagnostics)
         selected, payoff_extensions = extend_candidates_for_audience_payoff(
@@ -1139,6 +1318,8 @@ def select_semantic_session_candidates_covered(
     shard_diagnostics: list[dict[str, object]] = []
     semantic_chat_receipts: list[dict[str, object]] = []
     skipped: list[dict[str, object]] = []
+    burst_answers: dict[str, dict[str, object]] = {}
+    dangling_openings: list[dict[str, object]] = []
     for shard in shards:
         core_start_ms = int(shard["core_start_ms"])
         core_end_ms = int(shard["core_end_ms"])
@@ -1174,8 +1355,14 @@ def select_semantic_session_candidates_covered(
             semantic_chat_evidence_receipt=semantic_chat_receipt,
             scope_note=scope_note,
             _census_input=census_input,
+            selection_focus=selection_focus,
+            reading_aids=reading_aids,
         )
         recalled.extend(shard_selected)
+        for burst_id, answer in (diagnostics.get("burst_answers") or {}).items():
+            if burst_id not in burst_answers or answer["selected"]:      # a shard that took it in speaks for the burst
+                burst_answers[burst_id] = answer
+        dangling_openings.extend(diagnostics.get("dangling_openings") or [])
         hooks.update({str(key): str(value) for key, value in (diagnostics.get("hooks") or {}).items()})
         scorecards.update(
             {
@@ -1249,6 +1436,8 @@ def select_semantic_session_candidates_covered(
         "filler_proposals": {key: value for key, value in filler_proposals.items() if key in selected_ids},
         "merge_gaps": {key: value for key, value in merge_gaps.items() if key in selected_ids},
         "skipped": skipped,
+        "burst_answers": burst_answers,
+        "dangling_openings": dangling_openings,
         **_census_recall_diagnostics(census_input[1]),
     }
     result_diagnostics["semantic_chat_evidence"] = {

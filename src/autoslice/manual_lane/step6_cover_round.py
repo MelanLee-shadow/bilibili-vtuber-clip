@@ -13,8 +13,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, cast
 
-from . import cover_redo
-from .adapters import CPA_JUDGE_MODEL
+from . import cover_guests, cover_redo
 from .cover_emote_pick import pick_emote
 from .cover_pick import background_process_lines, candidate_record, choose_checked, rank
 from .cover_redo import RedoLog, RetryBudget
@@ -31,18 +30,20 @@ from .cover_thumb import ThumbVerdict
 from .lane_rules import rules
 from .step6_cover import (
     COVER_AI_ROUTES,
+    base_frame,
     _scored_rows,
     _thumb,
     cover_calls_line,
     cover_candidate_calls,
     cover_composition_key,
     cover_host_side,
+    cover_looks_repeated,
     cover_repeats,
     on_action,
     utc_now_iso,
 )
 from .step6_cover_types import CoverCandidate, CoverPlan, CoverRenderResult, CoverRoute, FrameCall
-from .step_io import _local, _run_remote
+from .step_io import _local, _run_remote, vision_models
 
 if TYPE_CHECKING:
     from src.autoslice.cpa_gemini_client import JsonValue
@@ -108,6 +109,9 @@ class Cover:
                          for run in runs]
         for run in runs:
             self.calls.extend(cover_candidate_calls(run.result))
+        for lost in {(d["name"], d["why"]) for run in runs for row in run.rows for d in cover_guests.faceless(row)}:
+            if (line := f"缺{lost[0]}的素材：{lost[1]}；这位不上封面，不拿别的图顶替") not in self.process:
+                self.process.append(line)
         infeasible = infeasible_routes(runs, routes)
         if infeasible:
             self.process.append("不可行或没做出的路线（记录，不算失败）：" + "；".join(f"{i['route']}（{i['reason']}）" for i in infeasible))
@@ -122,12 +126,19 @@ class Cover:
         rows, _ = _scored_rows(raw, self.plan)
         for row in rows:
             row["on_action"] = on_action(row, self.plan, frame_t)
-            row["repeat"] = row["status"] == "RENDERED" and not row["on_action"] and cover_repeats(row, self.plan)
+            fresh = row["status"] != "RENDERED" or row["on_action"]
+            row["repeat"] = None if fresh else cover_repeats(row, self.plan)
+            row["look_repeat"] = not fresh and cover_looks_repeated(row, self.plan)
         if acted := [r["id"] for r in rows if r.get("on_action") and r["score"]["status"] == "ELIGIBLE"]:
             action = self.plan.get("action_frame") or {}
             self.process.append(f"{'、'.join(acted)} 截在她的标志性动作上（{action.get('what')}）：合格就排在所有候选前面")
-        if repeated := [r["id"] for r in rows if r.get("repeat")]:
-            self.process.append(f"{'、'.join(repeated)} 与本场此前封面同路线、同构图（70-cover 同场创新）：排在不重复的候选之后")
+        if repeated := [f"{r['id']}（{r['repeat']}）" for r in rows if r.get("repeat")]:
+            self.process.append(f"{'、'.join(repeated)} 与最近的封面重复：排在不重复的候选之后（免费的仍可选，不为换样子出 AI 图）")
+        if looked := [r["id"] for r in rows if r.get("look_repeat")]:
+            self.process.append(f"{'、'.join(looked)} 与本场此前封面同路线、同构图（70-cover 同场创新）：排在不重复的候选之后")
+        for row in rows:
+            if row.get("cover_layout_note"):
+                self.process.append(f"{row['id']} {row['cover_layout_note']}")
         return rows
 
     def redo(self) -> None:
@@ -181,7 +192,8 @@ class Cover:
         local_spec.write_text(json.dumps(dict(self.spec, frame=frame), ensure_ascii=False, indent=2), encoding="utf-8")
         ctx.adapters.remote.put(local_spec, f"{rd}/cover/spec-r{number}.json")
         self.frame_remote = frame
-        return t, {"frame": frame, "screenshot_spec": f"{rd}/cover/spec-r{number}.json"}
+        return t, {"frame": frame, "screenshot_spec": f"{rd}/cover/spec-r{number}.json",
+                   "source_guest_boxes_unknown": bool(self.job.get("guest_assets"))}
 
 
 def _retry_brief(brief: Mapping[str, object], rejected: str) -> dict:
@@ -199,14 +211,20 @@ class Picked:
 
 def pick_free(cv: Cover, cover_lines: Sequence[str], identity: str) -> Picked | None:
     """The free stage's choice: the first eligible free candidate whose thumbnail passes, or None (then one picture is
-    generated, cover_stages).  A candidate that looks like a cover this stream already has goes behind one that does not
-    (owner 11-21「今天这个新切片全都是同一个标题封面」); among those, a picture from the stream goes before a library
-    sticker (owner 11-18「没有用截图呢」).  An eligible candidate whose thumbnail fails does not end the free stage."""
-    ranked = rank(cv.log.rows, repeats=lambda r: bool(r.get("repeat")), target_px=round(rules("cover")["face_target_frac"] * 1080))
-    ranked.sort(key=lambda r: (bool(r.get("repeat")), r.get("route") == "emote"))   # stable: the ranking stands within each kind
+    generated, cover_stages; U138: 免费合格即选，都不合格才生 1 张).  A candidate that repeats the covers before it
+    (step6_cover.cover_repeats: a composition template of the last covers, the route the last covers all used; 70-cover
+    构图样板) goes behind one that does not, and so does one that looks like a cover this
+    stream already has (同一场的封面全是同一个样子、同一种颜色); among those a picture from the stream goes
+    before a library sticker (the channel's request).  A repeat still passes when nothing else does: it is no
+    reason to generate a picture.  An eligible candidate whose thumbnail fails does not end the free stage."""
+    ranked = rank(cv.log.rows, repeats=lambda r: bool(r.get("repeat") or r.get("look_repeat")),
+                  target_px=round(rules("cover")["face_target_frac"] * 1080))
+    ranked.sort(key=lambda r: (bool(r.get("repeat")), bool(r.get("look_repeat")), r.get("route") == "emote"))   # stable
     for position, row in enumerate(ranked):
         if cv.thumb(row["id"], cover_lines, identity)["status"] != "FAIL":
             lead = f"免费候选排第 {position + 1} 的 {row['id']}" if position else f"免费候选中排最前的 {row['id']}"
+            if row.get("repeat"):
+                lead += f"（{row['repeat']}；没有不重复的免费候选合格，不为换样子出 AI 图）"
             skipped = f"；前 {position} 名缩略图未过" if position else ""
             return Picked(row["id"], f"{lead}（{row['score']['total']} 分）缩略图{cv.thumbs[row['id']]['status']}{skipped}",
                           {r["id"]: cv.thumbs[r["id"]] for r in ranked[:position + 1]}, None, None)
@@ -215,9 +233,11 @@ def pick_free(cv: Cover, cover_lines: Sequence[str], identity: str) -> Picked | 
 
 def pick_cover(cv: Cover, cover_lines: Sequence[str], title: str, identity: str) -> Picked | CoverRenderResult:
     """The eligible candidate whose thumbnail passes, else the fallback: CPA's look among the candidates not vetoed on their
-    material, else (all of them are) the one with the fewest vetoes, flagged."""
+    material and not leaving out a guest (cover_redo.fallback_pool), else (all of them are) the one with the fewest
+    vetoes, flagged (step 10 sends nothing on it)."""
     ctx, rows, calls, process = cv.ctx, cv.log.rows, cv.calls, cv.process
-    ranked = rank(rows, repeats=lambda r: bool(r.get("repeat")), target_px=round(rules("cover")["face_target_frac"] * 1080))
+    ranked = rank(rows, repeats=lambda r: bool(r.get("repeat") or r.get("look_repeat")),
+                  target_px=round(rules("cover")["face_target_frac"] * 1080))
     if ranked:
         chosen, why, thumbs = choose_checked(ranked, lambda cid: cv.thumb(cid, cover_lines, identity))
         return Picked(chosen, why, {**cv.thumbs, **thumbs}, None, None)
@@ -230,12 +250,13 @@ def pick_cover(cv: Cover, cover_lines: Sequence[str], title: str, identity: str)
         best = cover_redo.fewest_vetoes(rendered)
         flag = cover_redo.material_flag(best)
         process.extend([vetoed, cover_redo.flag_line(flag)])
-        return Picked(best["id"], f"所有候选都被素材类否决，取否决项最少的 {best['id']}（{len(cover_redo.vetoes_of(best))} 项）",
+        return Picked(best["id"], f"所有候选都被素材类否决或漏了该上封面的嘉宾，取否决项最少的 {best['id']}（{len(cover_redo.vetoes_of(best))} 项；上线前停下）",
                        {**cv.thumbs, best["id"]: cv.thumb(best["id"], cover_lines, identity)}, None, flag)
     try:
-        fallback = choose_vetoed(ctx, clean, title=title, lines=list(cover_lines), model=CPA_JUDGE_MODEL, frame=cv.frame_remote)
+        fallback = choose_vetoed(ctx, clean, title=title, lines=list(cover_lines), model=vision_models()[0], frame=cv.frame_remote)
     except (RuntimeError, OSError, ValueError, KeyError) as exc:
-        return CoverRenderResult(False, reason="COVER_VISION_CHOICE_FAILED", note=str(exc), cpa=calls, process=process)
+        reason = "CPA_CALL_FAILED" if ("CPA_FALLBACK_FAILED" in str(exc) or "CPA_QUOTA_REFUSED" in str(exc)) else "COVER_VISION_CHOICE_FAILED"
+        return CoverRenderResult(False, reason=reason, note=str(exc), cpa=calls, process=process)
     if fallback is None:
         return CoverRenderResult(False, reason="COVER_NO_ELIGIBLE_CANDIDATE", note="no rendered image", cpa=calls, process=process)
     chosen = fallback["choice"]["chosen"]
@@ -260,6 +281,7 @@ def record_cover(cv: Cover, picked: Picked, cover_lines: Sequence[str], boxes: M
             candidate["thumb"] = thumbs.get(str(candidate["id"]))
     cand_dir = ctx.clip_dir / "cover/cand"
     winner = next(r for r in rows if r["id"] == chosen)
+    guests = cover_record_guests(ctx, plan, winner, process)
     cover_path = _local(ctx, "cover/cover.png")
     cover_path.write_bytes((cand_dir / f"{chosen}.png").read_bytes())
     timing = timing_line(cv.runs, frame_s=frame_s, thumb_s=thumb_s, total_s=time.monotonic() - started)
@@ -271,7 +293,7 @@ def record_cover(cv: Cover, picked: Picked, cover_lines: Sequence[str], boxes: M
                      "thumb_all_failed": bool(thumbs) and all(t["status"] == "FAIL" for t in thumbs.values())},
         "infeasible_routes": first["infeasible"], "tool_failures": cv.failures,
         "vetoed": [{"id": r["id"], "vetoes": r["score"].get("vetoes") or []} for r in rows if r["score"]["status"] != "ELIGIBLE"],
-        "recent": plan["recent"], "participants": plan["participants"],
+        "recent": plan["recent"], "participants": plan["participants"], "roster": plan.get("roster"),
         "cover_lines": list(cover_lines), "stages": cv.stages, "emote_pick": cv.emote_pick, "timing": timing,
         "rounds": cv.log.rounds, "redo": {"limit": cv.budget.limit, "used": cv.budget.used},
         "material_flag": picked.flag,
@@ -296,8 +318,11 @@ def record_cover(cv: Cover, picked: Picked, cover_lines: Sequence[str], boxes: M
                         "background_id": (winner.get("background") or {}).get("id"),
                         "punch_font_size": winner.get("punch_font_size"),
                         "composition_key": cover_composition_key(winner["route"], winner.get("render"),
-                                                                 winner.get("main_emote"), plan.get("brief"))},
+                                                                 winner.get("main_emote"), plan.get("brief")),
+                        "template_id": (winner.get("render") or {}).get("template_id"),
+                        "cover_layout": winner.get("cover_layout")},
              "peers": plan.get("peers"), "host_side_reason": cover_host_side(plan, boxes)[1],
+             "guests": guests,
              "image_generation_used": generated,
              "image_gen_model": (own.get("model") or "UNKNOWN") if generated else "none",
              "reported_model": (own.get("reported_model") or "UNKNOWN") if generated else None,
@@ -310,9 +335,35 @@ def record_cover(cv: Cover, picked: Picked, cover_lines: Sequence[str], boxes: M
     made_t = cv.log.made[chosen][1]       # the frame the chosen cover was made on (a redo can have changed it)
     if made_t != first["frame_t"]:
         route["frame_s"] = cast(float, made_t)
+    route["base_frame"] = base_frame(ctx, float(made_t))
     process.extend(_cover_summary_lines(cv, rows, winner, route, why, generated, timing))
     return CoverRenderResult(True, products={"cover": str(cover_path), "choose": str(choose_path), "route": route},
                        note=f"cover t={made_t:.2f}s lines={list(cover_lines)} chosen={chosen}", cpa=calls, process=process)
+
+
+def cover_record_guests(ctx: Ctx, plan: CoverPlan, winner: CoverCandidate, process: list[str]) -> dict[str, JsonValue]:
+    """The chosen cover's guests (cover_guests: the four sets, the last read off the chosen picture by the judge), and,
+    when the cover goes without a guest for want of a picture, the day's record of pictures to fetch and a PROCESS line."""
+    roster = plan.get("roster")
+    if not roster:
+        return {}
+    missing = [*roster["missing"], *({"name": d["name"], "why": d["why"]} for d in cover_guests.faceless(winner))]
+    seen = cover_guests.visible(winner, plan["participants"][0] if plan["participants"] else "")
+    lost = {m["name"] for m in missing}
+    unseen = [name for name in roster["required"] if name not in seen and name not in lost]   # the flag stops step 10 on them
+    out: dict[str, JsonValue] = {
+        "source": roster["source"], "present": list(roster["present"]), "mentioned": list(roster["mentioned"]),
+        "needed_on_cover": list(roster["needed_on_cover"]), "actually_visible": cast("JsonValue", seen),
+        "missing": cast("JsonValue", missing), "not_visible": cast("JsonValue", unseen),
+        "on_cover": [{k: g[k] for k in ("name", "asset_id", "sha256", "source_url")} for g in winner.get("guests_on_cover") or []]}
+    if roster["needed_on_cover"]:
+        process.append(f"封面上的嘉宾：该交代 {'、'.join(roster['needed_on_cover'])}；判官在成图上看得见 {'、'.join(seen) or '无'}"
+                       + (f"；缺图 {'、'.join(m['name'] for m in missing)}" if missing else "")
+                       + (f"；有图却在成图上看不见 {'、'.join(unseen)}（上线前停下）" if unseen else ""))
+    if missing:
+        path = cover_guests.note_wanted(ctx, missing)
+        process.append(f"缺图的嘉宾记进当天待补：{path}（{'、'.join(m['name'] + '：' + m['why'] for m in missing)}）")
+    return out
 
 
 def _cover_summary_lines(cv: Cover, rows: Sequence[CoverCandidate], winner: CoverCandidate, route: CoverRoute, why: str,
@@ -339,5 +390,6 @@ def _cover_summary_lines(cv: Cover, rows: Sequence[CoverCandidate], winner: Cove
     picked = route["chosen"]
     out.append(f"封面字的风格（仓库风格表轮换）：{picked['style_id']}，字色 {'/'.join(picked['colors'] or [])}，"
                f"梗字 {picked['punch_font_size']}px，版式 {picked['layout']}；主播在{picked['host_side']}（{route['host_side_reason']}）")
+    out.append(f"封面采用的{winner.get('cover_layout_note') or '构图样板：没有记录（这条路线没有走样板选择）'}")
     out.append(timing)
     return out

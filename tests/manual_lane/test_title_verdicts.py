@@ -58,8 +58,9 @@ def test_the_asset_loads_and_has_the_shape_the_renderers_read():
     verdicts = title_verdicts.load_verdicts()
     # he adds batches and later candidates to the same file: it only grows
     assert len(verdicts.clips) >= 20 and [c["no"] for c in verdicts.clips] == list(range(1, len(verdicts.clips) + 1))
-    # a batch he graded has its four candidates; a remark on a published title has that one title
-    assert all((len(c["candidates"]) >= 4 or [x["letter"] for x in c["candidates"]] == ["online"]) and c["owner_comment"]
+    # every clip lists the candidates he was shown (a pick page shows two to five, a remark on a published title that
+    # one title), each under its own letter, with his words
+    assert all(c["candidates"] and len({x["letter"] for x in c["candidates"]}) == len(c["candidates"]) and c["owner_comment"]
                for c in verdicts.clips)
     assert verdicts.source.sha256 == hashlib.sha256(ASSET.read_bytes()).hexdigest()
     top = json.loads(ASSET.read_text(encoding="utf-8"))
@@ -190,7 +191,7 @@ def test_the_title_prompt_carries_his_verdicts_after_the_main_line_block_but_not
     prompt = cpa.title_prompts[0]
     heading = "## 频道主逐条评过的候选（体会口味用；只学取舍，不照抄句式，不搬内容）"
     assert prompt.count(heading) == 1
-    assert prompt.index("## 本片主线（已由两次独立阅读核对") < prompt.index(heading) < prompt.index("## 本流水线的输入")
+    assert prompt.index("## 本片主线和落点（已由两次独立阅读核对") < prompt.index(heading) < prompt.index("## 本流水线的输入")
     assert "他认可的（很不错／还可以）：" in prompt and "他判差的（差／尤其差），以及他说的毛病：" in prompt
     assert other["owner_comment"] in prompt                      # the others' words are there
     assert clip["owner_comment"] not in prompt
@@ -198,8 +199,7 @@ def test_the_title_prompt_carries_his_verdicts_after_the_main_line_block_but_not
 
 
 def test_every_title_round_carries_the_verdicts(tmp_path):
-    bad = _cand("她半分钟后真的破防了")
-    bad["swap_check"]["holds_with_other_host"] = True
+    bad = _cand("她半分钟后直接破防了")              # a banned word: round 0 fails its check, round 1 is asked
     cpa = FakeCpa([_answer(bad), _answer(_cand("她半分钟后真的破防了"))])
     ctx = make_ctx(tmp_path, remote=FakeRemote(), cpa=cpa)
     (ctx.clip_dir / "subs").mkdir(parents=True, exist_ok=True)
@@ -231,11 +231,11 @@ def test_a_missing_or_broken_asset_stops_the_title_step_before_any_call(tmp_path
 
 
 def test_a_retitle_request_is_read_for_the_manuscript_and_its_revisions(tmp_path, monkeypatch):
-    asked = dict(_clip(1, "alpha", ["线上标题"], "原话", grades=(None,)), retitle_evidence="“标题没体现看点”")
+    asked = dict(_clip(1, "alpha", ["线上标题"], "原话", grades=(None,)), retitle_evidence="标题没写出看点")
     path = _write(tmp_path / "v.json", [asked, _clip(2, "beta", ["乙"], "原话", grades=(None,))])
     monkeypatch.setattr(title_verdicts, "VERDICTS", path)
     verdicts = title_verdicts.load_verdicts()
-    assert verdicts.retitle("alpha_r2") == {"evidence": "“标题没体现看点”", "main_line": asked["main_line"],
+    assert verdicts.retitle("alpha_r2") == {"evidence": "标题没写出看点", "main_line": asked["main_line"],
                                             "punchline": asked["punchline"]}
     assert verdicts.retitle("beta_r2") is None
     assert verdicts.approved("alpha_r2") is None

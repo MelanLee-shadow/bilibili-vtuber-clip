@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 from . import channel
@@ -22,6 +24,7 @@ class PairScope(TypedDict, total=False):
     source_start_ms: int | float
     source_end_ms: int | float
     truth_id: str
+    context_patterns: list[str]
 
 
 class PairEvidence(TypedDict):
@@ -106,6 +109,24 @@ def derive_pairs(root: Path = ROOT) -> list[MishearingPair]:
                     }),
                     "authority": group.get("reason", ""),
                 })
+    for i, entry in enumerate(data["names"]):
+        standard = str(entry.get("canonical") or entry.get("name") or "")
+        for ci, rule in enumerate(entry.get("context_mishearings") or []):
+            patterns = [p for p in (rule.get("context_patterns") or []) if isinstance(p, str) and p]
+            misheard = str(rule.get("misheard") or "")
+            if not patterns or not misheard or not standard:
+                continue
+            add(misheard, standard, {
+                "source": SOURCES["names"],
+                "pointer": f"/{i}/context_mishearings/{ci}",
+                "origin": "proper_nouns_context",
+                "scope": {
+                    "kind": "context",
+                    "description": str(rule.get("description") or entry.get("condition") or "专名语境误听候选"),
+                    "context_patterns": patterns,
+                },
+                "authority": str(entry.get("condition") or entry.get("source") or ""),
+            })
     for i, entry in enumerate(data["ledger"]["entries"]):
         for ri, replacement in enumerate(entry.get("replacements") or []):
             add(replacement.get("surface", ""), replacement.get("canonical", ""), {
@@ -173,10 +194,37 @@ def _scope_text(evidence: PairEvidence) -> str:
     return str(scope.get("description") or scope)
 
 
+def surface_matches(row: Mapping[str, object], text: str) -> bool:
+    """Whether a misheard surface applies to `text` under any structured per-line `context_patterns` scope."""
+    misheard = str(row.get("misheard") or "")
+    if not misheard or misheard not in text:
+        return False
+    evidence = row.get("evidence")
+    if not isinstance(evidence, list) or not evidence:
+        return True
+    lines = text.splitlines() or [text]
+    for entry in evidence:
+        scope = entry.get("scope") if isinstance(entry, Mapping) else None
+        patterns = scope.get("context_patterns") if isinstance(scope, Mapping) else None
+        if not isinstance(patterns, list) or not patterns:
+            return True
+        if any(re.search(str(pattern), line) for line in lines for pattern in patterns):
+            return True
+    return False
+
+
+def _has_context_patterns(row: MishearingPair) -> bool:
+    evidence = row.get("evidence") or []
+    return bool(evidence) and all(bool(entry["scope"].get("context_patterns")) for entry in evidence)
+
+
 def relevant_pairs(rows: list[MishearingPair], readings: list[str]) -> list[MishearingPair]:
-    """Literal occurrence in an actual clip reading or participant form; never change detection's full lexicon."""
-    return [r for r in rows if any(form and form in text for form in (r["misheard"], r["standard"])
-                                   for text in readings)]
+    """Literal occurrence in an actual clip reading or participant form; context-scoped pairs require a pattern hit."""
+    return [r for r in rows if any(
+        surface_matches(r, text) if _has_context_patterns(r)
+        else (r["standard"] and r["standard"] in text) or surface_matches(r, text)
+        for text in readings
+    )]
 
 
 def render_lines(rows: list[MishearingPair]) -> str:

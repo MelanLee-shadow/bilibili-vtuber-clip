@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, TypedDict, cast
 
 from .adapters import remote_python, root_script
-from .step_io import REMOTE_TOOLS, _local, _run_remote
+from .step_io import REMOTE_TOOLS, _local, _run_remote, vision_models
 
 if TYPE_CHECKING:
     from .runner import Ctx
@@ -30,8 +30,10 @@ def choose_vetoed(ctx: Ctx, rows: Sequence[CoverCandidate], *, title: str, lines
         return None
     rd = ctx.remote_dir
     remote_cover = f"{rd}/cover"
+    _primary, fb_model, fb_effort = vision_models()
     job = {"out": f"{remote_cover}/cand", "frame": frame or f"{remote_cover}/frame.png", "title": title,
-           "lines": lines, "judge_model": model,
+           "lines": lines, "judge_model": model, "fallback_model": fb_model if fb_model != model else "",
+           "fallback_effort": fb_effort,
            "candidates": [{"id": r["id"], "vetoes": r["score"]["vetoes"]} for r in rendered]}
     local_job = _local(ctx, "cover/fallback.job.json")
     local_job.write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8")

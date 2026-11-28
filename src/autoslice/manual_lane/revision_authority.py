@@ -29,6 +29,8 @@ import hashlib
 import json
 from pathlib import Path
 
+from src.autoslice.upload_description import without_source_line
+
 from . import publication_id, title_history, title_receipt
 from .publication_id import publication_cid
 from .runner import Ctx, StepOutcome
@@ -153,13 +155,15 @@ def _cover_only(ctx: Ctx) -> bool:
 
 def _changed_metadata(ctx: Ctx, staged: Path, online: dict | None) -> dict:
     """What the tags and the description of the staged package are against the version online: {tags, description} as
-    True (differs) / False (same) / None (the chain does not say)."""
+    True (differs) / False (same) / None (the chain does not say).  The description is compared as it is submitted: the
+    source line ahead of a reposted archive's description is Bilibili's, and the upload tool sends it back on an edit."""
     if online is None:
         return {"tags": None, "description": None}
     now_tags = json.loads((ctx.clip_dir / "tags/tags.json").read_text(encoding="utf-8")).get("final_tags")
     desc = online.get("desc")
     return {"tags": sorted(now_tags or []) != sorted(online["tags"]),
-            "description": None if desc is None else (staged / "description.txt").read_text(encoding="utf-8").strip() != desc.strip()}
+            "description": None if desc is None else without_source_line(
+                (staged / "description.txt").read_text(encoding="utf-8").strip()) != without_source_line(desc.strip())}
 
 
 def record(ctx: Ctx, staged: Path, notes: list[str]) -> dict[str, str]:

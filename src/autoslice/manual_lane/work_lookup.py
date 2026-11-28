@@ -195,9 +195,12 @@ class WebLookup:
         self.timeout = timeout
         self.search_mcp_url = search_mcp_url if search_mcp_url is not None else layout().search_mcp_url
 
-    def _open(self, req: urllib.request.Request) -> tuple[http.client.HTTPMessage, str]:
+    def _open(self, req: urllib.request.Request, *, timeout: float | None = None) -> tuple[http.client.HTTPMessage, str]:
+        effective = self.timeout if timeout is None else min(self.timeout, timeout)
+        if effective <= 0:
+            raise TimeoutError("search budget exhausted")
         req.add_header("User-Agent", USER_AGENT)
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+        with urllib.request.urlopen(req, timeout=effective) as resp:
             return resp.headers, resp.read().decode("utf-8", "replace")
 
     def bangumi(self, query: str, *, limit: int = 5) -> list[LookupRow]:
@@ -240,16 +243,16 @@ class WebLookup:
             return []
         return [{"title": title, "abstract": str(data.get("abstract") or "")[:300], "url": data.get("url")}]
 
-    def web(self, query: str, *, limit: int = 5) -> list[LookupRow]:
+    def web(self, query: str, *, limit: int = 5, timeout: float | None = None) -> list[LookupRow]:
         """Search Router MCP free_search.  Only when configured; the caller checks `web_configured` first."""
-        return _mcp_results(self._tool("free_search", {"query": query}))[:limit]
+        return _mcp_results(self._tool("free_search", {"query": query}, timeout=timeout))[:limit]
 
     def page(self, url: str, about: str) -> str:
         """The text of one page, through the router's web_fetch (name_initials.listed opens the page a sign points to).
         The whole page is asked for; an engine that answers with excerpts chooses them by `about`."""
         return _mcp_page(self._tool("web_fetch", {"urls": [url], "objective": about, "full_content": True}))[:PAGE_MAX]
 
-    def _tool(self, name: str, arguments: dict[str, object]) -> str:
+    def _tool(self, name: str, arguments: dict[str, object], *, timeout: float | None = None) -> str:
         """One tools/call over streamable HTTP: initialize, keep Mcp-Session-Id, notifications/initialized, the call."""
         if not self.search_mcp_url:
             raise RuntimeError(f"{SEARCH_MCP_ENV} not configured")
@@ -258,7 +261,7 @@ class WebLookup:
         def post(payload: RpcRequest, session: str | None) -> tuple[http.client.HTTPMessage, str]:
             headers = dict(base, **({"Mcp-Session-Id": session} if session else {}))
             return self._open(urllib.request.Request(self.search_mcp_url, data=json.dumps(payload).encode("utf-8"),
-                                                     method="POST", headers=headers))
+                                                     method="POST", headers=headers), timeout=timeout)
 
         headers, _ = post({"jsonrpc": "2.0", "id": 1, "method": "initialize",
                            "params": {"protocolVersion": "2025-03-26", "capabilities": {},

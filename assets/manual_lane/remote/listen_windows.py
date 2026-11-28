@@ -123,12 +123,12 @@ def _probe_one(name, ask, clock):
 
 def probe(state, name, *, outdir, cheapest=None, ask=_probe_generate, clock=time.time):
     """PROBE: the first time a model fails in a run, one one-line request to it and one to the gateway's cheapest model
- (公开规则: a relay says why a model is down, 「当前分组下模型…暂无可用服务」, and then asking again and again
- is no use). Asked once per model per run; the other windows wait for the same answer. Returns
- {"down": False} the model answers a one-line request (or is only slow): retried as before;
- {"down": True, "said": …} the gateway refuses it: not asked again until the wait (WAIT_DOWN_S) is over;
- {"gateway_down": True} it refuses the cheapest model too: no model of the gateway is asked until then.
- Both answers are written to OUTDIR/PROBE_LOG (what the gateway said, masked by the client)."""
+    (the channel's request (a relay says why a model is down), and then asking again and again
+    is no use).  Asked once per model per run; the other windows wait for the same answer.  Returns
+      {"down": False}            the model answers a one-line request (or is only slow): retried as before;
+      {"down": True, "said": …}  the gateway refuses it: not asked again until the wait (WAIT_DOWN_S) is over;
+      {"gateway_down": True}     it refuses the cheapest model too: no model of the gateway is asked until then.
+    Both answers are written to OUTDIR/PROBE_LOG (what the gateway said, masked by the client)."""
     with state["lock"]:
         probes = state.setdefault("probes", {})
         entry = probes.get(name)

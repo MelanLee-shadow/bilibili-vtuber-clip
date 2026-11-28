@@ -13,6 +13,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from src.autoslice.authorized_upload_metadata import validate_tags
+
 from .common import now, sha256
 
 SCHEMA = "lane-publish-package-audit.v1"
@@ -85,9 +87,12 @@ def audit(package: Path) -> dict[str, Any]:
         if verdict != "PASS":
             issues.append(f"成品审查回执的结论是 {verdict!r}，不是 PASS")
     if "record" in inputs:
-        tags = ((json.loads((package / item["record"]).read_text(encoding="utf-8")).get("upload_tags") or {}).get("final_tags"))
+        upload_tags = json.loads((package / item["record"]).read_text(encoding="utf-8")).get("upload_tags") or {}
+        tags = upload_tags.get("final_tags") if isinstance(upload_tags, dict) else None
         if not (isinstance(tags, list) and tags and all(isinstance(t, str) and t for t in tags)):
             issues.append("record.json 没有定下的标签（upload_tags.final_tags）")
+        elif upload_tags.get("source") != "published" and (tag_problems := validate_tags(tags)):
+            issues.append(f"record.json 标签不符合策略：{'；'.join(tag_problems)}")
     if "video" in inputs:
         probed = _streams(package / item["video"])
         if isinstance(probed, str):

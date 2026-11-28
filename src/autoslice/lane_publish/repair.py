@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from src.autoslice.manual_lane import receipt_chain
+from src.autoslice.upload_description import with_source_line, without_source_line
 
 from . import authority, bili, manifest, registry
 from .common import FAILED, GATE, NOT_YET, OK, REFUSED, Config, Publish, Refused, bind, drift, now, read_json, sha256, write_json
@@ -49,6 +50,15 @@ def _note(journal: Path, plan_id: str, event: str, **fields: Any) -> None:
 def _last(rows: list[dict[str, Any]], event: str) -> dict[str, Any] | None:
     found = [r for r in rows if r["event"] == event]
     return found[-1] if found else None
+
+
+def stored_description(description: str, archive: dict[str, Any]) -> str:
+    """The package's description as Bilibili stores it for the live `archive`: an archive published as a repost (what the
+    pipeline posted before) keeps its source as the first line, where an edit must send it back; one published without a
+    declared type has no source and no such line.  The package's own text is taken without that line either way (a
+    package written for a repost carries it)."""
+    source = str(archive.get("source") or "") if archive.get("copyright") == 2 else ""
+    return with_source_line(without_source_line(description), source)
 
 
 def plan(kind: str, *, manifest_path: Path, bvid: str, out: Path, journal: Path, preserve_tags: bool,
@@ -81,7 +91,10 @@ def plan(kind: str, *, manifest_path: Path, bvid: str, out: Path, journal: Path,
         raise Refused(GATE, f"{bvid} 现在不是公开状态：等它公开再改")
     archive = creator.get("archive") or {}
     live_tags = [t for t in str(archive.get("tag") or "").split(",") if t]
-    meta = {"title": doc["title"], "desc": doc["description"], "tags": live_tags if (preserve_tags or kind == COVER) else doc["tags"]}
+    if type(archive.get("copyright")) is not int:
+        raise Refused(GATE, f"创作中心没有给出 {bvid} 的投稿类型（copyright={archive.get('copyright')!r}）：不知道它的简介前有没有来源行，不改")
+    desc = stored_description(doc["description"], archive)
+    meta = {"title": doc["title"], "desc": desc, "tags": live_tags if (preserve_tags or kind == COVER) else doc["tags"]}
     value: dict[str, Any] = {
         "schema_version": PLAN_SCHEMA[kind], "plan_id": uuid.uuid4().hex, "created_at": now(), "kind": kind, "bvid": bvid,
         "manifest": {"path": str(manifest_path), "sha256": sha256(manifest_path)}, "authorization": doc["authorization"],
@@ -94,7 +107,7 @@ def plan(kind: str, *, manifest_path: Path, bvid: str, out: Path, journal: Path,
         value["replacement"] = {"video": doc["video"], "cover": doc["cover"]}
         value["target_metadata"] = meta
     else:
-        if archive.get("title") != doc["title"] or str(archive.get("desc") or "").strip() != doc["description"].strip():
+        if archive.get("title") != doc["title"] or str(archive.get("desc") or "").strip() != desc.strip():
             raise Refused(GATE, "只换封面要求标题和简介与线上一字不差：不一样就是换视频或改题，不走这条路")
         value["replacement_cover"] = doc["cover"]
         value["unchanged_metadata"] = meta

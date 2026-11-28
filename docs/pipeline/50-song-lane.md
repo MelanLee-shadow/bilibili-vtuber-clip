@@ -59,7 +59,7 @@ Talk scope 也必须冻结为空；不能借“grant 不生效”恢复 broad Ta
 - 歌词字幕：external LRC 全局位移（`song_alignment.py`），零点锚 BCUT ASR 中位（`offset_basis`）；精确重编码；ASS 取整。**歌词正文不过词表修复链**（结构性事实，见 41 重构议题）。
 - 歌切不带片头；最终结构由 [80-package-delivery.md](80-package-delivery.md) 强制。
 - 标题：铁律目录式，见 [60-title.md](60-title.md)。
-- 默认每天最多 1 条歌切（公开规则21:42 UTC：“默认是每天5条限额和一条歌切”）；
+- 默认每天最多 1 条歌切（频道默认：每天 5 条谈话切片、1 条歌切）；
   这取代 7/10 的默认至多 2 首。没有完整合适歌曲不强行凑数。单日多场不能自动叠出多首，
   点名批次/日期的额外授权只在该范围生效，不改全局默认。
 - 执行入口是 `candidate_selection.song_delivery_budget`、跨场 refill 与

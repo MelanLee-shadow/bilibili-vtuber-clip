@@ -1,7 +1,6 @@
 """The one time window of the circle-knowledge crawlers: nine months back and six months ahead of a day.
 
-Owner 「crwaler应该覆盖从现在开始向前9个月的，动漫，二次元相关的专名，以及从现在开始，向后6个月的
-动漫新番，二次元漫展，新闻等等专名」; confirmed for the news crawler (「保持原来的-9到+6吧」).  The
+the channel's request; confirmed for the news crawler (「保持原来的-9到+6吧」).  The
 timely-term crawler, the news crawler and the lane's graph reader all take it from here."""
 from __future__ import annotations
 

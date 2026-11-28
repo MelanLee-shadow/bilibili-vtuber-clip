@@ -13,11 +13,11 @@ selection_scorecard 可留空对象。
 同片 hash-bound 上下文(含按时间排列的结构化弹幕/SC):
 同片上下文
 
-选片量化表（talk 必填，song 可省略；新卡使用 selection-scorecard-admission.v4）：
+选片量化表（talk 必填，song 可省略；新卡使用 selection-scorecard-admission.v5）：
 - tier 是硬层级 1/2/3。当前 Tier 1 先过共同实质内容门：candidate_quality 必须是
   watchability=STRONG、differentiation=DISTINCTIVE、production_disposition=PRODUCTION，
-  reason 非空且 evidence_cues 全在候选窗内；同时 audience_salience>=2、self_contained>=3、
-  comedic_payoff>=3。payoff 可以是明确观点、拒绝、关系变化、故事/游戏结果或表演收束，
+  reason 非空且 evidence_cues 全在候选窗内；同时 audience_salience>=2、comedic_payoff>=3。
+  payoff 可以是明确观点、拒绝、关系变化、故事/游戏结果或表演收束，
   不要求每条都搞笑。缺质量判断或证据越窗时不得晋级 Tier 1。
 - 关系/CP/GL 只是有条件的 Tier 1 路径：tier_basis 为 relationship_chain /
   explicit_gl_stance / cp_positioning 时仍要 relationship_interaction>=3，且至少两个
@@ -40,20 +40,21 @@ selection_scorecard 可留空对象。
   comedic_payoff 同时评价喜剧与情绪/观点兑现：2是明确但普通的收口，3是强且构成这个主事件主要看点的
   兑现，4须有不可替代的完整证据链。不搞笑不是扣落点的充分理由，有结尾也不自动给3；在 reason 中指出
   争论、情绪或题目怎样在窗口内得到兑现，不把同一关系关键词重复算作多个强项。
-  self_contained 只扣理解主事件必需而片内无法推出的背景，具体说明缺了谁、触发或回应；逐句声源尚未
-  验证另列为证据未知。没有听音/看帧、某个被提及人物是否现场参与，不自动等于路人看不懂；若声源未知
+  self_contained 按没看这场直播、但认识这些主播和圈内梗的观众来评：圈内都知道的人和梗不算缺背景，
+  只扣理解主事件必需而片内无法推出的背景，具体说明缺了谁、触发或回应；逐句声源尚未
+  验证另列为证据未知。没有听音/看帧、某个被提及人物是否现场参与，不自动等于观众看不懂；若声源未知
   确实改变主事件的主体或含义，说明这一实际理解缺口，不补造主体。
   播放、表演、朗读或转述中的词句，不能仅因使用“我”或由主播说出，就把被引用的立场算成主播本人当前
   立场；依实际声源、主语、时间和模态区分被引用内容与她的真实评价/回应。
 - uncertainty_penalty 0..15，证据/指代/身份不确定才扣；fatigue_penalty 0..10，同场高度同质才扣。
 - 系统按固定 25/20/15/15/10/10/5 权重计算 effective_score，confidence 不再代替内容价值。
-- 历史无 policy 字段及 v2/v3 卡按原准入规则验证并保留原字节；
-  不要把历史 Tier 或分数静默重算成 v4。只有本次新召回或明确 rescore 才生成 v4 卡。
+- 历史无 policy 字段及 v2/v3/v4 卡按原准入规则验证并保留原字节；
+  不要把历史 Tier 或分数静默重算成 v5。只有本次新召回或明确 rescore 才生成 v5 卡。
 - 另为每个 talk 候选填写 candidate_quality。这是候选级的制作资格判断，不是第八个维度，不参与
-  七维算术或另加分；在 v4 中它属于 Tier 1 共同准入，准入结果可以改变 Tier，并因此改变最终排序：
+  七维算术或另加分；它属于 Tier 1 共同准入，准入结果可以改变 Tier，并因此改变最终排序：
   watchability 只能是 STRONG/ORDINARY/THIN，
   differentiation 只能是 DISTINCTIVE/ORDINARY/THIN，production_disposition 只能是
-  PRODUCTION/RESERVE/HOLD，reason 说明路人实际能看见的看点，evidence_cues 只能引用候选窗内 cue。
+  PRODUCTION/RESERVE/HOLD，reason 说明没看这场直播的圈内观众实际能看见的看点，evidence_cues 只能引用候选窗内 cue。
   production_disposition 判断该候选的内容是否值得制作，不宣称最终媒体 READY；已知有实质看点但字幕、
   声源或边界待验时，在 reason 保留具体未知及其影响，交后续对应 gate 验收。若未知使主事件本身无法
   成立，仍按受支持的内容判 RESERVE/HOLD；不得为了制作而假定未知已经解决。

@@ -1,5 +1,5 @@
-"""The cover's text layout takes turns, and a column's rows are the cover lines (owner not every cover one
-line top left and one line bottom right)."""
+"""A column's rows are the cover lines, and a candidate is placed and worded as its composition template says (owner
+not every cover one line top left and one line bottom right)."""
 
 from __future__ import annotations
 
@@ -16,15 +16,6 @@ LINES = ["打针不会哭的人", "无趣的大人"]
 
 def _row(text, punch):
     return {"text": text, "punch": punch}
-
-
-def test_the_layout_is_the_first_the_last_covers_did_not_use():
-    assert cover_column.next_layout([], COVER)[0] == "top"
-    assert cover_column.next_layout(["top"], COVER)[0] == "left"
-    assert cover_column.next_layout(["top", "left"], COVER)[0] == "right"
-    assert cover_column.next_layout(["top", "left", "right"], COVER)[0] == "top"        # only the last two count
-    assert cover_column.next_layout([None, "auto", "top", None], COVER)[0] == "left"    # a layout that is not in the turn is not counted
-    assert cover_column.next_layout(["left", "left"], COVER)[0] == "top"
 
 
 def test_rows_are_kept_only_when_they_are_the_lines_letter_for_letter_within_the_row_lengths():
@@ -50,53 +41,56 @@ def _layout_module():
 
 
 class _Run:
-    """What Column.place reads of the tool's run: the renderer (unused by the fake placement) and the rows' painted width."""
+    """What Composition.place reads of the tool's run: the renderer (unused by the fake placement)."""
     renderer = None
 
-    def __init__(self, width_per_char):
-        self.width_per_char = width_per_char
 
-    def text_ink(self, spec):
-        return None, lambda i, size: (round(len(spec["lines"][i]["text"]) * size * self.width_per_char), size)
+def _composition(monkeypatch, layout, job, template, *, face_w=540):
+    """A Composition in `template` whose person lands with a face `face_w` wide, centred where place_solo was asked."""
+    asked = []
 
-
-def _column(monkeypatch, layout, job, *, face_w=540):
-    """A Column whose person lands with a face `face_w` wide, centred where place_solo was asked to centre it."""
-    def place_solo(layer, face, renderer, cfg, need_top, host_side, centre_frac=None):
+    def place_solo(layer, face, renderer, cfg, need_top, host_side, centre_frac=None, face_frac=None, face_top=None):
+        asked.append({"need_top": need_top, "centre_frac": centre_frac, "face_frac": face_frac, "face_top": face_top})
         centre = round((centre_frac if centre_frac is not None else cfg["sticker_face_center_x_frac"]) * 1920)
         return {"x": 0}, [centre - face_w // 2, 500, centre + face_w // 2, 940], {"need_top": need_top, "centre": centre}
     monkeypatch.setattr(layout, "place_solo", place_solo)
-    return layout.Column(job, {k: v for k, v in COVER.items() if not k.endswith("_source")})
+    comp = layout.Composition(job, {k: v for k, v in COVER.items() if not k.endswith("_source")})
+    comp.template = template
+    return comp, asked
 
 
-def test_a_candidate_gets_the_column_when_the_person_leaves_its_punchline_rows_room(monkeypatch):
-    layout = _layout_module()
+def _templates():
+    from src.autoslice import cover_layout_rotation
+    from src.autoslice.manual_lane.step6_cover import cover_layout_table
+    return {t["template_id"]: t for t in cover_layout_rotation.load_table(cover_layout_table())["templates"]}
+
+
+def test_a_column_template_places_her_on_the_other_side_and_takes_the_rows(monkeypatch):
+    layout, t = _layout_module(), _templates()
     rows = [_row("打针不会哭", False), _row("的人", False), _row("无趣的", True), _row("大人", True)]
-    column = _column(monkeypatch, layout, {"text_layout": "left", "column_rows": rows})
-    _, box, plan = column.place(_Run(1.0), "emote", {}, [0, 0, 1, 1], 555, "right", None, None)
-    assert plan["text_layout"] == "left" and plan["need_top"] is None and box[0] > 1100          # she stands on the right
-    assert column.text("emote", [{"text": t} for t in LINES]) == {"layout": "left", "lines": rows}
-    assert column.record()["placed"]["emote"]["punch_row_px"] <= column.record()["placed"]["emote"]["zone_px"]
-    mirrored = _column(monkeypatch, layout, {"text_layout": "right", "column_rows": rows})
-    _, box, _ = mirrored.place(_Run(1.0), "emote", {}, [0, 0, 1, 1], 555, "right", None, None)
-    assert box[2] < 820 and mirrored.text("emote", [])["layout"] == "right"                      # and on the left for a right column
+    comp, asked = _composition(monkeypatch, layout, {"column_rows": rows}, t["column-left"])
+    _, box, plan = comp.place(_Run(), "emote", {}, [0, 0, 1, 1], 555, "right", None, None)
+    assert plan["template_id"] == "column-left" and box[0] > 1100                    # she stands on the right
+    assert asked[-1] == {"need_top": None, "centre_frac": 0.72, "face_frac": 0.36, "face_top": None}
+    assert comp.text("emote", [{"text": x} for x in LINES]) == {"layout": "left", "lines": rows}
+    mirrored, _ = _composition(monkeypatch, layout, {"column_rows": rows}, t["column-right"])
+    _, box, _ = mirrored.place(_Run(), "emote", {}, [0, 0, 1, 1], 555, "right", None, None)
+    assert box[2] < 820 and mirrored.text("emote", [])["layout"] == "right"           # and on the left for a right column
 
 
-def test_a_column_that_does_not_fit_or_is_not_hers_alone_keeps_the_two_lines_on_top(monkeypatch):
-    layout = _layout_module()
-    rows = [_row("打针不会哭", False), _row("的人", False), _row("无趣的", True), _row("大人", True)]
-    lines = [{"text": t} for t in LINES]
-    wide = _column(monkeypatch, layout, {"text_layout": "left", "column_rows": rows})
-    _, _, plan = wide.place(_Run(2.0), "cutout", {}, [0, 0, 1, 1], 555, "right", None, None)     # the rows paint too wide for the side
-    assert plan["need_top"] == 555 and "text_layout" not in plan
-    assert wide.text("cutout", lines, "auto") == {"layout": "auto", "lines": lines} and "cutout" in wide.record()["refused"]
-    for job, guest, centre in (({"text_layout": "left", "column_rows": rows}, {"src": "g"}, None),     # another person
-                               ({"text_layout": "left", "column_rows": rows}, None, 0.5),              # a fixed centre (the audience's sticker)
-                               ({"text_layout": "top", "column_rows": rows}, None, None),              # not this cover's turn
-                               ({"text_layout": "left", "column_rows": []}, None, None)):              # no rows
-        column = _column(monkeypatch, layout, job)
-        _, _, plan = column.place(_Run(1.0), "emote", {}, [0, 0, 1, 1], 555, "right", centre, guest)
-        assert plan["need_top"] == 555 and column.text("emote", lines) == {"layout": "top", "lines": lines}
+def test_a_guest_keeps_her_place_and_only_the_words_change(monkeypatch):
+    layout, t = _layout_module(), _templates()
+    lines = [{"text": x} for x in LINES]
+    comp, asked = _composition(monkeypatch, layout, {"column_rows": []}, t["bottom-banner"])
+    _, _, plan = comp.place(_Run(), "emote", {}, [0, 0, 1, 1], 555, "right", None, {"src": "g"})   # another person
+    assert plan["need_top"] == 555 and asked[-1]["centre_frac"] is None
+    assert comp.text("emote", lines) == {"layout": "bottom", "lines": lines, "banner": True}
+    top, asked = _composition(monkeypatch, layout, {"column_rows": []}, t["top-two"])           # the approved framing
+    _, _, plan = top.place(_Run(), "cutout", {}, [0, 0, 1, 1], 555, "right", None, None)
+    assert plan["need_top"] == 555 and asked[-1]["face_frac"] == 0.43
+    assert top.text("cutout", lines) == {"layout": "top", "lines": lines}
+    none, _ = _composition(monkeypatch, layout, {}, None)                                       # no template: the caller's own
+    assert none.text("ai_scene", lines, "auto") == {"layout": "auto", "lines": lines}
 
 
 def test_the_cover_brief_asks_for_the_rows_with_the_rule_lengths(tmp_path):

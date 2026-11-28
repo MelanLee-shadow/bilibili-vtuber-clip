@@ -40,6 +40,7 @@ import json
 import os
 import re
 import sys
+import threading
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -49,7 +50,7 @@ from .chat_archive import ArchiveChat
 from .clip_init import clip_from_entry, create_clip_state
 from .clip_init import selection_entry as _selection_entry
 from .compilation import RecordingInput, compile_session
-from . import dissent_register, knowledge_observe, persona_observe
+from . import dissent_register, knowledge_observe, persona_observe, title_acceptance
 from .config import load_session_config
 from .layout import layout
 from .listen import ListenError, clip_queue, import_labels, write_queue
@@ -67,7 +68,16 @@ from .score import (
     tsv_rows,
 )
 from .stages import DEPENDS, GATES, STEPS
-from .state import DEFAULT_BCUT_SOURCE_ZERO_MS, ClipState, StateError, bcut_source_zero_ms, clip_run_lock
+from .state import (
+    DEFAULT_BCUT_SOURCE_ZERO_MS,
+    ClipRunBusyError,
+    ClipRunTakeover,
+    ClipState,
+    StateError,
+    bcut_source_zero_ms,
+    clip_run_lock,
+)
+from .step_io import fallback_judged_purposes
 from .trim_run import AdaptersFor, owner_marks, record_unfinished, trim_clip
 from .work_lookup import WebLookup
 
@@ -190,7 +200,9 @@ def _run_with_trim(args: argparse.Namespace, task: Path, ctx: Ctx, progress: Pro
     if status == "TRIMMED":
         successor, removed = cast(str, result["successor"]), sum(b - a + 1 for a, b in result.get("passed") or [])
         say(f"片中剪除：原片 {args.cid} 已被 {successor} 取代，剪去 {removed} 句")
-        with clip_run_lock(task / "state" / f"{successor}.json"):
+        with clip_run_lock(task / "state" / f"{successor}.json") as takeover:
+            if takeover is not None and (on_takeover := getattr(args, "_on_takeover", None)) is not None:
+                on_takeover(successor, takeover)
             ctx = _ctx(task, successor, on_media_host=args.on_media_host)
             report = _steps(ctx, progress, until=args.until, upload=args.upload, quote=args.quote)
         return _finish_run(successor, ctx, report, trim={"status": status, "replaces": args.cid, "removed_cues": removed})
@@ -202,13 +214,42 @@ def _run_with_trim(args: argparse.Namespace, task: Path, ctx: Ctx, progress: Pro
     return _finish_run(args.cid, ctx, report, trim={"status": status, "reason": result.get("reason", "")})
 
 
+def _refresh_guests(args: argparse.Namespace, task: Path, cid: str) -> None:
+    """For a clip whose session was named from the day's record of who is in the call (collab_guests): what its
+    products show is put into that record, and when the record holds people the session lacks, the clip is redone from
+    the speaker step with them (redo.redo_clip, with its refusals: an uploaded clip, a package that went online), so
+    its speakers, title, cover and tags are made for the people who were there.  A refused clip is said and left as it
+    is: what is online is the owner's to change."""
+    from . import collab_guests
+    from .redo import redo_clip
+
+    missing = collab_guests.behind(_ctx(task, cid, on_media_host=args.on_media_host))      # adds this clip's evidence to the day's record
+    if not missing:
+        return
+    names = "、".join(missing)
+    try:
+        redo_clip(task=task, cid=cid, start="speaker", adapters_for=_adapters_for(args.on_media_host))
+    except StateError as exc:
+        say(f"[{cid}] 当天连线名单后来补进了 {names}，本片是按之前的名单做的；没有重做：{exc}")
+        return
+    ctx = _ctx(task, cid, on_media_host=args.on_media_host)
+    collab_guests.catch_up(ctx)
+    with (ctx.clip_dir / "PROCESS.md").open("a", encoding="utf-8") as fh:
+        fh.write(f"- 重做原因：{collab_guests.process_line(ctx, missing)}；本片此前按补人之前的名单做过，从说话人一步起按现在的名单重做\n")
+    say(f"[{cid}] 当天连线名单补进了 {names}：已从说话人一步起重做")
+
+
 def _run_clip_cid(args: argparse.Namespace, task: Path, cid: str, progress: Progress | None) -> int:
     """`run` for one clip, holding the clip's run lock: a second process running it stops with an error."""
     one = argparse.Namespace(**{**vars(args), "cid": cid})
-    with clip_run_lock(task / "state" / f"{cid}.json"):
+    with clip_run_lock(task / "state" / f"{cid}.json") as takeover:
+        if takeover is not None and (on_takeover := getattr(args, "_on_takeover", None)) is not None:
+            on_takeover(cid, takeover)
         head = ClipState.load(task / "state" / f"{cid}.json").data["clip"]
         if head.get("status") == "SUPERSEDED":
             raise StateError(f"{cid} is SUPERSEDED by {head.get('superseded_by')}; run the replacement instead")
+        if args.refresh_guests:
+            _refresh_guests(args, task, cid)
         ctx = _ctx(task, cid, on_media_host=args.on_media_host, source_dir=args.source_dir)
         if args.trim or owner_marks(ctx):   # the owner's 删 marks (import/cut.srt) are cut at the same place and the same way
             return _run_with_trim(one, task, ctx, progress)
@@ -238,9 +279,27 @@ def cmd_discover(args: argparse.Namespace) -> int:
     return report.exit_code
 
 
+def _guests_lagging(task: Path, cids: list[str], *, on_media_host: bool) -> list[str]:
+    """Of reviewed clips that are not online (auto_run.pending), those whose session lacks one of the day's guests of
+    who is in the call.  Every one's evidence goes into its day's record first (collab_guests.behind), as a later clip's
+    may be what adds the guest.  A clip whose evidence cannot be read is said and not run (the round goes on)."""
+    from . import collab_guests
+
+    ctxs = {}
+    for cid in cids:
+        try:
+            ctx = _ctx(task, cid, on_media_host=on_media_host)
+            collab_guests.behind(ctx)
+        except RUN_ERRORS as exc:
+            say(f"[{cid}] 核对当天连线名单失败，本轮不跑：{type(exc).__name__}: {exc!s:.300}")
+            continue
+        ctxs[cid] = ctx
+    return [cid for cid, ctx in ctxs.items() if collab_guests.lacking(ctx)]
+
+
 def cmd_auto(args: argparse.Namespace) -> int:
     """One unattended round (auto_run.py): discover, then every unfinished clip of the task is run on."""
-    from .auto_run import auto_round, publication_paused
+    from .auto_run import ClipRunBatch, SkippedBusyClip, TookOverLock, auto_round, publication_paused
     from .discover import discover
     from .step10_rules import load as load_upload_rules
 
@@ -256,11 +315,24 @@ def cmd_auto(args: argparse.Namespace) -> int:
         report = discover(task=task, adapters=_adapters_for(args.on_media_host)(f"{layout().work_root}/discover"))
         return {"days": report.days, "deferred": report.deferred, "failures": report.failures}
 
-    def run_clips(cids: list[str]) -> int:
+    def run_clips(cids: list[str]) -> ClipRunBatch:
+        skipped_busy: list[SkippedBusyClip] = []
+        took_over: list[TookOverLock] = []
+        guard = threading.Lock()
+
+        def on_busy(cid: str, exc: ClipRunBusyError) -> None:
+            with guard:
+                skipped_busy.append(SkippedBusyClip(cid=cid, code=exc.code, owner_pid=exc.owner_pid))
+
+        def on_takeover(cid: str, info: ClipRunTakeover) -> None:
+            with guard:
+                took_over.append(TookOverLock(cid=cid, previous_pid=info.previous_pid))
+
         one = argparse.Namespace(task_dir=str(task), on_media_host=args.on_media_host, upload=upload, quote=quote,
-                                 until=None, trim=True, source_dir=None)
-        return run_many(cids, lambda cid, progress: _run_clip_cid(one, task, cid, progress),
-                        log_dir=task / "run-logs", errors=RUN_ERRORS)
+                                 until=None, trim=True, source_dir=None, refresh_guests=True, _on_takeover=on_takeover)
+        code = run_many(cids, lambda cid, progress: _run_clip_cid(one, task, cid, progress),
+                        log_dir=task / "run-logs", errors=RUN_ERRORS, on_busy=on_busy)
+        return ClipRunBatch(exit_code=code, skipped_busy=tuple(skipped_busy), took_over=tuple(took_over))
 
     from . import song_day
     from .discover import load_ledger
@@ -272,8 +344,11 @@ def cmd_auto(args: argparse.Namespace) -> int:
         return song_day.song_round(task, days=load_ledger(task)["days"], attempt=song_day.remote_attempt(task, remote))
 
     result = auto_round(task, discover_days=discover_days, run_clips=run_clips, upload=upload,
-                        remote=_adapters_for(args.on_media_host)(f"{layout().work_root}/discover").remote, run_songs=run_songs)
-    print(json.dumps({**result, "publication": publication}, ensure_ascii=False))
+                        remote=_adapters_for(args.on_media_host)(f"{layout().work_root}/discover").remote, run_songs=run_songs,
+                        lagging=lambda cids: _guests_lagging(task, cids, on_media_host=args.on_media_host))
+    from .cover_guests import wanted
+
+    print(json.dumps({**result, "publication": publication, "person_assets_wanted": wanted(task)}, ensure_ascii=False))
     return 0
 
 
@@ -283,8 +358,11 @@ def cmd_status(args: argparse.Namespace) -> int:
 
         from .song_day import ledger_lines as song_lines
 
-        print("\n".join(ledger_lines(Path(args.task_dir)) + song_lines(Path(args.task_dir))))
+        from .cover_guests import wanted_lines
+
+        print("\n".join(ledger_lines(Path(args.task_dir)) + song_lines(Path(args.task_dir)) + wanted_lines(Path(args.task_dir))))
         print(_streak_line(Path(args.task_dir)))
+        fallback_clips: list[str] = []
         for path in sorted((Path(args.task_dir) / "state").glob("*.json")):      # the clips of the task, by id
             state = ClipState.load(path)
             if state.data["clip"].get("status") == "SUPERSEDED":
@@ -293,14 +371,27 @@ def cmd_status(args: argparse.Namespace) -> int:
             stopped = [s for s in STEPS if state.step(s.key).get("status") not in (None, "DONE", "PENDING")]
             where = f"停在第 {stopped[0].number} 步 {stopped[0].title}：{state.step(stopped[0].key).get('reason') or ''}" if stopped \
                 else f"做到第 {done[-1].number} 步 {done[-1].title}" if done else "还没开始"
-            print(f"片 {path.stem}  {where}")
+            against = title_acceptance.objections(Path(args.task_dir) / "clips" / path.stem)
+            fb = fallback_judged_purposes(state)
+            if fb:
+                fallback_clips.append(f"{path.stem}（{'、'.join(fb)}）")
+            suffix = f"  [由回退模型判定：{'、'.join(fb)}，待抽查]" if fb else ""
+            objection = f"；沿用的线上标题有 {len(against)} 条异议，交频道主（status --cid 看）" if against else ""
+            print(f"片 {path.stem}  {where}{objection}{suffix}")
+        if fallback_clips:
+            print("由回退模型判定的片（待人工抽查）：" + "、".join(fallback_clips))
         return 0
     state = ClipState.load(Path(args.task_dir) / "state" / f"{args.cid}.json")
     for step in STEPS:
         rec = state.step(step.key)
         print(f"{step.number:>2} {step.key:<12} {rec.get('status', 'PENDING'):<8} {rec.get('reason', '') or ''} "
               f"cpa={len(rec.get('cpa') or [])} {str(rec.get('note', ''))[:400 if step.key == 'review' else 90]}")
+    fb_single = fallback_judged_purposes(state)
+    if fb_single:
+        print("fallback_judged=" + ",".join(fb_single))
     print(f"cpa_calls_total={state.cpa_call_count()}")
+    for why in title_acceptance.objections(Path(args.task_dir) / "clips" / args.cid):     # 60-title: kept, his to decide
+        print(f"沿用的线上标题有异议（不换题，换不换由频道主定）：{why}")
     return 0
 
 
@@ -474,7 +565,8 @@ def cmd_redo(args: argparse.Namespace) -> int:
 
     task = Path(args.task_dir)
     with clip_run_lock(task / "state" / f"{args.cid}.json"):      # the same lock as `run`: a running process holds the clip's state
-        print(json.dumps(redo_clip(task=task, cid=args.cid, start=args.start, adapters_for=_adapters_for(args.on_media_host)),
+        print(json.dumps(redo_clip(task=task, cid=args.cid, start=args.start, adapters_for=_adapters_for(args.on_media_host),
+                                   fresh_title=args.fresh_title),
                          ensure_ascii=False))
     return 0
 
@@ -577,6 +669,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="after the speaker step, cut unrelated topics and thanks out of the clip (as `trim`); when that makes "
                         "a new clip the later steps run on it.  On by default (owner 2026-11-14)")
     p.add_argument("--no-trim", dest="trim", action="store_false", help="leave the mid-clip cut out")
+    p.add_argument("--refresh-guests", action="store_true",
+                   help="first redo the clip from the speaker step when the day's list of who is in the call has gained "
+                        "people since the clip was named from it (every `auto` round does this; an uploaded clip is left)")
     p.add_argument("--source-dir", default=None,
                    help="where the clip's recording is on the media host when its state records none (default: <its work "
                         "directory>/sources); the directory it is found in is recorded in the clip")
@@ -691,6 +786,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--task-dir", required=True)
     p.add_argument("--cid", required=True)
     p.add_argument("--from", dest="start", required=True, help="the step to start from: its name (title_cover) or number (6)")
+    p.add_argument("--fresh-title", action="store_true",
+                   help="clear the accepted title receipt and title cache so step 6 generates a new title instead of keeping the accepted one")
     p.add_argument("--on-media-host", action="store_true", help="run controller and media work on the media host")
     p.set_defaults(func=cmd_redo)
 

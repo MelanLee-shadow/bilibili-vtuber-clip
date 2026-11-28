@@ -1,6 +1,6 @@
 {
   "schema": "manual-lane.runtime-layout.v1",
-  "_doc": "Where the manual lane runs for this channel (read by src/autoslice/manual_lane/layout.py; each key can be overridden by MANUAL_LANE_<KEY>, nested keys joined by _). Host facts only: the room id comes from profile.json, the emote media root from the emote library, the intro file names from the branding-intro manifest. The intro copies and the cover font are derived from work_root (<work_root>/assets/intro, <work_root>/assets/fonts/RuiZiZhenYan.ttf); set intro_dir / cover_font only to pin them elsewhere.",
+  "_doc": "Where the manual lane runs for this channel (read by src/autoslice/manual_lane/layout.py; each key can be overridden by MANUAL_LANE_<KEY>, nested keys joined by _). Host facts only: the room id comes from profile.json, the emote media root from the emote library, the intro file names from the branding-intro manifest. The intro copies, the cover font and the person asset pack's pictures are derived from work_root (<work_root>/assets/intro, <work_root>/assets/fonts/RuiZiZhenYan.ttf, <work_root>/assets/people); set intro_dir / cover_font / people_dir only to pin them elsewhere.",
   "remote_host": "oci3",
   "remote_user": "ubuntu",
   "autoslice_base": "/opt/bilive/autoslice",

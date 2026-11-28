@@ -15,12 +15,13 @@ import math
 FRAME_W, FRAME_H = 1920, 1080
 
 
-def _evaluate(top, ft, fb, rules, pad):
+def _evaluate(top, ft, fb, rules, pad, face_frac=None):
     """(layer height, face height, limited_by) for a face whose top sits at `top` and which spans the fractions ft..fb of
     the layer: head room above the face is at most `top` (the picture cannot leave through the top), the face and the
-    chin margin must stay above the frame's bottom, and the face is never larger than the target."""
+    chin margin must stay above the frame's bottom, and the face is never larger than the target (`face_frac` of the
+    height: the composition template's, else lane_rules cover.face_target_frac)."""
     span = fb - ft
-    target = rules["face_target_frac"] * FRAME_H
+    target = (face_frac or rules["face_target_frac"]) * FRAME_H
     h, limit = target / span, None
     head = (top - pad - rules["layer_top_min_px"]) / ft if ft > 0 else math.inf
     if head < h:
@@ -31,17 +32,27 @@ def _evaluate(top, ft, fb, rules, pad):
     return h, h * span, limit
 
 
-def solve(ft, fb, rules, need_top, pad=0):
+def solve(ft, fb, rules, need_top, pad=0, face_frac=None, face_top=None):
     """Where the face top goes and how tall the layer is.  `ft`, `fb`: the face's top and bottom as fractions of the
     layer's alpha height; `need_top`: the face top the punchline's floor size needs (None: not reachable, e.g. a line too
     wide for the safe zone).  Every face top is tried and the best by `layout_order` wins (each wish met beats any
-    later one), then the larger face, then the higher face (more room for the text)."""
-    target = round(rules["face_target_frac"] * FRAME_H)
+    later one), then the larger face, then the higher face (more room for the text).  A composition template may ask
+    for its own face height (`face_frac`) and for the face top (`face_top`, px: the highest the face may stand; the
+    words go under it): then only the tops from there down are tried."""
+    target = round((face_frac or rules["face_target_frac"]) * FRAME_H)
     floor = round(rules["face_floor_frac"] * FRAME_H)
     want = need_top if need_top is not None else rules["face_top_default_px"]
     best = None
-    for top in range(rules["face_top_min_px"], FRAME_H - floor, 2):
-        h, fh, limit = _evaluate(top, ft, fb, rules, pad)
+    tops = (range(rules["face_top_min_px"], FRAME_H - floor, 2) if face_top is None else
+            range(max(2, round(face_top)), max(3, round(face_top) + 1 + round(0.12 * FRAME_H)), 2))
+    for top in tops:
+        h, fh, limit = _evaluate(top, ft, fb, rules, pad, face_frac)
+        if face_top is not None:       # the template's face top: the first top whose face reaches the target, else the largest
+            met = {"face_floor": fh >= floor, "punch_floor": True, "face_target": fh >= target - 1}
+            key = (met["face_floor"], met["face_target"], -top if met["face_target"] else round(fh))
+            if best is None or key > best[0]:
+                best = (key, top, h, fh, limit, met)
+            continue
         met = {"face_floor": fh >= floor, "punch_floor": top >= want and need_top is not None, "face_target": fh >= target - 1}
         key = (tuple(met[name] for name in rules["layout_order"]), round(min(fh, target)), -top)
         if best is None or key > best[0]:
@@ -61,11 +72,14 @@ def _bleed_fits(ft, fb, rules, need_top):
         1 + rules["chin_margin_frac"]) <= FRAME_H
 
 
-def place_solo(layer, face, renderer, rules, need_top, host_side, centre_frac=None):
+def place_solo(layer, face, renderer, rules, need_top, host_side, centre_frac=None, face_frac=None, face_top=None):
     """One person's picture placed by the measured face.  `layer`: {src, cutout, crop?} (crop: the region of the source
     kept); `face`: the face box in the source picture's pixels.  Returns (sticker dict, face box in cover pixels, plan);
     raises ValueError("HOST_FACE_OUTSIDE_FIGURE") when the face is not inside the person's alpha box (the picture shows
-    no face, e.g. only legs).  `centre_frac`: where the face centre goes, when the cover has another main layer."""
+    no face, e.g. only legs), and ValueError("FIGURE_CUT_ENDS_ABOVE_FRAME_BOTTOM") when the picture cuts the figure
+    flat at its bottom (an emote cut at the waist, a cut-out cut by the frame) and the placement leaves that cut inside
+    the canvas (a face placed high and small by a composition template: the template is then passed over).  `centre_frac`: where the face centre goes, when the cover has another main layer or the
+    composition template says; `face_frac`, `face_top`: the template's face height and face top (solve)."""
     from PIL import Image
 
     with Image.open(layer["src"]) as raw:
@@ -79,14 +93,15 @@ def place_solo(layer, face, renderer, rules, need_top, host_side, centre_frac=No
     outline = int(layer.get("outline", 12))
     ft, fb = max(0.0, (face[1] - oy) / bh), min(1.0, (face[3] - oy) / bh)
     cut = crop[1] <= 0 and oy <= 1                    # the figure runs into the source picture's own top edge: a flat cut
-    bleed = cut and _bleed_fits(ft, fb, rules, need_top)
+    cut_bottom = bbox[3] >= crop[3] - crop[1] - 1     # ... or into the kept region's bottom edge (an emote cut at the waist)
+    bleed = cut and face_top is None and _bleed_fits(ft, fb, rules, need_top)
     flush = layer.get("flush")                        # L | R: the source picture cuts the figure there (cover_emote_layer)
     if bleed or flush:                                # no outline: the cut edge is then the canvas edge exactly
         outline = 0
     pad = outline + 4 if outline else 0               # the renderer pads the picture by the outline before it pastes
-    plan = solve(ft, fb, rules, need_top, pad)
-    if bleed:
-        h_target = round(rules["face_target_frac"] * FRAME_H / (fb - ft))
+    plan = solve(ft, fb, rules, need_top, pad, face_frac, face_top)
+    if bleed and face_top is None:
+        h_target = round((face_frac or rules["face_target_frac"]) * FRAME_H / (fb - ft))
         plan.update(face_top=round(ft * h_target), layer_h=h_target, limited_by=None)
         plan["met"] = dict(plan["met"], punch_floor=True, face_target=True)
     h = plan["layer_h"]
@@ -105,6 +120,8 @@ def place_solo(layer, face, renderer, rules, need_top, host_side, centre_frac=No
                "measure_outline": True}
     if "outline" in layer or bleed or flush:
         sticker["outline"] = 0 if bleed or flush else layer["outline"]
+    if cut_bottom and max(0, y) + pad + h < FRAME_H:  # the bottom cut would stand inside the canvas, a straight edge across her
+        raise ValueError("FIGURE_CUT_ENDS_ABOVE_FRAME_BOTTOM")
     box = [round(x + pad + fx0), round(max(0, y) + pad + ft * h), round(x + pad + fx1), round(max(0, y) + pad + fb * h)]
     plan.update(width=w, layer_xy=[x, max(0, y)], face=box, face_px=box[3] - box[1])
     if flush:
@@ -118,42 +135,45 @@ def place_solo(layer, face, renderer, rules, need_top, host_side, centre_frac=No
 SAFE_X0, SAFE_X1, FACE_GAP = 260, 1660, 30      # the renderer's feed-safe zone and the gap it keeps beside the face
 
 
-class Column:
-    """The cover's words stacked in a column beside the person (owner 2026-11-13: not every cover one line top left and
-    one line bottom right).  `job["text_layout"]` left | right asks for it; `job["column_rows"]` are the rows (the same
-    words broken at word boundaries, the punchline's rows marked `punch`).  A candidate gets the column only when its
-    person, placed on the other side, leaves the punchline's rows room for the floor size; otherwise it keeps the two
-    lines on top, and `record` says why.  A cover with another person or a fixed centre is never a column."""
+class Composition:
+    """The composition template a candidate is being made in (the channel's cover_layout_templates.json through the
+    shared selector cover_layout_rotation; owner 2026-10-31, 2026-11-13, 2026-11-25: the covers all looked the same).
+    `template` is set by the run for each try (cover_candidates.Run.compose); a template says where the words go
+    (`text`), whether they are the two cover lines or the column's rows (`rows`, the brief's `job["column_rows"]`), and
+    how the person is framed (`framing`: face height, face centre x, face top).  Whether the template fits is the
+    renderer's: a layout it refuses, or a punchline under the floor, sends the run on to the next template."""
 
     def __init__(self, job, rules):
-        self.side = job.get("text_layout") if job.get("text_layout") in ("left", "right") else None
         self.rows = [dict(r) for r in job.get("column_rows") or []]
-        self.rules, self.placed, self.refused = rules, {}, {}
+        self.rules, self.template, self.taken = rules, None, {}
+
+    def free(self):
+        """The template places the person (she stands alone); otherwise only the words change."""
+        t = self.template
+        return t is not None and "solo" in t["applies"]["people"] and (
+            t["text"] != "top" or t["framing"].get("face_x_frac") is not None or t["framing"].get("face_top_frac") is not None)
 
     def place(self, run, route, layer, face, need_top, host_side, centre_frac, guest):
-        """place_solo for this candidate: beside the column when one is asked for and fits, else as it always was."""
-        if self.side and len(self.rows) >= 2 and not guest and centre_frac is None:
-            frac = self.rules["column_face_center_x_frac"]
-            sticker, box, plan = place_solo(layer, face, run.renderer, self.rules, None, "right",
-                                            frac if self.side == "left" else 1 - frac)
-            zone = box[0] - FACE_GAP - SAFE_X0 if self.side == "left" else SAFE_X1 - box[2] - FACE_GAP
-            wide, size = self.punch_row(run)
-            if wide <= zone:
-                self.placed[route] = {"zone_px": zone, "punch_row_px": wide, "at_size": size}
-                return sticker, box, dict(plan, text_layout=self.side)
-            self.refused[route] = {"zone_px": zone, "punch_row_px": wide, "at_size": size}
-        return place_solo(layer, face, run.renderer, self.rules, need_top, host_side, centre_frac)
-
-    def punch_row(self, run):
-        """(width of the widest punchline row, the size it is measured at): the floor size on the renderer's own grid."""
-        ink = run.text_ink({"lines": self.rows})[1]
-        start = self.rules["punch_start_px"]
-        size = start - 6 * ((start - self.rules["punch_floor_px"]) // 6)
-        return max(ink(i, size)[0] for i, row in enumerate(self.rows) if row.get("punch")), size
+        """place_solo in this template: the template's face height, centre and top for a person alone; as it always was
+        for a person beside a guest or a fixed second sticker (the words still change with the template)."""
+        fr = (self.template or {}).get("framing") or {}
+        if guest or not self.free():
+            return place_solo(layer, face, run.renderer, self.rules, need_top, host_side, centre_frac, fr.get("face_frac"))
+        top = None if fr.get("face_top_frac") is None else fr["face_top_frac"] * FRAME_H
+        sticker, box, plan = place_solo(layer, face, run.renderer, self.rules, None if top is not None else
+                                        (need_top if self.template["text"] == "top" else None), "right",
+                                        fr.get("face_x_frac"), fr.get("face_frac"), top)
+        return sticker, box, dict(plan, template_id=self.template["template_id"])
 
     def text(self, route, lines, layout="top"):
-        """The layout and lines of a candidate's spec."""
-        return {"layout": self.side, "lines": self.rows} if route in self.placed else {"layout": layout, "lines": lines}
+        """The layout and lines of a candidate's spec in this template (`layout`: a caller's own default without one)."""
+        t = self.template
+        if t is None:
+            return {"layout": layout, "lines": lines}
+        out = {"layout": t["text"], "lines": [dict(r) for r in self.rows] if t["rows"] == "column" else lines}
+        if t["text"] == "bottom":
+            out["banner"] = True
+        return out
 
     def record(self):
-        return {"asked": self.side, "rows": [r["text"] for r in self.rows], "placed": self.placed, "refused": self.refused}
+        return {"rows": [r["text"] for r in self.rows], "taken": self.taken}

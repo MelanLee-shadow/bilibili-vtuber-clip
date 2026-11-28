@@ -10,7 +10,7 @@ when each quote stands letter for letter in the chat lines that name it.  The an
 task directory, so every clip of the day names the same guests, and is written into the clip's session block, where
 title, cover, tags and review read the participants.
 
-The chat is not the only witness (owner, U468: 「这个联动完全可以直接从新闻Crawler把这个动态一抓就知道了」): the
+The chat is not the only witness (the channel's request): the
 host announces a collab in her dynamics (11-22 「明天晚上八点的女大矿工见」) and the guests post about it (安晚awa 11-23
 「矿工是对的但我要晕倒了」).  So the same call also reads the Bilibili dynamics of the host and of the reviewed streamer
 registry's accounts (`read_dynamics`, at the time step 6 asks, so posts after the stream count) around the broadcast day.
@@ -19,7 +19,30 @@ lines, with what ties them to the host's (`linked`: a word both wrote then and n
 host's name); a quote may be one of her chat lines or stand in one of her own posts there, and one there only for her
 posts is kept on a quote from a post that holds such a tie.  The live room's title is the host's own words about the
 day too (11-23 「？！女大矿工？！」, in the recorder's header of the clip's chat file, `room_title`): it is shown beside
-her dynamics and its words count as hers around the day."""
+her dynamics and its words count as hers around the day.
+
+That one judgement is not the only way onto the day's list (安晚awa sat in 礼墨Sumi's room and spoke through
+her stream; the room title, the dynamics and the chat lines by name did not say so, the judge answered 礼墨Sumi alone, the
+day's file was kept as asked, and the eight clips with guests were titled 【李豆沙×礼墨Sumi】 with her lines nobody's).  The lane had
+measured her presence three other ways by then, and each clip in which someone else is heard now adds what it holds of
+them to the day's record (`clip_evidence`, no model):
+
+- voice: the frozen classifier's own guest classes on the clip's ~1.2 s chunks (speaker/chunks-pred.json);
+- subtitles: lines of the host that name a person and are followed by a guest's line;
+- peers: the titles other uploaders gave their clips of the same session (step 0's dedup/result.json), where a 【】
+  that names the host names her too.
+
+A person these name by two routes (`decide`; the numbers and what they were measured on are lane_rules collab_guests)
+joins the day's guests beside the judge's.  The list only grows: it is read again by every such clip at step 4, before
+the speakers are told apart, and at step 6; a clip whose session was named from an earlier, shorter list takes the
+missing people (`name_guests`), and one already past these steps adds its evidence and is found `behind` when it is
+run on again (cli run --refresh-guests, every unattended round), then redone from the speaker step.  A list written by hand (participants.json) is not touched.
+
+Two guests on one sound path (`path_voices`, `decide`): where step 4 found the clip in a guest's own recording
+(arrival.py), each lag group that is not the host's is one sound path, and the classifier's guest classes on it say
+whether one person or two speak there.  Two of the day's guests on one path in enough clips is kept as the day's
+`shared_path` and written into the session (`session["shared_path"]`: a list of name lists), for the steps that would
+otherwise take a path for a person."""
 
 from __future__ import annotations
 
@@ -27,11 +50,13 @@ import datetime as dt
 import html
 import json
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from . import text_overlap
+from .lane_rules import rules
 from .speaker_v8 import GUEST_LABEL, HOST
 
 if TYPE_CHECKING:
@@ -53,11 +78,11 @@ Dynamics = dict[str, list[dict[str, str]]]          # account (HOST for the host
 
 
 def streamers(ctx: Ctx) -> dict[str, list[str]]:
-    """The knowledge graph's people (graph_context: the channel's graph, the shared layer and the crawler's runtime
-    candidates), the host left out: formal name -> spellings.  Her formal name is the reviewed streamer registry's when
-    one of her spellings is a registry name (the title prefix needs that), else the node's display name; nodes with the
-    same formal name are one person (person:安晚 and person:安晚awa).  Every spelling of a node that shares one with the
-    host's names is the host's (李豆沙: 豆沙, lds, 小李 ...), and a node with one of those is left out."""
+    """The knowledge graph's accepted people (accepted person nodes grouped by accepted alias_of edges), the host
+    left out: formal name -> spellings.  Her formal name is the reviewed streamer registry's when one of her spellings
+    is a registry name (the title prefix needs that), else the node's official/display name; nodes with the same formal
+    name are one person (person:安晚 and person:安晚awa).  Every spelling of a group that shares one with the host's
+    names is the host's (李豆沙: 豆沙, lds, 小李 ...), and any group with one of those is left out."""
     from src.autoslice.channel_envelope import HOST_NAMES, load_related_streamers
 
     from . import graph_context
@@ -69,18 +94,27 @@ def streamers(ctx: Ctx) -> dict[str, list[str]]:
         registry = set(load_related_streamers())
     except Exception:  # noqa: BLE001 - an unreadable registry only loses the formal spelling
         registry = set()
-    # every person, detection_name=false ones too: that flag keeps a short name out of the subtitles' name detection,
-    # and the chat writing 安晚 or 礼墨 is exactly the evidence wanted here
-    nodes = [n for n in graph.nodes.values() if n.kind == "person" and n.status != "retired"]
+    # accepted persons only, detection_name=false ones too: that flag keeps a short name out of subtitle name detection,
+    # and the chat writing 安晚 or 礼墨 is valid evidence; candidate persons and candidate aliases never name streamers
+    accepted = {nid: n for nid, n in graph.nodes.items() if n.kind == "person" and n.status == "accepted"}
+    groups = [members for group in graph.alias_groups()
+              if (members := [accepted[nid] for nid in group if nid in accepted])]
+    alias_from = {e.from_id for e in graph.edges if e.type == "alias_of" and e.status == "accepted"}
     host = {*HOST_NAMES, HOST}
-    host |= {s for n in nodes if set(n.surfaces()) & host for s in n.surfaces()}
+    for members in groups:
+        surfaces = {s for n in members for s in n.surfaces()}
+        if surfaces & host:
+            host |= surfaces
     out: dict[str, set[str]] = {}
-    for node in nodes:
-        surfaces = set(node.surfaces())
+    for members in groups:
+        surfaces = {s for n in members for s in n.surfaces()}
         if surfaces & host:
             continue
-        formal = next((s for s in sorted(surfaces) if s in registry),
-                      node.names.get("official") or node.names.get("display") or sorted(surfaces)[0])
+        formal = next((s for s in sorted(surfaces) if s in registry), None)
+        if formal is None:
+            primary = [n for n in members if n.id not in alias_from] or members
+            node = sorted(primary, key=lambda n: n.id)[0]
+            formal = node.names.get("official") or node.names.get("display") or sorted(surfaces)[0]
         out.setdefault(formal, set()).update(surfaces)
     folded = {name: {x.casefold() for x in spellings} for name, spellings in out.items()}
     # a node whose spellings another person has all of is that person (person:awa beside 安晚awa)
@@ -105,16 +139,20 @@ def candidates(chat: Sequence[str], known: dict[str, list[str]]) -> dict[str, li
     return {name: lines for name, lines in mentions(chat, known).items() if len(lines) >= MIN_LINES}
 
 
-def mentions(chat: Sequence[str], known: dict[str, list[str]]) -> dict[str, list[str]]:
-    """Each person -> the chat lines that name her (any number)."""
+def _detector() -> Callable[[str, Sequence[str]], bool]:
+    """Whether a text writes one of a person's spellings, as detection counts a spelling (graph_context._spelled)."""
     from .graph_context import _spelled
-    from .lane_rules import rules
 
     cfg = rules("detection")
     least = int(cfg.get("latin_min_letters") or 1)
     common = {w.lower() for w in cfg.get("latin_common_words") or []}
-    return {name: [t for t in chat if any(_spelled(s, t, least, common) for s in spellings)]
-            for name, spellings in known.items()}
+    return lambda text, spellings: any(_spelled(s, text, least, common) for s in spellings)
+
+
+def mentions(chat: Sequence[str], known: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Each person -> the chat lines that name her (any number)."""
+    writes = _detector()
+    return {name: [t for t in chat if writes(t, spellings)] for name, spellings in known.items()}
 
 
 def room_title(clip_dir: Path) -> str:
@@ -230,13 +268,18 @@ def kept(answer: Any, named: dict[str, list[str]], posted: Mapping[str, Sequence
     return out
 
 
-def needed(ctx: Ctx) -> bool:
-    """The session names nobody but the host, and step 4 heard someone else in this clip."""
+def needed(ctx: Ctx, *, heard: bool | None = None) -> bool:
+    """Someone else speaks in this clip, and its session's guests are the lane's to name: nobody is named yet, or they
+    were named from the day's record (`guest_evidence`), which may hold more people by now.  A session whose guests
+    were written by hand is left as written.  `heard` is step 4's answer before the lines carry speakers (the
+    voiceprint hears others, step4_speaker.guests_heard); without it, a line step 4 labelled as a guest's."""
     from .config import participant_names
     from .subtitle_track import read_track
 
-    if [n for n in participant_names(ctx.session) if n != HOST] or ctx.session.get("guest_evidence"):
+    if [n for n in participant_names(ctx.session) if n != HOST] and not ctx.session.get("guest_evidence"):
         return False
+    if heard is not None:
+        return heard
     return any(c.get("speaker") == GUEST_LABEL for c in read_track(ctx.clip_dir))
 
 
@@ -246,45 +289,221 @@ class GuestsUnknown(RuntimeError):
     one prompt in flight, and each went on unnamed)."""
 
 
-def _day_record(ctx: Ctx, cache: Path, date: str, ask: Callable[[str, str], dict[str, Any] | None]) -> dict[str, Any]:
-    """The day's answer: read from the task directory, or asked once while holding the day's lock, so the clips of
-    one day that reach step 6 together wait for the first instead of sending the same prompt side by side."""
-    import fcntl
+# ----- what a clip itself shows of who is in the call (no model) -------------------------------------------------
 
-    cache.parent.mkdir(parents=True, exist_ok=True)
-    with open(cache.with_suffix(".lock"), "w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        if cache.exists():
-            return cast(dict[str, Any], json.loads(cache.read_text(encoding="utf-8")))
-        chat, known = session_chat(ctx.clip_dir), streamers(ctx)
-        said = mentions(chat, known)
-        named = {name: lines for name, lines in said.items() if len(lines) >= MIN_LINES}
-        uids = accounts()
-        uids = dict(sorted(uids.items(), key=lambda kv: -len(said.get(kv[0], [])))[:PEERS_READ])
-        dynamics, unread = read_dynamics(uids)
-        title = room_title(ctx.clip_dir)
-        links = linked(dynamics, date, title)
-        for name, items in dynamics.items():
-            if name != HOST and _around(items, date)[0]:
-                named.setdefault(name, said.get(name, []))
-        posted = {name: _around(dynamics.get(name, []), date)[0] for name in named}
-        host_posted = _around(dynamics.get(HOST, []), date)[0]
-        seen = {"room_title": title, "host": host_posted, "accounts": {n: v for n, v in posted.items() if v}, "linked": links, "unread": unread}
-        record: dict[str, Any] = {"date": date, "candidates": {}, "dynamics": seen, "guests": []}
-        if named:
-            from .step_io import _render
+VOICE, SUBTITLES, PEERS = "voice", "subtitles", "peers"       # the routes read from the lane's own products
+CHAT = "chat"                                                  # the judge's answer on the chat and the dynamics
+VOICE_PREDS = "speaker/chunks-pred.json"       # the frozen classifier's probabilities of every class for each chunk
+VOICE_UNITS = "speaker/chunks-units.json"      # where each chunk lies in the clip
+PEER_VIDEOS = "dedup/result.json"              # step 0: other uploaders' clips of the session
+_BRACKET = re.compile(r"【([^【】]*)】")
 
-            prompt = _render("collab_guests.md", room_title=title or "（没读到）",
-                             host_dynamics="\n".join(f"- {t}" for t in host_posted) or "（没有）",
-                             candidates="\n\n".join(_candidate_block(name, lines, posted[name], links.get(name))
-                                                    for name, lines in named.items()))
-            answer = ask("collab-guests", prompt)
-            if answer is None:
-                raise GuestsUnknown("CPA did not answer who is in the call (collab-guests)")
-            record = {"date": date, "candidates": {n: len(v) for n, v in named.items()}, "dynamics": seen,
-                      "answer": answer, "guests": kept(answer, named, posted, links)}
-        cache.write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
-        return record
+
+def _confident(clip_dir: Path, min_prob: float) -> tuple[list[str], list[tuple[str, str]]]:
+    """(the classifier's guest classes, [(chunk id, the guest class it holds with at least `min_prob`)]) of the clip's
+    chunk run; ([], []) for a clip without one (no voiceprint workspace, a revision)."""
+    path = clip_dir / VOICE_PREDS
+    if not path.exists():
+        return [], []
+    classes: dict[str, None] = {}
+    held = []
+    for row in json.loads(path.read_text(encoding="utf-8"))["predictions"]:
+        if not row.get("ok"):
+            continue
+        probs = {str(k): float(v) for k, v in row["probs"].items()}
+        classes.update(dict.fromkeys(k for k in probs if k != HOST))
+        top = max(probs, key=probs.__getitem__)
+        if top != HOST and probs[top] >= min_prob:
+            held.append((str(row["id"]), top))
+    return list(classes), held
+
+
+def voice_heard(clip_dir: Path, min_prob: float) -> dict[str, int]:
+    """{each guest class of the classifier: the clip's chunks that are hers with at least `min_prob`}.  The classes are
+    a closed set: a voice that is none of them (a guest it was not trained on, a watched video, the host singing) falls
+    into one of them too, so this never names a person alone (`decide`)."""
+    classes, held = _confident(clip_dir, min_prob)
+    return {name: sum(1 for _id, top in held if top == name) for name in classes}
+
+
+def path_voices(clip_dir: Path, min_prob: float) -> list[dict[str, int]]:
+    """Per sound path of the guests in the clip's arrival evidence (arrival.py: a lag group that is not the host's),
+    {guest class: the confident chunks lying on it}; [] without the evidence.  A chunk lies on the path whose
+    stretches hold arrival.LINE_MIN_SHARE of the time any stretch covers of it."""
+    from . import arrival
+
+    evidence = arrival.load(clip_dir)
+    classes, held = _confident(clip_dir, min_prob)
+    if evidence is None or not held:
+        return []
+    spans = {str(u["id"]): (int(u["s"]), int(u["e"]))
+             for u in json.loads((clip_dir / VOICE_UNITS).read_text(encoding="utf-8"))["units"]}
+    paths = [label for label, named in evidence["named"].items() if named["speaker"] == GUEST_LABEL]
+    out = {label: dict.fromkeys(classes, 0) for label in paths}
+    for chunk, top in held:
+        a, b = spans[chunk]
+        on: dict[str, int] = {}
+        for seg in evidence["segments"]:
+            ov = min(b, int(seg["end_ms"])) - max(a, int(seg["start_ms"]))
+            if ov > 0:
+                on[str(seg.get("speaker"))] = on.get(str(seg.get("speaker")), 0) + ov
+        if on and (label := max(on, key=on.__getitem__)) in out and on[label] >= arrival.LINE_MIN_SHARE * sum(on.values()):
+            out[label][top] += 1
+    return [out[label] for label in paths]
+
+
+def answered(track: Sequence[Mapping[str, Any]], known: Mapping[str, Sequence[str]], within: int) -> dict[str, int]:
+    """{person: the host's lines that name her and have a guest's line among the `within` lines after}.  A name the
+    host says while a guest answers is someone in the talk or someone talked about: one route, never enough alone."""
+    from .subtitle_track import plain_text
+
+    writes = _detector()
+    out: dict[str, int] = {}
+    for i, cue in enumerate(track):
+        if cue.get("speaker") != HOST or not any(c.get("speaker") == GUEST_LABEL for c in track[i + 1:i + 1 + within]):
+            continue
+        text = plain_text(str(cue["text"]))
+        for name, spellings in known.items():
+            if writes(text, spellings):
+                out[name] = out.get(name, 0) + 1
+    return out
+
+
+def peer_titles(clip_dir: Path, known: Mapping[str, Sequence[str]]) -> dict[str, dict[str, Any]]:
+    """{bvid: {"title", "names"}} for the other uploaders' videos step 0 confirmed as this session's
+    (external_duplicate_check.same_session: the title or description carries the day) whose title has a 【】 that
+    names the host and, in the same 【】, known people: a clipper's own list of who is in the clip (11-24
+    「玩的有点大的女大组三人【礼墨&安晚&李豆沙】」; a name outside the 【】 is only talked about, 11-23 「【礼墨×李豆沙×安晚】
+    今晚联动怎么有南町nightin啊」)."""
+    path = clip_dir / PEER_VIDEOS
+    if not path.exists():
+        return {}
+    writes, host = _detector(), sorted(_host_spellings())
+    out: dict[str, dict[str, Any]] = {}
+    for video in json.loads(path.read_text(encoding="utf-8")).get("videos") or []:
+        title = str(video.get("title") or "")
+        names = sorted({name for part in _BRACKET.findall(title) if writes(part, host)
+                        for name, spellings in known.items() if writes(part, spellings)})
+        if video.get("same_session_confirmed") and names:
+            out[str(video["bvid"])] = {"title": title, "names": names}
+    return out
+
+
+def _watched_video(clip_dir: Path) -> bool:
+    """Step 4 took the other voices of this clip for a video the host is watching (step4_speaker.OTHER_VOICES_MODE)."""
+    from .step4_speaker import OTHER_VOICES_MODE
+
+    path = clip_dir / "speaker/decision.json"
+    return path.exists() and json.loads(path.read_text(encoding="utf-8")).get("mode") == OTHER_VOICES_MODE
+
+
+def clip_evidence(ctx: Ctx, known: Mapping[str, Sequence[str]]) -> dict[str, Any]:
+    """What this clip adds to the day's record: see the three routes above, and the guests' sound paths.  Where the
+    other voices are a watched video's, they are nobody in the call (a streamer's own video played back is her voice
+    and her name): such a clip adds other uploaders' titles only."""
+    from .subtitle_track import read_track
+
+    cfg = rules("collab_guests")
+    min_prob = float(cfg["voice_min_prob"])
+    if _watched_video(ctx.clip_dir):
+        return {VOICE: dict.fromkeys(voice_heard(ctx.clip_dir, min_prob), 0), SUBTITLES: {},
+                PEERS: peer_titles(ctx.clip_dir, known), "paths": []}
+    return {VOICE: voice_heard(ctx.clip_dir, min_prob),
+            SUBTITLES: answered(read_track(ctx.clip_dir), known, int(cfg["answer_within"])),
+            PEERS: peer_titles(ctx.clip_dir, known),
+            "paths": path_voices(ctx.clip_dir, min_prob)}
+
+
+def decide(clips: Mapping[str, Mapping[str, Any]], chat: Sequence[str],
+           guests: Sequence[str]) -> tuple[dict[str, dict[str, Any]], list[str], list[list[str]]]:
+    """From the clips' evidence (`clip_evidence` by clip id), the judge's guests `chat` and the day's guests so far:
+    ({person: what each route holds of her}, the day's guests, the sound paths two of them share).
+
+    A route names a person when (lane_rules collab_guests): voice - `voice_min_clips` clips each hold `voice_min_chunks`
+    confident chunks of her class; subtitles - the host named her and a guest answered `answered_min` times over
+    `answered_min_clips` clips; peers - `peer_min_videos` videos.  The judge's guests stay; a person `routes_needed` of
+    these routes name is added; nobody is taken off.  The voice counts only on a day where everyone the other routes
+    and the judge name is a class of the classifier (its classes are a closed set: with a guest it does not know in
+    the call, her voice is counted as one of them).
+    Two guests share a path when, in `shared_path_min_clips` clips, one guests' path holds both: the lesser of the two
+    with `shared_path_min_chunks` confident chunks and `shared_path_min_share` of the path's."""
+    cfg = rules("collab_guests")
+    seen: dict[str, dict[str, Any]] = {}
+
+    def row(name: str) -> dict[str, Any]:
+        return seen.setdefault(name, {CHAT: name in chat, VOICE: 0, SUBTITLES: [0, 0], PEERS: [], "routes": []})
+
+    classes = {name for ev in clips.values() for name in ev[VOICE]}
+    for ev in clips.values():
+        for name, n in ev[VOICE].items():
+            row(name)[VOICE] += n >= int(cfg["voice_min_chunks"])
+        for name, n in ev[SUBTITLES].items():
+            row(name)[SUBTITLES] = [row(name)[SUBTITLES][0] + n, row(name)[SUBTITLES][1] + 1]
+        for bvid, video in ev[PEERS].items():
+            for name in video["names"]:
+                row(name)[PEERS] = sorted({*row(name)[PEERS], bvid})
+    for name in [*guests, *chat]:      # everyone on the list has a row, also one whose evidence has gone since (a clip
+        row(name)                      # that held it trimmed or redone): the list only grows, and its people are read by name
+    need = int(cfg["routes_needed"])
+
+    def named(*, voice: bool) -> list[str]:
+        for got in seen.values():
+            got["routes"] = [route for route, rings in (
+                (VOICE, voice and got[VOICE] >= int(cfg["voice_min_clips"])),
+                (SUBTITLES, got[SUBTITLES][0] >= int(cfg["answered_min"]) and got[SUBTITLES][1] >= int(cfg["answered_min_clips"])),
+                (PEERS, len(got[PEERS]) >= int(cfg["peer_min_videos"]))) if rings]
+        kept = list(guests) + [n for n in chat if n not in guests]
+        return kept + sorted(n for n, got in seen.items() if n not in kept and len(got["routes"]) >= need)
+
+    out = named(voice=False)
+    if set(out) <= classes:       # everyone named without the voice is a class of the classifier: its classes count
+        out = named(voice=True)
+    together: dict[tuple[str, str], int] = {}
+    for ev in clips.values():
+        pairs = set()
+        for path in ev["paths"]:
+            on = sorted(((n, name) for name, n in path.items() if name in out), reverse=True)[:2]
+            if (len(on) == 2 and on[1][0] >= int(cfg["shared_path_min_chunks"])
+                    and on[1][0] >= float(cfg["shared_path_min_share"]) * sum(path.values())):
+                pairs.add(tuple(sorted((on[0][1], on[1][1]), key=out.index)))
+        for pair in pairs:
+            together[cast("tuple[str, str]", pair)] = together.get(cast("tuple[str, str]", pair), 0) + 1
+    shared = [list(pair) for pair, n in sorted(together.items()) if n >= int(cfg["shared_path_min_clips"])]
+    return {n: got for n, got in seen.items() if got[CHAT] or got["routes"] or n in out}, out, shared
+
+
+# ----- the day's record ---------------------------------------------------------------------------------------------
+
+def _chat_record(ctx: Ctx, date: str, known: dict[str, list[str]], ask: Callable[[str, str], dict[str, Any] | None]) -> dict[str, Any]:
+    """The judge's part of the day's record, asked once: the people the chat names often enough or who posted around
+    the day, their lines and posts, one CPA call, and the guests whose quotes stand (`kept`)."""
+    chat = session_chat(ctx.clip_dir)
+    said = mentions(chat, known)
+    named = {name: lines for name, lines in said.items() if len(lines) >= MIN_LINES}
+    uids = accounts()
+    uids = dict(sorted(uids.items(), key=lambda kv: -len(said.get(kv[0], [])))[:PEERS_READ])
+    dynamics, unread = read_dynamics(uids)
+    title = room_title(ctx.clip_dir)
+    links = linked(dynamics, date, title)
+    for name, items in dynamics.items():
+        if name != HOST and _around(items, date)[0]:
+            named.setdefault(name, said.get(name, []))
+    posted = {name: _around(dynamics.get(name, []), date)[0] for name in named}
+    host_posted = _around(dynamics.get(HOST, []), date)[0]
+    seen = {"room_title": title, "host": host_posted, "accounts": {n: v for n, v in posted.items() if v}, "linked": links, "unread": unread}
+    if not named:
+        return {"date": date, "candidates": {}, "dynamics": seen, "chat_guests": []}
+    from .step_io import _render
+
+    prompt = _render("collab_guests.md", room_title=title or "（没读到）",
+                     host_dynamics="\n".join(f"- {t}" for t in host_posted) or "（没有）",
+                     candidates="\n\n".join(_candidate_block(name, lines, posted[name], links.get(name))
+                                            for name, lines in named.items()))
+    answer = ask("collab-guests", prompt)
+    if answer is None:
+        raise GuestsUnknown("CPA did not answer who is in the call (collab-guests)")
+    return {"date": date, "candidates": {n: len(v) for n, v in named.items()}, "dynamics": seen,
+            "answer": answer, "chat_guests": kept(answer, named, posted, links)}
 
 
 def _candidate_block(name: str, lines: Sequence[str], posted: Sequence[str], words: Sequence[str] | None) -> str:
@@ -296,19 +515,148 @@ def _candidate_block(name: str, lines: Sequence[str], posted: Sequence[str], wor
     return f"{head}\n{chat}{own}{shared}"
 
 
-def name_guests(ctx: Ctx, ask: Callable[[str, str], dict[str, Any] | None]) -> list[str]:
-    """Fill the clip's session participants with the day's guests when `needed`; returns the names added.  `ask`
-    sends the prompt and returns the parsed answer, None when the call failed (GuestsUnknown).  The day's answer is
-    asked once and kept in the task directory (_day_record)."""
-    if not needed(ctx):
+def _task(ctx: Ctx) -> Path:
+    return ctx.clip_dir.parent.parent
+
+
+def _published_without(task: Path, date: str, names: Sequence[str]) -> list[str]:
+    """The day's clips that went online named from the day's record while it lacked one of `names` (their titles are
+    the owner's to change, not the lane's)."""
+    out = []
+    for path in sorted((task / "state").glob("*.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        session = data.get("session") or {}
+        if (session.get("recording_date") == date and session.get("guest_evidence") is not None
+                and data["clip"].get("status") != "SUPERSEDED"
+                and (data.get("steps") or {}).get("upload", {}).get("status") == "DONE"
+                and any(n not in [g[0] for g in session.get("participants") or [] if g] for n in names)):
+            out.append(str(data["clip"]["cid"]))
+    return out
+
+
+@contextmanager
+def _day_lock(cache: Path) -> Iterator[None]:
+    """The day's lock: held by whoever reads or rewrites the day's record."""
+    import fcntl
+
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    with open(cache.with_suffix(".lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
+def _day_record(ctx: Ctx, cache: Path, date: str, ask: Callable[[str, str], dict[str, Any] | None]) -> dict[str, Any]:
+    """The day's record after this clip: read from the task directory (the judge asked first when there is none),
+    this clip's evidence put in place of what it gave before, and the guests decided again.  All of it while holding
+    the day's lock, so the clips of one day that arrive together wait for the first instead of sending the same
+    prompt side by side, and none loses another's evidence."""
+    from .state import utc_now
+    from .step_io import _write_atomic, superseded
+
+    with _day_lock(cache):
+        known = streamers(ctx)
+        record = (cast(dict[str, Any], json.loads(cache.read_text(encoding="utf-8"))) if cache.exists()
+                  else _chat_record(ctx, date, known, ask))
+        before = [str(g) for g in record.get("guests") or []]
+        record.setdefault("chat_guests", before)        # a record kept before the routes: its guests were the judge's
+        cid = str(ctx.state.data["clip"]["cid"])
+        record.setdefault("clips", {})[cid] = clip_evidence(ctx, known)
+        live = {c: ev for c, ev in record["clips"].items() if not superseded(_task(ctx), c)}
+        record["routes"], record["guests"], record["shared_path"] = decide(live, record["chat_guests"], before)
+        added = [g for g in record["guests"] if g not in before]
+        if added and cache.exists():      # the list grew after it was first kept: who was named without them
+            record.setdefault("added", []).append({
+                "at": utc_now(), "clip": cid, "guests": added, "by": {g: record["routes"][g]["routes"] for g in added},
+                "judge_said_not": [g for g in added if g in ((record.get("answer") or {}).get("not_in_call") or [])],
+                "published_without": _published_without(_task(ctx), date, added)})
+        _write_atomic(cache, json.dumps(record, ensure_ascii=False, indent=1))
+        return record
+
+
+def _apply(ctx: Ctx, record: Mapping[str, Any], name: str) -> list[str]:
+    """Write the day's guests the clip's session lacks, and the day's shared sound paths, into the session; returns
+    the guests added."""
+    from .config import participant_names
+
+    session = cast(dict[str, Any], ctx.session)
+    guests = [str(g) for g in record.get("guests") or []]
+    missing = [g for g in guests if g not in participant_names(ctx.session)]
+    shared = [list(p) for p in record.get("shared_path") or []]
+    routes = record.get("routes")       # absent in a record kept before the routes: its guests were the judge's
+    evidence = {"source": "collab_guests", "record": name, "guests": guests,
+                "by": {g: [CHAT] if routes is None else [*([CHAT] if routes[g][CHAT] else []), *routes[g]["routes"]]
+                       for g in guests}}
+    if not missing and session.get("guest_evidence") == evidence and (session.get("shared_path") or []) == shared:
+        return []
+    session["participants"] = [*(session.get("participants") or []), *([g] for g in missing)]
+    session["guest_evidence"] = evidence
+    if shared or "shared_path" in session:
+        session["shared_path"] = shared
+    ctx.state.save()
+    return missing
+
+
+def name_guests(ctx: Ctx, ask: Callable[[str, str], dict[str, Any] | None], *, heard: bool | None = None) -> list[str]:
+    """When `needed`: put this clip's evidence into the day's record, and the day's guests the clip's session lacks
+    into the session; returns the names added.  `ask` sends the judge's prompt and returns the parsed answer, None
+    when the call failed (GuestsUnknown); it is asked once a day (_day_record)."""
+    if not needed(ctx, heard=heard):
         return []
     date = str(ctx.session.get("recording_date") or "")
-    cache = ctx.clip_dir.parent.parent / CACHE.format(date=date)
-    record = _day_record(ctx, cache, date, ask)
-    guests = [str(g) for g in record.get("guests") or []]
-    if guests:
-        session = cast(dict[str, Any], ctx.session)
-        session["participants"] = [*(session.get("participants") or []), *([g] for g in guests)]
-        session["guest_evidence"] = {"source": "session_chat+dynamics", "record": str(cache.name), "guests": guests}
-        ctx.state.save()
-    return guests
+    cache = _task(ctx) / CACHE.format(date=date)
+    return _apply(ctx, _day_record(ctx, cache, date, ask), cache.name)
+
+
+def process_line(ctx: Ctx, added: Sequence[str]) -> str:
+    """The PROCESS line of a clip whose session took guests from the day's record: who, by which routes, and what the
+    record says of people sharing a sound path."""
+    evidence = ctx.session.get("guest_evidence") or {}
+    said = {CHAT: "整场弹幕与动态的判断", VOICE: "声纹分类", SUBTITLES: "字幕里主播点名后嘉宾接话", PEERS: "同场他人切片标题"}
+    # a guest none of whose routes stands now was named earlier, by clips trimmed or redone since: the list only grows
+    who = "、".join(f"{g}（{'＋'.join(said[r] for r in evidence['by'][g]) or '当天名单早先认定，现有片的证据已不够'}）" for g in added)
+    line = f"本场连线：本片场次写进 {who}；当天名单 {'、'.join(evidence['guests'])}（{evidence['record']}）"
+    shared = cast("dict[str, Any]", ctx.session).get("shared_path") or []
+    return line + "".join(f"；{'、'.join(p)} 共用一路声音" for p in shared)
+
+
+def lacking(ctx: Ctx) -> list[str]:
+    """The day's guests the session of a clip named from the day's record lacks, as the record stands; [] for a clip
+    that never asked the record, one whose people were written by hand, and a day without a record.  Nothing is read
+    from the clip's products and nothing is written."""
+    from .config import participant_names
+
+    cache = _task(ctx) / CACHE.format(date=str(ctx.session.get("recording_date") or ""))
+    if ctx.session.get("guest_evidence") is None or not cache.exists():
+        return []
+    with _day_lock(cache):
+        record = json.loads(cache.read_text(encoding="utf-8"))
+    named = participant_names(ctx.session)
+    return [str(g) for g in record.get("guests") or [] if g not in named]
+
+
+def behind(ctx: Ctx) -> list[str]:
+    """For a clip whose session was named from the day's record (its steps may all be done by now): put what its
+    products show today into the record, and return the day's guests its session lacks (`lacking`).  Nobody is asked.
+    This is how a day made before a guest was recognised catches up: each clip run on again adds its evidence, and the
+    clips named from the shorter list are then redone (cli._refresh_guests); an unattended round looks at the reviewed
+    clips that are not online too (auto_run.pending `lagging`), so a day whose clips all wait for the upload catches up."""
+    date = str(ctx.session.get("recording_date") or "")
+    cache = _task(ctx) / CACHE.format(date=date)
+    if ctx.session.get("guest_evidence") is None or not cache.exists():
+        return []
+
+    def not_asked(_call_id: str, _prompt: str) -> dict[str, Any] | None:
+        raise AssertionError("the day's record exists: the judge is not asked again")
+    if (ctx.clip_dir / "subs/final.srt").exists():
+        _day_record(ctx, cache, date, not_asked)
+    # else its subtitles are being made again (redo from an earlier step): it has nothing to add until they are
+    return lacking(ctx)
+
+
+def catch_up(ctx: Ctx) -> list[str]:
+    """Write the day's guests into the session of a clip that is `behind`; returns the guests added.  Nobody is asked
+    and no evidence is added: the clip adds its own when its steps run again."""
+    cache = _task(ctx) / CACHE.format(date=str(ctx.session.get("recording_date") or ""))
+    with _day_lock(cache):
+        record = json.loads(cache.read_text(encoding="utf-8"))
+    return _apply(ctx, record, cache.name)

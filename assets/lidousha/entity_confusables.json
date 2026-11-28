@@ -563,6 +563,77 @@
         }
       ],
       "reason": "星汐（星汐Seki，PSPLive 同团，roster 已收录）自称/他称误听拯救（公开规则立项）：2026-07-24/25 bcut 实测 新C=星汐——xīng-xī 被拆成「新」+拉丁「C」，联动/彩排/同团语境按本句发音复核为 星汐；真「新C位」等游戏语境 UNCERTAIN 保留。词条只证明实体存在，禁止盲替。"
+    },
+    {
+      "entities": [
+        {
+          "canonical": "东爱璃",
+          "surfaces": [
+            "段离",
+            "东爱离",
+            "段里",
+            "多里",
+            "端粒"
+          ]
+        }
+      ],
+      "reason": "人名位候选，逐处由声音和语境定，不全局替换。2026-10-23 片定稿「我说我不要跟东爱璃再续前缘了」，同一段各家识别写成段离/东爱离（assets/lidousha/reaction_publications/20261023-nanaliya/final_audio_gate/final-r5/01-kiss/final-audio-gate/01-kiss.subtitle-audio-witness.srt（段离）及 final-r6 对应文件（东爱离））；2026-11-24 片 semantictalk_980180_1227730_11242159 各家识别写段里/多里/端粒，主会话据此定为东爱璃。"
+    },
+    {
+      "entities": [
+        {
+          "canonical": "萱师傅",
+          "surfaces": [
+            "轩叔",
+            "薛叔",
+            "玄素",
+            "谢师傅"
+          ],
+          "readings": [
+            "xuan shi fu"
+          ]
+        }
+      ],
+      "reason": "萱师傅是萱萱卡娅（Kaya）的昵称。本人公开自我介绍 https://www.bilibili.com/opus/996270943414255636 原文「您可以叫我 魔王大人 也可以叫我萱萱 萱师傅 或者...卡娅」；2026-11-24 片 semantictalk_980180_1227730_11242159 各家识别写轩叔/薛叔/玄素/谢师傅，主会话据此定为萱师傅。只作候选，逐处由声音和语境定。"
+    },
+    {
+      "entities": [
+        {
+          "canonical": "三剪一",
+          "surfaces": [
+            "三减一",
+            "3-1"
+          ],
+          "readings": [
+            "san jian yi"
+          ]
+        }
+      ],
+      "reason": "圈内词候选，逐处由声音和语境定。2026-11-24 频道的要求；2026-11-24 片 semantictalk_318080_550480_11242230_trim 第 71 句「有的都是，那都是三剪一。」上一句「我没有那种很猪的切片」。"
+    },
+    {
+      "audio_verify_all_surfaces": false,
+      "positions": [
+        "transcript_only"
+      ],
+      "uncertain_keep_canonicals": [
+        "奈叶香"
+      ],
+      "uncertain_keep_surfaces": [],
+      "entities": [
+        {
+          "canonical": "奈叶香",
+          "surfaces": [
+            "内香",
+            "奈香"
+          ],
+          "readings": [
+            "nai ye xiang",
+            "naiyexiang"
+          ]
+        }
+      ],
+      "reason": "《魔法少女的魔女审判》角色黑部奈叶香的常用简称「奈叶香」（公开规则确认）。ASR 易将「奈叶香」听成近音面「内香」「奈香」，仅作语境候选，须结合本句发音或画面核实；普通词「内向」不入此表。"
     }
   ]
 }

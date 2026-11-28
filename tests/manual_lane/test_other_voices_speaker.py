@@ -35,8 +35,9 @@ class Cpa:
 
     def ask(self, *, call_id, prompt_text, model, effort, remote_dir):
         self.asked.append({"call_id": call_id, "prompt": prompt_text, "effort": effort})
+        answer = {"anchors": []} if call_id == "guest-identity" else self.answers    # step 4 names the guests: no citation
         return {"call_id": call_id, "model": model, "effort": effort, "rc": self.rc, "elapsed_s": 0.1,
-                "response_text": json.dumps(self.answers, ensure_ascii=False) if self.rc == 0 else "",
+                "response_text": json.dumps(answer, ensure_ascii=False) if self.rc == 0 else "",
                 "stderr_tail": "boom" if self.rc else ""}
 
 
@@ -397,6 +398,33 @@ def test_a_clip_whose_voiceprint_hears_guests_separates_them_although_the_sessio
     assert _labels(ctx) == [H, G, H, G]
     decision = json.loads((ctx.clip_dir / "speaker/decision.json").read_text(encoding="utf-8"))
     assert decision["mode"] == "guests_heard_v8" and decision["heard"]["share"] == 0.728
+
+
+def test_the_guests_the_day_already_knows_are_named_before_the_speakers_are_told_apart(tmp_path):
+    # 11-24: the guests were named at step 6, after step 4 had told the host from "the others" as two people (host
+    # threshold 0.5 for a trio, no arrival evidence looked for); the day's record is read here first
+    from src.autoslice.manual_lane import collab_guests
+
+    ctx, _, cpa = _ctx(tmp_path, playing=False, host_probs=(0.95, 0.05, 0.75, 0.05))
+    _heard(ctx, 0.728, 22)
+    cache = tmp_path / collab_guests.CACHE.format(date=ctx.session["recording_date"])
+    cache.parent.mkdir(parents=True)
+    cache.write_text(json.dumps({"date": "d", "guests": ["礼墨Sumi", "安晚awa"]}, ensure_ascii=False), encoding="utf-8")
+    out = si.step4_speaker(ctx)
+    assert out.ok, out.reason
+    assert [g[0] for g in ctx.session["participants"]] == ["李豆沙", "礼墨Sumi", "安晚awa"]
+    decision = json.loads((ctx.clip_dir / "speaker/decision.json").read_text(encoding="utf-8"))
+    assert decision["mode"].startswith("linked_v8") and "(3 people" in decision["rule"] and "p>=0.8" in decision["rule"]
+    assert _labels(ctx) == [H, G, G, G]                 # 0.75: the host's for two people, not for a trio the classifier knows
+    assert any("本场连线：本片场次写进 礼墨Sumi（整场弹幕与动态的判断）、安晚awa（整场弹幕与动态的判断）" in line for line in out.process)
+    assert not [a for a in cpa.asked if a["call_id"] == "collab-guests"]      # the day was asked before: not again
+
+
+def test_a_day_that_names_nobody_keeps_the_host_and_the_others_and_remembers_it_asked(tmp_path):
+    ctx, _, _ = _ctx(tmp_path, playing=False, host_probs=(0.95, 0.05, 0.75, 0.05))
+    _heard(ctx, 0.728, 22)
+    assert si.step4_speaker(ctx).ok and _labels(ctx) == [H, G, H, G]
+    assert ctx.session["guest_evidence"]["guests"] == [] and [g[0] for g in ctx.session["participants"]] == ["李豆沙"]
 
 
 def test_a_clip_with_a_few_chunks_unlike_the_host_stays_uniform_host(tmp_path):

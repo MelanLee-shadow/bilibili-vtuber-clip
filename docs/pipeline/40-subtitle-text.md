@@ -7,13 +7,17 @@
 本文件是字幕文本步骤的**分步权威**。入口：`src/autoslice/producer_text_pipeline.py::run_text_pipeline`
 （生产唯一调用方 `scripts/produce_slice_package.py`）。
 
+## 手动字幕的定稿时间
+
+单人代理按词区间或原识别句区间给字幕计时；并句也须带上被并入的话的时间。对字母数字每秒超过 12 个的异常句，定稿优先核对同一句的逐词和独立识别时间；时间延伸只依据匹配证据，不能超邻句或改文字。没有足够证据且前后紧邻至少 1 秒无字幕空档时退回代理核查。无此空档及 owner 锁定句只记 FLAG；发布字幕由 `subtitle_validation` 按相同条件检查，读速阈值不用于计算时间。
+
 ## 当前默认与说话人样式
 
 谈话交付默认 `speaker_mode=uniform_host`：所有字幕使用同一主播样式（Sapphire72 白字蓝描边），
 不因旧 speaker manifest、声纹猜测或历史 GUEST 标签重新染成两色。单色是呈现策略，不是
 “音频中每个人都已被声纹证实为李豆沙”的事实声明；不能据此虚构说话人归属。
 
-公开规则在 2026-09-06 00:41 UTC 再次明确“现在全都是默认 Uniform Host”。因此，本文末尾
+频道后来再次明确：日常一律默认 Uniform Host（全片只有主播一人）。因此，本文末尾
 2026-08-07 的 `required/default GUEST` **已不再是日常默认**；其余声纹、混说和人工标注
 合同仅在后来明确点名的说话人分析/重放任务中适用。普通快车道同样遵循此默认。
 
@@ -797,8 +801,8 @@ FLAGGED/失效 receipt。最终 materialize 后仍必须重算 exact-final SRT�
   绑定：所有当前 source pieces 必须来自同一源 segment，且 hash-bound
   `speaker-session-context.v1` 的 orientation 为 `portrait` 才可激活；横屏、unknown、
   读探针失败、跨 segment pieces 和显式人工 speaker override 全部保持现行路径。裁定出处
- （公开规则竖屏定律）：「竖屏直播 ⇒ 99% 单人直播。从录制分辨率纵横比直接判
-  session/场级 solo 先验(比任何音频分析都便宜),再叠 roster/语境佐证」。
+ （竖屏定律）：竖屏直播几乎都是单人直播；先由录制分辨率的纵横比判出
+  session/场级 solo 先验（比任何音频分析都便宜），再叠 roster 与语境佐证。
 - 注入点位于 provider mixed/overlap gate 与现有 CAM++ 分析之后、speaker label
   materialize 之前；只在身份不可判或仍含 unresolved cue 时把全部 cue 归 HOST，并在
   READY manifest 写 `solo_prior=portrait` 与可复算 receipt。模型/资产/IO 漂移等一般故障

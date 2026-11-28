@@ -152,18 +152,18 @@ def _visual_constants():
     return audit
 
 
-def srt_shape_problems(path: Path) -> list[str]:
+def srt_shape_problems(path: Path, *, owner_cue_numbers: set[int] | None = None,
+                       media_duration_ms: int | None = None) -> list[str]:
     """Release validation plus the line/length/static-cue contract of the audit."""
     from src.autoslice.subtitle_validation import validate_srt_file
 
     audit = _visual_constants()
     problems: list[str] = []
-    verdict = validate_srt_file(path)
+    verdict = validate_srt_file(path, owner_cue_numbers=owner_cue_numbers, media_duration_ms=media_duration_ms)
     if verdict.get("status") != "PASS":
-        problems.extend(
-            str(err.get("code") or "SRT_RELEASE_VALIDATION_FAILED")
-            for err in verdict.get("errors") or [] if isinstance(err, dict)
-        ) or problems.append("SRT_RELEASE_VALIDATION_FAILED")
+        codes = [str(err.get("code") or "SRT_RELEASE_VALIDATION_FAILED")
+                 for err in verdict.get("errors") or [] if isinstance(err, dict)]
+        problems.extend(codes or ["SRT_RELEASE_VALIDATION_FAILED"])   # the general code only when no error names one
     for cue in audit._parse_srt(path):
         lines = [line.strip() for line in cue["lines"] if line.strip()]
         if len(lines) > DEFAULT_MAX_VISUAL_LINES:
@@ -176,9 +176,16 @@ def srt_shape_problems(path: Path) -> list[str]:
 
 
 def a2_srt(ctx: Context) -> dict[str, Any]:
-    problems = srt_shape_problems(ctx.files["srt"])
+    from src.autoslice.subtitle_validation import validate_srt_file
+
+    owned = set(ctx.member.get("owner_cue_numbers", []))
+    duration = ctx.member.get("subtitle_duration_ms")
+    problems = srt_shape_problems(ctx.files["srt"], owner_cue_numbers=owned, media_duration_ms=duration)
+    verdict = validate_srt_file(ctx.files["srt"], owner_cue_numbers=owned, media_duration_ms=duration)
+    flags = verdict["warnings"]
     cues = srt_cues(ctx.text("srt"))
-    return row("A2", FAIL if problems else PASS, problems, cue_count=len(cues))
+    return row("A2", FAIL if problems else FLAG if flags else PASS,
+               problems + [w["code"] for w in flags], cue_count=len(cues), read_speed_flags=flags)
 
 
 # --------------------------------------------------------------------- A3
@@ -708,9 +715,11 @@ def build_speaker_nominations(ctx: Context) -> list[dict[str, Any]]:
             first_host = index
     if first_host is not None:
         reasons_by_cue[first_host].append("SAMPLE_HOST")
+    names = ctx.member.get("speaker_names") or {}     # the maker's names of the speakers by cue (a linked clip)
     return [
         {"ref": f"cue:{index}", "cue_index": index, "reasons": sorted(set(reasons)),
-         "label": next(r["label"] for r in rows if r["cue_index"] == index)}
+         "label": next(r["label"] for r in rows if r["cue_index"] == index),
+         **({"person": names[str(index)]} if str(index) in names else {})}
         for index, reasons in sorted(reasons_by_cue.items()) if reasons
     ]
 

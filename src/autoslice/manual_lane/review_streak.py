@@ -1,7 +1,6 @@
 """How many broadcasts in a row went online with nothing to change: what earns unattended upload (owner, U452).
 
-Owner's words: 「仍然需要你看过后才能上传，不过我需要知道最近你看过后遇到了哪些问题，是否严重，我想的一个事是，如果10次直播你都
-看过后没有任何要改的，就可以撤掉你了直接自动上传。如果还有错其实说明自动切片仍然需要改进」.
+the channel's request.
 
 - The account is the channel's `review_findings.jsonl` (one row per change a clip needed after the lane had passed it):
   changed before upload by whoever looked at it, or after it was public by anyone who found it.  A row also says why the

@@ -2,9 +2,11 @@
 """Score candidate covers for one clip and pick the route. Renders every candidate with render_cover.py, measures what can be
 measured, combines it with the judge's notes from the scorecard, and writes a comparison sheet.
 
-usage: choose_cover.py SCORECARD.json [--font PATH] [--styles PATH] --out-dir DIR
+usage: choose_cover.py SCORECARD.json [--font PATH] [--styles PATH] [--layouts PATH] --out-dir DIR
        choose_cover.py SCORECARD.json --suggest-emote --emote-library PATH --emote-dir DIR --out-dir DIR
   --styles: lidousha/cover_style_rotation.json (or env LIDOUSHA_COVER_STYLES). Required to render; there is no built-in table.
+  --layouts: <channel>/cover_layout_templates.json (or env LIDOUSHA_COVER_LAYOUTS): the composition templates. Needed by
+  every candidate whose spec has no "layout" (the renderer then picks the template, recent.templates last).
   --suggest-emote: do not render. Pick the official emote whose manifest keywords match the cover lines + quotes, write its
   spec to DIR and print a ready candidate row for the scorecard. "No match" is printed as a reason, never an error.
 
@@ -12,8 +14,14 @@ SCORECARD.json:
 {
   "clip": "8/17 女友感",
   "participants": ["李豆沙", "kmx"],          # everyone the story is about (from step 1); kmx counts when the hook is about them
-  "recent": {"routes": ["screenshot", "emote"], "emotes": ["13_李豆沙_得意.png"]},   # last 5 published covers, oldest first;
+  "guests": ["礼墨Sumi", "由菜Yuna"],          # collaboration only: the session's other streamers who are part of this clip
+                                                # (also in participants); each must be on the cover unless in no_picture
+  "no_picture": {"由菜Yuna": "素材包里没有她的透明底整图"},   # guests no route can show, each with why (she is not in the
+                                                # frame and the person asset pack has no usable picture of her); optional
+  "recent": {"routes": ["screenshot", "emote"], "emotes": ["13_李豆沙_得意.png"],   # last 5 published covers, oldest first;
                                                 # emotes = their MAIN emotes (kmx's 只是熊猫 as a side layer does not count)
+             "templates": ["top-two", "column-left"],      # their composition templates (render.json cover_layout.template_id)
+             "session_templates": ["column-left"]},        # the templates of this stream's covers, oldest first
   "cover_lines": ["女友感", "只是熊猫"],       # --suggest-emote only: the fixed cover lines (same as every candidate's spec)
   "quotes": ["kmx：只是熊猫"],                 # --suggest-emote only: final-subtitle quotes of the participants
   "candidates": [
@@ -36,7 +44,12 @@ Score (higher is better), research-backed parts weighted highest:
   hook    1 x H   judge's hook_fit (0-2)                                                                    (editorial: picture carries the line)
   real    1 x C   C = 2 screenshot / official or fan emote, 1 cut-out by AI, 0 AI-drawn                    (no identity drift, no cost)
   fresh   1 x V   V = 1 if the route differs from the previous cover and the main emote is not among the last 5, else 0
+Repeats (ranked after every candidate that does not repeat, never dropped; the channel's request):
+  the renderer took a template of the recent covers (cover_layout recent_repeat_forced: the others did not fit this
+  picture or were all used lately; one person or several), or the route is the one the last route_run_max covers (the
+  template table) all used.  A repeat that is the only good candidate is still chosen: no picture is generated for it.
 Gates (candidate dropped): fabricated, identity not ok, a layer that is not a clean whole figure, face < 25% of the height,
+       a collaboration guest missing who is not listed in no_picture (a guest the cover could show: 名单没到齐不算合格),
        main emote already used in the last five covers, render refused (text < 120px, text on face or on a keep box, missing glyph ...).
 The chosen candidate is the highest total; a manual override must be written down with its score gap and reason.
 """
@@ -111,6 +124,7 @@ def suggest_emote(card, a):
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('scorecard'); ap.add_argument('--font', default=os.environ.get('LIDOUSHA_COVER_FONT'))
     ap.add_argument('--styles', default=os.environ.get('LIDOUSHA_COVER_STYLES'))
+    ap.add_argument('--layouts', default=os.environ.get('LIDOUSHA_COVER_LAYOUTS'))
     ap.add_argument('--suggest-emote', action='store_true'); ap.add_argument('--emote-library'); ap.add_argument('--emote-dir', default=os.environ.get('LIDOUSHA_EMOTE_DIR'))
     ap.add_argument('--out-dir', required=True); a = ap.parse_args(); os.makedirs(a.out_dir, exist_ok=True)
     rc = load_renderer(); card = json.load(open(a.scorecard, encoding='utf-8')); base = os.path.dirname(os.path.abspath(a.scorecard))
@@ -122,7 +136,16 @@ def main():
         raise SystemExit('need --styles or LIDOUSHA_COVER_STYLES pointing at lidousha/cover_style_rotation.json (no built-in default)')
     # The renderer draws from the installed rotation table; without this call every candidate fails with an empty palette.
     rc.install_table(rc.load_styles(a.styles))
+    if a.layouts: rc.load_layouts(a.layouts)
     parts = card['participants']; recent = card.get('recent', {}); results = []
+    run_max = int(rc.LAYOUTS['route_run_max']) if rc.LAYOUTS else 0
+    last_routes = (recent.get('routes') or [])[-run_max:] if run_max else []
+    route_run = last_routes[0] if run_max and len(last_routes) == run_max and len(set(last_routes)) == 1 else None
+    guests = card.get('guests') or []; no_picture = card.get('no_picture') or {}
+    if set(guests) - set(parts):
+        raise SystemExit(f'guests 里的人不在 participants 里：{sorted(set(guests) - set(parts))}')
+    if set(no_picture) - set(guests):
+        raise SystemExit(f'no_picture 里的人不在 guests 里：{sorted(set(no_picture) - set(guests))}')
     # anti-gaming 1: the cover text is fixed in step 3 BEFORE routes are compared; every candidate must carry the same lines,
     # so the size score only measures how much room the picture leaves, never a reworded / shortened text.
     texts = {json.dumps([ln['text'] for ln in json.load(open(os.path.join(base, c['spec']), encoding='utf-8'))['lines']], ensure_ascii=False)
@@ -140,7 +163,9 @@ def main():
             r.update(status='DROP', why='主表情包近 5 条已用过：' + main_emote); results.append(r); continue
         err = io.StringIO()
         try:
-            with contextlib.redirect_stderr(err): img, rec, _selection = rc.render(spec, a.font)
+            with contextlib.redirect_stderr(err):
+                img, rec, selection = rc.render(spec, a.font, template_history=recent.get('templates') or (),
+                                                session_history=recent.get('session_templates') or ())
         except SystemExit as e:
             r.update(status='DROP', why=f'渲染被拦：{e}'); results.append(r); continue
         path = os.path.join(a.out_dir, f"{spec.get('id', 'c')}.png"); img.save(path)
@@ -150,20 +175,32 @@ def main():
         fh = spec['face'][3] - spec['face'][1]
         if fh < 0.25 * rc.H:
             r.update(status='DROP', why=f'人物太小：脸高 {fh}px，不到画面高度的 25%'); results.append(r); continue
+        lacking = [g for g in guests if g not in present and g not in no_picture]
+        if lacking:
+            r.update(status='DROP', why='拿得到图的人没上封面：' + '、'.join(lacking)); results.append(r); continue
         P = 2 if set(parts) <= present else (1 if '李豆沙' in present else 0)
         T = 2 if punch >= 200 else 1 if punch >= 150 else 0
         H = int(c.get('hook_fit', 1)); C = REAL[c['route']]
         prev = (recent.get('routes') or [None])[-1]
         V = 0 if (c['route'] == prev or set(c.get('emotes', [])) & set(recent.get('emotes', []))) else 1
         score = 3 * P + 2 * T + H + C + V
+        layout = selection.get('cover_layout') or {}
+        unfit = [x['template_id'] for x in layout.get('skipped') or [] if x['reason'].startswith(('does_not_fit', 'punch_below_floor'))]
+        repeat = (f"构图样板 {layout.get('template_id')} 最近几张用过（{'、'.join(unfit) + ' 放不下' if unfit else '适用的样板最近都用过'}）"
+                  if 'recent_repeat_forced' in str(layout.get('fallback') or '') else
+                  f"做法 {c['route']} 最近 {run_max} 张都用了" if c['route'] == route_run else None)
         r.update(status='OK', score=score, P=P, T=T, H=H, C=C, V=V, punch=punch, layout=rec[-1].get('layout'), img=path,
-                 note=c.get('hook_note', ''), missing=sorted(set(parts) - present))
+                 note=c.get('hook_note', ''), missing=sorted(set(parts) - present), template=layout.get('template_id'),
+                 cover_layout=layout, repeat=repeat)
         results.append(r)
-    ok = sorted([r for r in results if r['status'] == 'OK'], key=lambda r: (-r['score'], -r['C']))
+    ok = sorted([r for r in results if r['status'] == 'OK'], key=lambda r: (bool(r['repeat']), -r['score'], -r['C']))
     for r in results:
         if r['status'] == 'OK':
             print(f"{r['score']:2d}  {r['name']:<22} 人物{r['P']}×3 字号{r['T']}×2({r['punch']}px) 贴合{r['H']} 真实{r['C']} 新鲜{r['V']}"
-                  + (f"  缺：{'、'.join(r['missing'])}" if r['missing'] else ''))
+                  + f"  构图 {r['template'] or r['layout']}" + (f"  缺：{'、'.join(r['missing'])}" if r['missing'] else '')
+                  + (f"  重复：{r['repeat']}（排在不重复的后面）" if r['repeat'] else ''))
+            if r['cover_layout'].get('skipped'):
+                print(f"     {rc.LAYOUT.describe(r['cover_layout'])}" if rc.LAYOUT and r['template'] else '')
         else:
             print(f" -  {r['name']:<22} 淘汰：{r['why']}")
     if ok: print('选用：', ok[0]['name'])

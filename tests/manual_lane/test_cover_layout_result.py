@@ -149,7 +149,7 @@ def test_a_head_that_leaves_no_room_records_the_face_it_really_got_and_still_cle
 
 @needs_renderer
 def test_a_screenshot_is_cropped_by_its_measured_face_and_the_text_stays_above_it(tmp_path, tools):
-    crop_mod, renderer = tools["crop"], tools["renderer"]
+    crop_mod = tools["crop"]
     style, ink, need = _ink(tools)
     frame = _material(tmp_path / "f.png", (1920, 1080), (0, 0, 1920, 1080), (1300, 330, 1500, 530), alpha=False)
     plan = crop_mod.plan_crop([1300, 330, 1500, 530], 250, [], COVER, need)
@@ -181,8 +181,9 @@ def test_a_figure_whose_head_is_cut_by_its_source_picture_records_where_the_flat
     assert plan["head_cut"] == "INSIDE_CANVAS" and plan["cut_edge_y"] > 0          # recorded, not hidden
     spec = {"bg": ["#dff0ff", "#ffe3f1"], "stickers": [sticker], "layout": "top", "lines": [{"text": t} for t in LINES],
             "face": box, "keep": []}
-    img, _, _ = _render(tools, spec, ink, style, box[1])
-    seen = _body_top(img, round((box[0] + box[2]) / 2))
+    _render(tools, spec, ink, style, box[1])
+    # Measure the composited figure before words: text can legitimately cover hair at this x-coordinate.
+    seen = _body_top(renderer.background(spec), round((box[0] + box[2]) / 2))
     assert seen is not None and abs(seen - plan["cut_edge_y"]) <= 3                  # the recorded edge is where the picture shows it
     # a figure whose top is its own (the alpha begins below the picture's edge) is not a cut
     whole = _material(tmp_path / "whole.png", (700, 1100), (60, 60, 640, 1040), (200, 330, 500, 640))

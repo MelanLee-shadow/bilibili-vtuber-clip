@@ -1,6 +1,6 @@
 """按录制日期的配额授权面——话题与歌切名额的唯一政策来源。
 
-`PUBLIC_CASE_ID` 事故：公开规则：8.8切片配额到20条，分数在85分以上即可是一条
+`PUBLIC_CASE_ID` 事故：频道的要求是一条
 **按日期**的裁定，却被写进了游戏 lane 的全局常量（`GAME_SESSION_TALK_PICK_CAP`
 10→20、`GAME_SESSION_EXTRA_SLOT_MIN_SCORE` 90→85）。8/8 的 session_game_context
 是 NO_MATCH，游戏 lane 根本不触发——那次改动**没管到 8/8**，却把全库唯一
@@ -105,7 +105,7 @@ def _policy_body(
             raise TalkQuotaAuthorityError(f"{label} song quota cannot have a score gate")
         return cap, gate
     if cap > BASE_TALK_PICK_CAP and gate is None:
-        # 「日常还是5，并没有分数限制」= 普通日没有额外席，不是额外席位门=0。
+        # 普通日仍是 5 条，没有分数门= 普通日没有额外席，不是额外席位门=0。
         raise TalkQuotaAuthorityError(f"{label} grants extra slots without a score gate")
     return cap, gate
 
@@ -113,10 +113,9 @@ def _policy_body(
 def _default_policy_body(payload: Mapping[str, object]) -> tuple[int, float | None]:
     """The document default may only ever be the base seats, never a widening.
 
- A dateless knob that can widen the whole library is the disease this asset
- exists to cure; ``default_policy`` carries 公开规则：日常还是5，并没有
- 分数限制as authority for the code default, and nothing more.
- """
+    A dateless knob that can widen the whole library is the disease this asset
+    exists to cure; ``default_policy`` carries 普通日仍是 5 条，没有分数门as authority for the code default, and nothing more.
+    """
 
     cap, gate = _policy_body(payload, label="default_policy")
     if cap > BASE_TALK_PICK_CAP or gate is not None:

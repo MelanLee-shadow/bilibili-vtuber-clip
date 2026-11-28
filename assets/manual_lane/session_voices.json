@@ -1,0 +1,8 @@
+{
+  "_doc": "Same-session voice samples and the switch rule (src/autoslice/manual_lane/session_voices.py; docs/pipeline/manual-lane-supervision.md 说话人真值与本场样本). arrival_high_share: the arrival rule that picked the 11-23/11-24 weak truth (owner 11-25 truth: 133 of 135 picked lines right). min_clips: the self-check leaves one sample clip out. per_class_lines/seconds: a start value, from the smallest one-clip seed of the 11-24 replay that still helped (178410: 李豆沙 7 lines, 15.7 s); 2026-11-24.arrival-high is therefore spent, not a holdout (splits.v1.json). owner_lines_min: a start value, not fitted on any set: the switch is measured on his labelled lines only, and below about 30 a one-line difference decides it.",
+  "arrival_high_share": 0.9,
+  "min_clips": 2,
+  "per_class_lines": 7,
+  "per_class_seconds": 15,
+  "owner_lines_min": 30
+}

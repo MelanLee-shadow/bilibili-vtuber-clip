@@ -21,9 +21,11 @@ import json
 import re
 from collections.abc import Iterable, Sequence
 from functools import lru_cache
-from typing import TYPE_CHECKING, TypedDict, cast
+from pathlib import Path
+from typing import TYPE_CHECKING, Literal, TypedDict, cast
 
-from ..acoustic_pinyin import text_pinyin_tokens
+from ..acoustic_pinyin import phrase_words, text_pinyin_tokens, valid_syllables
+from ..channel_profile import ChannelProfileError
 from . import channel
 from .config import unknown_participant
 from .lane_rules import rules
@@ -54,12 +56,119 @@ class UnresolvedSpelling(TypedDict, total=False):
     note: str
 
 PROPER_NOUNS = channel.name_table("proper_nouns.json")   # the active channel's table
+SHARED_NODES = Path(__file__).resolve().parents[3] / "assets" / "manual_lane" / "knowledge" / "nodes.jsonl"
 _HAN = re.compile(r"[一-鿿]+")
 _MARKS = re.compile(r"[《》〈〉「」『』“”‘’\"']")      # marks that set a title or a quotation off inside a sentence
 _LATIN = re.compile(r"[A-Za-z][A-Za-z0-9]*")
 # initials and finals that ASR and speech blur: zh/z, ch/c, sh/s, n/l; in/ing, en/eng
 _INITIALS = (("zh", "z"), ("ch", "c"), ("sh", "s"), ("n", "l"))
 _FINALS = (("ing", "in"), ("eng", "en"))
+# high-frequency function and basic characters (playbook_evidence reads this set: one definition)
+COMMON_CHARS = frozenset(
+    "的地得了着过是不在有我你他她它们这那就都也还很吗呢吧啊呀哦嗯么什个一说要会能可到去来上下里看想没对好把被给让和跟与而又再才只人家大小多少"
+)
+
+
+def _default_roster_path() -> Path | None:
+    try:
+        return channel.profile().asset_file("psplive_roster_sources")
+    except ChannelProfileError:
+        return None
+
+
+ROSTER_SOURCES: Path | None = _default_roster_path()
+
+
+@lru_cache(maxsize=8)
+def _read_roster_cached(path_str: str, _mtime_ns: int, _size: int) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    path = Path(path_str)
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid roster file {path}: {exc}") from exc
+    if not isinstance(doc, dict):
+        raise ValueError(f"invalid roster file {path}: root must be an object")
+    overrides = doc.get("member_overrides")
+    if not isinstance(overrides, dict):
+        raise ValueError(f"invalid roster file {path}: member_overrides must be an object")
+    out: list[tuple[str, tuple[str, ...]]] = []
+    for key, entry in overrides.items():
+        if not isinstance(entry, dict):
+            raise ValueError(f"invalid roster file {path}: member_overrides[{key!r}] must be an object")
+        canonical = entry.get("canonical")
+        if not isinstance(canonical, str) or not canonical.strip():
+            raise ValueError(f"invalid roster file {path}: member_overrides[{key!r}].canonical must be a non-empty string")
+        aliases = entry.get("aliases", [])
+        if not isinstance(aliases, list) or any(not isinstance(a, str) for a in aliases):
+            raise ValueError(f"invalid roster file {path}: member_overrides[{key!r}].aliases must be a list of strings")
+        out.append((canonical, tuple(aliases)))
+    return tuple(out)
+
+
+def _roster_entries() -> tuple[tuple[str, tuple[str, ...]], ...]:
+    path = ROSTER_SOURCES
+    if path is None or not path.exists():
+        return ()
+    if not path.is_file():
+        raise ValueError(f"invalid roster file {path}: expected a file")
+    st = path.stat()
+    return _read_roster_cached(str(path), st.st_mtime_ns, st.st_size)
+
+
+_roster_entries.cache_clear = _read_roster_cached.cache_clear  # type: ignore[attr-defined]
+
+
+@lru_cache(maxsize=8)
+def _read_shared_cached(path_str: str, _mtime_ns: int, _size: int) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    path = Path(path_str)
+    out: list[tuple[str, tuple[str, ...]]] = []
+    try:
+        raw_text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"invalid shared terms file {path}: {exc}") from exc
+    for lineno, line in enumerate(raw_text.splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            node = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid shared terms file {path} line {lineno}: {exc}") from exc
+        if not isinstance(node, dict):
+            raise ValueError(f"invalid shared terms file {path} line {lineno}: line must be an object")
+        if node.get("status") == "retired":
+            continue
+        names = node.get("names")
+        if not isinstance(names, dict) or not isinstance(names.get("display"), str) or not names["display"].strip():
+            raise ValueError(f"invalid shared terms file {path} line {lineno}: names.display must be a non-empty string")
+        if any(not isinstance(v, str) for v in names.values()):
+            raise ValueError(f"invalid shared terms file {path} line {lineno}: names values must be strings")
+        aliases = node.get("aliases", [])
+        if not isinstance(aliases, list) or any(not isinstance(a, str) for a in aliases):
+            raise ValueError(f"invalid shared terms file {path} line {lineno}: aliases must be a list of strings")
+        display = names["display"]
+        forms = [*names.values(), *aliases]
+        extra = tuple(s for s in dict.fromkeys(forms) if s and s != display)
+        out.append((display, extra))
+    return tuple(out)
+
+
+def _shared_entries() -> tuple[tuple[str, tuple[str, ...]], ...]:
+    path = SHARED_NODES
+    if not path.exists():
+        return ()
+    if not path.is_file():
+        raise ValueError(f"invalid shared terms file {path}: expected a file")
+    st = path.stat()
+    return _read_shared_cached(str(path), st.st_mtime_ns, st.st_size)
+
+
+_shared_entries.cache_clear = _read_shared_cached.cache_clear  # type: ignore[attr-defined]
+
+
+def _single_han(text: str) -> str:
+    """Single contiguous Chinese-character run of `text`, or '' when absent or split by non-Han characters."""
+    runs = _HAN.findall(text)
+    return runs[0] if len(runs) == 1 else ""
 
 
 def _blur(syllable: str) -> str:
@@ -117,13 +226,89 @@ def _table() -> tuple[tuple[str, tuple[str, ...]], ...]:
 
 
 
-def entries(participants: Iterable[Sequence[str]] = ()) -> list[tuple[str, tuple[str, ...]]]:
-    """(name, aliases) of the table and of the session's participant groups (first = the name)."""
+NameSource = Literal["table", "participant", "roster", "shared"]
+
+
+class NameCandidate(TypedDict):
+    name: str
+    source: NameSource
+    weak: bool
+
+
+class NameEntries(list[tuple[str, tuple[str, ...]]]):
+    """`(name, aliases)` list carrying entry provenance (`sources`), primary (table + participant) rows for
+    `unknown_latin`, and roster/shared-added spellings for weak-source filtering."""
+
+    def __init__(
+        self,
+        rows: Iterable[tuple[str, tuple[str, ...]]],
+        *,
+        sources: dict[str, NameSource] | None = None,
+        primary_rows: Sequence[tuple[str, tuple[str, ...]]] = (),
+        weak_spellings: set[tuple[str, str]] | None = None,
+    ) -> None:
+        super().__init__(rows)
+        self.sources: dict[str, NameSource] = dict(sources or {})
+        self.primary_rows: tuple[tuple[str, tuple[str, ...]], ...] = tuple(primary_rows)
+        self.weak_spellings: set[tuple[str, str]] = set(weak_spellings or ())
+
+
+def entry_source(names: Sequence[tuple[str, tuple[str, ...]]], name: str) -> NameSource:
+    """Return the source (`table`, `participant`, `roster`, or `shared`) recorded for `name`."""
+    if isinstance(names, NameEntries):
+        return names.sources.get(name, "table")
+    return "table"
+
+
+def entries(participants: Iterable[Sequence[str]] = ()) -> NameEntries:
+    """(name, aliases) of the table, the session's participant groups (first = the name), and 3+ syllable
+    contiguous-Han roster/shared entries."""
     out = list(_table())
-    known = {n for n, _ in out}
-    out.extend((str(g[0]), tuple(str(a) for a in g[1:])) for g in participants
-               if g and not unknown_participant(str(g[0])) and str(g[0]) not in known)
-    return out
+    sources: dict[str, NameSource] = {n: "table" for n, _ in out}
+    for g in participants:
+        if g and not unknown_participant(str(g[0])) and str(g[0]) not in sources:
+            pname = str(g[0])
+            out.append((pname, tuple(str(a) for a in g[1:])))
+            sources[pname] = "participant"
+    primary_rows = tuple(out)
+    owner_by_spelling: dict[str, int] = {}
+    for idx, (n, als) in enumerate(out):
+        for s in (n, *als):
+            owner_by_spelling.setdefault(s, idx)
+    weak_spellings: set[tuple[str, str]] = set()
+    weak_groups: tuple[tuple[NameSource, tuple[tuple[str, tuple[str, ...]], ...]], ...] = (
+        ("roster", _roster_entries()),
+        ("shared", _shared_entries()),
+    )
+    for src, items in weak_groups:
+        for canon, aliases in items:
+            raw_forms = tuple(dict.fromkeys((canon, *aliases)))
+            owner = next((owner_by_spelling[s] for s in raw_forms if s in owner_by_spelling), None)
+            forms = tuple(s for s in raw_forms if len(_single_han(s)) >= 3 and s not in owner_by_spelling)
+            if not forms:
+                continue
+            if owner is not None:
+                cur_name, cur_aliases = out[owner]
+                added = tuple(f for f in forms if f != cur_name and f not in cur_aliases)
+                out[owner] = (cur_name, (*cur_aliases, *added))
+                for f in forms:
+                    owner_by_spelling.setdefault(f, owner)
+                    weak_spellings.add((cur_name, f))
+            elif len(_single_han(canon)) >= 3:
+                idx = len(out)
+                out.append((canon, tuple(f for f in forms if f != canon)))
+                sources[canon] = src
+                for f in forms:
+                    owner_by_spelling.setdefault(f, idx)
+                    weak_spellings.add((canon, f))
+            else:
+                for form in forms:
+                    idx = len(out)
+                    out.append((form, ()))
+                    sources[form] = src
+                    owner_by_spelling.setdefault(form, idx)
+                    weak_spellings.add((form, form))
+    return NameEntries(out, sources=sources, primary_rows=primary_rows, weak_spellings=weak_spellings)
 
 
 def _spellings(names: Sequence[tuple[str, tuple[str, ...]]]) -> list[tuple[str, str]]:
@@ -152,33 +337,168 @@ def _spelled_out(text: str, spelling: str) -> bool:
     return False
 
 
-def near_names(text: str, names: Sequence[tuple[str, tuple[str, ...]]]) -> list[str]:
-    """Names whose Chinese part (two or more characters) the sentence says in other characters, and Latin-only names
-    the sentence sounds out in Chinese characters."""
-    hits: list[str] = []
+@lru_cache(maxsize=4096)
+def _drop_fuse_keys(han: str) -> frozenset[tuple[str, ...]]:
+    """Blurred keys formed by dropping one syllable (interior only for 3-syllable names, any position for 4+) or
+    fusing two adjacent syllables (initial(s1)+final(s2) when valid, or s1 alone when s2 starts with a vowel)."""
+    raw = raw_pinyin(han)
+    if raw is None or len(raw) < 3:
+        return frozenset()
+    blur = tuple(_blur(s) for s in raw)
+    keys: set[tuple[str, ...]] = set()
+    drop_positions = range(len(blur)) if len(blur) >= 4 else range(1, len(blur) - 1)
+    for i in drop_positions:
+        keys.add(blur[:i] + blur[i + 1:])
+    valid = valid_syllables()
+    for i in range(len(raw) - 1):
+        ini1 = _initial(raw[i])
+        ini2 = _initial(raw[i + 1])
+        fin2 = raw[i + 1][len(ini2):]
+        if ini1 and (ini1 + fin2) in valid:
+            keys.add(blur[:i] + (_blur(ini1 + fin2),) + blur[i + 2:])
+        if ini2 == "":
+            keys.add(blur[:i] + (blur[i],) + blur[i + 2:])
+    keys.discard(blur)
+    return frozenset(keys)
+
+
+def _is_common_word_span(span: str) -> bool:
+    """True when `span` is a common lexical word, 2+ char single-char repetition, or dominated by basic function chars."""
+    if len(span) >= 2 and len(set(span)) == 1:
+        return True
+    if span in phrase_words():
+        return True
+    if len(span) == 2 and any(ch in COMMON_CHARS for ch in span):
+        return True
+    return len(span) >= 3 and sum(ch in COMMON_CHARS for ch in span) >= 2
+
+
+def _written_positions(run: str, words: Iterable[str]) -> dict[str, set[int]]:
+    """Map each 2+ Han written word present in `run` to all character indices it covers."""
+    positions: dict[str, set[int]] = {}
+    for w_han in words:
+        if len(w_han) < 2 or w_han in positions:
+            continue
+        start = 0
+        hits: set[int] = set()
+        while (pos := run.find(w_han, start)) != -1:
+            hits.update(range(pos, pos + len(w_han)))
+            start = pos + 1
+        if hits:
+            positions[w_han] = hits
+    return positions
+
+
+def _covered_indices(
+    positions: dict[str, set[int]],
+    written_owners: Sequence[tuple[str, str]],
+    owner_name: str,
+    han_len: int,
+    extra_han: str = "",
+) -> set[int]:
+    """Indices in a run covered by written spellings, excluding shorter aliases of `owner_name` itself."""
+    covered: set[int] = set()
+    for w_han, w_owner in written_owners:
+        if w_owner == owner_name and len(w_han) < han_len:
+            continue
+        if w_han in positions:
+            covered.update(positions[w_han])
+    if extra_han and extra_han in positions:
+        covered.update(positions[extra_han])
+    return covered
+
+
+def near_name_candidates(text: str, names: Sequence[tuple[str, tuple[str, ...]]]) -> list[NameCandidate]:
+    """Candidate records for `near_names`, carrying source (`table`/`participant`/`roster`/`shared`) and weakness."""
+    hits: list[NameCandidate] = []
+    seen_hits: set[str] = set()
+    weak_set = names.weak_spellings if isinstance(names, NameEntries) else set()
     spellings = _spellings(names)
-    written = {s for s, _ in spellings if s in text}
+    written_owners = list(
+        dict.fromkeys(
+            (w_han, owner)
+            for s, owner in spellings
+            if s in text and len(w_han := "".join(_HAN.findall(s))) >= 2
+        )
+    )
+    written_words = {w_han for w_han, _ in written_owners}
+    raw_runs = list(dict.fromkeys((*_HAN.findall(text), *_HAN.findall(_MARKS.sub("", text)))))
+    runs: list[tuple[str, list[str]]] = []
+    for run in raw_runs:
+        got = _pinyin(run)
+        if len(got) == len(run):
+            runs.append((run, got))
+    run_positions = [(_written_positions(run, written_words) if written_words else {}) for run, _ in runs]
+
+    def _record(name: str, is_weak_spelling: bool) -> None:
+        seen_hits.add(name)
+        src = entry_source(names, name)
+        hits.append({"name": name, "source": src, "weak": is_weak_spelling or src in ("roster", "shared")})
+
     for spelling, name in spellings:
-        if name not in hits and _spelled_out(text, spelling):
-            hits.append(name)
+        if name in seen_hits:
+            continue
+        is_weak = (name, spelling) in weak_set
+        if _spelled_out(text, spelling):
+            _record(name, is_weak)
+            continue
         han = "".join(_HAN.findall(spelling))
-        if len(han) < 2 or name in hits or spelling in written:
+        if len(han) < 2:
             continue
         want = _pinyin(han)
         if len(want) != len(han):
             continue
-        for run in (*_HAN.findall(text), *_HAN.findall(_MARKS.sub("", text))):   # a name may run across 《》 or quotes
-            got = _pinyin(run)
-            if len(got) != len(run):
-                continue
+        for (run, got), positions in zip(runs, run_positions, strict=True):   # a name may run across 《》 or quotes
+            covered = _covered_indices(positions, written_owners, name, len(han)) if positions else set()
             for i in range(len(run) - len(han) + 1):
-                if run[i:i + len(han)] != han and got[i:i + len(han)] == want \
-                        and not any(run[i:i + len(han)] in s for s in written):
-                    hits.append(name)
-                    break
-            if name in hits:
+                span = run[i:i + len(han)]
+                if span == han or got[i:i + len(han)] != want:
+                    continue
+                if covered and any(pos in covered for pos in range(i, i + len(han))):
+                    continue
+                if is_weak and _is_common_word_span(span):
+                    continue
+                _record(name, is_weak)
+                break
+            if name in seen_hits:
+                break
+    for spelling, name in spellings:
+        if name in seen_hits:
+            continue
+        han = _single_han(spelling)
+        if len(han) < 3:
+            continue
+        keys = _drop_fuse_keys(han)
+        if not keys:
+            continue
+        is_weak = (name, spelling) in weak_set
+        width = len(han) - 1
+        for (run, got), positions in zip(runs, run_positions, strict=True):
+            if len(run) < width:
+                continue
+            pos_map = positions
+            if han in run and han not in pos_map:
+                pos_map = {**positions, **_written_positions(run, (han,))}
+            cov = _covered_indices(pos_map, written_owners, name, len(han), extra_han=han) if pos_map else set()
+            for i in range(len(run) - width + 1):
+                if tuple(got[i:i + width]) not in keys:
+                    continue
+                if cov and any(pos in cov for pos in range(i, i + width)):
+                    continue
+                span = run[i:i + width]
+                if _is_common_word_span(span):
+                    continue
+                _record(name, is_weak)
+                break
+            if name in seen_hits:
                 break
     return hits
+
+
+def near_names(text: str, names: Sequence[tuple[str, tuple[str, ...]]]) -> list[str]:
+    """Names whose Chinese part (two or more characters) the sentence says in other characters, 3+ syllable Chinese
+    names with one dropped or two adjacent fused syllables, and Latin-only names sounded out in Chinese characters."""
+    return [c["name"] for c in near_name_candidates(text, names)]
 
 
 _PINYIN_INITIALS = ("zh", "ch", "sh", "b", "p", "m", "f", "d", "t", "n", "l", "g", "k", "h", "j", "q", "x", "r", "z",
@@ -231,7 +551,8 @@ def near_full_names(text: str, names: Sequence[tuple[str, tuple[str, ...]]]) -> 
 
 
 def _latin_known(names: Sequence[tuple[str, tuple[str, ...]]]) -> set[str]:
-    return {w.lower() for s, _ in _spellings(names) for w in _LATIN.findall(s)}
+    base = names.primary_rows if isinstance(names, NameEntries) else names
+    return {w.lower() for s, _ in _spellings(base) for w in _LATIN.findall(s)}
 
 
 def unknown_latin(text: str, names: Sequence[tuple[str, tuple[str, ...]]]) -> list[str]:
@@ -275,9 +596,22 @@ def detection_reasons(text: str, names: Sequence[tuple[str, tuple[str, ...]]], c
     """The name doubts of one sentence (lane_rules detection.near_name, detection.latin_unknown)."""
     out = []
     if cfg.get("near_name"):
-        out += [f"近音名字：本句可能说的是名字表里的「{n}」（拼音相近、写法不同）" for n in near_names(text, names)]
-        out += [f"近音全名：本句紧挨着名字的字母部分，前面几个字和「{n}」的汉字部分声母相同，可能说的是全名「{n}」"
-                for n in near_full_names(text, names) if n not in near_names(text, names)]
+        seen_near = set()
+        for c in near_name_candidates(text, names):
+            n, src = c["name"], c["source"]
+            seen_near.add(n)
+            if src in ("roster", "shared"):
+                out.append(f"近音候选（{src}）：本句可能提到「{n}」，请结合音频和语境判断")
+            else:
+                out.append(f"近音名字：本句可能说的是名字表里的「{n}」（拼音相近、写法不同）")
+        for n in near_full_names(text, names):
+            if n in seen_near:
+                continue
+            src = entry_source(names, n)
+            if src in ("roster", "shared"):
+                out.append(f"近音候选（{src}）：本句可能提到全名「{n}」，请结合音频和语境判断")
+            else:
+                out.append(f"近音全名：本句紧挨着名字的字母部分，前面几个字和「{n}」的汉字部分声母相同，可能说的是全名「{n}」")
     if cfg.get("latin_unknown"):
         latin = unknown_latin(text, names)
         if latin:

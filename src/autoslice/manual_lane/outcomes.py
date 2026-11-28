@@ -59,3 +59,33 @@ def record(state: ClipState, clip_dir: Path, push: Path) -> int:
     with path.open("a", encoding="utf-8") as fh:
         fh.writelines(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
     return len(rows)
+
+
+SPEAKER_FILE = "calibration/speaker-outcomes.jsonl"   # beside FILE: the same moment, the speaker of each line
+
+
+def record_speakers(state: ClipState, clip_dir: Path, push: Path) -> int:
+    """Append what became of each line's speaker when an owner-decided push brings his names (speaker/speakers.json):
+    what step 4 had said (decision.json: the label, its confidence, which route gave it, the voiceprint's host
+    probability) and the name he gave the line, so the speaker rules can be calibrated on outcomes as the hold rule is
+    (consult plan-draft B2.7).  Written by the same import that records the text outcomes, to a file of its own so the
+    text rows' readers keep their rows.  Returns how many lines were written (0 without his names or without step 4's decision)."""
+    from . import speaker_v8
+    from .guest_identity import names_by_overlap
+
+    names, decision = push / "speaker/speakers.json", clip_dir / "speaker/decision.json"
+    if not names.is_file() or not decision.is_file():
+        return 0
+    cues = json.loads(decision.read_text(encoding="utf-8")).get("cues") or []
+    owner = names_by_overlap([{"start_s": c["start_ms"] / 1000, "end_s": c["end_ms"] / 1000} for c in cues],
+                             json.loads(names.read_text(encoding="utf-8")))
+    rows = [{"cid": state.data["clip"]["cid"], "recorded_at": utc_now(), "n": n, "start_s": c["start_ms"] / 1000,
+             "end_s": c["end_ms"] / 1000, "pipeline": c["speaker"], "confidence": c.get("speaker_confidence"),
+             "label_from": c.get("label_from"), "host_prob": c.get("host_prob"), "owner": name,
+             "host_guest_changed": (c["speaker"] == speaker_v8.HOST) != (name == speaker_v8.HOST)}
+            for n, (c, name) in enumerate(zip(cues, owner, strict=True), 1) if name and name != "未知"]
+    path = clip_dir.parent.parent / SPEAKER_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.writelines(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
+    return len(rows)

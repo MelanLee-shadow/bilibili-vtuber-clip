@@ -18,8 +18,8 @@ BODIES = ["她半分钟后真的破防了", "这一段她越讲越心虚了", "�
 
 
 def _cand(body, *, check_ok=True):
-    return {"title_body": body, "on_stage": ["李豆沙"], "punchline_person": "她越长大越讨厌看那种有规矩的",
-            "swap_check": {"holds_with_other_host": not check_ok, "reason": "换主播不成立"}}
+    """A candidate; `check_ok=False` names someone on stage who is not a participant (a deterministic check fails)."""
+    return {"title_body": body, "on_stage": ["李豆沙"] if check_ok else ["路人甲"], "landing": 1}
 
 
 def _answer(*cands, recommended=0):
@@ -76,7 +76,8 @@ def test_the_ranking_prompt_has_the_corpus_without_this_clip_the_main_line_and_t
     prompt = cpa.prompts[cpa.calls.index("title-pick-r0")]
     assert "{" not in prompt.split("只输出一个 JSON 对象，不要任何其他文字：\n", 1)[0]        # every placeholder filled
     assert prompt.count("### 片 ") == len(clips) - 1 and clip["owner_comment"] not in prompt    # the corpus grows
-    assert "这段讲的是：李豆沙讲了她的主线\n笑点：她先嘴硬，接着自己拆台（序号 3）\n" in prompt
+    assert ("这段讲的是：李豆沙讲了她的主线\n这条片值得当标题的几下（排在前面的更该被看到；标〔选片点出〕的是选片时认出的那一下）："
+            "1. [李豆沙] “我才不买呢，顶多买一点”（第 3 句）——她先嘴硬，接着自己拆台〔选片点出〕；2. ") in prompt
     assert "候选（序号从 0 起）：\n" + "\n".join(f"{i} 【李豆沙】{b}" for i, b in enumerate(BODIES)) + "\n" in prompt
 
 
@@ -305,7 +306,7 @@ def test_what_the_research_measured_goes_before_taste_and_a_failing_first_is_rew
     assert "research_fail" not in record["candidates"][0]["pick"]
     assert record["chosen"]["title"] == record["candidates"][0]["title"]
     item = record["candidates"][1]["pick"]
-    assert "没点名这段涉及的人" in title_pick.feedback_line(item)
+    assert "认不出这句话是谁对谁说的" in title_pick.feedback_line(item)
     assert title_pick.research_fail({"research": {"setup": False, "voice": False}}) == ["voice", "setup"]
     assert title_pick.research_fail({"grade": "x"}) == []
 
@@ -313,9 +314,12 @@ def test_what_the_research_measured_goes_before_taste_and_a_failing_first_is_rew
 def test_a_title_that_leaves_out_someone_the_story_involves_fails_the_self_check():
     from src.autoslice.manual_lane import step6_title as s6
 
-    cand = {"title": "【李豆沙】《APEX》是我的，有什么问题吗", "on_stage": ["李豆沙"], "involved": ["小室", "李豆沙"],
-            "swap_check": {"holds_with_other_host": False}, "punchline_person": "嘴硬"}
-    checks = s6.title_checks(cand, ["李豆沙"], "1\n00:00:00,000 --> 00:00:01,000\n《APEX》是我的，有什么问题吗\n")
-    assert checks["failed"] == ["involved_named"] and checks["reasons"] == ["标题未点名这段涉及的人：小室"]
+    srt_text = "1\n00:00:00,000 --> 00:00:01,000\n《APEX》是我的，有什么问题吗\n"
+    cand = {"title": "【李豆沙】《APEX》是我的，有什么问题吗", "on_stage": ["李豆沙"],
+            "involved": ["小室", "李豆沙", "另一位通话同伴"]}
+    checks = s6.title_checks(cand, ["李豆沙"], srt_text, formal=["小室"])
+    assert checks["failed"] == ["involved_named"] and checks["reasons"] == ["标题里没有这个人的名字，少了会读歪：小室"]
+    # 11-24 178410: 「另一位通话同伴」 is no name the clip knows; three rounds died on it.  Only known names are checked
+    assert s6.title_checks(cand, ["李豆沙"], srt_text)["ok"]
     cand["title"] = "【李豆沙】想暴露小室的游戏库，结果《APEX》是我的，有什么问题吗"
-    assert s6.title_checks(cand, ["李豆沙"], "1\n00:00:00,000 --> 00:00:01,000\n《APEX》是我的，有什么问题吗\n")["ok"]
+    assert s6.title_checks(cand, ["李豆沙"], srt_text, formal=["小室"])["ok"]

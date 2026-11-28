@@ -36,11 +36,10 @@ CLAUSE_BREAKS = re.compile("[，？！]")
 COVERAGE_MIN = 0.5            # below this share of the last clause's characters found in the subtitles, it is the editor's
 BAD_GRADE = "差"              # predicted 差 exactly, or any grade containing 尤其差, is a rejection
 WORST_GRADE = "尤其差"
-
-
-
-RESEARCH = {"named": "没点名这段涉及的人", "voice": "有编辑的评语、抬杠式反问，或半路换成第三人称；落点要是她自己的话",
-            "setup": "没看过这段的人只看标题看不出谁在干嘛"}
+# What the channel's title research measured to go with plays (cover-title research ; skill section 1): the
+# ranking answers each per candidate, and a candidate that fails one goes behind those that fail none (the channel's request).  Key -> what the rewrite feedback says of a failure.
+RESEARCH = {"named": "认不出这句话是谁对谁说的", "voice": "有编辑的评语、抬杠式反问，或半路换成第三人称；落点要是片里的话",
+            "setup": "那句话字面读不懂，或会读错是谁的话"}
 
 
 class PickItem(TypedDict):

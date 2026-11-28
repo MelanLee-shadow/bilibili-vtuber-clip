@@ -81,9 +81,14 @@ def _cpa_cache_path(ctx: Ctx, prompt_text: str, run: int = 0, effort: str = CPA_
 def _cpa_settings_of(purpose: str | None) -> tuple[str, str, int | None, str]:
     """TASK-37 (U168): the thinking tier of one CPA text call, by what the call is for.
 
-    Returns (model, effort, max_output_tokens, note). The tier comes from lane_rules `effort.purposes`; `note` is empty when
-    the purpose is registered and is the PROCESS line to write when it is not: an unregistered purpose (or none at all)
-    keeps the `effort.default` tier and says so, so a new call site is never silently left on a tier nobody chose."""
+    Returns (model, effort, max_output_tokens, note). The default model comes from lane_rules `cpa.model`
+    (CPA_JUDGE_MODEL when an older rules file has no `cpa` section), and the tier comes from `effort.purposes`; `note`
+    is empty when the purpose is registered and is the PROCESS line to write when it is not."""
+    try:
+        cpa_sec = rules("cpa")
+    except KeyError:
+        cpa_sec = {}
+    default_model = str(cpa_sec.get("model") or CPA_JUDGE_MODEL)
     try:
         section = rules("effort")
     except KeyError:                  # a rules file from before this task (an experiment copy)
@@ -93,10 +98,46 @@ def _cpa_settings_of(purpose: str | None) -> tuple[str, str, int | None, str]:
     if purpose and purpose in purposes:
         entry = purposes[purpose] or {}
         effort = str(entry.get("effort") or default)
-        return str(entry.get("model") or CPA_JUDGE_MODEL), effort, entry.get("max_output_tokens"), ""
+        return str(entry.get("model") or default_model), effort, entry.get("max_output_tokens"), ""
     named = f"用途 `{purpose}`" if purpose else "调用没有写用途"
-    return CPA_JUDGE_MODEL, default, None, (f"{named}没有在 lane_rules effort.purposes 登记，这次按默认档位 {default} 调用"
-                                            f"（U168：请给这个用途定档并登记，别让它悄悄留在默认档）")
+    return default_model, default, None, (f"{named}没有在 lane_rules effort.purposes 登记，这次按默认档位 {default} 调用"
+                                          f"（U168：请给这个用途定档并登记，别让它悄悄留在默认档）")
+
+
+def _cpa_fallback_of(primary_model: str, primary_effort: str) -> tuple[str, str, int | None] | None:
+    """The configured quota-fallback (model, effort, min_output_tokens) from lane_rules `cpa`, or None."""
+    try:
+        cpa_sec = rules("cpa")
+    except KeyError:
+        return None
+    fb_model = str(cpa_sec.get("fallback_model") or "").strip()
+    if not fb_model or fb_model == primary_model:
+        return None
+    efforts = cpa_sec.get("fallback_efforts")
+    fb_effort = str(efforts.get(primary_effort) or primary_effort) if isinstance(efforts, Mapping) else primary_effort
+    min_tok_raw = cpa_sec.get("fallback_min_output_tokens")
+    fb_min_tok = int(min_tok_raw) if isinstance(min_tok_raw, int) and min_tok_raw > 0 else None
+    return fb_model, fb_effort, fb_min_tok
+
+
+def vision_models() -> tuple[str, str, str]:
+    """(vision_model, fallback_model, fallback_low_effort) from lane_rules `cpa`."""
+    try:
+        cpa_sec = rules("cpa")
+    except KeyError:
+        return CPA_JUDGE_MODEL, "", "low"
+    primary = str(cpa_sec.get("vision_model") or cpa_sec.get("model") or CPA_JUDGE_MODEL)
+    fb_model = str(cpa_sec.get("fallback_model") or "").strip()
+    if fb_model == primary:
+        fb_model = ""
+    efforts = cpa_sec.get("fallback_efforts")
+    fb_low = str(efforts.get("low") or "low") if isinstance(efforts, Mapping) else "low"
+    return primary, fb_model, fb_low
+
+
+def _is_quota_refused(record: Mapping[str, object]) -> bool:
+    """True only when a failed CPA call ended on a definite quota refusal (cpa_text.py's CPA_QUOTA_REFUSED)."""
+    return not _cpa_ok(cast("CpaEvent", record)) and str(record.get("reason") or "").startswith("CPA_QUOTA_REFUSED")
 
 
 def _effort_of(purpose: str | None) -> tuple[str, str]:
@@ -115,7 +156,9 @@ def _write_atomic(path: Path, text: str) -> None:
 
 
 def _cache_cpa_answer(path: Path, answer: CpaEvent, *, keep_http_log: bool = False) -> None:
-    omitted = {"call_id"} if keep_http_log else {"call_id", "http_log"}
+    omitted = {"call_id", "fallback_from", "fallback_reason", "fallback_note"}
+    if not keep_http_log:
+        omitted.add("http_log")
     _write_atomic(path, json.dumps({k: v for k, v in answer.items() if k not in omitted}, ensure_ascii=False))
 
 
@@ -153,6 +196,66 @@ def _answer_problem(text: str, accepts: Callable[[Any], str] | None) -> str:
     return accepts(value) if accepts else ""
 
 
+def _ask_cpa_model(
+    ctx: Ctx, call_id: str, prompt_text: str, *, active_model: str, active_effort: str, run: int,
+    max_output_tokens: int | None, accepts: Callable[[Any], str] | None, max_attempts: int,
+    transport_tries: int | None, suffix: str = "",
+) -> tuple[CpaEvent, Path, float, int]:
+    active_cache = _cpa_cache_path(ctx, prompt_text, run, active_effort, active_model, max_output_tokens)
+    active_rel = f"cpa/{call_id}{suffix}"
+    rejected: list[RejectedAnswer] = []
+    chosen: CpaEvent | None = None
+    elapsed = 0.0
+    reqs = 0       # every HTTP request this model made, across the provider's tries and the re-asks below
+    # the answers an earlier run already turned down for this call: the media host gives a request id its finished
+    # answer again (cpa_text.py, REUSED), so the asking goes on after them instead of being turned the same answers
+    # down every run (a labelling answer outside the contract left its recording failing for good, selection-bursts 5.1)
+    before = len(list((ctx.clip_dir / "cpa").glob(f"{call_id}{suffix}.rejected-*.completion.txt")))
+    for attempt in range(before + 1, before + max_attempts + 1):
+        cached = active_cache.exists()
+        if cached:
+            answer = cast(CpaEvent, dict(json.loads(active_cache.read_text(encoding="utf-8")),
+                                         call_id=call_id, cached=True))
+        else:
+            base_id = f"{call_id}{suffix}"
+            reply_id = base_id if attempt == 1 else f"{base_id}--reply-{attempt}"
+            extra: dict[str, Any] = {"tries": transport_tries} if transport_tries is not None else {}
+            if max_output_tokens is not None:
+                extra["max_output_tokens"] = max_output_tokens
+            answer = cast(CpaEvent, ctx.adapters.cpa.ask(call_id=reply_id, prompt_text=prompt_text,
+                                                         model=active_model, effort=active_effort,
+                                                         remote_dir=ctx.remote_dir, **extra))
+            answer["call_id"] = call_id
+        elapsed += float(answer.get("elapsed_s") or 0.0)
+        reqs += 1 if cached else max(1, answer.get("attempts") or 1)
+        if not _cpa_ok(answer):
+            chosen = answer          # the call itself failed: the provider's own retry already ran
+            break
+        problem = _answer_problem(answer.get("response_text", ""), accepts)
+        if not problem:
+            chosen = answer
+            if not cached:
+                _cache_cpa_answer(active_cache, answer)
+            break
+        _write_atomic(_local(ctx, f"{active_rel}.rejected-{attempt}.completion.txt"), answer.get("response_text", ""))
+        rejected.append({"attempt": attempt, "reason": problem,
+                         "chars": len(answer.get("response_text", "")), "usage": answer.get("usage")})
+        if cached:
+            Path(active_cache).unlink(missing_ok=True)   # void: no rerun may read this answer again
+    if chosen is None:
+        last = rejected[-1] if rejected else {"reason": "CPA_ANSWER_INCOMPLETE", "chars": 0}
+        why = last["reason"].split(" (", 1)[0]
+        chosen = {"call_id": call_id, "model": active_model, "effort": active_effort, "stream": True,
+                  "rc": 1, "complete": False, "reason": why, "elapsed_s": round(elapsed, 1),
+                  "response_text": "", "rejected_answers": rejected,
+                  "stderr_tail": (f"CPA_ANSWER_INCOMPLETE: {len(rejected)} answers in a row were not whole "
+                                  f"(last: {last['chars']} chars, {last['reason']}); "
+                                  f"originals under {active_rel}.rejected-*.completion.txt")}
+    elif rejected:
+        chosen = cast(CpaEvent, dict(chosen, rejected_answers=rejected))
+    return chosen, active_cache, elapsed, reqs
+
+
 def _ask_cpa(ctx: Ctx, call_id: str, prompt_text: str, *, run: int = 0, purpose: str | None = None,
              accepts: Callable[[Any], str] | None = None, max_attempts: int = CPA_TEXT_TRIES,
              transport_tries: int | None = None) -> CpaEvent:
@@ -181,52 +284,39 @@ def _ask_cpa(ctx: Ctx, call_id: str, prompt_text: str, *, run: int = 0, purpose:
     A call that failed at the provider (rc != 0) is not asked again here: the adapter's own tries already ran.
     """
     model, effort, max_output_tokens, effort_note = _cpa_settings_of(purpose)
-    cache = _cpa_cache_path(ctx, prompt_text, run, effort, model, max_output_tokens)
-    rel = f"cpa/{call_id}"
-    rejected: list[RejectedAnswer] = []
-    record: CpaEvent | None = None
-    spent = 0.0
-    requests = 0       # every HTTP request this call made, across the provider's tries and the re-asks below
-    for attempt in range(1, max_attempts + 1):
-        cached = cache.exists()
-        if cached:
-            answer = cast(CpaEvent, dict(json.loads(cache.read_text(encoding="utf-8")), call_id=call_id, cached=True))
+    record, cache, spent, requests = _ask_cpa_model(
+        ctx, call_id, prompt_text, active_model=model, active_effort=effort, run=run,
+        max_output_tokens=max_output_tokens, accepts=accepts, max_attempts=max_attempts,
+        transport_tries=transport_tries,
+    )
+    fallback = _cpa_fallback_of(model, effort) if _is_quota_refused(record) else None
+    if fallback is not None:
+        orig_model = model
+        orig_reason = str(record.get("reason") or "CPA_QUOTA_REFUSED")
+        fb_model, fb_effort, fb_min_tok = fallback
+        fb_max_tokens = max(max_output_tokens or 0, fb_min_tok) if fb_min_tok else max_output_tokens
+        fb_record, fb_cache, fb_spent, fb_requests = _ask_cpa_model(
+            ctx, call_id, prompt_text, active_model=fb_model, active_effort=fb_effort, run=run,
+            max_output_tokens=fb_max_tokens, accepts=accepts, max_attempts=max_attempts,
+            transport_tries=transport_tries, suffix="--fallback",
+        )
+        spent += fb_spent
+        requests += fb_requests
+        model, effort, max_output_tokens, cache = fb_model, fb_effort, fb_max_tokens, fb_cache
+        fb_record["elapsed_s"] = round(spent, 1)
+        fb_record["fallback_from"] = orig_model
+        fb_record["fallback_reason"] = orig_reason
+        if _cpa_ok(fb_record):
+            fb_record["fallback_note"] = f"原模型 {orig_model} 额度不足（{orig_reason}），改用 {fb_model}"
         else:
-            reply_id = call_id if attempt == 1 else f"{call_id}--reply-{attempt}"
-            extra = {"tries": transport_tries} if transport_tries is not None else {}
-            if max_output_tokens is not None:
-                extra["max_output_tokens"] = max_output_tokens
-            answer = cast(CpaEvent, ctx.adapters.cpa.ask(call_id=reply_id, prompt_text=prompt_text, model=model,
-                                                         effort=effort, remote_dir=ctx.remote_dir, **extra))
-            answer["call_id"] = call_id
-        spent += float(answer.get("elapsed_s") or 0.0)
-        requests += 1 if cached else max(1, answer.get("attempts") or 1)
-        if not _cpa_ok(answer):
-            record = answer          # the call itself failed: the provider's own retry already ran
-            break
-        problem = _answer_problem(answer.get("response_text", ""), accepts)
-        if not problem:
-            record = answer
-            if not cached:
-                _cache_cpa_answer(cache, answer)
-            break
-        _write_atomic(_local(ctx, f"{rel}.rejected-{attempt}.completion.txt"), answer.get("response_text", ""))
-        rejected.append({"attempt": attempt, "reason": problem, "chars": len(answer.get("response_text", "")),
-                         "usage": answer.get("usage")})
-        if cached:
-            Path(cache).unlink(missing_ok=True)   # void: no rerun may read this answer again
-    if record is None:
-        last = rejected[-1] if rejected else {"reason": "CPA_ANSWER_INCOMPLETE", "chars": 0}
-        reason = last["reason"].split(" (", 1)[0]    # the failure the last try ended on (what the caller can act on)
-        record = {"call_id": call_id, "model": model, "effort": effort, "stream": True,
-                  "rc": 1, "complete": False, "reason": reason, "elapsed_s": round(spent, 1),
-                  "response_text": "", "rejected_answers": rejected,
-                  "stderr_tail": (f"CPA_ANSWER_INCOMPLETE: {len(rejected)} answers in a row were not whole "
-                                  f"(last: {last['chars']} chars, {last['reason']}); "
-                                  f"originals under cpa/{call_id}.rejected-*.completion.txt")}
-    elif rejected:
-        record = cast(CpaEvent, dict(record, rejected_answers=rejected))   # answered whole on a later try
-    # the tier this call was actually made at, whatever the adapter echoed back (a cached answer kept the old record's)
+            fb_why = failure_line(fb_record)
+            dual = f"CPA_FALLBACK_FAILED: 原模型 {orig_model} 额度不足（{orig_reason}）；回退模型 {fb_model} 也不可用（{fb_why}）"
+            fb_record["fallback_note"] = f"原模型 {orig_model} 额度不足（{orig_reason}），改用 {fb_model} 仍失败（{fb_why}）"
+            fb_record["reason"] = dual
+            fb_record["stderr_tail"] = f"{dual}\n{fb_record.get('stderr_tail') or ''}".strip()[:800]
+        record = fb_record
+    # the model and tier this call was actually answered at (a cached answer kept its own model/tier)
+    record["model"] = model
     record["effort"] = effort
     record["requests"] = requests
     if max_output_tokens is not None:
@@ -277,6 +367,22 @@ def ask_json(ctx: Ctx, call_id: str, prompt_text: str, *, purpose: str, problem:
         return None, f"{unparseable} ({str(exc)[:160]})"
     found = problem(value)
     return (None, found) if found else (value, "")
+
+
+def json_asker(ctx: Ctx, calls: list[CpaEvent], *, purpose: str = "title") -> Callable[[str, str], dict[str, Any] | None]:
+    """A CPA ask for a step's helpers (collab_guests, guest_identity): ask(call_id, prompt) gives the parsed JSON object,
+    None when the call or its answer failed; each call's record is appended to `calls`."""
+    def ask(call_id: str, prompt: str) -> dict[str, Any] | None:
+        record = _ask_cpa(ctx, call_id, prompt, purpose=purpose)
+        calls.append(_log(record))
+        if not _cpa_ok(record):
+            return None
+        try:
+            answer = _json_from_text(record["response_text"])
+        except ValueError:
+            return None
+        return answer if isinstance(answer, dict) else None
+    return ask
 
 
 def _principle_section(heading: str, what: str) -> str:
@@ -332,11 +438,29 @@ def _render(prompt_name: str, **fields: str) -> str:
     return text
 
 
+def _mark_unparseable_rejected(record: Mapping[str, object]) -> None:
+    """Record a CPA answer refused after rc=0 as `.rejected-N.completion.txt` so the next run advances reply_id."""
+    if record.get("rc") != 0 or not record.get("file") or not record.get("call_id"):
+        return
+    base = f"{record['call_id']}--fallback" if record.get("fallback_from") else str(record["call_id"])
+    prefix = Path(str(record["file"]))
+    if not prefix.parent.is_dir():
+        return
+    text = record.get("response_text")
+    if text is None:
+        comp = prefix.with_name(f"{prefix.name}.completion.txt")
+        text = comp.read_text(encoding="utf-8") if comp.is_file() else ""
+    before = len(list(prefix.parent.glob(f"{base}.rejected-*.completion.txt")))
+    _write_atomic(prefix.parent / f"{base}.rejected-{before + 1}.completion.txt", str(text))
+
+
 def _fail(reason: str, note: str, *, cpa: Sequence[CpaEvent] = (), process: Sequence[str] = ()) -> StepOutcome:
-    if reason == "CPA_RESPONSE_UNPARSEABLE" and cpa and isinstance(cpa[-1], Mapping) and cpa[-1].get("cache_path"):
+    if reason == "CPA_RESPONSE_UNPARSEABLE" and cpa and isinstance(cpa[-1], Mapping):
         # an answer the step cannot read is not kept as the answer to that prompt: the rerun asks again (TASK-11:
-        # a truncated adjudication was cached and every rerun stopped on it)
-        Path(str(cpa[-1]["cache_path"])).unlink(missing_ok=True)
+        # a truncated adjudication was cached and every rerun stopped on it), and `.rejected-*` advances reply_id
+        if cpa[-1].get("cache_path"):
+            Path(str(cpa[-1]["cache_path"])).unlink(missing_ok=True)
+        _mark_unparseable_rejected(cpa[-1])
     return StepOutcome(False, reason=reason, note=note, cpa=[_log(c) for c in cpa], process=list(process))
 
 
@@ -376,3 +500,99 @@ def _other_live(clip_dir: Path, rel: str) -> list[Path]:
     return [path for path in sorted(clip_dir.parent.glob(f"*/{rel}"))
             if (other := path.parents[len(Path(rel).parts) - 1]) != clip_dir
             and not superseded(clip_dir.parent.parent, other.name)]
+
+
+class CpaVisionUnavailable(Exception):
+    """Raised when both primary and quota-fallback vision routes fail (never swallowed as a per-frame miss)."""
+
+
+def vision_fatal_detail(text: str) -> str:
+    for line in reversed(text.splitlines()):
+        for marker in ("CPA_FALLBACK_FAILED:", "CPA_QUOTA_REFUSED:"):
+            if marker in line:
+                return line[line.index(marker):].strip()[:400]
+    return ""
+
+
+def raise_if_vision_unavailable(text: str) -> None:
+    if detail := vision_fatal_detail(text):
+        raise CpaVisionUnavailable(detail)
+
+
+def fallback_judged_purposes(state: Any) -> list[str]:
+    """Judge purposes (`lane_rules` `cpa.judge_purposes`: title-judge, review) answered by a quota-fallback model."""
+    try:
+        judges = set(rules("cpa").get("judge_purposes") or ("title-judge", "review"))
+    except KeyError:
+        judges = {"title-judge", "review"}
+    steps = state.data.get("steps") or {}
+    events = [call for step in steps.values() if isinstance(step, Mapping) for call in (step.get("cpa") or [])]
+    events.extend(((state.data.get("review") or {}).get("cpa")) or [])
+    seen: list[str] = []
+    for call in events:
+        if not isinstance(call, Mapping):
+            continue
+        purpose, model = str(call.get("purpose") or ""), str(call.get("model") or "")
+        if purpose in judges and call.get("fallback_from") and call.get("rc") == 0 and model:
+            label = f"{purpose}→{model}"
+            if label not in seen:
+                seen.append(label)
+    return seen
+
+
+def merge_judge_fallbacks(base: Mapping[str, Any] | None, *others: Mapping[str, Any] | None) -> list[str]:
+    merged: list[str] = []
+    for item in (base, *others):
+        for model in (item.get("fallback_models") or [] if isinstance(item, Mapping) else []):
+            if str(model) and str(model) not in merged:
+                merged.append(str(model))
+    return merged
+
+
+def review_effective_model(cpa: Sequence[Mapping[str, Any]]) -> str | None:
+    review_calls = [c for c in cpa if c.get("rc") == 0 and c.get("model")
+                    and (c.get("purpose") == "review" or str(c.get("call_id") or "").startswith("review"))]
+    fb = next((str(c["model"]) for c in review_calls if c.get("fallback_from")), None)
+    return fb or next((str(c["model"]) for c in review_calls if c.get("call_id") == "review"), None)
+
+
+def review_fallback_lines(cpa: Sequence[Mapping[str, Any]]) -> list[str]:
+    notes: list[str] = []
+    for c in cpa:
+        if c.get("rc") == 0 and c.get("fallback_from") and c.get("fallback_note") and (
+                c.get("purpose") == "review" or str(c.get("call_id") or "").startswith("review")):
+            line = f"> 回退模型复审说明（`{c.get('call_id')}`）：{c['fallback_note']}（待人工抽查）"
+            if line not in notes:
+                notes.append(line)
+    return [*notes, ""] if notes else []
+
+
+def vision_cpa_event(call_id: str, call: Mapping[str, Any], default_model: str | None = None) -> CpaEvent:
+    ev: dict[str, Any] = {"call_id": call_id, "kind": "vision", "model": call.get("model", default_model),
+                          "rc": call.get("rc"), "elapsed_s": call.get("elapsed_s"), "usage": call.get("usage")}
+    for key in ("fallback_from", "fallback_reason", "fallback_note"):
+        if call.get(key):
+            ev[key] = call[key]
+    return cast(CpaEvent, ev)
+
+
+def focused_route_valid(ctx: Ctx, event: Mapping[str, Any], prompt: str, cache_path: str,
+                        primary_model: str, effort: str) -> bool:
+    orig_model = str(event.get("fallback_from") or event.get("model") or "")
+    expected = {
+        str(_cpa_cache_path(ctx, prompt, effort=effort, model=primary_model)),
+        str(_cpa_cache_path(ctx, prompt, effort=str(event.get("effort") or effort),
+                            model=str(event.get("model") or primary_model),
+                            max_output_tokens=cast("int | None", event.get("max_output_tokens")))),
+    }
+    return (orig_model == primary_model and (bool(event.get("fallback_from")) or event.get("effort") == effort)
+            and event.get("stream") is True and cache_path in expected)
+
+
+def judge_run_fallback(cid: str, record: CpaEvent, fallback_models: list[str]) -> dict[str, object]:
+    extra: dict[str, object] = {"call_id": cid}
+    if record.get("fallback_from") and record.get("model"):
+        extra.update(model=record.get("model"), fallback_from=record["fallback_from"])
+        if str(record["model"]) not in fallback_models:
+            fallback_models.append(str(record["model"]))
+    return extra

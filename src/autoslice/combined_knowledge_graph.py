@@ -4,37 +4,82 @@ Split out of news_event_graph so the lane reads the combined graph without loadi
 news_event_graph re-exports `load_combined`."""
 from __future__ import annotations
 
-import tempfile
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
-from src.autoslice.knowledge_graph import EDGES_FILE, NODES_FILE, Graph, load_graph
+from src.autoslice.knowledge_graph import (
+    EDGES_FILE, NODES_FILE, Edge, Graph, Node, check_unique_ids, read_edges, read_nodes,
+    validate_edge_id, validate_graph)
 
 
-def _combined_root(repo_root: Path, runtime_root: Path | None, scratch: Path) -> Path:
-    """A scratch profile root whose knowledge files are the repository's followed by the runtime candidates'."""
-    (scratch / NODES_FILE).parent.mkdir(parents=True, exist_ok=True)
+class LayeredGraph(Graph):
+    """A graph joined from ordered authority layers, recording lower-layer ids shadowed by a higher layer."""
+
+    def __init__(
+        self,
+        nodes: Iterable[Node],
+        edges: Iterable[Edge],
+        *,
+        shadowed_nodes: Sequence[str] = (),
+        shadowed_edges: Sequence[str] = (),
+    ) -> None:
+        super().__init__(nodes, edges)
+        self.shadowed_nodes: tuple[str, ...] = tuple(shadowed_nodes)
+        self.shadowed_edges: tuple[str, ...] = tuple(shadowed_edges)
+
+    @property
+    def shadowed(self) -> tuple[str, ...]:
+        return (*self.shadowed_nodes, *self.shadowed_edges)
+
+
+def load_combined(repo_root: Path, runtime_root: Path | None) -> LayeredGraph:
+    """Repository graph plus the runtime candidates, joined in authority order (a missing runtime graph adds nothing)."""
+    repo = Path(repo_root)
     for rel in (NODES_FILE, EDGES_FILE):
-        text = (repo_root / rel).read_text("utf-8")
-        if runtime_root is not None and (runtime_root / rel).is_file():
-            text += (runtime_root / rel).read_text("utf-8")
-        (scratch / rel).write_text(text, "utf-8")
-    return scratch
+        if not (repo / rel).is_file():
+            raise FileNotFoundError(repo / rel)
+    roots = [repo, Path(runtime_root)] if runtime_root is not None else [repo]
+    return load_layers(roots)
 
 
-def load_combined(repo_root: Path, runtime_root: Path | None) -> Graph:
-    """Repository graph plus the runtime candidates, validated together (a missing runtime graph adds nothing)."""
-    with tempfile.TemporaryDirectory(prefix="news-event-graph-") as tmp:
-        return load_graph(_combined_root(Path(repo_root), runtime_root and Path(runtime_root), Path(tmp)))
+def load_layers(roots: Sequence[Path]) -> LayeredGraph:
+    """Several knowledge roots read as one graph, in authority order (highest first): the circle-wide terms
+    every channel shares (assets/manual_lane/knowledge), the channel's graph, then any runtime candidates.
 
-
-def load_layers(roots: Sequence[Path]) -> Graph:
-    """Several knowledge roots read as one graph, in order (a root without the files adds nothing): the circle-wide terms
-    every channel shares (assets/manual_lane/knowledge), the channel's graph, then any runtime candidates."""
-    with tempfile.TemporaryDirectory(prefix="knowledge-layers-") as tmp:
-        scratch = Path(tmp)
-        (scratch / NODES_FILE).parent.mkdir(parents=True, exist_ok=True)
-        for rel in (NODES_FILE, EDGES_FILE):
-            parts = [(Path(root) / rel).read_text("utf-8") for root in roots if (Path(root) / rel).is_file()]
-            (scratch / rel).write_text("".join(t if t.endswith("\n") or not t else t + "\n" for t in parts), "utf-8")
-        return load_graph(scratch)
+    When an id appears in more than one layer, the higher-authority layer's entry stands untouched and the lower
+    layer's duplicate is shadowed (reported on ``shadowed_nodes`` / ``shadowed_edges``); lower-layer edges pointing
+    at a shadowed node id resolve to the standing node.  Within-layer duplicates, dangling edges, and format errors
+    still raise.
+    """
+    nodes_by_id: dict[str, Node] = {}
+    edges_by_id: dict[str, Edge] = {}
+    shadowed_nodes: set[str] = set()
+    shadowed_edges: set[str] = set()
+    for root in roots:
+        root_path = Path(root)
+        nodes_path = root_path / NODES_FILE
+        edges_path = root_path / EDGES_FILE
+        layer_nodes = read_nodes(nodes_path) if nodes_path.is_file() else []
+        layer_edges = read_edges(edges_path) if edges_path.is_file() else []
+        check_unique_ids("node", [n.id for n in layer_nodes])
+        check_unique_ids("edge", [e.id for e in layer_edges])
+        for edge in layer_edges:
+            validate_edge_id(edge)
+        for node in layer_nodes:
+            if node.id in nodes_by_id:
+                shadowed_nodes.add(node.id)
+            else:
+                nodes_by_id[node.id] = node
+        for edge in layer_edges:
+            if edge.id in edges_by_id:
+                shadowed_edges.add(edge.id)
+            else:
+                edges_by_id[edge.id] = edge
+    graph = LayeredGraph(
+        nodes_by_id.values(),
+        edges_by_id.values(),
+        shadowed_nodes=sorted(shadowed_nodes),
+        shadowed_edges=sorted(shadowed_edges),
+    )
+    validate_graph(graph)
+    return graph

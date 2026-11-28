@@ -19,9 +19,11 @@ first, gpt-image-2 only when 2.5 is explicitly unavailable).  A generated image 
 bytes) is unchanged is reused, not asked again.  Every paid request is listed in OUT/result.json "calls".
 Runs under the root wrapper that loads cpa.env (CPA_BASE_URL / CPA_API_KEY); the key is never printed or written.
 
+Composition: each route's candidate is made in the first composition template of the channel's table that fits
+(cover_compose.py; job "layouts", "template_history", "template_session_history"); OUT/result.json "layouts".
+
 Text style: the renderer rotates it from the repo's one style table (job "styles"; skill section 6: colours, size ratio, tilt and stroke are chosen by the content hash, skipping the styles of the last three covers, job "content_sha256" and "recent_style_ids"); nothing here pins a style.  The background colours of the pastel routes come from lane_rules `cover.backgrounds` (cover_background.py).
 """
-import base64
 import contextlib
 import hashlib
 import importlib.util
@@ -32,7 +34,6 @@ import re
 import sys
 import time
 import urllib.error
-import urllib.request
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
@@ -43,12 +44,17 @@ import cover_band as band
 import cover_clock as clock
 import cover_fast_text as fast_text
 import cover_face_crop as crop_mod
+import cover_compose
 import cover_layout as layout
 import cover_text_fit as text_fit
 import cover_confirm
 import cover_dead_panel as dead_panel
 import cover_emote_layer as emote_layer
+import cover_pack_guests as pack
+import cover_pixel_audit
+import cover_vision
 from cover_face_crop import frame_face, protect
+from cover_vision import sha
 
 CALLS = []
 GENERATIONS = {}   # candidate kind -> {model, reported_model, reused}: what produced the layer this run used
@@ -56,11 +62,6 @@ GENERATIONS = {}   # candidate kind -> {model, reported_model, reused}: what pro
 # (layout "top"); the renderer's own checks keep the text off the host's face and the guest's head.
 GUEST_H = 560        # a guest who is not an equal: her head and shoulders, standing on the bottom edge on the left
 BUST = 0.65          # a bust layer is the top 65 % of the body box (head and shoulders)
-
-
-def sha(path):
-    with open(path, "rb") as fh:
-        return hashlib.sha256(fh.read()).hexdigest()
 
 
 def load(path, name):
@@ -142,65 +143,15 @@ def reported_model(response_path):
     return "UNKNOWN"
 
 
-def b64_jpeg(path, width=1280):
-    with Image.open(path) as im:
-        im = im.convert("RGB")
-        if im.width > width:
-            im = im.resize((width, round(im.height * width / im.width)), Image.LANCZOS)
-        buf = io.BytesIO()
-        im.save(buf, format="JPEG", quality=88)
-    return base64.b64encode(buf.getvalue()).decode("ascii")
-
-
 def vision(job, name, question, images, out_dir):
-    """One CPA vision reading (images: [(path, width)]), kept as OUT/<name>.response.json; an unchanged question on
-    unchanged images is read from there, not asked again.  Returns (answer text, reused)."""
-    raw_path = os.path.join(out_dir, f"{name}.response.json")
-    key = {"question": hashlib.sha256(question.encode()).hexdigest(), "images": [sha(p) for p, _ in images],
-           "model": job["judge_model"]}
-    key_path = raw_path + ".key.json"
-    if os.path.exists(raw_path) and os.path.exists(key_path):
-        with open(key_path, encoding="utf-8") as fh:
-            if json.load(fh) == key:
-                with open(raw_path, encoding="utf-8") as fh2:
-                    return output_text(json.load(fh2)), True
-    base = os.environ.get("CPA_BASE_URL", "").strip().rstrip("/")
-    content = [{"type": "input_text", "text": question}] + [
-        {"type": "input_image", "image_url": "data:image/jpeg;base64," + b64_jpeg(p, w)} for p, w in images]
-    body = {"model": job["judge_model"], "reasoning": {"effort": "low"}, "max_output_tokens": 1600,
-            "input": [{"role": "user", "content": content}]}
-    req = urllib.request.Request(f"{base}/responses", data=json.dumps(body).encode(), method="POST", headers={
-        "Authorization": "Bearer " + os.environ.get("CPA_API_KEY", ""), "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"})
-    call = {"kind": "vision", "candidate": name, "model": job["judge_model"], "effort": "low", "rc": 1}
-    CALLS.append(call)
-    started = time.monotonic()
-    try:
-        with urllib.request.urlopen(req, timeout=240) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-    finally:
-        call["elapsed_s"] = round(time.monotonic() - started, 1)
-    call["usage"] = payload.get("usage") or {}
-    # TASK-26: only an answer the provider completed is kept and read (cpa_text.completion_of's rule); an incomplete
-    # one is a failed call, raised before it is written, so it is never reused as the answer to this question
-    statuses = [i.get("status") for i in payload.get("output") or [] if i.get("type") == "message"]
-    if (payload.get("status") != "completed" or payload.get("incomplete_details") or payload.get("error")
-            or any(s != "completed" for s in statuses) or not output_text(payload)):
-        call["incomplete"] = {"status": payload.get("status"), "incomplete_details": payload.get("incomplete_details")}
-        raise ValueError(f"CPA vision answer not complete: status={payload.get('status')}")
-    call["rc"] = 0
-    with open(raw_path, "w", encoding="utf-8") as fh:
-        json.dump(payload, fh, ensure_ascii=False)
-    with open(key_path, "w", encoding="utf-8") as fh:
-        json.dump(key, fh)
-    return output_text(payload), False
+    return cover_vision.vision(job, name, question, images, out_dir, calls=CALLS)
 
 
 @clock.timed("judge")
 def judge(job, cid, question, image, frame, out_dir):
     """One rendered candidate (1920 wide) judged against the source frame; a veto is confirmed: (answer, reused, votes)."""
-    return cover_confirm.confirm_judge(lambda n: vision(job, f"{cid}.judge" + cover_confirm.nth(n), question,
-                                                        [(image, 1920), (frame, 1280)], out_dir), parse_verdict, crop_mod.HOST)
+    ask = lambda n: vision(job, f"{cid}.judge" + cover_confirm.nth(n), question, [(image, 1920), (frame, 1280)], out_dir)
+    return cover_confirm.confirm_judge(ask, parse_verdict, crop_mod.HOST, job.get("needed_on_cover") or ())
 
 
 LOCATE = ("这张图（{w}x{h} 像素）里有虚拟主播" + crop_mod.HOST + "（Q 版、表情包、抠图也算她）；以画面实际造型和名牌辨认，"
@@ -214,17 +165,17 @@ FACE_IN = ("这张图（{w}x{h} 像素）是从一张画面里裁出的一位虚
            '{{"face": [x0, y0, x1, y1]}}，整数；看不出就写 null。')
 
 
-def found_by_most(job, name, question, images, out_dir, found):
+def found_by_most(job, name, question, images, out_dir, found, strict=False):
     """A locating reading; "not there" drops the route, so it is confirmed (cover_confirm.confirm_found)."""
-    return cover_confirm.confirm_found(lambda n: vision(job, name + cover_confirm.nth(n), question, images, out_dir), found)
+    return cover_confirm.confirm_found(lambda n: vision(job, name + cover_confirm.nth(n), question, images, out_dir), found, strict)
 
 
-def _located(job, src, out_dir, name, question, key):
+def _located(job, src, out_dir, name, question, key, strict=False):
     """The face box one picture is read for (reused while the picture's bytes are unchanged)."""
     with Image.open(src) as im:
         w, h = im.size
     return found_by_most(job, name, question.format(w=w, h=h), [(src, w)], out_dir,
-                         lambda answer: cover_confirm.box_in(answer, key, w, h))
+                         lambda answer: cover_confirm.box_in(answer, key, w, h), strict)
 
 
 @clock.timed("locate")
@@ -236,7 +187,7 @@ def host_face(job, src, out_dir, name="locate-cutout"):
 
 
 @clock.timed("locate")
-def guest_face(job, src, out_dir, name, region):
+def guest_face(job, src, out_dir, name, region, strict=False):
     """The other participant's face, read inside her own figure (region: the guest box of the frame reading, or her
     figure in the cut-out, both already told apart from the host's): the crop holds one person, so the reading does not
     depend on telling the two apart by name (asked by name on the whole picture, CPA vision returned the host's face as
@@ -248,7 +199,7 @@ def guest_face(job, src, out_dir, name, region):
             return None
         crop = os.path.join(out_dir, f"{name}.crop.png")
         im.crop((x0, y0, x1, y1)).save(crop)
-    box = _located(job, crop, out_dir, name, FACE_IN, "face")
+    box = _located(job, crop, out_dir, name, FACE_IN, "face", strict)
     return [box[0] + x0, box[1] + y0, box[2] + x0, box[3] + y0] if box else None
 
 
@@ -275,15 +226,6 @@ def measured_face(job, route, spec, host_src, out_dir, renderer):
 
 
 CHIN_MARGINS = (0.9, 0.7, 0.5, 0.35, 0.15)   # how much below the chin a peer's layer keeps (in face heights), widest first
-
-
-def output_text(payload):
-    text = payload.get("output_text") or ""
-    if not text:
-        for item in payload.get("output") or []:
-            if item.get("type") == "message":
-                text += "".join(c.get("text", "") for c in item.get("content") or [])
-    return text.strip()
 
 
 def parse_verdict(text):
@@ -648,7 +590,8 @@ class Run:
         self.rules = job["rules"]                     # lane_rules `cover`, read by the caller (numbers and their sources there)
         self.face_px = round(self.rules["face_target_frac"] * 1080)
         self.floor_px = round(self.rules["face_floor_frac"] * 1080)     # the one 25 % floor (lane_rules cover.face_floor_frac)
-        self.plans, self.column = {}, layout.Column(job, self.rules)   # route -> its crop and text plans; the text column
+        self.plans, self.column = {}, layout.Composition(job, self.rules)   # route -> its crop and text plans; the template
+        self.table, self.layouts, self.rows = cover_compose.load(job), {}, []   # the templates; route -> its selection; rows
         self.renderer = fast_text.fast_renderer(load(job["renderer"], "render_cover"))
         self.redraw = load(job["redraw"], "redraw_background")
         self.renderer.install_table(self.renderer.load_styles(job["styles"]))
@@ -669,6 +612,7 @@ class Run:
         self.frame_guest = []                 # the guest's face in the live frame, read once when a candidate needs it
         self.guest_layer = None
         self.guest_layers = []
+        pack.setup(self, sha, PEER_FACE_TOP_MIN, lambda src, name, box: guest_face(self.job, src, self.out, name, box, strict=True))
         self.group_failed = False
         self.group_failure = None
         self.cut_png = os.path.join(self.out, "gen-cutout.png")
@@ -730,11 +674,23 @@ class Run:
             hf = [x0, head_top, x1, head_top + max(1, (y1 - head_top) * 2 // 5)]
         if hf is None:                          # a cover of her without her face is not made
             return self.fail("screenshot", "HOST_FACE_NOT_FOUND")
+        if self.pack:
+            if job.get("source_guest_boxes_unknown"):
+                return self.fail("screenshot", "PACK_FRAME_GUESTS_UNCHECKED")
+            # A partially detected guest is deliberately not laid out from the frame, but her pixels have not
+            # disappeared from it. Reject the whole frame: a bounding box can omit a horn or hat outside the box.
+            if job.get("source_guest_boxes"):
+                return self.fail("screenshot", "PACK_FRAME_CONTAINS_OTHER_PERSON")
+            return pack.cover(self, "screenshot", {"kind": "frame", "src": frame, "face": hf}, "直播截图，弹幕框模糊", blur=spec.get("blur"))
         gf = self.guest_in_frame()
-        if not self.guest_boxes:            # a solo frame: beside the column of words when it is its turn, else tight on the face
+        if not self.guest_boxes:            # a solo frame: framed as the template says (cover_side)
             side_shot.solo(self, spec, hf, head_top, clock)
-        if (dead := dead_panel.widest_dead_block(frame, spec.get("crop"), self.rules)) >= self.rules["dead_panel_max_frac"]:
+        else:
+            spec.update(self.column.text("screenshot", self.lines))
+        shift = side_shot.pad_shift(spec)   # a window reaching past the frame's left edge: the crop is in the extended frame
+        if (dead := dead_panel.widest_dead_block(frame, side_shot.in_frame(spec, frame), self.rules)) >= self.rules["dead_panel_max_frac"]:
             return self.fail("screenshot", f"SCREENSHOT_DEAD_PANEL: 画面里有一整块死黑（占 {dead:.0%}）")
+        hf = [hf[0] + shift, hf[1], hf[2] + shift, hf[3]]
         guest_measured = frame_face(gf, spec["crop"]) if gf else None
         spec["face"] = protect([frame_face(hf, spec["crop"]), guest_measured])
         spec["keep"] = list(spec.get("keep") or []) + ([guest_measured] if guest_measured else [])
@@ -750,6 +706,8 @@ class Run:
         hf = host_face(job, emote["hd"], out, name="locate-emote")      # the face is measured in the emote itself
         if hf is None:
             return self.fail("emote", "HOST_FACE_NOT_FOUND")
+        if self.pack:
+            return pack.cover(self, "emote", pack.layer_host(self, layer, cutout, hf), f"官方表情包 {emote['id']}（{emote['label']}）当{crop_mod.HOST}", emote["id"])
         gf = self.guest_in_frame() if self.peers else None
         guest_measured = None
         if gf:
@@ -794,6 +752,8 @@ class Run:
             ready = cutout_ready(self.job, self.out, self.redraw, self.frame) if "ai_sticker" in self.routes else None
         if not ready:
             return
+        if self.pack:
+            return pack.cutout(self, host_face, figures) if "cutout" in self.routes else None
         people = figures(self.cut_png, self.renderer, raw=self.expected_people > 1)
         legacy_two = self.expected_people == 2 and len(people) == 2
         if legacy_two:
@@ -808,7 +768,7 @@ class Run:
         stickers, face, keep, note, host_ref, guest_measured = layers
         if "cutout" in self.routes:
             self.specs.append(("cutout", {"id": "cutout", "stickers": stickers,
-                                          **self.column.text("cutout", self.lines, "top" if self.guest_boxes else "auto"),
+                                          **self.column.text("cutout", self.lines),
                                           "face": face, "keep": keep}, note, None,
                                host_ref, guest_measured))
 
@@ -900,8 +860,10 @@ class Run:
         res = generate(self.job, "ai_scene", self.redraw.build_prompt(self.brief, "scene"), self.frame, scene_png, None)
         if res.get("status") in ("REUSED", "AI_BACKGROUND_READY"):
             located = host_face(self.job, scene_png, self.out, name="locate-ai_scene")   # the text keeps off her real face
+            if located is None:               # no face read in the scene: the words have nothing to keep off
+                return self.fail("ai_scene", "HOST_FACE_NOT_FOUND")
             self.specs.append(("ai_scene", {"id": "ai_scene", "frame": scene_png, "crop": [0, 0, 1920],
-                                            "layout": "auto", "lines": self.lines, "face": located or [1100, 120, 1680, 700],
+                                            **self.column.text("ai_scene", self.lines), "face": located,
                                             "keep": []},
                                f"整幅 AI 场景（{self.brief.get('scene_reason', '')}）", None,
                                {"kind": "picture", "src": scene_png}, None))
@@ -932,6 +894,8 @@ class Run:
             self.failed.append({"id": "ai_sticker", "route": "ai_sticker",
                                 "failure": f"IMAGE_EDIT_{res.get('reason_code')}"})
             return
+        if self.pack:
+            return pack.drawn(self, sticker_png, host_face(self.job, sticker_png, self.out, name="locate-ai_sticker"))
         try:
             stickers, face, keep, host_ref, guest_measured = self.sticker_layers(sticker_png)
         except ValueError as exc:
@@ -983,8 +947,8 @@ class Run:
         stickers, face, keep, host = self.solo_host("ai_sticker", {"src": sticker_png, "cutout": "auto"}, hf, self.guest_layer)
         return stickers, face, keep, {"kind": "layer", "src": sticker_png, "crop": host["crop"], "face": hf}, None
 
-    def render_row(self, route, spec, note, main_emote, host_ref, guest_measured):
-        """Render one candidate, measure its face and have it judged.  Returns its row."""
+    def draw(self, route, spec, note, main_emote, host_ref, guest_measured):
+        """Render one candidate (no judge yet).  Returns its row."""
         job, out = self.job, self.out
         if job.get("style_id"):                # an explicit pin only (skill: spec style_id); the lane sends none
             spec["style_id"] = job["style_id"]
@@ -996,14 +960,17 @@ class Run:
             row["note"] = f"CPA 生图画的 Q 版贴纸当{crop_mod.HOST}，嘉宾为抠图层，{self.expected_people} 人同样大小"
         if self.expected_people > 2:
             row["expected_guest_count"] = self.expected_people - 1
+        pack.row_facts(self, route, row)
         started = time.monotonic()
         clock.route(route)
         original = json.loads(json.dumps(spec))       # before the text plan: the banded retry starts from it
+        plan = None
         with clock.phase("layout"):
             style, ink = self.text_ink(spec)         # size line 1 before rendering, from where the face really sits
             row["background"] = background.choose(self.renderer, spec, style, route, job)   # pastel routes only (None: a frame)
-            plan = text_fit.plan_text(ink, len(spec["lines"]), spec["face"][1], style, self.rules)
-            text_fit.apply_plan(spec, plan)
+            if spec.get("layout") == "top":          # the strip above the face is sized here; other layouts by the renderer
+                plan = text_fit.plan_text(ink, len(spec["lines"]), spec["face"][1], style, self.rules)
+                text_fit.apply_plan(spec, plan)
         err = io.StringIO()
         try:
             with contextlib.redirect_stderr(err), clock.phase("render"):
@@ -1011,25 +978,36 @@ class Run:
                                                            recent_style_ids=job.get("recent_style_ids") or (),
                                                            content_sha256=job.get("content_sha256"))
         except SystemExit as exc:
-            if route == "screenshot" and self.column.placed.pop("screenshot", None):     # the column did not fit after all
-                self.column.refused["screenshot"] = {"reason": f"RENDER_REFUSED: {exc}"}
-                self.screenshot()
-                return self.render_row(*self.specs.pop())
-            banded = route == "screenshot" and band.banded_spec(original, text_fit.need_face_top(
-                ink, len(spec["lines"]), self.rules, self.rules["punch_floor_px"]), os.path.join(out, "frame-band.png"))
-            if banded:                     # 字放不下先换版式 (70-cover): the picture lowered for its text, not dropped
-                return self.render_row(route, banded, note + "；字放不下：整幅截图缩小放下方，上方同画面虚化出字区",
-                                       main_emote, host_ref, band.moved_any(guest_measured, banded["band"]["scale"]))
+            banded = (route == "screenshot" and not self.pack and spec.get("layout") == "top" and not spec.get("band")
+                      and band.banded_spec(original, text_fit.need_face_top(ink, len(spec["lines"]), self.rules,
+                                                                            self.rules["punch_floor_px"]),
+                                           os.path.join(out, "frame-band.png")))
+            if banded:                     # the top template's words do not fit: the picture lowered for them, not dropped
+                return self.draw(route, banded, note + "；字放不下：整幅截图缩小放下方，上方同画面虚化出字区",
+                                 main_emote, host_ref, band.moved_any(guest_measured, banded["band"]["scale"]))
             row.update(status="RENDER_FAILED", failure=f"RENDER_REFUSED: {exc}")
             return row
         path = os.path.join(self.images, f"{route}.png")
+        try:
+            base, mask, pixel_audit = cover_pixel_audit.audit(self.renderer, spec, rec, job["font"], img)
+        except ValueError as exc:
+            row.update(status="RENDER_FAILED", failure=f"PIXEL_AUDIT_FAILED: {exc}")
+            return row
+        base.save(os.path.join(self.images, f"{route}.pre-overlay.png"))
+        mask.save(os.path.join(self.images, f"{route}.title-mask.png"))
         img.save(path)
         img.save(os.path.join(self.images, f"{route}.jpg"), quality=90)
-        punch = rec[-1]
+        punch = max(rec, key=lambda ln: ln["size"])      # the punchline: the largest line (a column's punch rows)
         row.update(status="RENDERED", image=path, image_sha256=sha(path), punch_font_size=int(punch["size"]),
                    render=self.render_record(spec, rec, selection, guest_measured), render_s=round(time.monotonic() - started, 2),
                    punch_ink_h=int(punch["h"]), punch_floor_px=self.rules["punch_floor_px"], text_plan=plan,
-                   punch_below_floor=int(punch["size"]) < self.rules["punch_floor_px"], crop_plan=self.plans.get(route))
+                   punch_below_floor=int(punch["size"]) < self.rules["punch_floor_px"], crop_plan=self.plans.get(route),
+                   pixel_audit=pixel_audit)
+        return row
+
+    def judge_row(self, row, route, spec, note, main_emote, host_ref, guest_measured):
+        """Measure the taken candidate's face and have it judged."""
+        job, out, path = self.job, self.out, row["image"]
         face_box, face_note = measured_face(job, route, spec, host_ref, out, self.renderer)
         group_faces = (guest_measured if guest_measured and isinstance(guest_measured[0], list)
                        else [guest_measured] if guest_measured else [])
@@ -1058,10 +1036,12 @@ class Run:
         composed = bool(spec.get("stickers"))
         return {"measured_lines": [{k: int(ln[k]) for k in ("x", "y", "w", "h")} for ln in rec],
                 "layout": rec[-1].get("layout"), "style_id": selection.get("style_id"),
+                "template_id": (self.column.template or {}).get("template_id"),
                 "colors": [ln.get("color") for ln in rec], "sizes": [int(ln["size"]) for ln in rec],
                 "size_ratio": style.get("size_ratio"), "tilt": rec[-1].get("tilt"),
                 "stroke": rec[-1].get("stroke"), "style_selection": selection,
-                "host_side": self.host_side if composed and guest_measured else ("right" if self.host_right else "left"),
+                "host_side": self.sides.get(spec.get("id")) or (
+                    self.host_side if composed and guest_measured else ("right" if self.host_right else "left")),
                 "composition": ("peers_equal" if composed and guest_measured else
                                 "layers" if composed else "picture_band" if spec.get("band") else spec.get("composition", "picture")),
                 "band": spec.get("band")}
@@ -1072,20 +1052,25 @@ def main(argv):
         job = json.load(fh)
     run = Run(job)
     if "screenshot" in run.routes:
-        run.screenshot()
+        cover_compose.compose(run, "screenshot", run.screenshot)
     if job.get("emote") and "emote" in run.routes:
-        run.emote(job["emote"])
-    run.cutout()
+        cover_compose.compose(run, "emote", lambda: run.emote(job["emote"]))
+    if "cutout" in run.routes:
+        cover_compose.compose(run, "cutout", run.cutout)
+    elif "ai_sticker" in run.routes:
+        run.cutout()                  # only the guest layers the sticker reuses (no candidate, no template)
     if "ai_scene" in run.routes:
-        run.ai_scene()
+        cover_compose.compose(run, "ai_scene", run.ai_scene)
     if "ai_sticker" in run.routes:
-        run.ai_sticker()
-    rows = list(run.failed) + [run.render_row(*spec) for spec in run.specs]
+        cover_compose.compose(run, "ai_sticker", run.ai_sticker)
+    rows = list(run.failed) + run.rows
     for row in rows:
+        if run.pack_dropped:
+            row["guest_assets_dropped"] = run.pack_dropped
         row["phases_s"] = clock.seconds(row["route"])      # where this route's seconds went (cover_clock.PHASES)
     with open(os.path.join(run.images, job.get("result", "result.json")), "w", encoding="utf-8") as fh:
         json.dump({"rows": rows, "calls": CALLS, "frame_sha256": sha(run.frame), "routes": run.routes,
-                   "column": run.column.record()}, fh, ensure_ascii=False, indent=1)
+                   "layouts": run.layouts, "column": run.column.record()}, fh, ensure_ascii=False, indent=1)
     rendered = sum(1 for r in rows if r.get("status") == "RENDERED")
     print(f"COVER_CANDIDATES_DONE rendered={rendered} calls={len(CALLS)}")
     refused = [r["failure"] for r in rows if r.get("status") == "RENDER_FAILED"]

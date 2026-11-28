@@ -1,5 +1,4 @@
-"""Step 3: words a game or a piece of software says are not subtitled (owner, U469: 「这个有几个是系统提示音，
-系统提示音你怎么还给这个加成字幕了？就那个什么Ladies and gentlemen什么MVP那个，这个不应该加呀」).
+"""Step 3: words a game or a piece of software says are not subtitled (the channel's request).
 
 The subtitle agent has the rule (subtitle_playbook_rules R21) and still wrote them: 316670 redone with R21 on 11-23
 kept a countdown 「10」 it wrote itself and 「three two」 that the jianying orphan rule added after it, and the step 9
@@ -66,6 +65,8 @@ SOURCES = ("game", "person", "unsure")
 class Verdict(TypedDict):
     cue: int                    # 1-based number in final.srt before the check
     text: str
+    line_s: list[float]         # the line's start and end (clip clock) before the check; sound_events reads where a
+                                # hearing placed a game part
     foreign: list[int]          # positions of the foreign clauses in parts(text)
     levels: dict[str, list[int]]   # hearing (level slug, `<slug>-again`) -> the foreign clauses it placed in a game part
     removed: list[int]          # the clauses every answering hearing placed there (two hearings or more answered)
@@ -166,8 +167,8 @@ def decide(cues: Sequence[TrackCue], wins: Sequence[dict], records: Sequence[Map
         timing = next((answers[s] for s in slugs if s in answers), None)
         if removed and timing is not None:
             start, end = _kept_times(text, removed, timing, float(win["audio"][0]), win["core"])
-        out.append({"cue": n, "text": text, "foreign": foreign_clauses(text), "levels": levels, "removed": removed,
-                    "start_s": start, "end_s": end})
+        out.append({"cue": n, "text": text, "line_s": [float(win["core"][0]), float(win["core"][1])],
+                    "foreign": foreign_clauses(text), "levels": levels, "removed": removed, "start_s": start, "end_s": end})
     return out
 
 

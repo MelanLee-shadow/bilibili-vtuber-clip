@@ -103,7 +103,9 @@ def test_the_other_persons_line_is_placed_in_time_order_and_the_sentence_keeps_i
 
 def test_step4_uses_the_chunk_voiceprint_from_step3_without_another_remote_run(tmp_path):
     class NoRemote:
-        def run_script(self, **_):
+        def run_script(self, *, name, **_):
+            if name == "s4-guest-audio":       # looking for a guest's recording is not the voiceprint run (arrival.py)
+                return RemoteResult(0, 'GUEST_AUDIO {"guests": {}}\n', "")
             raise AssertionError("step 4 must reuse the chunk predictions of step 3")
 
     ctx = make_ctx(tmp_path, remote=NoRemote(), cpa=IdCpa(), bcut_text=_srt(BCUT))

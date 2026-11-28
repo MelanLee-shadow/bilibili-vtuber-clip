@@ -193,6 +193,26 @@ def test_compile_session_cuts_two_recordings_and_writes_the_joined_clock(tmp_pat
     assert cpa.calls == ["compilation-select"]
 
 
+def test_pieces_the_caller_already_decided_are_checked_like_cpas_and_nothing_is_asked(tmp_path):
+    """discover joins the evening's candidates on one matter: the pieces are theirs, CPA is not asked which."""
+    from src.autoslice.manual_lane.config import load_session_config
+
+    adapters, _remote, cpa = _adapters(tmp_path, [])
+    names, session = _task(tmp_path)
+    run = lambda decided: comp.compile_session(
+        task=tmp_path / "task", cid="comp", theme="谁是谁的宠物", session=load_session_config(session),
+        recordings=[comp.RecordingInput(n, tmp_path / f"{n}.srt") for n in names], source_dir=SOURCES, remote_root=ROOT,
+        adapters=adapters, decided=decided)
+    with pytest.raises(comp.CompilationError) as err:
+        run(json.loads(_answer((1, 5, 99))))
+    assert err.value.code == "COMPILATION_CUE_UNKNOWN"
+    result = run(json.loads(_answer((1, 3, 6), (2, 9, 12), hook="谁是谁的宠物")))
+    assert result.compilation and [p["start_cue"] for p in result.manifest["pieces"]] == [3, 9] and cpa.calls == []
+    kept = json.loads((tmp_path / "task/clips/comp/compilation/selection.json").read_text(encoding="utf-8"))
+    assert kept["decided_by"] == "discover_topics" and "cpa" not in kept and "cpa" not in result.manifest
+    assert run(None).manifest == result.manifest and cpa.calls == []          # a second run reads the kept answer
+
+
 def test_the_compilation_looks_like_one_ordinary_candidate_to_init(tmp_path):
     adapters, _remote, _cpa = _adapters(tmp_path, [_answer((1, 3, 6), (2, 9, 12))])
     result = _run_compile(tmp_path, adapters)

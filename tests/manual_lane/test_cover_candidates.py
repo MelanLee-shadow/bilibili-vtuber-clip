@@ -1,7 +1,7 @@
 """TASK-10 problem 2 and TASK-11 item 4: step 6's cover candidates (70-cover: screenshot, emote, cutout, ai_sticker
 or ai_scene), all with the same cover lines, scored with the repo's choose_cover rules
 (title_cover_candidates.score_candidate) on CPA's per-candidate vision reasons.  11-18 the free candidates come first
-again (U138 「每个封面出3-4个候选也太奢侈了吧」; requirements §6 封面先用免费候选，不合格才出1张AI图): the screenshot and
+again (the channel's request; requirements §6 封面先用免费候选，不合格才出1张AI图): the screenshot and
 the emote are made together; only when neither passes is ONE picture generated (11-10..11-18 every route was made at
 once and a sticker outscored passing screenshots).  Every paid image and vision request is recorded.  Ordinary path:
 step6_title_cover on the fake remote."""
@@ -150,6 +150,20 @@ def test_rendered_candidate_without_first_vision_verdict_can_still_be_chosen(tmp
     assert any("未评分" in line for line in out.process)
 
 
+def test_unavailable_frame_vision_fails_with_the_accepted_title_preserved(tmp_path):
+    def unavailable(name, body, remote):
+        if name == "s6-frame":
+            return RemoteResult(1, "", "RuntimeError: CPA_FALLBACK_FAILED: primary quota exhausted; fallback unavailable")
+        return None
+
+    ctx, remote = _ctx(tmp_path, hook=unavailable)
+    out = si.step6_title_cover(ctx)
+    assert not out.ok and out.reason == "CPA_CALL_FAILED" and "CPA_FALLBACK_FAILED" in out.note
+    title_path = ctx.clip_dir / "title/title.txt"
+    assert out.products == {"title": str(title_path)} and title_path.is_file()
+    assert not any(name.startswith("s6-cover-job") for name, _ in remote.scripts)
+
+
 def test_missing_frame_remains_a_tool_failure(tmp_path):
     ctx, remote = _ctx(tmp_path, frame_rc=22)
     out = si.step6_title_cover(ctx)
@@ -215,8 +229,9 @@ def test_an_unchanged_frame_reading_is_not_asked_again(tmp_path):
     doc = json.loads((ctx.clip_dir / "cover/frames.json").read_text(encoding="utf-8"))
     times = doc.get("times")
     assert times is None                    # the fake tool did not record its times: the next run asks again
-    (ctx.clip_dir / "cover/frames.json").write_text(json.dumps(dict(FRAMES_WITH_TIMES, times=_times(remote))),
-                                                   encoding="utf-8")
+    avoid = json.loads((ctx.clip_dir / "cover/avoid.json").read_text(encoding="utf-8"))   # what the tool was handed
+    (ctx.clip_dir / "cover/frames.json").write_text(json.dumps(dict(FRAMES_WITH_TIMES, times=_times(remote),
+                                                                    avoid=avoid)), encoding="utf-8")
     (ctx.clip_dir / "cover/frames.json").chmod(0o444)     # on the media host the record belongs to root
     before = [n for n, _ in remote.scripts].count("s6-frame")
     again = si.step6_title_cover(ctx)
@@ -227,4 +242,4 @@ def test_an_unchanged_frame_reading_is_not_asked_again(tmp_path):
 
 def _times(remote):
     body = next(b for n, b in reversed(remote.scripts) if n == "s6-frame")
-    return [float(t) for t in body.split("frames.json ")[1].split("'")[0].split(",")]
+    return [float(t) for t in body.split("frames.json ")[1].split("'")[0].split()[0].split(",")]

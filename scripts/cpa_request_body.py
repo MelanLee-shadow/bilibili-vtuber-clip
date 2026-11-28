@@ -6,11 +6,13 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src.autoslice.cpa_model_ladder import min_output_tokens_for_model
 from src.autoslice.structured_output import guard_json_object
 
 
 def build_body(prompt, model, effort, response_format=None):
-    body = {'model': model, 'input': prompt, 'reasoning': {'effort': effort}, 'max_output_tokens': 16000}
+    body = {'model': model, 'input': prompt, 'reasoning': {'effort': effort},
+            'max_output_tokens': min_output_tokens_for_model(model, 16000)}
     guarded = guard_json_object(response_format, prompt)
     if response_format and guarded is None:
         print('[autoslice-structured-output] JSON_MODE_SKIPPED_NO_JSON_WORD', file=sys.stderr)

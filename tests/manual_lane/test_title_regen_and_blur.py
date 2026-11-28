@@ -103,9 +103,9 @@ def _answer(cands, recommended=0):
 def test_all_candidates_failing_self_check_get_two_regeneration_rounds_then_the_step_stops(tmp_path):
     """Skill 八.4 (owner, U471): after the rewrites no title is taken by score; the old code took the
     highest-scored candidate and went on to the cover."""
-    bad_swap = _cand("【李豆沙】她半分钟后真的破防了", holds=True)                                # fails swap
+    bad_word = _cand("【李豆沙】她半分钟后直接破防了")                                           # a banned word
     bad_name = _cand("【李豆沙】她和弹幕吵起来了", on_stage=("李豆沙", "雾深Girimi"))   # fails names
-    answers = [_answer([bad_swap, bad_name]), _answer([bad_swap]), _answer([bad_swap])]
+    answers = [_answer([bad_word, bad_name]), _answer([bad_word]), _answer([bad_word])]
     ctx, cpa, _ = _ctx(tmp_path, answers, frames={"chosen": 12.0, "checked": []})
     out = si.step6_title_cover(ctx)
     assert not out.ok and out.reason == "TITLE_NOT_ACCEPTED" and "不按得分硬选" in out.note, out
@@ -117,14 +117,14 @@ def test_all_candidates_failing_self_check_get_two_regeneration_rounds_then_the_
     assert cands["forced"] is True and cands["rounds"] == ["title", "title-regen-1", "title-regen-2"]
     assert cands["chosen"]["checks"]["ok"] is False
     assert cands["chosen"]["checks"]["score"] == len(si.TITLE_RULES) - 1
-    assert cands["chosen"]["checks"]["failed"] == ["swap"]       # the highest score (6/7), the unpassed item recorded
+    assert cands["chosen"]["checks"]["failed"] == ["banned"]     # the highest score, the unpassed item recorded
 
 
 def test_the_regeneration_prompt_carries_the_reasons_of_the_failed_round(tmp_path):
-    ctx, cpa, _ = _ctx(tmp_path, [_answer([_cand("【李豆沙】她半分钟后真的破防了", holds=True)]),
+    ctx, cpa, _ = _ctx(tmp_path, [_answer([_cand("【李豆沙】她半分钟后直接破防了")]),
                                   _answer([_cand("【李豆沙】她半分钟后真的破防了")])], frames={"chosen": None, "checked": []})
     assert si.step6_title_cover(ctx).ok
-    assert "上一轮候选没有一条通过自检" in cpa.title_prompts[1] and "换主播自检未通过" in cpa.title_prompts[1]
+    assert "上一轮候选没有一条通过自检" in cpa.title_prompts[1] and "禁词：直接" in cpa.title_prompts[1]
     assert "上一轮候选没有一条通过自检" not in cpa.title_prompts[0]
 
 

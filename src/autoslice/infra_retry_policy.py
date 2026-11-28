@@ -1,7 +1,6 @@
 """何时重排一条"在等基础设施"的 talk 候选。
 
-公开规则#9 逐字：「仅仅是一个CPA请求失败为什么会让整条候选判死…CPA
-请求失败的逻辑是积极重试，而不是判候选死」。
+频道的要求（9 逐字）。
 
 "不判死"那一半 talk lane 早就有了：``provider_transient`` /
 ``runtime_prerequisite`` 属于 ``INFRASTRUCTURE_WAIT_FAILURE_KINDS``，永不落
@@ -25,6 +24,7 @@ import json
 import math
 import random
 import re
+from contextlib import contextmanager
 from contextvars import ContextVar
 from collections.abc import Mapping
 
@@ -91,8 +91,9 @@ def cpa_text_failure_category(exc: BaseException) -> str | None:
     if not isinstance(exc, LlmCallError):
         return None
     code = str(diagnostics.get('provider_error_code') or '')
+    from .cpa_model_ladder import is_definite_quota_code
     from .cpa_runtime import CPA_RESPONSE_LOCAL_FAILURE
-    if exc.safe_reason == 'LLM_RESPONSE_LOCAL_FAILURE' or code == CPA_RESPONSE_LOCAL_FAILURE:
+    if exc.safe_reason == 'LLM_RESPONSE_LOCAL_FAILURE' or code == CPA_RESPONSE_LOCAL_FAILURE or is_definite_quota_code(code):
         return None
     if code.lower() in CPA_TEXT_REJECTED_ERROR_CODES:
         return None
@@ -321,6 +322,40 @@ def terminal_retry_remaining_seconds() -> float | None:
     return max(0.0, remaining)
 
 
+@contextmanager
+def terminal_retry_scope(
+    *,
+    wallclock_seconds: float | int | None = None,
+    clock=None,
+    sleeper=None,
+):
+    """Install one bounded wall-clock retry scope for a terminal judge call."""
+
+    if wallclock_seconds is None:
+        wallclock_seconds = TERMINAL_RETRY_DEFAULT_WALLCLOCK_SECONDS
+    if isinstance(wallclock_seconds, bool) or float(wallclock_seconds) < 0:
+        raise ValueError("terminal retry wall-clock budget must be non-negative")
+    clock = clock or time.monotonic
+    sleeper = sleeper or time.sleep
+    started = float(clock())
+    state: dict[str, object] = {
+        "started_monotonic": started,
+        "deadline_monotonic": started + float(wallclock_seconds),
+        "wallclock_seconds": float(wallclock_seconds),
+        "clock": clock,
+        "sleeper": sleeper,
+        "attempts": 0,
+        "retries": 0,
+        "unknown_attempts": 0,
+        "events": [],
+    }
+    token = _terminal_retry_scope.set(state)
+    try:
+        yield state
+    finally:
+        _terminal_retry_scope.reset(token)
+
+
 def terminal_failure_is_transient(exc: BaseException) -> bool:
     """Use the repository's provider classifier for terminal transport retry."""
 
@@ -369,6 +404,9 @@ def terminal_failure_is_transient(exc: BaseException) -> bool:
     # deterministic.  408/429 continue through the canonical service/quota
     # branches below.
     lowered = text.lower()
+    from .cpa_model_ladder import is_definite_quota_code
+    if is_definite_quota_code(error_code) or getattr(exc, "quota_fallback_exhausted", False):
+        return False
     if status in {401, 403} or (
         status == 400
         and "auth_unavailable" in lowered

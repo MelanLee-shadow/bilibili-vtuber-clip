@@ -138,7 +138,7 @@ def test_legacy_only_asks_focused_once_and_reuses_both_terminals_after_material_
     assert report.stopped_at is None and report.rewinds == ['package', 'review']
     assert counts == {'burn': 1, 'tags': 1, 'package': 2}
     assert cpa.calls == ['review-held'] and cpa.details == [
-        {'call_id': 'review-held', 'model': 'gpt-6.1-sol', 'effort': 'high'}]
+        {'call_id': 'review-held', 'model': 'gpt-6.2-sol', 'effort': 'high'}]
     assert not doubt_policy.is_hold(_row(ctx)) and _row(ctx)['affects_meaning'] is False
     assert [(ctx.clip_dir / p).read_bytes() for p in ('subs/final.srt', 'speaker/speaker.srt')] == before
     record = ctx.state.data['review']
@@ -473,7 +473,7 @@ def test_pre_dispatch_interruption_resumes_same_question_once(tmp_path, monkeypa
     resumed = run_clip(ctx, steps)
     assert resumed.stopped_at is None and cpa.calls == ['review-held'] and not doubt_policy.is_hold(_row(ctx))
     assert saved_prompt == prompts[0] == cpa.prompts[0]
-    assert cpa.details == [{'call_id': 'review-held', 'model': 'gpt-6.1-sol', 'effort': 'high'}]
+    assert cpa.details == [{'call_id': 'review-held', 'model': 'gpt-6.2-sol', 'effort': 'high'}]
     assert ctx.state.data['review']['held_ids'] == ['d493']
     assert all(p.read_bytes() == v for p, v in main_original.items())
 

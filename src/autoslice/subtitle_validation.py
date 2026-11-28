@@ -8,10 +8,17 @@ non-empty block is consumed or the artifact fails closed.
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any
+
+from .channel_profile import LABEL_RE
 
 
 SRT_RELEASE_POLICY_SCHEMA = "lidousha-srt-release-policy.v1"
+# 62 sealed clips (recorded on/after 11-18), 3,125 cues: p99 8.60,
+# p99.9 12.82 alphanumeric characters/s. Five cues exceed 12; the witness is 16.07.
+MAX_READ_CHARS_PER_SECOND = 12
+
 _TIME_RE = re.compile(r"^(\d{2}):(\d{2}):(\d{2}),(\d{3})$")
 _TIMING_RE = re.compile(r"^(.+?)\s+-->\s+(.+?)$")
 _PUNCT_ONLY_RE = re.compile(r"^[，。！？、,.!?…]+$")
@@ -55,12 +62,27 @@ def _blocks(text: str) -> list[list[str]]:
     return blocks
 
 
+def read_speed_error(text: str, start_ms: int, end_ms: int) -> dict[str, Any] | None:
+    """Flag an exceptional reading rate; this alone does not establish speech timing."""
+    duration = end_ms - start_ms
+    # Speaker labels select a style and are not drawn in the subtitle.
+    while label := LABEL_RE.match(text):
+        text = label.group(2)
+    count = sum(unicodedata.category(ch)[0] in "LN" for ch in text)
+    if duration > 0 and count * 1000 > MAX_READ_CHARS_PER_SECOND * duration:
+        return {"code": "SRT_CUE_READ_TOO_FAST", "characters": count, "duration_ms": duration,
+                "characters_per_second": round(count * 1000 / duration, 2),
+                "limit": MAX_READ_CHARS_PER_SECOND}
+    return None
+
+
 def validate_srt_text(
     text: str,
     *,
     media_duration_ms: int | None = None,
     min_cue_ms: int = 300,
     media_tail_tolerance_ms: int = 100,
+    owner_cue_numbers: set[int] | None = None,
 ) -> dict[str, Any]:
     """Return a deterministic release verdict without silently skipping blocks."""
 
@@ -164,11 +186,26 @@ def validate_srt_text(
         parsed.append(
             {
                 "index": cue_index,
+                "block": block_number,
                 "start_ms": start_ms,
                 "end_ms": end_ms,
                 "text": "\n".join(text_lines),
             }
         )
+    for position, cue in enumerate(parsed):
+        problem = read_speed_error(cue["text"], cue["start_ms"], cue["end_ms"])
+        if not problem:
+            continue
+        before = cue["start_ms"] - (parsed[position - 1]["end_ms"] if position else 0)
+        after = ((parsed[position + 1]["start_ms"] if position + 1 < len(parsed) else media_duration_ms)
+                 - cue["end_ms"] if position + 1 < len(parsed) or media_duration_ms is not None else None)
+        problem.update(block=cue["block"], gap_before_ms=before, gap_after_ms=after)
+        owner = owner_cue_numbers is not None and cue["block"] in owner_cue_numbers
+        if not owner and (before >= 1000 or (after is not None and after >= 1000)):
+            errors.append(problem)
+        else:
+            problem["code"] = "SRT_CUE_READ_FAST_OWNER" if owner else "SRT_CUE_READ_FAST_PACKED"
+            warnings.append(problem)
     # Name-echo exemption (秦秦/秦 case): a lone CJK character is a
     # real utterance when the SAME character appears inside a >=2-char run of
     # an adjacent cue (呼名回声/结巴 onset). Isolated content-word fragments

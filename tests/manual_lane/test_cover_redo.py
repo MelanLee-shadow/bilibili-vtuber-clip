@@ -172,11 +172,11 @@ def test_when_the_redo_is_spent_the_fewest_vetoes_is_taken_with_a_loud_flag_and_
     flag = choose["material_flag"]
     assert flag["id"] == "ai_sticker" and flag["axes"] == ["CPA_VETO:identity", "CPA_VETO:source_faithful"]
     assert IDENTITY_WORDS in flag["judge_words"] and choose["fallback_choice"]["method"] == "fewest_vetoes"
-    flagged = [line for line in out.process if line.startswith("【封面素材被否决·非阻塞")]
+    flagged = [line for line in out.process if line.startswith("【封面素材被否决·上线前停下")]
     assert len(flagged) == 1 and "CPA_VETO:identity" in flagged[0] and IDENTITY_WORDS in flagged[0]
     route = json.loads((host.ctx.clip_dir / "title/candidates.json").read_text(encoding="utf-8"))["cover_route"]
     assert route["material_flag"] == flag and route["chosen"]["route"] == "ai_sticker"
-    assert "非阻塞" in out.note
+    assert "上线前停下" in out.note           # step 6 does not fail; step 10 sends nothing (step10_check.cover_material)
 
 
 def test_the_fallback_never_picks_a_candidate_vetoed_on_its_material_while_another_exists(tmp_path):

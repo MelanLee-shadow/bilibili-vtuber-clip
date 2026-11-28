@@ -97,7 +97,7 @@ def run_group(ctx: Ctx, job: dict, routes: Sequence[str], tag: str = "") -> Grou
     for row in (run.result or {}).get("rows", []):
         run.rows.append(row)
         if row.get("status") == "RENDERED":
-            for ext in ("jpg", "png"):
+            for ext in ("jpg", "png", *(("pre-overlay.png", "title-mask.png") if row.get("pixel_audit") else ())):
                 ctx.adapters.remote.get(f"{rd}/cover/cand/{row['id']}.{ext}", ctx.clip_dir / f"cover/cand/{row['id']}.{ext}")
         if row.get("answer") is not None:
             with contextlib.suppress(RuntimeError):

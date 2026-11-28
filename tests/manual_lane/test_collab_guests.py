@@ -1,5 +1,7 @@
 """A collab day whose session names nobody but the host: the guests come from the whole session's chat, are kept only
-on chat lines that name them, are shared by every clip of the day, and reach the title as named participants."""
+on chat lines that name them, are shared by every clip of the day, and reach the title as named participants.  Beside
+that one judgement, what the clips themselves show (the classifier's guest classes, the host naming someone a guest
+answers, other uploaders' titles) adds a person two of these routes name, and the day's list grows as clips arrive."""
 
 from __future__ import annotations
 
@@ -104,7 +106,7 @@ def test_clips_of_one_day_asking_together_send_one_call(tmp_path):
     assert len(calls) == 1 and got == [['安晚awa', '礼墨Sumi']] * 3
 
 
-# U468 (owner): 「这个联动完全可以直接从新闻Crawler把这个动态一抓就知道了」 — the 11-23 dynamics as posted
+# the channel's request — the 11-23 dynamics as posted
 DYNAMICS = {
     step6_title.HOST: [{"published_at": "2026-11-22T13:22:00+00:00", "text": "大家——不好意思刚干完活回去会太晚惹,今晚就早点休息好不好我们明天晚上八点的女大矿工见噢...!"},
                        {"published_at": "2026-11-17T15:13:00+00:00", "text": "晚安小熊——附赠一张照片"}],
@@ -164,7 +166,7 @@ def test_a_guest_the_chat_hardly_names_is_asked_about_from_her_dynamics_and_kept
     prompt = asked[0]
     assert "明天晚上八点的女大矿工见" in prompt and "### 安晚awa（弹幕里 1 条提到）" in prompt
     assert "两人以前都没写过的词：矿工" in prompt and "### 雾深Girimi（弹幕里 0 条提到）" in prompt
-    assert ctx.session['guest_evidence']['source'] == "session_chat+dynamics"
+    assert ctx.session['guest_evidence']['by'] == {"安晚awa": ["chat"]}
     record = json.loads((tmp_path / collab_guests.CACHE.format(date='2026-11-23')).read_text(encoding="utf-8"))
     assert record["dynamics"]["linked"] == {"安晚awa": ["矿工"]} and record["guests"] == ["安晚awa"]
 
@@ -200,3 +202,253 @@ def test_the_feed_reader_takes_the_time_from_the_dynamic_id_and_leaves_picture_p
     monkeypatch.setattr(dynamics_feed, "_get", lambda url, referer="": {"code": 0, "data": {"items": []}})
     with pytest.raises(dynamics_feed.FeedError):          # an empty first page is Bilibili refusing, not "no posts"
         dynamics_feed.recent(1)
+
+
+# ----- 安晚awa sat with 礼墨Sumi and spoke through her stream; the judge answered 礼墨Sumi alone -------------
+
+H, G = step6_title.HOST, step6_title.GUEST_LABEL
+JUDGE_LIMO = {"in_call": [{"name": "礼墨Sumi", "quotes": ["礼墨在骂人"]}], "not_in_call": ["安晚awa"]}
+PEER_TITLE = "玩的有点大的女大组三人【礼墨&安晚&李豆沙】"
+
+
+def _voice(ctx, **chunks):
+    """The clip's chunk run: `chunks` confident chunks per guest class, five of the host's, two the classifier is unsure of."""
+    rows = [(H, 0.9)] * 5 + [(name, 0.9) for name, n in chunks.items() for _ in range(n)] + [("安晚awa", 0.6)] * 2
+    units = [{"id": f"u{i}", "s": i * 1200, "e": (i + 1) * 1200} for i in range(len(rows))]
+    preds = [{"id": f"u{i}", "ok": True, "probs": {c: (p if c == top else round((1 - p) / 2, 3)) for c in (H, "礼墨Sumi", "安晚awa")}}
+             for i, (top, p) in enumerate(rows)]
+    (ctx.clip_dir / "speaker").mkdir(exist_ok=True)
+    (ctx.clip_dir / collab_guests.VOICE_UNITS).write_text(json.dumps({"units": units}), encoding="utf-8")
+    (ctx.clip_dir / collab_guests.VOICE_PREDS).write_text(json.dumps({"predictions": preds}, ensure_ascii=False), encoding="utf-8")
+
+
+def _peers(ctx, *videos):
+    (ctx.clip_dir / "dedup").mkdir(exist_ok=True)
+    (ctx.clip_dir / collab_guests.PEER_VIDEOS).write_text(json.dumps({"videos": [
+        {"bvid": f"BV{i}", "title": title, "same_session_confirmed": confirmed} for i, (title, confirmed) in enumerate(videos)]},
+        ensure_ascii=False), encoding="utf-8")
+
+
+def _lines(ctx, *rows):
+    subtitle_track.write_track(ctx.clip_dir, [{"start_s": float(i), "end_s": i + 0.9, "text": text, "speaker": who}
+                                              for i, (who, text) in enumerate(rows)], speakers=True)
+
+
+def test_a_word_said_twice_does_not_name_the_person_at_its_seam():
+    # 11-24: four of the eleven chat lines shown to the judge as naming 安晚awa were 「晚安晚安」
+    known = {"安晚awa": ["安晚", "awa", "安晚awa"]}
+    chat = ["晚安晚安", "大家晚安晚安啦", "晚安晚安晚安", "怎么是awa先和lmsm线下联动播呢", "晚安安晚", "安晚安晚", "今晚安晚来吗"]
+    assert collab_guests.mentions(chat, known)["安晚awa"] == chat[3:]
+    assert collab_guests.candidates(["晚安晚安"] * 9, known) == {}
+
+
+def test_what_one_clip_shows_of_who_is_in_the_call(tmp_path):
+    known = {"安晚awa": ["安晚", "awawa"], "礼墨Sumi": ["礼墨"], "南町Nightin": ["南町"]}
+    ctx, _ = _collab(tmp_path, 'ev')
+    _voice(ctx, 安晚awa=6, 礼墨Sumi=3)
+    assert collab_guests.voice_heard(ctx.clip_dir, 0.8) == {"礼墨Sumi": 3, "安晚awa": 6}      # the two unsure chunks: nobody's
+    _lines(ctx, (H, "安晚也要来"), (G, "那你要告诉我你什么时候来啊"), (H, "南町昨天说她不来"), (H, "对吧"), (H, "嗯"),
+           (H, "awawa请说"), (H, "快说"), (G, "有吗"), (G, "礼墨你说"), (H, "好"))
+    # 南町: the host talks on and no guest answers within two lines; 礼墨: a guest said the name, not the host
+    assert collab_guests.answered(subtitle_track.read_track(ctx.clip_dir), known, 2) == {"安晚awa": 2}
+    _peers(ctx, (PEER_TITLE, True), ("【礼墨×李豆沙×安晚】今晚联动怎么有南町nightin啊", True),
+           ("【晚礼沙】不可以在和李豆沙说话的时候和礼小虎玩", False), ("【李豆沙】南町为什么不找我吃饭", True),
+           ("【李豆沙&南町】没写日期的另一场", False))
+    assert collab_guests.peer_titles(ctx.clip_dir, known) == {
+        "BV0": {"title": PEER_TITLE, "names": ["安晚awa", "礼墨Sumi"]},
+        "BV1": {"title": "【礼墨×李豆沙×安晚】今晚联动怎么有南町nightin啊", "names": ["安晚awa", "礼墨Sumi"]}}
+
+
+def test_a_watched_videos_voices_and_lines_are_nobody_in_the_call(tmp_path):
+    # the host watching 礼墨Sumi's own video hears her voice and says her name while "a guest" speaks: not a call
+    ctx, _ = _collab(tmp_path, 'wv')
+    _voice(ctx, 礼墨Sumi=9)
+    _lines(ctx, (H, "礼墨这里好好笑"), (G, "大家好我是礼墨"))
+    _peers(ctx, (PEER_TITLE, True))
+    known = {"礼墨Sumi": ["礼墨"], "安晚awa": ["安晚"]}
+    assert collab_guests.clip_evidence(ctx, known)["voice"]["礼墨Sumi"] == 9
+    (ctx.clip_dir / "speaker/decision.json").write_text(json.dumps({"mode": "other_voices_video"}), encoding="utf-8")
+    assert collab_guests.clip_evidence(ctx, known) == {
+        "voice": {"礼墨Sumi": 0, "安晚awa": 0}, "subtitles": {}, "paths": [],
+        "peers": {"BV0": {"title": PEER_TITLE, "names": ["安晚awa", "礼墨Sumi"]}}}
+
+
+def _ev(voice=None, answered=None, peers=None, paths=()):
+    return {"voice": {"礼墨Sumi": 0, "安晚awa": 0, **(voice or {})}, "subtitles": answered or {},
+            "peers": {b: {"title": "t", "names": n} for b, n in (peers or {}).items()}, "paths": list(paths)}
+
+
+def test_a_person_two_routes_name_joins_the_days_guests_and_one_route_names_nobody():
+    heard = _ev(voice={"安晚awa": 9, "礼墨Sumi": 12})
+    # the classifier's classes alone: a watched video, the host singing (11-16: 35 chunks of 礼墨Sumi's class in one clip)
+    assert collab_guests.decide({"a": heard, "b": heard}, [], [])[1] == []
+    # the host named her and a guest answered, alone: someone talked about is answered too
+    talked = _ev(answered={"南町Nightin": 4})
+    assert collab_guests.decide({"a": talked, "b": talked}, [], [])[1] == []
+    # one clip that hears her is one clip: the second makes the voice a route, the peer's title the second route
+    one = {"a": _ev(voice={"安晚awa": 9}, peers={"BV1": ["安晚awa"]})}
+    assert collab_guests.decide(one, ["礼墨Sumi"], ["礼墨Sumi"])[1] == ["礼墨Sumi"]
+    routes, guests, shared = collab_guests.decide({**one, "b": _ev(voice={"安晚awa": 4})}, ["礼墨Sumi"], ["礼墨Sumi"])
+    assert guests == ["礼墨Sumi", "安晚awa"] and shared == []
+    assert routes["安晚awa"]["routes"] == ["voice", "peers"] and not routes["安晚awa"]["chat"] and routes["礼墨Sumi"]["chat"]
+    # three chunks in a clip is what a clip of the host alone shows (11-15: 3): not heard
+    assert collab_guests.decide({"a": _ev(voice={"安晚awa": 3}, peers={"BV1": ["安晚awa"]}), "b": _ev(voice={"安晚awa": 3})}, [], [])[1] == []
+    # nobody is taken off: the day's guests so far stay whatever the routes say now
+    assert collab_guests.decide({}, [], ["礼墨Sumi", "安晚awa"])[1] == ["礼墨Sumi", "安晚awa"]
+
+
+def test_the_classifiers_classes_do_not_count_on_a_day_with_a_guest_it_does_not_know():
+    # its classes are a closed set: with 雾深Girimi in the call her voice is counted as one of them
+    clips = {c: _ev(voice={"安晚awa": 9}, answered={"安晚awa": 2}) for c in "ab"}
+    assert collab_guests.decide(clips, [], [])[1] == ["安晚awa"]
+    assert collab_guests.decide(clips, ["雾深Girimi"], [])[1] == ["雾深Girimi"]
+
+
+def test_two_guests_on_one_sound_path_in_two_clips_share_it():
+    # 11-24, 礼墨Sumi's path: 20 and 22 confident chunks; 11-23, each her own path: 61 and 5 (7.6 %), 5 and 2
+    together = _ev(paths=[{"礼墨Sumi": 20, "安晚awa": 22}])
+    apart = _ev(paths=[{"礼墨Sumi": 61, "安晚awa": 5}, {"礼墨Sumi": 2, "安晚awa": 5}])
+    guests = ["礼墨Sumi", "安晚awa"]
+    assert collab_guests.decide({"a": together, "b": _ev(paths=[{"礼墨Sumi": 11, "安晚awa": 3}])}, guests, guests)[2] == [guests]
+    assert collab_guests.decide({"a": together, "b": apart}, guests, guests)[2] == []          # one clip: not yet
+    assert collab_guests.decide({"a": apart, "b": apart}, guests, guests)[2] == []
+    assert collab_guests.decide({"a": together, "b": together}, ["礼墨Sumi"], ["礼墨Sumi"])[2] == []   # she is not on the list
+
+
+def _arrival(ctx, runs, named):
+    (ctx.clip_dir / "speaker/arrival.json").write_text(json.dumps({
+        "segments": [{"start_ms": a, "end_ms": b, "speaker": g} for a, b, g in runs],
+        "named": {g: {"speaker": who} for g, who in named.items()}, "persons": {}, "owner": "礼墨Sumi", "bvid": "BV",
+        "centres_ms": [0.0, 500.0]}, ensure_ascii=False), encoding="utf-8")
+
+
+def test_the_guest_classes_on_each_sound_path_of_the_arrival_evidence(tmp_path):
+    ctx, _ = _collab(tmp_path, 'pv')
+    _voice(ctx, 礼墨Sumi=4, 安晚awa=3)            # chunks: 0-4 the host's, 5-8 礼墨Sumi's, 9-11 安晚awa's, 12-13 unsure
+    assert collab_guests.path_voices(ctx.clip_dir, 0.8) == []                 # no arrival evidence: no paths
+    _arrival(ctx, [(0, 6000, "g1"), (6000, 14400, "g0")], {"g0": G, "g1": H})   # the guests' path holds both of them
+    assert collab_guests.path_voices(ctx.clip_dir, 0.8) == [{"礼墨Sumi": 4, "安晚awa": 3}]
+    _arrival(ctx, [(0, 6000, "g2"), (6000, 10800, "g0"), (10800, 14400, "g1")], {"g0": G, "g1": G, "g2": H})
+    assert collab_guests.path_voices(ctx.clip_dir, 0.8) == [{"礼墨Sumi": 4, "安晚awa": 0}, {"礼墨Sumi": 0, "安晚awa": 3}]
+
+
+def test_the_days_list_grows_with_the_clips_and_a_clip_named_before_is_behind(tmp_path):
+    first, _ = _collab(tmp_path, 'a')
+    assert collab_guests.name_guests(first, lambda *a: JUDGE_LIMO) == ["礼墨Sumi"]          # as on 11-24
+    second, _ = _collab(tmp_path, 'b')
+    _voice(second, 安晚awa=6, 礼墨Sumi=9)
+    _peers(second, (PEER_TITLE, True))
+    never = lambda *a: (_ for _ in ()).throw(AssertionError("the judge is asked once a day"))
+    assert collab_guests.name_guests(second, never) == ["礼墨Sumi"]         # her voice in one clip and a title: not yet two routes
+    third, _ = _collab(tmp_path, 'c')
+    _voice(third, 安晚awa=5)
+    assert collab_guests.name_guests(third, never) == ["礼墨Sumi", "安晚awa"]
+    assert [g[0] for g in third.session['participants']] == ['李豆沙', '礼墨Sumi', '安晚awa']
+    assert third.session['guest_evidence']['by'] == {"礼墨Sumi": ["chat", "peers"], "安晚awa": ["voice", "peers"]}
+    record = json.loads((tmp_path / collab_guests.CACHE.format(date=first.session['recording_date'])).read_text(encoding="utf-8"))
+    assert record["chat_guests"] == ["礼墨Sumi"] and record["guests"] == ["礼墨Sumi", "安晚awa"]
+    assert [(a["clip"], a["guests"], a["by"], a["judge_said_not"]) for a in record["added"]] == [
+        ("c", ["安晚awa"], {"安晚awa": ["voice", "peers"]}, ["安晚awa"])]        # the judge had said she was not: kept, not dropped
+    # the two clips named from the shorter list
+    assert collab_guests.behind(first) == ["安晚awa"] == collab_guests.behind(second) and collab_guests.behind(third) == []
+    assert collab_guests.name_guests(second, never) == ["安晚awa"]           # at its next step it takes her
+    assert collab_guests.catch_up(first) == ["安晚awa"] and collab_guests.behind(first) == []
+    assert "安晚awa（声纹分类＋同场他人切片标题）" in collab_guests.process_line(first, ["安晚awa"])
+
+
+def test_a_replaced_clip_no_longer_counts_and_a_clip_that_went_online_without_her_is_listed(tmp_path):
+    first, _ = _collab(tmp_path, 'a')
+    collab_guests.name_guests(first, lambda *a: JUDGE_LIMO)
+    first.state.record("upload", ok=True, reason="", products={}, cpa=[], note="online")
+    old, _ = _collab(tmp_path, 'b')
+    _voice(old, 安晚awa=6)
+    _peers(old, (PEER_TITLE, True))
+    collab_guests.name_guests(old, lambda *a: None)
+    old.state.data["clip"]["status"] = "SUPERSEDED"                    # revised: b_r2 is the same minutes again
+    old.state.save()
+    again, _ = _collab(tmp_path, 'b_r2')
+    _voice(again, 安晚awa=6)
+    assert collab_guests.name_guests(again, lambda *a: None) == ["礼墨Sumi"]      # one clip heard her, not two
+    other, _ = _collab(tmp_path, 'c')
+    _voice(other, 安晚awa=4)
+    _peers(other, (PEER_TITLE, True))
+    assert collab_guests.name_guests(other, lambda *a: None) == ["礼墨Sumi", "安晚awa"]
+    record = json.loads((tmp_path / collab_guests.CACHE.format(date=first.session['recording_date'])).read_text(encoding="utf-8"))
+    assert record["added"][0]["published_without"] == ["a"]
+
+
+def test_a_session_named_from_the_days_record_asks_again_and_one_written_by_hand_does_not(tmp_path):
+    ctx, _ = _collab(tmp_path, 'n')
+    assert collab_guests.needed(ctx) and not collab_guests.needed(ctx, heard=False) and collab_guests.needed(ctx, heard=True)
+    collab_guests.name_guests(ctx, lambda *a: JUDGE_LIMO)
+    assert collab_guests.needed(ctx)                                      # named from the record: it may hold more by now
+    ctx.session.pop('guest_evidence')
+    assert not collab_guests.needed(ctx) and collab_guests.behind(ctx) == []     # participants.json
+
+
+def test_a_day_record_kept_before_the_routes_is_read_as_the_judges(tmp_path):
+    # the 11-23 file on the media host: {"guests": [...]} and nothing else of today's fields
+    ctx, _ = _collab(tmp_path, 'o')
+    cache = tmp_path / collab_guests.CACHE.format(date=ctx.session['recording_date'])
+    cache.parent.mkdir(parents=True)
+    cache.write_text(json.dumps({"date": "d", "guests": ["安晚awa", "礼墨Sumi"]}, ensure_ascii=False), encoding="utf-8")
+    assert collab_guests.behind(ctx) == []                           # it never asked the record
+    ctx.session["guest_evidence"] = {"guests": []}
+    assert collab_guests.behind(ctx) == ["安晚awa", "礼墨Sumi"]
+    assert collab_guests.catch_up(ctx) == ["安晚awa", "礼墨Sumi"] and ctx.session["guest_evidence"]["by"]["礼墨Sumi"] == ["chat"]
+    fresh, _ = _collab(tmp_path, 'q')
+    assert collab_guests.name_guests(fresh, lambda *a: (_ for _ in ()).throw(AssertionError("asked"))) == ["安晚awa", "礼墨Sumi"]
+    assert json.loads(cache.read_text(encoding="utf-8"))["chat_guests"] == ["安晚awa", "礼墨Sumi"]
+
+
+def test_step_6_goes_back_to_the_speakers_when_the_session_gains_a_guest(tmp_path):
+    # step 4 told the host from "the others" as two people; the day's record now names two guests: three people
+    ctx, _ = _collab(tmp_path, 'r')
+    cache = tmp_path / collab_guests.CACHE.format(date=ctx.session['recording_date'])
+    cache.parent.mkdir(parents=True)
+    cache.write_text(json.dumps({"date": "d", "guests": ["礼墨Sumi", "安晚awa"]}, ensure_ascii=False), encoding="utf-8")
+    (ctx.clip_dir / "speaker/decision.json").write_text(json.dumps({"mode": "guests_heard_v8"}), encoding="utf-8")
+    out = step6_title.step6_title_cover(ctx)
+    assert out.ok and out.rewind == ("speaker", "burn", "title_cover") and "礼墨Sumi、安晚awa" in out.process[0]
+    assert [g[0] for g in ctx.session['participants']] == ['李豆沙', '礼墨Sumi', '安晚awa']
+    for mode, decided in (("linked_v8_clusters", True), ("import", False), ("other_voices_video", False)):
+        (ctx.clip_dir / "speaker/decision.json").write_text(json.dumps({"mode": mode}), encoding="utf-8")
+        assert step6_title._voice_decided(ctx) is decided
+
+
+def test_a_day_made_before_she_was_recognised_catches_up_when_its_clips_are_run_on(tmp_path):
+    # 11-24 as it stands on the media host: every clip done, each session 【礼墨Sumi】, the record the judge's alone
+    def never(*a):
+        raise AssertionError("the judge is asked once a day")
+    clips = []
+    for cid, voice in (("a", 6), ("b", 5), ("c", 0)):
+        ctx, _ = _collab(tmp_path, cid)
+        collab_guests.name_guests(ctx, lambda *a: JUDGE_LIMO)
+        clips.append(ctx)
+        cache = tmp_path / collab_guests.CACHE.format(date=ctx.session['recording_date'])
+        cache.write_text(json.dumps({"date": "d", "guests": ["礼墨Sumi"], "answer": JUDGE_LIMO}, ensure_ascii=False), encoding="utf-8")
+        _voice(ctx, 安晚awa=voice)                       # the products step 3 and step 0 left in the clip directory
+        _peers(ctx, (PEER_TITLE, True))
+    first, second, third = clips
+    assert collab_guests.behind(first) == []                         # one clip heard her: not yet
+    assert collab_guests.behind(second) == ["安晚awa"] == collab_guests.behind(third) == collab_guests.behind(first)
+    (first.clip_dir / "subs/final.srt").unlink()                     # redone from the subtitles: nothing to add, still behind
+    (first.clip_dir / "speaker/speaker.srt").unlink()
+    assert collab_guests.behind(first) == ["安晚awa"]
+
+
+def test_a_guest_whose_evidence_is_gone_stays_on_the_list_and_the_next_clip_reads_her(tmp_path):
+    """The list only grows, but a person's row was built only from the live clips' evidence: one who came in on clips
+    trimmed or redone since had no row, and the next clip's step failed on it (KeyError)."""
+    routes, guests, _ = collab_guests.decide({"c": _ev()}, [], ["雾深Girimi"])
+    assert guests == ["雾深Girimi"] and routes["雾深Girimi"]["routes"] == [] and not routes["雾深Girimi"]["chat"]
+    ctx, _ = _collab(tmp_path, 'c')
+    cache = tmp_path / collab_guests.CACHE.format(date=ctx.session['recording_date'])
+    cache.parent.mkdir(parents=True)
+    cache.write_text(json.dumps({"date": "d", "chat_guests": ["礼墨Sumi"], "guests": ["礼墨Sumi", "雾深Girimi"], "clips": {}},
+                                ensure_ascii=False), encoding="utf-8")
+    never = lambda *a: (_ for _ in ()).throw(AssertionError("the judge is asked once a day"))
+    assert collab_guests.name_guests(ctx, never) == ["礼墨Sumi", "雾深Girimi"]
+    assert ctx.session["guest_evidence"]["by"] == {"礼墨Sumi": ["chat"], "雾深Girimi": []}
+    assert "雾深Girimi（当天名单早先认定，现有片的证据已不够）" in collab_guests.process_line(ctx, ["雾深Girimi"])
+    assert collab_guests.catch_up(ctx) == [] and collab_guests.lacking(ctx) == []

@@ -1,8 +1,10 @@
-"""A screenshot with the words in a column beside her, on a colour panel (assets/manual_lane/remote/cover_side.py).
+"""A screenshot framed by the cover's composition template (assets/manual_lane/remote/cover_side.py).
 
-Owner the covers of one stream were the same picture, one line top left and one line lower right, in one
-colour.  The screenshot route had one composition; now it has the column's too, the panel takes the lane's background
-colours in turn, and a cover that looks like one the stream already has goes behind one that does not."""
+Owner and the covers of one stream were the same picture, one line top left and one line lower
+right, in one colour.  The screenshot route is framed by the template the run tries (a column or a close-up beside the
+words on a colour panel, the words on top, diagonal, a bottom banner); the panel takes the lane's background colours in
+turn, and a cover that repeats the covers before it ranks behind one that does not (it still passes the free stage
+when nothing else does: U138)."""
 
 from __future__ import annotations
 
@@ -16,10 +18,11 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
+from src.autoslice import cover_layout_rotation
 from src.autoslice.cover_style_rotation import REPO_TABLE
-from src.autoslice.manual_lane import cover_column
 from src.autoslice.manual_lane import stage_impl as si
 from src.autoslice.manual_lane.lane_rules import rules
+from src.autoslice.manual_lane.step6_cover import cover_layout_table
 
 COVER = {k: v for k, v in rules("cover").items() if not (k.startswith("_") or k.endswith("_source") or k == "source")}
 TABLE = json.loads(Path(REPO_TABLE).read_text(encoding="utf-8"))
@@ -27,6 +30,8 @@ SKY = (100, 160, 225)
 FACE, HEAD_TOP = [800, 440, 1190, 690], 0          # the stream of her head touches the top of the frame
 ROWS = [{"text": "摄像头", "punch": False}, {"text": "认出kmx", "punch": False},
         {"text": "永远", "punch": True}, {"text": "看着你", "punch": True}]
+LAYOUTS = cover_layout_rotation.load_table(cover_layout_table())
+T = {t["template_id"]: t for t in LAYOUTS["templates"]}
 
 
 def _load(name):
@@ -45,52 +50,77 @@ STUB = SimpleNamespace(H=1080, MIN_CONTRAST=TABLE["contrast"]["min_distance"], S
                        default_content_sha256=lambda spec: hashlib.sha256(b"x").hexdigest())
 
 
-@pytest.mark.parametrize("words", ["left", "right"])
-def test_the_window_puts_her_on_the_other_side_and_leaves_the_column_its_room(words):
-    made, why = side.plan(FACE, HEAD_TOP, [], COVER, words, 650)
+@pytest.mark.parametrize("tid", ["column-left", "column-right", "closeup-left", "closeup-right"])
+def test_the_window_puts_her_on_the_other_side_of_the_words(tid):
+    words = T[tid]["text"]
+    made, why = side.plan(FACE, HEAD_TOP, [], COVER, T[tid])
     assert why is None
     x0, y0, w = made["crop"]
-    assert 0 <= x0 and x0 + w <= 1920 and y0 == 0 and y0 + round(w * 9 / 16) >= FACE[3]      # inside the frame, head and chin in
+    assert made["face"][0] >= 0 and made["face"][2] <= 1920 and made["face"][1] >= 0 and made["face"][3] <= 1080   # the face is on the cover
     centre = (made["face"][0] + made["face"][2]) / 2
     assert centre > 1920 * 0.6 if words == "left" else centre < 1920 * 0.4                  # she stands away from the words
-    assert made["zone_px"] >= 650 and made["face_px"] >= COVER["face_floor_frac"] * 1080
+    assert made["face_px"] >= COVER["face_floor_frac"] * 1080
+    if tid.startswith("closeup"):                                                          # a close-up: a much larger face
+        assert made["face_px"] >= 0.5 * 1080
 
 
-@pytest.mark.parametrize("face, head_top, keep, row_px, why", [
-    (FACE, None, [], 650, "HEAD_TOP_UNMEASURED"),
-    (FACE, HEAD_TOP, [], 1200, "COLUMN_NO_ROOM"),                       # a punchline row wider than the room beside her
-    ([900, 700, 1000, 760], 0, [], 300, "COLUMN_FACE_UNDER_FLOOR"),     # a small face far under her head top: the window would shrink it
-    (FACE, HEAD_TOP, [[1700, 100, 1900, 300]], 650, "COLUMN_KEEPS_OUTSIDE"),    # a kept box would leave the window
+def test_a_face_near_the_words_side_gets_a_window_padded_on_that_side():
+    near_left = [300, 300, 500, 500]          # the column's place for her face is right of the words: past the frame's left edge
+    made, why = side.plan(near_left, 200, [], COVER, T["column-left"])
+    assert why is None and made["pad"]["side"] == "left" and made["pad"]["px"] > 0
+    assert (made["face"][0] + made["face"][2]) / 2 > 1920 * 0.6
+
+
+@pytest.mark.parametrize("face, head_top, keep, why", [
+    (FACE, None, [], "HEAD_TOP_UNMEASURED"),
+    ([900, 700, 1000, 760], 0, [], "FACE_UNDER_FLOOR"),      # a small face far under her head top: the window would shrink it
+    (FACE, HEAD_TOP, [[1700, 100, 1900, 300]], "KEEPS_OUTSIDE"),    # a kept box would leave the window
 ])
-def test_a_frame_without_such_a_window_says_why(face, head_top, keep, row_px, why):
-    assert side.plan(face, head_top, keep, COVER, "left", row_px) == (None, why)
+def test_a_frame_without_such_a_window_says_why(face, head_top, keep, why):
+    assert side.plan(face, head_top, keep, COVER, T["column-left"]) == (None, why)
 
 
-def _run(job_extra):
-    job = {"text_layout": None, "column_rows": [], **job_extra}
-    run = SimpleNamespace(job=job, rules=COVER, plans={}, column=layout.Column(job, COVER))
+def _run(template, job_extra=None):
+    job = {"column_rows": ROWS if template["rows"] == "column" else [], **(job_extra or {})}
+    run = SimpleNamespace(job=job, rules=COVER, plans={}, column=layout.Composition(job, COVER))
+    run.column.template = template
     run.text_ink = lambda spec: ({"style_id": "s"}, lambda i, size: (size * len(spec["lines"][i]["text"]), size))
     return run
 
 
-def _spec():
-    return {"id": "screenshot", "frame": "frame.png", "crop": [0, 0, 1920], "layout": "auto",
+def _spec(frame="frame.png"):
+    return {"id": "screenshot", "frame": frame, "crop": [0, 0, 1920], "layout": "auto",
             "lines": [{"text": "摄像头认出kmx"}, {"text": "永远看着你"}], "keep": [], "blur": [[0, 300, 300, 800]]}
 
 
-def test_at_the_columns_turn_the_screenshot_takes_the_rows_and_asks_for_the_panel(monkeypatch):
+def test_a_column_template_takes_the_rows_and_the_panel_and_the_top_template_keeps_two_lines(monkeypatch, tmp_path):
     monkeypatch.setattr(side.text_fit, "need_face_top", lambda *a, **k: 500)
-    run, spec = _run({"text_layout": "right", "column_rows": ROWS}), _spec()
+    frame = tmp_path / "frame.png"
+    Image.new("RGB", (1920, 1080), SKY).save(frame)
+    run, spec = _run(T["column-right"]), _spec(str(frame))
     side.solo(run, spec, FACE, HEAD_TOP, SimpleNamespace(phase=lambda name: _Quiet()))
     assert spec["layout"] == "right" and [r["text"] for r in spec["lines"]] == [r["text"] for r in ROWS]
     assert spec["panel"]["side"] == "right" and spec["panel"]["edge"] > run.plans["screenshot"]["face"][2]
-    assert run.plans["screenshot"]["text_layout"] == "right" and "screenshot" in run.column.placed
+    assert run.plans["screenshot"]["template_id"] == "column-right"
     assert "底板" in side.note(spec)
-    # not its turn: the two lines on top, as before, and no panel
-    run, spec = _run({}), _spec()
+    # the top template: the two lines on top, framed as tight as the head allows, no panel
+    run, spec = _run(T["top-two"]), _spec(str(frame))
     side.solo(run, spec, FACE, HEAD_TOP, SimpleNamespace(phase=lambda name: _Quiet()))
-    assert spec["layout"] == "auto" and len(spec["lines"]) == 2 and "panel" not in spec
+    assert spec["layout"] == "top" and len(spec["lines"]) == 2 and "panel" not in spec
     assert "text_top_wanted" in run.plans["screenshot"] and "底板" not in side.note(spec)
+    # the bottom banner: the words under her, on a band
+    run, spec = _run(T["bottom-banner"]), _spec(str(frame))
+    side.solo(run, spec, FACE, HEAD_TOP, SimpleNamespace(phase=lambda name: _Quiet()))
+    assert spec["layout"] == "bottom" and spec["banner"] is True and len(spec["lines"]) == 2
+
+
+def test_a_frame_without_the_templates_window_refuses_the_template(tmp_path):
+    frame = tmp_path / "frame.png"
+    Image.new("RGB", (1920, 1080), SKY).save(frame)
+    run, spec = _run(T["column-left"]), _spec(str(frame))
+    with pytest.raises(ValueError, match="HEAD_TOP_UNMEASURED") as refused:   # the tool's own copy of the shared module
+        side.solo(run, spec, FACE, None, SimpleNamespace(phase=lambda name: _Quiet()))
+    assert type(refused.value).__name__ == "TemplateRefused"
 
 
 class _Quiet:
@@ -101,18 +131,10 @@ class _Quiet:
         return False
 
 
-def test_a_column_refused_once_is_not_tried_again(monkeypatch):
-    monkeypatch.setattr(side.text_fit, "need_face_top", lambda *a, **k: 500)
-    run, spec = _run({"text_layout": "left", "column_rows": ROWS}), _spec()
-    run.column.refused["screenshot"] = {"reason": "RENDER_REFUSED"}        # the renderer refused the column (cover_candidates)
-    side.solo(run, spec, FACE, HEAD_TOP, SimpleNamespace(phase=lambda name: _Quiet()))
-    assert "panel" not in spec and len(spec["lines"]) == 2
-
-
 def _painted(tmp_path, words, job_extra=None, sha="0"):
     frame = tmp_path / "frame.png"
     Image.new("RGB", (1920, 1080), SKY).save(frame)
-    made, _ = side.plan(FACE, HEAD_TOP, [], COVER, words, 650)
+    made, _ = side.plan(FACE, HEAD_TOP, [], COVER, T[f"column-{words}"])
     spec = {"id": "screenshot", "frame": str(frame), "crop": made["crop"], "layout": words, "lines": ROWS, "face": made["face"],
             "blur": [], "panel": {"side": words, "edge": side.panel_edge(words, made["face"], COVER)}}
     job = {"rules": COVER, "out": str(tmp_path), "content_sha256": hashlib.sha256(sha.encode()).hexdigest(), **(job_extra or {})}
@@ -143,7 +165,7 @@ def test_the_panel_colours_the_words_side_and_leaves_her_face_and_the_crop(tmp_p
 def test_a_blur_box_under_the_panel_is_dropped_and_one_beside_her_stays(tmp_path):
     frame = tmp_path / "frame.png"
     Image.new("RGB", (1920, 1080), SKY).save(frame)
-    made, _ = side.plan(FACE, HEAD_TOP, [], COVER, "left", 650)
+    made, _ = side.plan(FACE, HEAD_TOP, [], COVER, T["column-left"])
     edge = side.panel_edge("left", made["face"], COVER)
     spec = {"id": "s", "frame": str(frame), "crop": made["crop"], "layout": "left", "lines": ROWS, "face": made["face"],
             "blur": [[0, 300, 200, 800], [1700, 0, 1920, 200]], "panel": {"side": "left", "edge": edge}}
@@ -160,30 +182,24 @@ def test_the_panel_takes_a_colour_the_stream_has_not_used(tmp_path):
         seen.add(record["id"])
 
 
-def test_the_layout_turn_skips_what_this_stream_already_used():
-    # the last two covers took left and right; an older cover of this same stream took the top
-    assert cover_column.next_layout(["top", "left", "right"], COVER)[0] == "top"
-    assert cover_column.next_layout(["left", "right"], COVER, ["top"])[0] == "top"            # nothing else is free: the oldest
-    assert cover_column.next_layout(["top"], COVER, ["top"])[0] == "left"
-    assert cover_column.next_layout(["x", "top"], COVER, ["top", "left"])[0] == "right"       # left was this stream's too
-    assert "本场用过" in cover_column.next_layout(["top"], COVER, ["top"])[1]
-
-
-def test_five_covers_of_one_stream_take_five_looks(monkeypatch):
-    """top, a column on a panel on each side, then the columns again on the picture itself."""
-    monkeypatch.setattr(side.text_fit, "need_face_top", lambda *a, **k: 500)
-    layouts, looks = [], []
-    for _ in range(5):
-        turn = cover_column.next_layout(layouts, COVER, layouts)[0]
-        run, spec = _run({"text_layout": turn if turn != "top" else None, "column_rows": ROWS if turn != "top" else [],
-                          "session_compositions": [list(look) for look in looks]}), _spec()
-        side.solo(run, spec, FACE, HEAD_TOP, SimpleNamespace(phase=lambda name: _Quiet()))
-        layouts.append(turn)
-        looks.append(("screenshot", turn, "picture_panel" if "panel" in spec else "picture"))
-    assert looks == [("screenshot", "top", "picture"), ("screenshot", "left", "picture_panel"),
-                     ("screenshot", "right", "picture_panel"), ("screenshot", "left", "picture"),
-                     ("screenshot", "right", "picture")]
-    assert len(set(looks)) == 5
+def test_five_covers_of_one_stream_take_five_compositions(tmp_path):
+    """Five screenshot covers of one stream in a row, each in the template the selector gives it after the ones before:
+    five different compositions, never the same one twice in a row (owner every cover looked the same)."""
+    frame = tmp_path / "frame.png"
+    Image.new("RGB", (1920, 1080), SKY).save(frame)
+    facts = {"people": "solo", "lines": ["摄像头认出kmx", "永远看着你"], "column_rows": True, "route": "screenshot",
+             "fans_emote": False, "watching": False}
+    history: list[str] = []
+    for n in range(5):
+        def attempt(template):
+            run, spec = _run(template), _spec(str(frame))
+            side.solo(run, spec, FACE, HEAD_TOP, SimpleNamespace(phase=lambda name: _Quiet()))
+            return {"punch": 202, "layout": spec["layout"]}
+        result, selection = cover_layout_rotation.select(LAYOUTS, facts, attempt=attempt, history=history,
+                                                         session_history=history, content_sha256=f"{n:064x}")
+        assert selection["fallback"] is None and result["layout"] == result["template"]["text"]
+        history.append(selection["template_id"])
+    assert len(set(history)) == 5 and all(a != b for a, b in zip(history, history[1:]))
 
 
 def test_the_tool_ships_the_module_and_the_judge_is_told_what_a_panel_is():
@@ -217,16 +233,18 @@ class _Cover:
         return self.thumbs[cid]
 
 
-def test_a_cover_the_stream_already_has_goes_behind_one_it_does_not():
+def test_a_cover_that_repeats_the_covers_before_it_ranks_behind_but_never_asks_for_a_picture():
     from src.autoslice.manual_lane.step6_cover_round import pick_free
 
     # a fresh screenshot still goes before the sticker (owner 11-18)
     assert pick_free(_Cover([_row("emote", 15), _row("screenshot", 11)]), ["a", "b"], "id").chosen == "screenshot"
-    # the screenshot repeats a cover of this stream: the sticker, which does not, is taken
+    # the screenshot repeats the covers before it: the sticker, which does not, is taken
     assert pick_free(_Cover([_row("emote", 12), _row("screenshot", 13, repeat=True)]), ["a", "b"], "id").chosen == "emote"
-    # the fresh one's thumbnail fails: the repeat is still better than nothing free
-    picked = pick_free(_Cover([_row("emote", 12), _row("screenshot", 13, repeat=True)], failing={"emote"}), ["a", "b"], "id")
-    assert picked.chosen == "screenshot"
+    # review: the fresh one's thumbnail fails; the repeat passed and is free, so it is taken and no picture
+    # is generated (U138: 免费合格即选，都不合格才生 1 张; the repeat is recorded, not paid for)
+    picked = pick_free(_Cover([_row("emote", 12), _row("screenshot", 13, repeat="构图样板 top-two 最近几张用过")],
+                              failing={"emote"}), ["a", "b"], "id")
+    assert picked is not None and picked.chosen == "screenshot" and "不为换样子出 AI 图" in picked.why
 
 
 def test_a_revision_keeps_the_title_an_in_place_edit_gave_the_manuscript(tmp_path):

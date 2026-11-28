@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""pick_frame.py CUT.mp4 FRAME_DIR OUT.json T1,T2,...
+"""pick_frame.py CUT.mp4 FRAME_DIR OUT.json T1,T2,... [AVOID.json]
 
 Cover frame choice (skill 7, and the 692 review).  For each candidate time, extract one full-resolution frame (the cut
 is 1920x1080, so boxes read from it are in that space) and ask the CPA vision route whether the picture shows an
@@ -7,6 +7,12 @@ unrelated page or UI.  The first frame answered CLEAN is chosen.  Then the same 
 every block of viewers' text wherever it sits (to blur), the host's face (the only thing the blur keeps off), the host's body (to keep clear of the blur, and the reference of the cover's
 generated layers) and the guest's body (the guest's layer of a composed cover).  The host is identified from the
 frame and nameplate, allowing the headwear actually shown instead of assuming her ears are visible.
+
+A frame that looks like the base frame of a cover this stream already has (AVOID.json, step6_cover.base_avoid: the
+same recording within SAME_TIME_S seconds, or her face's 16x16 dHash within SAME_FACE_BITS of that cover's) is passed
+over for the next one; only when every frame is such a repeat is the first of them taken (`repeat_forced`).  Her face
+box in each frame is the face reading's own answer (the layout's face does not stay in one place: a box carried from
+another frame finds nothing alike, 2026-11-25 calibration).
 
 Before that, the whole cut is looked at for the host's signature move (owner 2026-11-14: a clip that has a classic
 action, such as squatting down holding her head when shy, takes its screenshot there): frames every ACTION_STEP_S
@@ -19,6 +25,7 @@ OUT.json = {"chosen": seconds or null, "action": {"t", "what"} or {"t": null, "w
 Runs on OCI3 under the root wrapper that loads cpa.env (CPA_BASE_URL / CPA_API_KEY); the key is never printed.
 """
 import base64
+import io
 import json
 import os
 import re
@@ -28,7 +35,63 @@ import time
 import urllib.error
 import urllib.request
 
-MODEL = "gpt-6.1-sol"
+QUOTA_CODES = frozenset({
+    "organization_spend_limit_exceeded",
+    "insufficient_quota",
+    "insufficient_user_quota",
+    "credit_balance_exhausted",
+    "billing_hard_limit_reached",
+    "usage_limit_reached",
+})
+QUOTA_TYPES = frozenset({"insufficient_quota", "usage_limit_reached"})
+
+
+def _models():
+    """(vision_model, fallback_model, fallback_low_effort, fallback_min_tokens) from lane_rules `cpa`."""
+    primary = os.environ.get("MANUAL_LANE_VISION_MODEL") or "gpt-6.2-sol"
+    fallback = os.environ.get("MANUAL_LANE_FALLBACK_MODEL")
+    effort, min_tokens = "low", 32768
+    try:
+        sys.path.insert(0, os.environ.get("MANUAL_LANE_REMOTE_REPO") or os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
+        from src.autoslice.manual_lane.lane_rules import rules
+        sec = rules("cpa")
+        if "MANUAL_LANE_VISION_MODEL" not in os.environ:
+            primary = str(sec.get("vision_model") or sec.get("model") or primary)
+        if fallback is None:
+            fallback = str(sec.get("fallback_model") or "")
+        efforts = sec.get("fallback_efforts")
+        if isinstance(efforts, dict):
+            effort = str(efforts.get("low") or "low")
+        min_tokens = int(sec.get("fallback_min_output_tokens") or min_tokens)
+    except (ImportError, KeyError, ValueError, OSError):
+        if fallback is None:
+            fallback = "gemini-4-neon"
+    return primary, (fallback if fallback != primary else ""), effort, min_tokens
+
+
+MODEL, FALLBACK_MODEL, FALLBACK_EFFORT, FALLBACK_MIN_TOKENS = _models()
+
+
+def _definite_quota_error(raw):
+    """Return a short quota reason when `raw` (JSON text/bytes or error dict) is a definite quota refusal, else None."""
+    if isinstance(raw, (bytes, str)):
+        text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
+        try:
+            parsed = json.loads(text)
+        except ValueError:
+            return None
+        err = parsed.get("error", parsed) if isinstance(parsed, dict) else None
+    elif isinstance(raw, dict):
+        err = raw.get("error", raw) if "error" in raw and isinstance(raw.get("error"), dict) else raw
+    else:
+        return None
+    if not isinstance(err, dict):
+        return None
+    if err.get("code") in QUOTA_CODES:
+        return str(err["code"])
+    if err.get("type") in QUOTA_TYPES:
+        return str(err["type"])
+    return None
 
 
 def _channel():
@@ -68,7 +131,15 @@ ACTION_PICK = ("这几格是同一段直播切片里不同时刻、主播" + HOS
                "最能一眼认出、最适合当视频封面？只输出一个 JSON 对象：{\"cell\": 编号, \"what\": \"动作的简短描述\"}。")
 FACE_QUESTION = ("这是直播切片的一帧（1920x1080）。画面里能不能看清主播" + HOST + "本人的脸"
                  + (f"（{FACE_HINT.strip('，')}）" if FACE_HINT else "") + "？镜头只拍到腿、脚、身体别的部分，脸在画面外，"
-                 "或者只有角落里很小的头像、图标、表情贴图，都算看不清。看得清只回答 FACE，看不清只回答 NOFACE。只回答这一个词。")
+                 "或者只有角落里很小的头像、图标、表情贴图，都算看不清。看得清就给出她的脸的像素框 [x0,y0,x1,y1]"
+                 "（只框眉毛到下巴、两颊之间，不含头发、耳朵、发饰），只输出一个 JSON 对象 {\"face\": [x0,y0,x1,y1]}；"
+                 "看不清只输出 {\"face\": null}。")
+# 2026-11-25 calibration (84 same-stream pairs of the 11-23..11-25 cover frames, labelled by eye: same expression and
+# pose or not): the 16x16 dHash of each frame's own face box, in 64ths, at most 13 marked 13 of 18 alike pairs and 4 of
+# 21 unlike ones on 11-24/25, and 1 of 12 alike, 0 of 33 unlike on 11-23 (her face small in a corner); the person box's
+# 8x8 dHash at 16 (the plan's starting point) marked 11 of 30 alike and 17 of 54 unlike.  Weak: it only orders frames.
+SAME_FACE_BITS = 13
+SAME_TIME_S = 15      # the same recording within 15 s: the same moment (the plan's starting point; 2 of 3 such pairs alike)
 READING_KEY = (BOX_QUESTION + "\n" + ACTION_QUESTION + "\n" + ACTION_PICK + "\n" + FACE_QUESTION)   # a reading made
 #                                                                     with other questions is not reused
 
@@ -159,37 +230,130 @@ def extract(cut, t, path):
 CALLS = []   # every paid vision request made, for the step's cost record (OUT.json "calls")
 
 
-def ask(base, key, image_b64, question, max_tokens=64, kind="clean", t=None):
-    body = {"model": MODEL, "reasoning": {"effort": "low"}, "max_output_tokens": max_tokens,
+def answered_model():
+    return CALLS[-1]["model"] if CALLS else MODEL
+
+
+def _send_vision(base, key, model, effort, image_b64, question, max_tokens):
+    body = {"model": model, "reasoning": {"effort": effort}, "max_output_tokens": max_tokens,
             "input": [{"role": "user", "content": [
                 {"type": "input_text", "text": question},
                 {"type": "input_image", "image_url": "data:image/jpeg;base64," + image_b64}]}]}
     req = urllib.request.Request(f"{base}/responses", data=json.dumps(body).encode(), method="POST", headers={
         "Authorization": f"Bearer {key}", "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"})
-    call = {"kind": kind, "t": t, "model": MODEL, "effort": "low", "rc": 1}
-    CALLS.append(call)
-    started = time.monotonic()
-    try:
-        with urllib.request.urlopen(req, timeout=150) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-    finally:
-        call["elapsed_s"] = round(time.monotonic() - started, 1)
+    with urllib.request.urlopen(req, timeout=240) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _extract_complete_text(payload, call):
     call["usage"] = payload.get("usage") or {}
     text = payload.get("output_text") or ""
     if not text:
         for item in payload.get("output") or []:
             if item.get("type") == "message":
                 text += "".join(c.get("text", "") for c in item.get("content") or [])
-    # TASK-26: a reading counts only when the provider says it completed (same rule as cpa_text.completion_of);
-    # anything else is a failed call (the caller records ERROR), never a NOT_CLEAN verdict made of half an answer
     items = [i.get("status") for i in payload.get("output") or [] if i.get("type") == "message"]
     if (payload.get("status") != "completed" or payload.get("incomplete_details") or payload.get("error")
             or any(s != "completed" for s in items) or not text.strip()):
         call["incomplete"] = {"status": payload.get("status"), "incomplete_details": payload.get("incomplete_details")}
         raise ValueError(f"CPA vision answer not complete: status={payload.get('status')}")
-    call["rc"] = 0
     return text.strip()
+
+
+def ask(base, key, image_b64, question, max_tokens=64, kind="clean", t=None):
+    call = {"kind": kind, "t": t, "model": MODEL, "effort": "low", "rc": 1}
+    CALLS.append(call)
+    started = time.monotonic()
+    quota_reason = None
+    try:
+        try:
+            payload = _send_vision(base, key, MODEL, "low", image_b64, question, max_tokens)
+            quota = _definite_quota_error(payload.get("error")) if isinstance(payload, dict) else None
+            if quota:
+                quota_reason = f"200 {quota}"
+            else:
+                text = _extract_complete_text(payload, call)
+                call["rc"] = 0
+                return text
+        except urllib.error.HTTPError as exc:
+            err_bytes = exc.read()
+            quota = _definite_quota_error(err_bytes)
+            if not quota:
+                raise urllib.error.HTTPError(exc.url, exc.code, exc.msg, exc.hdrs, io.BytesIO(err_bytes)) from None
+            quota_reason = f"HTTP {exc.code} {quota}"
+        if not FALLBACK_MODEL or FALLBACK_MODEL == MODEL:
+            raise RuntimeError(f"CPA_QUOTA_REFUSED: {quota_reason}")
+        orig_model = MODEL
+        call["model"] = FALLBACK_MODEL
+        call["effort"] = FALLBACK_EFFORT
+        call["fallback_from"] = orig_model
+        call["fallback_reason"] = f"CPA_QUOTA_REFUSED: {quota_reason}"
+        try:
+            fb_payload = _send_vision(base, key, FALLBACK_MODEL, FALLBACK_EFFORT, image_b64, question,
+                                      max(max_tokens, FALLBACK_MIN_TOKENS))
+            text = _extract_complete_text(fb_payload, call)
+        except urllib.error.HTTPError as fb_exc:
+            fb_body = fb_exc.read()
+            fb_code = _definite_quota_error(fb_body) or f"HTTP {fb_exc.code}"
+            call["fallback_note"] = f"原模型 {orig_model} 额度不足（{quota_reason}），改用 {FALLBACK_MODEL} 仍失败（{fb_code}）"
+            raise RuntimeError(
+                f"CPA_FALLBACK_FAILED: 原模型 {orig_model} 额度不足（{quota_reason}）；回退模型 {FALLBACK_MODEL} 也不可用（{fb_code}）"
+            ) from fb_exc
+        except Exception as fb_exc:
+            fb_why = f"{type(fb_exc).__name__}: {str(fb_exc)[:120]}"
+            call["fallback_note"] = f"原模型 {orig_model} 额度不足（{quota_reason}），改用 {FALLBACK_MODEL} 仍失败（{fb_why}）"
+            raise RuntimeError(
+                f"CPA_FALLBACK_FAILED: 原模型 {orig_model} 额度不足（{quota_reason}）；回退模型 {FALLBACK_MODEL} 也不可用（{fb_why}）"
+            ) from fb_exc
+        call["fallback_note"] = f"原模型 {orig_model} 额度不足（{quota_reason}），改用 {FALLBACK_MODEL}"
+        call["rc"] = 0
+        return text
+    finally:
+        call["elapsed_s"] = round(time.monotonic() - started, 1)
+
+
+def face_hash(path, box):
+    """Her face's 16x16 dHash (256 bits, hex) in the frame at `path`."""
+    from PIL import Image
+
+    with Image.open(path) as im:
+        g = im.convert("L").crop(tuple(box)).resize((17, 16), Image.LANCZOS)
+    px, bits = g.tobytes(), 0
+    for r in range(16):
+        for c in range(16):
+            bits = (bits << 1) | (px[r * 17 + c] > px[r * 17 + c + 1])
+    return f"{bits:064x}"
+
+
+def face_bits(a, b):
+    """The distance of two face hashes in 64ths (a 16x16 hash has 256 bits)."""
+    return bin(int(a, 16) ^ int(b, 16)).count("1") / 4
+
+
+def repeat_of(t, dhash, avoid):
+    """Why the frame at `t` (seconds into the cut) repeats a cover of this stream, or None.  `avoid`: {"source", "offset_s"
+    (the cut's start on that recording's clock; null for a cut pieced together), "covers": [{cid, source, t_source, dhash}]}."""
+    for cover in avoid.get("covers") or []:
+        if (cover.get("t_source") is not None and avoid.get("offset_s") is not None and cover.get("source") == avoid.get("source")
+                and abs(avoid["offset_s"] + t - cover["t_source"]) < SAME_TIME_S):
+            return f"{cover['cid']} 的封面底帧同一时刻（相差 {abs(avoid['offset_s'] + t - cover['t_source']):.1f}s）"
+        if dhash and cover.get("dhash") and face_bits(dhash, cover["dhash"]) <= SAME_FACE_BITS:
+            return f"{cover['cid']} 的封面底帧脸一样（dHash 距离 {face_bits(dhash, cover['dhash'])}）"
+    return None
+
+
+def read_face(text):
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    try:
+        box = json.loads(match.group(0)).get("face") if match else None
+    except (ValueError, AttributeError):
+        return None
+    if isinstance(box, list) and len(box) == 4 and all(isinstance(v, (int, float)) for v in box):
+        x0, y0, x1, y1 = (int(v) for v in box)
+        if 0 <= x0 < x1 <= 1920 and 0 <= y0 < y1 <= 1080:
+            return [x0, y0, x1, y1]
+    return None
 
 
 def read_boxes(text):
@@ -213,27 +377,63 @@ def read_boxes(text):
     return out
 
 
+def look_at_face(row, path, image, t, base_url, key, avoid):
+    """(her face box, its hash) when the frame at `t` shows her face, else None; the row records the answer and whether
+    the frame repeats a cover of this stream."""
+    try:                     # 1645880 (2026-11-15): the cover line fell where the camera showed only her shoes
+        face = read_face(ask(base_url, key, image, FACE_QUESTION, max_tokens=80, kind="face", t=t))
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        row["face"] = f"ERROR {type(exc).__name__}"
+        return None
+    row["face"] = "FACE" if face else "NOFACE"
+    if not face:
+        return None
+    try:
+        dhash = face_hash(path, face)
+    except OSError as exc:       # ranking only: the frame is still judged on its moment, the failure recorded
+        dhash, row["dhash_error"] = None, type(exc).__name__
+    row.update(face_box=face, repeat=repeat_of(t, dhash, avoid))
+    return face, dhash
+
+
+def fallback(first_repeat, first_clean, image):
+    """(chosen, base, its image) when no frame was taken on the way: every frame showing her face repeats a cover, the
+    first of them (`repeat_forced`); no clean frame shows her face, the first clean one, as before; else nothing."""
+    if first_repeat is not None:
+        t, image, face, dhash = first_repeat
+        return t, {"t": t, "face": face, "dhash": dhash, "repeat_forced": True}, image
+    if first_clean is not None:
+        return first_clean[0], {}, first_clean[1]
+    return None, {}, image
+
+
 def main(argv):
     cut, frame_dir, out_json, times = argv[1], argv[2], argv[3], [float(x) for x in argv[4].split(",") if x]
+    avoid = {}
+    if len(argv) > 5:
+        with open(argv[5], encoding="utf-8") as fh:
+            avoid = json.load(fh)
     asked = list(times)          # the caller's frames: the key a later run reuses this reading by
-    base = os.environ.get("CPA_BASE_URL", "").rstrip("/")
+    base_url = os.environ.get("CPA_BASE_URL", "").rstrip("/")
     key = os.environ.get("CPA_API_KEY", "")
-    if not base or not key:
+    if not base_url or not key:
         raise SystemExit("CPA_BASE_URL / CPA_API_KEY not set (load cpa.env first)")
     os.makedirs(frame_dir, exist_ok=True)
     try:
-        action = find_action(cut, frame_dir, base, key)
+        action = find_action(cut, frame_dir, base_url, key)
     except (subprocess.CalledProcessError, urllib.error.URLError, OSError, ValueError) as exc:
         action = {"t": None, "why": f"找动作失败：{type(exc).__name__}"}
     if action.get("t") is not None:     # the move's own frame first, then the frames around the cover line
         times = [action["t"], *[t for t in times if abs(t - action["t"]) >= 0.01]]
     checked, chosen, boxes = [], None, None
     first_clean = None           # (t, image) of the first clean frame: taken when no clean frame shows her face
+    first_repeat = None          # (t, image, face, dhash) of the first frame showing her face that repeats a cover
+    base = {}                    # the chosen frame's face and its hash (the next covers of the stream avoid it)
     for index, t in enumerate(times):
         path = os.path.join(frame_dir, f"frame-{index}.jpg")
         try:
             image = extract(cut, t, path)
-            text = ask(base, key, image, QUESTION, kind="clean", t=t)
+            text = ask(base_url, key, image, QUESTION, kind="clean", t=t)
         except (subprocess.CalledProcessError, urllib.error.URLError, OSError, ValueError) as exc:
             checked.append({"t": t, "verdict": "ERROR", "text": type(exc).__name__})
             continue
@@ -244,28 +444,28 @@ def main(argv):
             continue
         first_clean = first_clean or (t, image)
         if action.get("t") is not None and abs(t - action["t"]) < 0.01:
-            chosen = t           # the signature move may hide her face (owner 2026-11-14): its frame is not asked
-            break
-        try:                     # 1645880 (2026-11-15): the cover line fell where the camera showed only her shoes
-            face = ask(base, key, image, FACE_QUESTION, kind="face", t=t).upper()
-        except (urllib.error.URLError, OSError, ValueError) as exc:
-            row["face"] = f"ERROR {type(exc).__name__}"
+            row["repeat"] = repeat_of(t, None, avoid)     # her face is not asked here: only the same moment repeats
+            if not row["repeat"]:
+                chosen, base = t, {"t": t}   # the signature move may hide her face (owner 2026-11-14): not asked
+                break
             continue
-        row["face"] = "FACE" if "FACE" in face and "NOFACE" not in face else "NOFACE"
-        if row["face"] == "FACE":
-            chosen = t
+        seen = look_at_face(row, path, image, t, base_url, key, avoid)
+        if seen and not row["repeat"]:
+            chosen, base = t, {"t": t, "face": seen[0], "dhash": seen[1]}
             break
-    if chosen is None and first_clean is not None:
-        chosen = first_clean[0]  # no clean frame shows her face: the first clean one, as before (recorded below)
+        if seen:
+            first_repeat = first_repeat or (t, image, *seen)
+    if chosen is None:
+        chosen, base, image = fallback(first_repeat, first_clean, image)
     if chosen is not None:
-        image = first_clean[1] if first_clean and first_clean[0] == chosen else image
         try:
-            boxes = read_boxes(ask(base, key, image, BOX_QUESTION, max_tokens=300, kind="boxes", t=chosen))
+            boxes = read_boxes(ask(base_url, key, image, BOX_QUESTION, max_tokens=300, kind="boxes", t=chosen))
         except (urllib.error.URLError, OSError, ValueError):
             boxes = None
     with open(out_json, "w", encoding="utf-8") as fh:
         json.dump({"chosen": chosen, "checked": checked, "boxes": boxes, "calls": CALLS, "times": asked, "question": READING_KEY,
-                   "action": action, "looked_at": times},
+                   "model": CALLS[-1]["model"] if CALLS else MODEL,
+                   "action": action, "looked_at": times, "avoid": avoid, "base": base},
                   fh, ensure_ascii=False, indent=1)
     print(f"{out_json}: chosen={chosen} action={action.get('t')} checked={len(checked)} boxes={'yes' if boxes else 'no'}")
     return 0

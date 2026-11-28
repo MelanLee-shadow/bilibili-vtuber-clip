@@ -1,0 +1,379 @@
+{
+  "schema_version": "cover-layout-templates.v2",
+  "authority_note": "The channel's cover compositions: where the words go, how they are broken, and how the person is framed. Read by src/autoslice/cover_layout_rotation.py, which the production lane (step 6, assets/manual_lane/remote/cover_candidates.py) and the title-cover skill's scripts/render_cover.py (--layouts) both load; neither keeps its own list. Basis: the owner's requests of 2026-10-31, 2026-11-13 and 2026-11-25 (quoted in the title-cover skill, section 7) and the peer covers of the skill's section 6 (people and words both large, words a third to a half of the picture, simple ground, several people side by side).",
+  "recent_covers": 3,
+  "recent_covers_source": "A template used by one of the last 3 covers (in time, any stream) is tried only after every other template that applies. 3 because a single-host cover with column rows has 7 templates that apply, so after the 3 recent and the 2 same-stream ones at most 5 are passed over and at least 2 remain; a larger window would leave covers without column rows (3 templates apply) repeating at once.",
+  "session_recent_covers": 2,
+  "session_recent_covers_source": "The last 2 covers of the same stream are passed over as well: the clips of one stream are often made between other streams' clips (11-25: 11-23 and 11-24 clips interleaved), so the time window alone lets two neighbours of one stream share a composition.",
+  "route_run_max": 2,
+  "route_run_max_source": "The way a cover is made (screenshot, emote, cut-out, generated sticker or scene) should not be the same for more than 2 covers in a row: a candidate of the route the last 2 covers both used ranks behind the candidates of other routes, in the free stage and in the paid one (step6_cover.cover_repeats; the skill: choose_cover.py). It still passes the free stage when no other free candidate does (U138: a free candidate that passes is taken, one picture is generated only when none does; a repeat is no reason to pay). The 20 covers before 2026-11-25 were 11 screenshots, 6 emotes, 2 cut-outs and 1 sticker, with runs of up to 4 screenshots in a row.",
+  "punch_floor_px": 200,
+  "punch_floor_px_source": "Same number as assets/manual_lane/lane_rules.json cover.punch_floor_px (the approved batch laid every punchline out for 200px; the score saturates there). A template whose punchline stays under it is passed over, not made with smaller words; only when no template reaches it is the largest one taken. The hard floor of 120px stays the renderer's.",
+  "short_punch_chars_people_min": 3,
+  "short_punch_chars": 6,
+  "short_punch_chars_source": "A cover of three or more people (the host and two guests or more) asks for its punchline in at most this many characters before it is rendered (step 6; the 2026-11-25 plan, T7 b): three equal faces leave room for the words only on top unless the punchline is short, and the ten-cover replay of 2026-11-25 fitted the bottom band at 200px only for its one punchline of 6 characters or fewer. When the writer says the line cannot be that short without losing what it says, the long line is kept and panels-bottom is tried from its wordy_punch_floor_px.",
+  "templates": [
+    {
+      "template_id": "column-left",
+      "name": "字全在左侧竖列",
+      "text": "left",
+      "rows": "column",
+      "framing": {
+        "face_frac": 0.36,
+        "face_x_frac": 0.72,
+        "face_top_frac": null,
+        "panel": true
+      },
+      "applies": {
+        "people": [
+          "solo"
+        ],
+        "needs": [
+          "column_rows"
+        ],
+        "routes": [
+          "screenshot",
+          "emote",
+          "cutout",
+          "ai_sticker"
+        ]
+      },
+      "basis": "Owner 2026-11-13 named it (words all in a column on the left). Half-length: the face a third of the height so her shoulders and hands show beside the column."
+    },
+    {
+      "template_id": "column-right",
+      "name": "字全在右侧竖列",
+      "text": "right",
+      "rows": "column",
+      "framing": {
+        "face_frac": 0.36,
+        "face_x_frac": 0.28,
+        "face_top_frac": null,
+        "panel": true
+      },
+      "applies": {
+        "people": [
+          "solo"
+        ],
+        "needs": [
+          "column_rows"
+        ],
+        "routes": [
+          "screenshot",
+          "emote",
+          "cutout",
+          "ai_sticker"
+        ]
+      },
+      "basis": "Owner 2026-11-13 named it (words all in a column on the right). Mirror of column-left."
+    },
+    {
+      "template_id": "closeup-left",
+      "name": "人物大特写在右、大字竖列在左",
+      "text": "left",
+      "rows": "column",
+      "framing": {
+        "face_frac": 0.56,
+        "face_x_frac": 0.76,
+        "face_top_frac": 0.2,
+        "cut_head": true,
+        "panel": true
+      },
+      "applies": {
+        "people": [
+          "solo"
+        ],
+        "needs": [
+          "column_rows"
+        ],
+        "routes": [
+          "screenshot",
+          "emote",
+          "cutout",
+          "ai_sticker"
+        ]
+      },
+      "basis": "Peers (skill section 6): the person very large, cut by the frame, the words taking the other side. The window may cut the top of her head (hair, ears), never the forehead or the chin."
+    },
+    {
+      "template_id": "closeup-right",
+      "name": "人物大特写在左、大字竖列在右",
+      "text": "right",
+      "rows": "column",
+      "framing": {
+        "face_frac": 0.56,
+        "face_x_frac": 0.24,
+        "face_top_frac": 0.2,
+        "cut_head": true,
+        "panel": true
+      },
+      "applies": {
+        "people": [
+          "solo"
+        ],
+        "needs": [
+          "column_rows"
+        ],
+        "routes": [
+          "screenshot",
+          "emote",
+          "cutout",
+          "ai_sticker"
+        ]
+      },
+      "basis": "Mirror of closeup-left."
+    },
+    {
+      "template_id": "top-two",
+      "name": "上方横排两行",
+      "text": "top",
+      "rows": "lines",
+      "framing": {
+        "face_frac": 0.43,
+        "face_x_frac": null,
+        "face_top_frac": null
+      },
+      "applies": {
+        "people": [
+          "solo",
+          "together"
+        ]
+      },
+      "basis": "The approved batch's composition (lane_rules cover.face_target_frac 0.43): two lines above the face, the face below them. It was every cover until 2026-11-25 (18 of the 20 covers before it)."
+    },
+    {
+      "template_id": "diagonal",
+      "name": "斜对角（上一句、下一句）",
+      "text": "diagonal",
+      "rows": "lines",
+      "framing": {
+        "face_frac": 0.34,
+        "face_x_frac": 0.5,
+        "face_top_frac": 0.24
+      },
+      "applies": {
+        "people": [
+          "solo",
+          "together"
+        ],
+        "lines": 2,
+        "max_punch_chars": 7
+      },
+      "basis": "The renderer's diagonal layout (line 1 above the face on the left, the punchline under the face on the right); the face in the middle third, a little smaller, so both lines have room."
+    },
+    {
+      "template_id": "bottom-banner",
+      "name": "底部横幅",
+      "text": "bottom",
+      "rows": "lines",
+      "framing": {
+        "face_frac": 0.3,
+        "face_x_frac": 0.5,
+        "face_top_frac": 0.04
+      },
+      "applies": {
+        "people": [
+          "solo",
+          "together"
+        ]
+      },
+      "basis": "Peers' banner covers: the words in a band along the bottom, the person above it. The face high in the picture and smaller (still above the 25 % veto floor), the band painted under the words."
+    },
+    {
+      "template_id": "panels-top",
+      "name": "多格分屏，字在上方",
+      "text": "top",
+      "rows": "lines",
+      "framing": {
+        "face_frac": 0.43,
+        "face_x_frac": null,
+        "face_top_frac": null
+      },
+      "applies": {
+        "people": [
+          "panels"
+        ]
+      },
+      "basis": "Collaboration split screen (70-cover 「联动嘉宾」: one panel per person, equal faces, owner 2026-11-02 and 2026-11-24); each line over its speaker.",
+      "family": "collab-split",
+      "pack_layout": "split"
+    },
+    {
+      "template_id": "panels-bottom",
+      "name": "多格分屏，字在底部",
+      "text": "bottom",
+      "rows": "lines",
+      "framing": {
+        "face_frac": 0.36,
+        "face_x_frac": null,
+        "face_top_frac": 0.06
+      },
+      "applies": {
+        "people": [
+          "panels"
+        ]
+      },
+      "wordy_punch_floor_px": 170,
+      "wordy_punch_floor_people_min": 3,
+      "wordy_punch_floor_px_source": "A split screen of three or more people whose cover words cannot be written short without losing what they say (step 6 asked for at most 6 characters on the punchline and the writer said the meaning would be lost): this template is taken from 170px instead of the table's punch_floor_px. Three equal faces leave a narrow band under the chests; at 200px a longer punchline never fits it, so every such cover fell back to the words on top (2026-11-25 replay of ten covers). 170 rather than 150: further from the renderer's 120px floor (2026-11-25 plan, T7).",
+      "basis": "The same split screen with the faces high and the words in a band along the bottom, each line under its speaker; so two collaboration covers in a row do not look the same.",
+      "family": "collab-split",
+      "pack_layout": "split"
+    },
+    {
+      "template_id": "panels-diagonal",
+      "name": "多格分屏，上一句、下一句",
+      "text": "diagonal",
+      "rows": "lines",
+      "framing": {
+        "face_frac": 0.34,
+        "face_x_frac": null,
+        "face_top_frac": null
+      },
+      "applies": {
+        "people": [
+          "panels"
+        ],
+        "lines": 2,
+        "max_punch_chars": 7
+      },
+      "basis": "A text arrangement of the existing equal split-screen family.",
+      "family": "collab-split",
+      "pack_layout": "split"
+    },
+    {
+      "template_id": "emote-collage",
+      "name": "表情包拼贴（主表情包加粉丝贴纸）",
+      "text": "top",
+      "rows": "lines",
+      "framing": {
+        "face_frac": 0.43,
+        "face_x_frac": 0.333,
+        "face_top_frac": null
+      },
+      "applies": {
+        "people": [
+          "solo"
+        ],
+        "needs": [
+          "fans_emote"
+        ],
+        "routes": [
+          "emote"
+        ]
+      },
+      "basis": "The approved emote collage (lane_rules cover.fans_*): her main emote left of centre, the audience's sticker on the right, the words above."
+    },
+    {
+      "template_id": "reaction-inset",
+      "name": "看别人内容：被看的画面做主体，她在角落小窗",
+      "text": "top",
+      "rows": "lines",
+      "framing": {
+        "face_frac": 0.25,
+        "face_x_frac": 0.82,
+        "face_top_frac": 0.55
+      },
+      "applies": {
+        "people": [
+          "solo",
+          "together"
+        ],
+        "needs": [
+          "watching"
+        ]
+      },
+      "basis": "Skill section 3 (她看别人的内容: the watched picture is the subject, her face in a corner, spec inset). The lane does not tell such clips apart yet, so it never takes this template; it is for covers made with the skill."
+    },
+    {
+      "template_id": "collab-pair",
+      "name": "两格：主播一格、嘉宾合一格",
+      "family": "collab-pair",
+      "pack_layout": "pair",
+      "text": "top",
+      "rows": "lines",
+      "framing": {
+        "face_frac": 0.38,
+        "face_x_frac": null,
+        "face_top_frac": null
+      },
+      "applies": {
+        "people": [
+          "panels"
+        ]
+      },
+      "basis": "The host has one panel and two guests share a panel; faces remain equal."
+    },
+    {
+      "template_id": "collab-portraits",
+      "name": "直播画面与嘉宾圆头像",
+      "family": "collab-portraits",
+      "pack_layout": "portraits",
+      "text": "top",
+      "rows": "lines",
+      "framing": {
+        "face_frac": 0.38,
+        "face_x_frac": null,
+        "face_top_frac": null
+      },
+      "applies": {
+        "people": [
+          "panels"
+        ],
+        "routes": [
+          "screenshot"
+        ],
+        "no_guest_lines": true
+      },
+      "basis": "The host's live frame is the main image with two guest portraits at its lower corners."
+    },
+    {
+      "template_id": "collab-stacked",
+      "name": "直播画面与右侧上下头像卡",
+      "family": "collab-stacked",
+      "pack_layout": "stacked",
+      "text": "top",
+      "rows": "lines",
+      "framing": {
+        "face_frac": 0.38,
+        "face_x_frac": null,
+        "face_top_frac": null
+      },
+      "applies": {
+        "people": [
+          "panels"
+        ],
+        "routes": [
+          "screenshot"
+        ],
+        "no_guest_lines": true
+      },
+      "basis": "The host's live frame occupies the left side; two guest portraits form a vertical group."
+    },
+    {
+      "template_id": "collab-dialogue",
+      "name": "对话气泡与圆形人物卡",
+      "family": "collab-dialogue",
+      "pack_layout": "dialogue",
+      "text": "top",
+      "rows": "lines",
+      "framing": {
+        "face_frac": 0.3,
+        "face_x_frac": null,
+        "face_top_frac": null
+      },
+      "applies": {
+        "people": [
+          "panels"
+        ],
+        "routes": [
+          "screenshot",
+          "emote",
+          "cutout",
+          "ai_sticker"
+        ]
+      },
+      "basis": "Speech-card bands and circular portraits put each line near the speaker."
+    }
+  ]
+}

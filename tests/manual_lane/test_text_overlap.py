@@ -35,6 +35,16 @@ def test_share_is_of_the_first_text() -> None:
     assert text_overlap.share("大家好", "", empty=0.0) == 0.0
 
 
+def test_a_word_stands_where_it_is_written_and_not_at_the_seam_of_another_word_said_twice() -> None:
+    # 「晚安晚安」 was counted as a chat line naming 安晚 (four of the eleven shown to the judge)
+    for text in ("晚安晚安", "大家晚安晚安啦", "晚安晚安晚安", "晚安晚安晚"):
+        assert not text_overlap.stands("安晚", text), text
+    for text in ("安晚来了", "安晚安晚", "晚安安晚", "晚安晚安，安晚也晚安", "今晚安晚来吗"):
+        assert text_overlap.stands("安晚", text), text
+    assert not text_overlap.stands("甲乙丙", "乙丙甲乙丙甲") and text_overlap.stands("甲乙丙", "甲乙丙甲乙丙")
+    assert not text_overlap.stands("安晚", "") and not text_overlap.stands("", "晚安")
+
+
 def test_no_step_keeps_its_own_copy() -> None:
     """A module that strips a text to its letters itself is a second implementation: it calls text_overlap."""
     own = re.compile(r"if ch\.isalnum\(\)\)(\.lower\(\))?$|re\.sub\(r\"\[\\W_\]\+\", \"\", ")

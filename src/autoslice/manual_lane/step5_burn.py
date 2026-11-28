@@ -65,6 +65,48 @@ def _burned_lines(ctx: Ctx) -> Path:
     return out
 
 
+def _person_styles(ctx: Ctx, burned: Path) -> tuple[Path | None, str]:
+    """burn/speaker.persons.json for render_ass.py: the guests step 4 named (speaker/persons.json) in their own colours
+    (person_colours; owner), each burned guest line taking the person of the named line of the same label it
+    overlaps most (a line step 9 rewrote keeps the name of the line it was).  (path, PROCESS line); no path when no
+    guest line is named or no named guest has a colour."""
+    from . import guest_identity, person_colours
+    from .step4_speaker import PERSONS
+
+    out = _local(ctx, "burn/speaker.persons.json")
+    out.unlink(missing_ok=True)
+    if not (ctx.clip_dir / PERSONS).exists():
+        return None, ""
+    rows = guest_identity.named_rows(ctx.clip_dir)
+    known, guest = person_colours.people(), person_colours.channel_guest_style()
+    styles: dict[str, str] = {}
+    cues: list[str | None] = []
+    who: dict[str, int] = {}
+    unnamed = 0
+    for cue in parse_srt(burned.read_text(encoding="utf-8")):
+        if not cue["text"].startswith(f"[{speaker_v8.GUEST_LABEL}]"):
+            cues.append(None)
+            continue
+        person = guest_identity.person_at(rows, float(cue["start_s"]), float(cue["end_s"]))
+        style = person_colours.guest_style(person, guest, known) if person else None
+        if person is None or style is None:
+            unnamed += 1
+            cues.append(None)
+            continue
+        styles[style[0]] = style[1]
+        who[person] = who.get(person, 0) + 1
+        cues.append(style[0])
+    named_people = sorted({str(r["person"]) for r in rows})
+    missing = [p for p in named_people if p not in known]
+    if not styles:
+        return None, (f"嘉宾颜色：定到人的嘉宾（{'、'.join(named_people)}）在 person_colours 里都没有登记颜色，按通用嘉宾样式"
+                      if named_people else "")
+    out.write_text(json.dumps({"styles": styles, "cues": cues}, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    return out, ("嘉宾颜色（各用 person_colours 给她登记的颜色）：" + "、".join(f"{p} {n} 句 {known[p]['outline']}" for p, n in who.items())
+                 + (f"；{'、'.join(missing)} 没有登记颜色" if missing else "")
+                 + (f"；{unnamed} 句嘉宾句按通用嘉宾样式（没定到人或没有颜色）" if unnamed else ""))
+
+
 def step5_burn(ctx: Ctx) -> StepOutcome:
     rd = ctx.remote_dir
     clip = ctx.state.data["clip"]
@@ -78,7 +120,11 @@ def step5_burn(ctx: Ctx) -> StepOutcome:
     identity_args = f"{shlex.quote(recording_date)} {shlex.quote(manuscript)}"
     pinned = _manuscript_intro(ctx, manuscript) if manuscript != clip["cid"] else None
     pin_env = f"MANUAL_LANE_PIN_INTRO={shlex.quote(pinned)} " if pinned else ""
-    ctx.adapters.remote.put(_burned_lines(ctx), f"{rd}/burn/speaker.srt")
+    burned = _burned_lines(ctx)
+    ctx.adapters.remote.put(burned, f"{rd}/burn/speaker.srt")
+    persons, colour_line = _person_styles(ctx, burned)
+    if persons is not None:
+        ctx.adapters.remote.put(persons, f"{rd}/burn/speaker.persons.json")
     ctx.adapters.remote.put(REMOTE_TOOLS / "render_ass.py", f"{rd}/tools/render_ass.py")
     ctx.adapters.remote.put(REMOTE_TOOLS / "prepend_intro.py", f"{rd}/tools/prepend_intro.py")
     # libass finds a glyph the style's font lacks only through fontconfig, so the lane's fallback fonts (a monochrome
@@ -87,7 +133,7 @@ def step5_burn(ctx: Ctx) -> StepOutcome:
             f"printf '%s\\n' '<?xml version=\"1.0\"?><fontconfig><include ignore_missing=\"yes\">/etc/fonts/fonts.conf</include>' "
             f"'<dir>{REMOTE_LANE_FONTS}</dir><cachedir>{rd}/burn/fontcache</cachedir></fontconfig>' > {rd}/burn/fonts.conf\n"
             f"export FONTCONFIG_FILE={rd}/burn/fonts.conf\n"
-            f"{remote_python(f'{rd}/tools/render_ass.py {rd}/burn/speaker.srt {rd}/burn/final.ass {REMOTE_FONTS}')} || exit 11\n"
+            f"{remote_python(f'{rd}/tools/render_ass.py {rd}/burn/speaker.srt {rd}/burn/final.ass {REMOTE_FONTS}' + (f' {rd}/burn/speaker.persons.json' if persons else ''))} || exit 11\n"
             f"ffmpeg -hide_banner -loglevel error -y -i {rd}/cut/cut.mp4 "
             f"-vf \"subtitles='{rd}/burn/final.ass':fontsdir='{REMOTE_FONTS}'\" "
             f"-c:v libx264 -preset veryfast -crf 20 -c:a copy -movflags +faststart {rd}/burn/main_burned.mp4 || exit 12\n"
@@ -116,6 +162,8 @@ def step5_burn(ctx: Ctx) -> StepOutcome:
             process.append(f"后继片的片头：线上那版用的是 {pinned}，它已不在当前可选的片头里，改用了 {verdict.evidence.get('intro_id')}")
         else:
             process.append(f"后继片的片头：与「{manuscript}」线上那版相同（{pinned}）")
+    if colour_line:
+        process.append(colour_line)
     return StepOutcome(True, products={"intro_result": str(local_result)},
                        note=f"intro={verdict.evidence.get('intro_id')} offset={verdict.evidence.get('intro_offset_ms')}ms "
                             f"OCI3 {rd}/burn/final.mp4",

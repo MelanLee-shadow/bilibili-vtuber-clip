@@ -519,12 +519,16 @@ def test_a_final_that_leaves_speech_without_a_subtitle_is_sent_back_and_the_sent
     assert not (ctx.clip_dir / 'subs/unsubtitled.json').exists()      # nothing is left without a line: nothing to decide
 
 
-def test_the_agent_may_keep_its_answer_when_the_sound_is_not_speech_to_subtitle(tmp_path, monkeypatch):
+def test_the_agent_may_keep_its_rows_when_it_names_the_stretch_and_its_sound(tmp_path, monkeypatch):
     rows = sung_rows(reason='这一段是背景音乐里的人声，不是口播')
+    named = [{'start_s': 4.0, 'end_s': 7.7, 'sound': '背景音乐里的人声'}]
     ctx, cpa = sung_context(tmp_path, monkeypatch, [
         {'action': 'plan', 'doubts': [], 'tools': []}, {'action': 'draft', 'rows': rows},
-        {'action': 'final', 'self_check': 'checked', 'rows': rows}, {'action': 'final', 'self_check': 'not speech', 'rows': rows}])
-    assert step._step3_body(ctx).ok and len(cpa.calls) == 4          # told once; the second identical answer stands
+        {'action': 'final', 'self_check': 'checked', 'rows': rows},
+        {'action': 'final', 'self_check': 'not speech', 'rows': rows, 'not_subtitled': [{'start_s': 4.0, 'end_s': 7.7}]},
+        {'action': 'final', 'self_check': 'not speech', 'rows': rows, 'not_subtitled': named}])
+    assert step._step3_body(ctx).ok and len(cpa.calls) == 5          # told once; a name without the sound is no name
+    assert 'not_subtitled must be' in cpa.prompts[4] and trace_of(ctx)['not_subtitled'] == named
     from src.autoslice.manual_lane import package_guards as pg
     decided = json.loads((ctx.clip_dir / pg.DECIDED_FILE).read_text())
     assert [(g['start_s'], g['end_s'], g['text']) for g in decided] == [(4.0, 7.7, '南达莫奈卡拉波库诺乌塔哦')]
@@ -548,3 +552,243 @@ def test_a_finished_run_whose_rows_leave_unsubtitled_speech_is_taken_up_again(tm
     again = pb._Agent(ctx, bcut, [], ctx.state.data['clip'], 9.0, tag='b')
     rows = again.execute(finish=False)
     assert rows == timed and len(cpa.calls) == 2 and any(e.get('unsubtitled') for e in again.trace['events'])
+
+
+def test_a_finished_run_that_named_its_stretch_stands_when_taken_up_again(tmp_path, monkeypatch):
+    from src.autoslice.manual_lane.srt_text import parse_srt
+
+    rows, named = sung_rows(reason='背景音乐里的人声'), [{'start_s': 4.0, 'end_s': 7.7, 'sound': '背景音乐里的人声'}]
+    ctx, cpa = sung_context(tmp_path, monkeypatch, [])
+    agent = pb._Agent(ctx, parse_srt(SUNG), [], ctx.state.data['clip'], 9.0, tag='b')
+    agent.trace.update(status='COMPLETE', final_rows=rows, not_subtitled=named, events=[
+        {'event': 'cpa_result', 'call_id': 'agentb-000', 'response': json.dumps({'action': 'final', 'rows': rows})}])
+    agent.save()
+    again = pb._Agent(ctx, parse_srt(SUNG), [], ctx.state.data['clip'], 9.0, tag='b')
+    assert again.execute(finish=False) == rows and not cpa.calls
+
+
+# semantictalk_1621740_1804080_11242159, cut down: she imitates answering a professor in Japanese; the
+# recogniser wrote the Japanese of cues 5-6 as Chinese-sounding nonsense, and far from it stands a 「对」 by itself
+ANSWERED = ('1\n00:00:00,000 --> 00:00:01,500\n这是真情实感\n\n2\n00:00:02,000 --> 00:00:02,680\n对\n\n'
+            '3\n00:00:03,020 --> 00:00:05,800\n一边用来应付教授\n\n4\n00:00:05,800 --> 00:00:09,190\n他在那呱呱呱呱叫我说嗨嗨\n\n'
+            '5\n00:00:09,190 --> 00:00:11,490\n社死你涩死了，涩涩死你\n\n6\n00:00:11,490 --> 00:00:12,229\n他是搞你\n\n'
+            '7\n00:00:12,229 --> 00:00:15,740\n然后其实脑子早就已经飞到直播间\n')
+JAPANESE = '他在那呱呱呱呱讲，我说はいはい、そうっすね、そう、それはそう、そうですね、確かに。'
+
+
+def answered_rows(*, lone_merged):
+    keep = {'state': 'KEEP', 'confidence': '高', 'affects_meaning': False}
+    moved = {'state': 'ADOPT', 'final_text': '', 'drop': True, 'confidence': '高', 'affects_meaning': False, 'parts': []}
+    lone = ([{'id': 'd002', 'reason': '并入d003', **moved},
+             {'id': 'd003', 'state': 'ADOPT', 'final_text': '对，一边用来应付教授', 'confidence': '高', 'affects_meaning': False}]
+            if lone_merged else [{'id': 'd002', 'final_text': '对', **keep}, {'id': 'd003', 'final_text': '一边用来应付教授', **keep}])
+    return answer_rows([
+        {'id': 'd001', 'final_text': '这是真情实感', **keep}, *lone,
+        {'id': 'd004', 'state': 'ADOPT', 'final_text': JAPANESE, 'confidence': '高', 'affects_meaning': False,
+         'parts': [{'text': JAPANESE, 'first_cue': 4, 'last_cue': 6}]},
+        {'id': 'd005', 'reason': '是d004所引日语的连续部分，已全部移入d004，未删口播。', **moved},
+        {'id': 'd006', 'reason': '是日语確かに的近音误识别，并入d004。', **moved},
+        {'id': 'd007', 'final_text': '然后其实脑子早就已经飞到直播间', **keep}])
+
+
+def test_a_lone_character_with_no_touching_sentence_is_not_subtitled_and_the_line_that_took_in_its_neighbours_keeps_their_time(
+        tmp_path, monkeypatch):
+    # The agent moved cues 5-6 into cue 4 and said so with the cue span.  The lone 「对」 (2.00-2.68) has no touching
+    # neighbour (the next sentence starts at 3.02, 0.34 s later): the release shape left it out, so that shape was
+    # refused and the 「对」 stood alone in final.srt - the release check refused the file (SRT_SINGLE_CJK_CHARACTER,
+    # finished-media review A2 FAIL).  A sentence that is one lone character takes U138 as in every writer: not
+    # subtitled, recorded in subs/lone_dropped.json; never joined across the silence, and the agent is not asked.
+    from src.autoslice.manual_lane import package_guards as pg, subtitle_track
+    from src.autoslice.manual_lane.srt_text import parse_srt
+    from src.autoslice.subtitle_validation import validate_srt_file
+
+    rows = answered_rows(lone_merged=False)
+    cpa = AgentCpa([], answers=[{'action': 'plan', 'doubts': [], 'tools': [{'tool': 'words', 'start': 0, 'end': 16}]},
+                                {'action': 'draft', 'rows': rows}, {'action': 'final', 'self_check': 'checked', 'rows': rows}])
+    ctx = context(tmp_path, monkeypatch, cpa)
+    (ctx.clip_dir / 'asr/bcut.srt').write_text(ANSWERED)
+    outcome = step._step3_body(ctx)
+    assert outcome.ok and len(cpa.calls) == 3
+    assert not [e for e in trace_of(ctx)['events'] if e.get('event') == 'protocol_error']
+    path = ctx.clip_dir / 'subs/final.srt'
+    assert validate_srt_file(path)['status'] == 'PASS'                # what the release check and A2 run
+    final = subtitle_track.parse_blocks(path.read_text())
+    assert [(c['start_s'], c['text']) for c in final[:2]] == [(0.0, '这是真情实感'), (3.02, '一边用来应付教授')]
+    left_out = json.loads((ctx.clip_dir / 'subs/lone_dropped.json').read_text(encoding='utf-8'))
+    assert [(r['start_s'], r['end_s'], r['text']) for r in left_out] == [(2.0, 2.68, '对')]
+    japanese = [c for c in final if 'はいはい' in c['text'] or '確かに' in c['text']]
+    assert (japanese[0]['start_s'], japanese[-1]['end_s']) == (5.8, 12.229)     # cues 4-6, whole
+    assert pg.gaps_with_speech(final, parse_srt(ANSWERED)) == []      # what step 8 looks for
+    assert not any('句内不拆' in line for line in outcome.process)       # the release shape stands: U138 lost no word
+
+
+def test_a_lone_character_only_a_cut_leaves_alone_stays_in_its_sentence(tmp_path, monkeypatch):
+    # The agent wrote 「对，一边用来应付教授」 as one sentence and gave it two parts; the first, 「对」, has no touching
+    # neighbour.  Leaving it out would lose a word of a longer sentence: the release shape is refused, the sentence
+    # stays one line over its parts' time (the agent's own words, as before).
+    from src.autoslice.manual_lane import subtitle_track
+    from src.autoslice.subtitle_validation import validate_srt_file
+
+    keep = {'confidence': '高', 'affects_meaning': False}
+    rows = answer_rows([
+        {'id': 'd001', 'state': 'KEEP', 'final_text': '这是真情实感', **keep},
+        {'id': 'd002', 'state': 'ADOPT', 'final_text': '', 'drop': True, 'reason': '并入d003', 'parts': [], **keep},
+        {'id': 'd003', 'state': 'ADOPT', 'final_text': '对，一边用来应付教授', **keep,
+         'parts': [{'text': '对，', 'first_cue': 2, 'last_cue': 2}, {'text': '一边用来应付教授', 'first_cue': 3, 'last_cue': 3}]}])
+    cpa = AgentCpa([], answers=[{'action': 'plan', 'doubts': [], 'tools': [{'tool': 'words', 'start': 0, 'end': 6}]}, {'action': 'draft', 'rows': rows},
+                                {'action': 'final', 'self_check': 'checked', 'rows': rows}])
+    ctx = context(tmp_path, monkeypatch, cpa)
+    (ctx.clip_dir / 'asr/bcut.srt').write_text(ANSWERED.split('\n\n4\n')[0] + '\n')
+    outcome = step._step3_body(ctx)
+    assert outcome.ok and len(cpa.calls) == 3 and any('句内不拆' in line for line in outcome.process)
+    path = ctx.clip_dir / 'subs/final.srt'
+    assert validate_srt_file(path)['status'] == 'PASS'
+    final = subtitle_track.parse_blocks(path.read_text())
+    assert [(c['start_s'], c['end_s'], c['text']) for c in final] == [(0.0, 1.5, '这是真情实感'), (2.0, 5.8, '对，一边用来应付教授')]
+
+
+def test_rows_without_parts_take_u138_for_a_lone_character(tmp_path, monkeypatch):
+    # No row gives parts: the rows' own lines (decided_cues).  The 「对」 touching the next sentence joins it; the 「行」
+    # after a silence is not subtitled.  Both used to stand alone in final.srt, refused on release.
+    from src.autoslice.manual_lane import subtitle_track
+    from src.autoslice.subtitle_validation import validate_srt_file
+
+    keep = {'state': 'KEEP', 'confidence': '高', 'affects_meaning': False}
+    rows = answer_rows([{'id': 'd001', 'final_text': '这是真情实感', **keep}, {'id': 'd002', 'final_text': '对', **keep},
+                        {'id': 'd003', 'final_text': '一边用来应付教授', **keep}, {'id': 'd004', 'final_text': '行', **keep},
+                        {'id': 'd005', 'final_text': '我说好的好的', **keep}])
+    cpa = AgentCpa([], answers=[{'action': 'plan', 'doubts': [], 'tools': []}, {'action': 'draft', 'rows': rows},
+                                {'action': 'final', 'self_check': 'checked', 'rows': rows}])
+    ctx = context(tmp_path, monkeypatch, cpa)
+    (ctx.clip_dir / 'asr/bcut.srt').write_text(
+        '1\n00:00:00,000 --> 00:00:01,500\n这是真情实感\n\n2\n00:00:02,000 --> 00:00:02,600\n对\n\n'
+        '3\n00:00:02,600 --> 00:00:05,000\n一边用来应付教授\n\n4\n00:00:06,000 --> 00:00:06,500\n行\n\n'
+        '5\n00:00:07,500 --> 00:00:09,000\n我说好的好的\n')
+    outcome = step._step3_body(ctx)
+    assert outcome.ok and len(cpa.calls) == 3
+    path = ctx.clip_dir / 'subs/final.srt'
+    assert validate_srt_file(path)['status'] == 'PASS'
+    final = subtitle_track.parse_blocks(path.read_text())
+    assert [(c['start_s'], c['end_s'], c['text']) for c in final] == [
+        (0.0, 1.5, '这是真情实感'), (2.0, 5.0, '对，一边用来应付教授'), (7.5, 9.0, '我说好的好的')]
+    left_out = json.loads((ctx.clip_dir / 'subs/lone_dropped.json').read_text(encoding='utf-8'))
+    assert [(r['start_s'], r['text']) for r in left_out] == [(6.0, '行')]
+
+
+def test_a_long_sentence_the_shape_cuts_never_leaves_a_lone_character_piece(tmp_path, monkeypatch):
+    # A 31 s sentence is cut into pieces by its duration.  The cut used to end on 「对。」 alone (punctuation was
+    # counted as a character): the release check refused it, and the hand-in check, looking for that piece's row,
+    # threw TypeError (a cut piece has no id) and sent the same rows back as "invalid selected parts" until the cap.
+    from src.autoslice.subtitle_validation import validate_srt_file
+
+    text = '我觉得这个东西其实还挺好玩的你们觉得呢。对。'
+    rows = answer_rows([{'id': 'd001', 'state': 'ADOPT', 'final_text': text, 'confidence': '高', 'affects_meaning': False,
+                         'parts': [{'text': text, 'first_cue': 1, 'last_cue': 1}]}])
+    cpa = AgentCpa([], answers=[{'action': 'plan', 'doubts': [], 'tools': [{'tool': 'words', 'start': 0, 'end': 31}]}, {'action': 'draft', 'rows': rows},
+                                {'action': 'final', 'self_check': 'checked', 'rows': rows}])
+    ctx = context(tmp_path, monkeypatch, cpa)
+    (ctx.clip_dir / 'asr/bcut.srt').write_text('1\n00:00:00,000 --> 00:00:31,000\n我觉得这个东西其实还挺好玩的你们觉得呢对\n')
+    outcome = step._step3_body(ctx)
+    assert outcome.ok and len(cpa.calls) == 3
+    assert not [e for e in trace_of(ctx)['events'] if e.get('event') == 'protocol_error']
+    assert validate_srt_file(ctx.clip_dir / 'subs/final.srt')['status'] == 'PASS'
+
+
+def test_words_the_parts_moved_to_a_neighbour_are_not_lost_when_the_release_shape_is_not_applied(tmp_path, monkeypatch):
+    # 「今晚要」 stays a kept row whose own parts are empty: its words stand in the next row's part.  Where the release
+    # shape is refused (here: it cannot lay out a line it joined), the lines written instead must still hold every
+    # word the parts hold.
+    from src.autoslice.manual_lane import subtitle_track
+
+    def unshapable(*_args, **_kwargs):
+        raise ValueError('cannot split subtitle within visual limits without starting a line with punctuation')
+
+    rows = answer_rows([
+        {'id': 'd001', 'state': 'ADOPT', 'final_text': '今晚要', 'confidence': '高', 'affects_meaning': False, 'parts': []},
+        {'id': 'd002', 'state': 'ADOPT', 'final_text': '喝奶茶', 'confidence': '高', 'affects_meaning': False,
+         'parts': [{'text': '今晚要喝奶茶', 'first_cue': 1, 'last_cue': 2}]}])
+    cpa = AgentCpa([], answers=[{'action': 'plan', 'doubts': [], 'tools': [{'tool': 'words', 'start': 0, 'end': 4}]},
+                                {'action': 'draft', 'rows': rows}, {'action': 'final', 'self_check': 'checked', 'rows': rows}])
+    ctx = context(tmp_path, monkeypatch, cpa)
+    (ctx.clip_dir / 'asr/bcut.srt').write_text('1\n00:00:02,000 --> 00:00:03,000\n今晚要\n\n'
+                                               '2\n00:00:03,000 --> 00:00:04,000\n喝奶茶\n')
+    monkeypatch.setattr(pb.normalize, 'release_shape', unshapable)
+    outcome = step._step3_body(ctx)
+    assert outcome.ok and len(cpa.calls) == 3 and any('句内不拆' in line for line in outcome.process)
+    final = subtitle_track.parse_blocks((ctx.clip_dir / 'subs/final.srt').read_text())
+    assert [(c['start_s'], c['end_s'], c['text']) for c in final] == [(2.0, 4.0, '今晚要喝奶茶')]
+
+
+# semantictalk_298620_487180_11242159, cut down: the lead run wrote a title in 《》 of 21 characters; a
+# subtitle line holds 18 and a bracketed title is never cut, so writing final.srt threw ValueError and step 3 stopped
+TITLED = '1\n00:00:00,000 --> 00:00:02,000\n你们知道吗\n\n2\n00:00:02,000 --> 00:00:04,000\nLoveLive Sunshine吗\n'
+
+
+def titled_rows(text):
+    return answer_rows([{'id': 'd001', 'state': 'KEEP', 'final_text': '你们知道吗', 'confidence': '高', 'affects_meaning': False},
+                        {'id': 'd002', 'state': 'ADOPT', 'final_text': text, 'confidence': '高', 'affects_meaning': False}])
+
+
+def test_a_title_longer_than_a_line_is_sent_back_with_its_sentence_and_why(tmp_path, monkeypatch):
+    titled, plain = titled_rows('《LoveLive! Sunshine!!》吗？'), titled_rows('LoveLive! Sunshine!!吗？')
+    cpa = AgentCpa([], answers=[{'action': 'plan', 'doubts': [], 'tools': []}, {'action': 'draft', 'rows': titled},
+                                {'action': 'final', 'self_check': 'checked', 'rows': titled},
+                                {'action': 'final', 'self_check': 'the title without its brackets', 'rows': plain}])
+    ctx = context(tmp_path, monkeypatch, cpa)
+    (ctx.clip_dir / 'asr/bcut.srt').write_text(TITLED)
+    outcome = step._step3_body(ctx)
+    assert outcome.ok and len(cpa.calls) == 4
+    told = [e['unfit'] for e in trace_of(ctx)['events'] if e.get('unfit')]
+    assert [[(t['id'], t['text']) for t in unfit] for unfit in told] == [[('d002', '《LoveLive! Sunshine!!》吗？')]]
+    assert '《LoveLive! Sunshine!!》' in told[0][0]['why'] and pb.UNFIT_NOTE in cpa.prompts[3]
+    assert 'LoveLive!\nSunshine!!吗？' in (ctx.clip_dir / 'subs/final.srt').read_text()
+
+
+def test_rows_release_keeps_refusing_stop_at_the_call_cap_by_name(tmp_path, monkeypatch):
+    monkeypatch.setattr(pb, 'MAX_TEXT_CALLS', 4)
+    titled = titled_rows('《LoveLive! Sunshine!!》吗？')
+    cpa = AgentCpa([], answers=[{'action': 'plan', 'doubts': [], 'tools': []}, {'action': 'draft', 'rows': titled},
+                                {'action': 'final', 'self_check': 'checked', 'rows': titled},
+                                {'action': 'final', 'self_check': 'checked again', 'rows': titled}])
+    ctx = context(tmp_path, monkeypatch, cpa)
+    (ctx.clip_dir / 'asr/bcut.srt').write_text(TITLED)
+    outcome = step._step3_body(ctx)
+    assert outcome.reason == 'CPA_AGENT_CALL_CAP' and len(cpa.calls) == 4
+    assert trace_of(ctx)['status'] == 'REFUSED' and not (ctx.clip_dir / 'subs/final.srt').exists()
+
+
+MOVED = ('1\n00:00:00,000 --> 00:00:01,500\n这是真情实感\n\n2\n00:00:02,000 --> 00:00:03,000\n我跟你说嗨嗨\n\n'
+         '3\n00:00:03,000 --> 00:00:09,000\n社死你涩死了涩涩死你\n\n4\n00:00:09,000 --> 00:00:10,500\n然后脑子早就飞到直播间\n')
+
+
+def moved_rows(parts=None):
+    keep = {'state': 'KEEP', 'confidence': '高', 'affects_meaning': False}
+    return answer_rows([
+        {'id': 'd001', 'final_text': '这是真情实感', **keep},
+        {'id': 'd002', 'state': 'ADOPT', 'final_text': '我跟你说はいはい、そうですね', 'confidence': '高',
+         'affects_meaning': False, **({'parts': parts} if parts else {})},
+        {'id': 'd003', 'state': 'ADOPT', 'final_text': '', 'drop': True, 'confidence': '高', 'affects_meaning': False,
+         'parts': [], 'reason': '并入d002'},
+        {'id': 'd004', 'final_text': '然后脑子早就飞到直播间', **keep}])
+
+
+def test_a_stretch_given_neither_a_line_nor_a_name_is_sent_back_again(tmp_path, monkeypatch):
+    # The line took in the next sentence (Japanese: no character of it matches what the recogniser wrote there), the
+    # agent gave it no time and, asked, handed in the same rows.  Handing in the same rows decides nothing: taken as
+    # "kept without a line", 6 s of her speech went out with no subtitle and the package step no longer stopped for it.
+    from src.autoslice.manual_lane import package_guards as pg, subtitle_track
+    from src.autoslice.manual_lane.srt_text import parse_srt
+
+    moved = moved_rows()
+    timed = moved_rows([{'text': '我跟你说はいはい、そうですね', 'first_cue': 2, 'last_cue': 3}])
+    cpa = AgentCpa([], answers=[{'action': 'plan', 'doubts': [], 'tools': [{'tool': 'words', 'start': 0, 'end': 11}]},
+                                {'action': 'draft', 'rows': moved}, {'action': 'final', 'self_check': 'checked', 'rows': moved},
+                                {'action': 'final', 'self_check': 'checked again', 'rows': moved},
+                                {'action': 'final', 'self_check': 'the line keeps the time', 'rows': timed}])
+    ctx = context(tmp_path, monkeypatch, cpa)
+    (ctx.clip_dir / 'asr/bcut.srt').write_text(MOVED)
+    assert step._step3_body(ctx).ok and len(cpa.calls) == 5
+    told = [e['unsubtitled'] for e in trace_of(ctx)['events'] if e.get('unsubtitled')]
+    assert [[(g['start_s'], g['end_s']) for g in gaps] for gaps in told] == [[(3.0, 9.0)], [(3.0, 9.0)]]
+    final = subtitle_track.parse_blocks((ctx.clip_dir / 'subs/final.srt').read_text())
+    assert pg.gaps_with_speech(final, parse_srt(MOVED)) == [] and not (ctx.clip_dir / pg.DECIDED_FILE).exists()

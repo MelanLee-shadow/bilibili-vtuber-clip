@@ -37,7 +37,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Mapping
 
-from src.autoslice.cpa_model_ladder import TOP_CPA_MODEL, cpa_call_timeout_seconds
+from src.autoslice.cpa_model_ladder import TOP_CPA_MODEL, classify_http_error_code, cpa_call_timeout_seconds, quota_fallback_action
 from src.autoslice.cpa_model_ladder import model_ladder, resolve_models, attempt_timeout_seconds, chain_deadline_seconds
 from src.autoslice.provider_slots import ProviderSlotError, ProviderSlotTimeout, runtime_provider_slot
 from src.autoslice.cpa_runtime import observed_cpa_request, observed_model_request, observation_environment, record_cpa_event
@@ -589,47 +589,22 @@ def build_llm_call(config: LlmConfig) -> LlmCall:
                 record=lambda receipt: record_cpa_event('structured_output', {
                     **receipt, 'kind': 'text', 'model_identity': identity,
                     'observation_input_sha256': hashlib.sha256(prompt.encode()).hexdigest()}))
-    if config.transport == "direct":
-        def call(prompt):
-            from src.autoslice.infra_retry_policy import terminal_retry_call
-            return terminal_retry_call(
-                lambda: _provider_dispatch(
-                    lambda: observed(
-                        prompt,
-                        lambda actual: _call_direct(
-                            actual, _terminal_transport_config(config)
-                        ),
-                    ),
-                    config.runtime_root,
-                    timeout_seconds=config.timeout_seconds,
-                ),
-                # The physical transport clamps its own timeout from the
-                # current terminal remaining budget on every attempt.  Do not
-                # apply the generic adapter's full-timeout admission check to
-                # this native path: a retry may legitimately use the shorter
-                # remaining deadline.
-                timeout_seconds=None,
-            )
-    elif config.transport == "command":
-        def call(prompt):
-            from src.autoslice.infra_retry_policy import terminal_retry_call
-            return terminal_retry_call(
-                lambda: _provider_dispatch(
-                    lambda: observed(
-                        prompt,
-                        lambda actual: _call_command(
-                            actual, _terminal_transport_config(config)
-                        ),
-                    ),
-                    config.runtime_root,
-                    timeout_seconds=config.timeout_seconds,
-                ),
-                # See the direct transport above: native dispatch owns the
-                # per-attempt deadline and may retry with a shorter remainder.
-                timeout_seconds=None,
-            )
-    else:
+    if config.transport not in ("direct", "command"):
         raise ValueError(f"unknown llm transport: {config.transport!r}")
+    fb_holder: dict[str, LlmCall] = {}
+
+    def _run_primary(prompt: str) -> str:
+        from src.autoslice.infra_retry_policy import terminal_retry_call
+        raw_fn = _call_direct if config.transport == "direct" else _call_command
+        return terminal_retry_call(
+            lambda: _provider_dispatch(lambda: observed(prompt, lambda actual: raw_fn(actual, _terminal_transport_config(config))),
+                                       config.runtime_root, timeout_seconds=config.timeout_seconds),
+            timeout_seconds=None,
+        )
+
+    def call(prompt: str) -> str:
+        from .cpa_model_ladder import run_with_cpa_quota_fallback
+        return run_with_cpa_quota_fallback(call, config, cpa_text, prompt, _run_primary, build_llm_call, LlmCallError, fb_holder)
     call.cpa_cache_identity = _cpa_cache_identity(config)
     if config.runtime_root:
         call.completed_review_root = Path(config.runtime_root).absolute() / 'cache/completed-reviews'
@@ -831,8 +806,19 @@ def _call_direct(prompt: str, config: LlmConfig) -> str:
                     # the direct model ladder before it sees the exception.
                     raise
                 code = exc.provider_diagnostics.get('provider_http_status')
+                err_code = str(exc.provider_diagnostics.get('provider_error_code') or '')
+                q_action = quota_fallback_action(code, err_code, attempt, attempts, model)
+                if q_action == 'RAISE':
+                    raise
+                if q_action and q_action != 'RETRY_429':
+                    fb_timeout = min(attempt_timeout_seconds(), max(1.0, config.timeout_seconds - (time.monotonic() - started)))
+                    try:
+                        return _call_direct_once(prompt, replace(config, model=q_action, timeout_seconds=fb_timeout))
+                    except LlmCallError as fb_exc:
+                        msg = f"CPA quota fallback failed: primary {model} quota exhausted ({err_code}); fallback {q_action} failed ({fb_exc})"
+                        raise LlmCallError(msg, provider_diagnostics=fb_exc.provider_diagnostics, response_received=fb_exc.response_received) from fb_exc
                 if code and 400 <= code < 500 and code not in (408, 429) and not (
-                        code == 400 and exc.provider_diagnostics.get('provider_error_code') == 'group_capability_unavailable'):
+                        code == 400 and err_code == 'group_capability_unavailable'):
                     raise
                 if attempt + 1 < attempts:
                     delay = min(max(0, config.timeout_seconds - (time.monotonic() - started)),
@@ -884,13 +870,11 @@ def _call_direct_once(prompt: str, config: LlmConfig) -> str:
         raise LlmCallError(f"environment variable {config.api_key_env} is empty")
     responses_mode = config.api_mode == "responses"
     if responses_mode:
+        from .cpa_model_ladder import min_output_tokens_for_model
         endpoint = config.api_base.rstrip("/") + "/responses"
-        request_body: dict = {
-            "model": config.model,
-            "input": prompt,
-            "reasoning": {"effort": config.reasoning_effort or "medium"},
-            "max_output_tokens": config.max_tokens,
-        }
+        request_body: dict = {"model": config.model, "input": prompt,
+                              "reasoning": {"effort": config.reasoning_effort or "medium"},
+                              "max_output_tokens": min_output_tokens_for_model(config.model, config.max_tokens)}
     else:
         endpoint = config.api_base.rstrip("/") + "/chat/completions"
         request_body = {
@@ -932,29 +916,16 @@ def _call_direct_once(prompt: str, config: LlmConfig) -> str:
         header_value = headers.get("Retry-After") if hasattr(headers, "get") else None
         retry_after = _retry_after_seconds(header_value)
         # The existing command route treats this precise 400 as a transient
-        # credential-group routing failure, rather than a request rejection.
-        group_routing = False
-        if exc.code == 400:
-            try:
-                body = exc.read(65536)
-                group_routing = any(token in body for token in (
-                    b'group_capability_unavailable', '当前分组不支持'.encode(),
-                    b'current group does not support'))
-            except (OSError, TypeError, AttributeError):
-                pass
-        diagnostics = sanitize_provider_diagnostics(
-            {
-                "provider_http_status": int(exc.code),
-                "provider_error_code": 'group_capability_unavailable' if group_routing else f"HTTP_STATUS_{int(exc.code)}",
-                "provider_error_message": f"HTTP Error {int(exc.code)}",
-                "provider_retry_after_seconds": retry_after,
-            }
-        )
-        raise LlmCallError(
-            f"direct LLM call failed: HTTPError: HTTP Error {int(exc.code)}",
-            provider_diagnostics=diagnostics,
-            response_received=True,
-        ) from exc
+        # credential-group routing failure; definite quota errors trigger fallback in _call_direct.
+        try:
+            body = exc.read(65536) or b""
+        except (OSError, TypeError, AttributeError):
+            body = b""
+        err_code = classify_http_error_code(int(exc.code), body)
+        diagnostics = sanitize_provider_diagnostics({"provider_http_status": int(exc.code), "provider_error_code": err_code,
+                                                     "provider_error_message": f"HTTP Error {int(exc.code)}", "provider_retry_after_seconds": retry_after})
+        raise LlmCallError(f"direct LLM call failed: HTTPError: HTTP Error {int(exc.code)}",
+                           provider_diagnostics=diagnostics, response_received=True) from exc
     except Exception as exc:
         raise LlmCallError(
             f"direct LLM call failed: {type(exc).__name__}: {exc}",
@@ -962,6 +933,10 @@ def _call_direct_once(prompt: str, config: LlmConfig) -> str:
         ) from exc
     if not isinstance(payload, dict):
         raise LlmCallError('unexpected completion payload shape')
+    from .cpa_model_ladder import definite_quota_error_code
+    if qcode := definite_quota_error_code(payload):
+        diag = sanitize_provider_diagnostics({"provider_http_status": 200, "provider_error_code": qcode, "provider_error_message": qcode})
+        raise LlmCallError(f"direct LLM quota error: {qcode}", provider_diagnostics=diag, response_received=True)
     if responses_mode:
         # Responses API: prefer the convenience output_text, else walk output[]
         # for the assistant message parts (skipping reasoning items).  An empty
@@ -1143,8 +1118,11 @@ def _call_command(prompt: str, config: LlmConfig) -> str:
             child_env = {**(child_env if child_env is not None else os.environ), **observation}
         from .infra_retry_policy import cpa_text_attempt_environment, terminal_retry_state, CPA_TEXT_MAX_ATTEMPTS, CPA_TEXT_RETRY_EXHAUSTED
         budget = cpa_text_attempt_environment()
+        from .cpa_model_ladder import CPA_DEFER_QUOTA_FALLBACK_ENV, defer_quota_fallback_active
         from .cpa_request_lifecycle import request_environment
         budget.update(request_environment())
+        if defer_quota_fallback_active(child_env):
+            budget[CPA_DEFER_QUOTA_FALLBACK_ENV] = "1"
         if _cpa_cache_identity(config) is not None:
             terminal = terminal_retry_state()
             if not budget and terminal is not None:

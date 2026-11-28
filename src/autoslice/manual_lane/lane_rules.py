@@ -102,6 +102,15 @@ class EffortRules(_RuleMetadata, total=False):
     purposes: dict[str, EffortPurpose]
 
 
+class CpaRules(_RuleMetadata, total=False):
+    model: str
+    vision_model: str
+    fallback_model: str
+    fallback_efforts: dict[str, str]
+    fallback_min_output_tokens: int
+    judge_purposes: list[str]
+
+
 class NameConsistencyRules(_RuleMetadata, total=False):
     enabled: bool
     min_syllables: int
@@ -152,9 +161,6 @@ class CoverRules(_RuleMetadata, total=False):
     text_stagger_px: int
     first_line_max_px: int
     first_line_min_px: int
-    text_layouts: list[str]
-    text_layout_recent_covers: int
-    column_face_center_x_frac: float
     column_rows_max: int
     column_punch_row_max_chars: int
     column_context_row_max_chars: int
@@ -207,7 +213,7 @@ class DiscoverRules(_RuleMetadata, total=False):
 
 if TYPE_CHECKING:
     RuleSection: TypeAlias = (DetectionRules | ListeningRules | CandidateRules | OrphanRules | SplitRules
-                              | SpeakerRules | OtherVoicesRules | EffortRules | NameConsistencyRules | ConcurrencyRules
+                              | SpeakerRules | OtherVoicesRules | CpaRules | EffortRules | NameConsistencyRules | ConcurrencyRules
                               | TrimThanksWordsRules | ScreenWorkRules | SubtitleAgentRules | GraphContextRules | CoverRules | AudioUnderSubtitleRules | DiscoverRules | AutoRules | dict[str, JsonValue])
 
 
@@ -233,6 +239,8 @@ def rules(section: Literal["split"]) -> SplitRules: ...
 def rules(section: Literal["speaker"]) -> SpeakerRules: ...
 @overload
 def rules(section: Literal["other_voices"]) -> OtherVoicesRules: ...
+@overload
+def rules(section: Literal["cpa"]) -> CpaRules: ...
 @overload
 def rules(section: Literal["effort"]) -> EffortRules: ...
 @overload

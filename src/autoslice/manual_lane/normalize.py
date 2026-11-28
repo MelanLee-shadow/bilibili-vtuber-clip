@@ -421,11 +421,12 @@ def shape_decided_cues(cues: Sequence[TimedText]) -> list[TimedText]:
 
 def _merge_fragments(pieces: list[str]) -> list[str]:
     """A split never cuts one sentence down to a one-character piece (any character: the pieces are parts of one
-    utterance, one speaker, touching).  Lone characters between cues are join_lone_chars'."""
+    utterance, one speaker, touching; punctuation is not a character here - 「对。」 is one, as the release check reads
+    it).  Lone characters between cues are join_lone_chars'."""
     merged = list(pieces)
     index = 0
     while index < len(merged) and len(merged) > 1:
-        if text_len(merged[index]) <= 1:
+        if sum(ch.isalnum() for ch in merged[index]) <= 1:
             if index > 0:
                 merged[index - 1] = merged[index - 1] + merged[index]
                 del merged[index]

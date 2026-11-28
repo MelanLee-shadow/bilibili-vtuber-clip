@@ -92,3 +92,18 @@ def test_mode_a_reads_3_8_and_argon_as_its_witnesses(tmp_path, monkeypatch):
     readings = next(d for d in json.loads((ctx.clip_dir / "subs/doubts.json").read_text(encoding="utf-8"))
                     if d["cue_id"] == 1)["readings"]
     assert {k for k in readings if k.startswith("audio:")} == {"audio:38m@P0", "audio:argon@P0"}
+
+
+def test_configured_listening_models_translate_wire_id_and_low_thinking_tier():
+    from src.autoslice import cpa_gemini_client as cpa
+    from src.autoslice.manual_lane.lane_rules import rules
+
+    listening = rules("listening")
+    models = listening["models"]
+    for slug in ("38m", "argon"):
+        assert models[slug], slug
+        for name in models[slug]:
+            assert cpa.wire_model(name)
+            if "(low)" in name.lower() or name.lower().endswith("-low"):
+                assert cpa.model_thinking(name) == {"thinkingLevel": "LOW"}, name
+    assert cpa.wire_model(listening["probe_model"])

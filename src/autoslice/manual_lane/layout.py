@@ -8,8 +8,8 @@ joined with "_", upper case, e.g. MANUAL_LANE_SPEAKER_V8_PYTHON).  Everything el
 so a caller never spells a deployed path itself.  Channel facts stay in their own assets: the room id in the profile
 manifest, the emote media root in the emote library, the intro file names in the branding-intro manifest.  A session's
 work directory is <work_root>/<recording date>; no default is a particular day's directory.  The lane's shared assets
-(verified intro copies, the cover font) live under <work_root>/assets, not in any task's directory: archiving a task
-directory must never break the next clip.
+(verified intro copies, the cover font, the collaborators' official pictures) live under <work_root>/assets, not in
+any task's directory: archiving a task directory must never break the next clip.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import lru_cache
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -34,6 +34,7 @@ _STRINGS = ("remote_host", "remote_user", "autoslice_base", "work_root", "danmak
 ASSETS_DIR = "assets"                                  # <work_root>/assets: the lane's shared, undated assets
 INTRO_SUBDIR = "intro"                                 # ... /intro: verified copies of the branding intros
 COVER_FONT_FILE = "fonts/RuiZiZhenYan.ttf"             # ... /fonts/RuiZiZhenYan.ttf: the cover font
+PEOPLE_SUBDIR = "people"                               # ... /people/<mid>/: the person asset pack's pictures
 _SPEAKER_V8 = ("code_dir", "python", "model", "score")
 TOPOLOGY_FILE = REPO_ROOT / "ops" / "recording" / "oci3-recording-topology.json"
 _FREE_ASR = ("min_interval_s", "rate_limit_cooldown_s", "attempts", "rate_limit_attempts")
@@ -63,7 +64,9 @@ class Layout:
     room_id: str                  # the channel's live room (profile identity.room_id)
     intro_dir: str                # verified copies of the branding intros, readable by remote_user (<work_root>/assets/intro)
     cover_font: str               # the cover font on the media host, readable by remote_user (<work_root>/assets/fonts/...)
+    people_dir: str               # the person asset pack's pictures, written and read by remote_user (<work_root>/assets/people)
     cover_skill_scripts: Path     # local: the title-cover skill's scripts (render_cover.py, redraw_background.py)
+    cover_skill_configured: str   # cover_skill_scripts as the profile (or MANUAL_LANE_COVER_SKILL_SCRIPTS) writes it, unresolved
     speaker_v8: Mapping[str, str]  # the frozen v8 speaker workspace: code_dir, python, model, score
     free_asr: FreeAsrPacing
     search_mcp_url: str = ""      # Search Router MCP address (work/circle lookup); optional, "" = not configured
@@ -73,6 +76,13 @@ class Layout:
     #                                    with it and the root, discover copies the newest days before it looks
     archive_root: str = ""             # the recordings on the media host, <root>/<room id>/<date>/ (video and chat files);
     #                                    optional: unset = the archive root of the recorder topology (ops/recording)
+
+    @property
+    def cover_skill_name(self) -> str:
+        """The title-cover skill's name: the directory cover_skill_scripts names as configured.  Not the resolved path's: a
+        versioned install (scripts/deploy_oci3_title_skill.py install) is a link named after the skill pointing at
+        versions/<content hash>, so the resolved directory is a hash."""
+        return PurePath(self.cover_skill_configured).parent.name
 
     @property
     def archive_room_dir(self) -> str:
@@ -160,6 +170,7 @@ def load_layout(environ: Mapping[str, str] | None = None, *, path: Path | None =
     assets = f"{strings['work_root']}/{ASSETS_DIR}"
     strings["intro_dir"] = str(env.get(ENV_PREFIX + "INTRO_DIR") or doc.get("intro_dir") or f"{assets}/{INTRO_SUBDIR}")
     strings["cover_font"] = str(env.get(ENV_PREFIX + "COVER_FONT") or doc.get("cover_font") or f"{assets}/{COVER_FONT_FILE}")
+    strings["people_dir"] = str(env.get(ENV_PREFIX + "PEOPLE_DIR") or doc.get("people_dir") or f"{assets}/{PEOPLE_SUBDIR}")
     if not strings["cover_font"].startswith("/"):        # a font shipped in the repo, as deployed on the media host
         strings["cover_font"] = f"{strings['autoslice_base']}/current/repo/{strings['cover_font']}"
     pacing = {k: _value(doc, k, env, section="free_asr") for k in _FREE_ASR}
@@ -167,7 +178,7 @@ def load_layout(environ: Mapping[str, str] | None = None, *, path: Path | None =
     if not skill_scripts.is_absolute():
         skill_scripts = (REPO_ROOT / skill_scripts).resolve()
     return Layout(**{k: v for k, v in strings.items() if k != "cover_skill_scripts"},
-                  cover_skill_scripts=skill_scripts,
+                  cover_skill_scripts=skill_scripts, cover_skill_configured=strings["cover_skill_scripts"],
                   search_mcp_url=str(env.get(ENV_PREFIX + "SEARCH_MCP_URL") or doc.get("search_mcp_url") or ""),
                   recordings_direct_root=str(env.get(ENV_PREFIX + "RECORDINGS_DIRECT_ROOT")
                                              or doc.get("recordings_direct_root") or ""),

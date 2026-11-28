@@ -10,13 +10,13 @@ import shutil
 import subprocess
 import tempfile
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
 from src.autoslice.bilibili_member_api import QUOTA_FREQUENCY_CODE, BiliSession
 
-from .common import Config, Publish, Refused, REFUSED
+from .common import Config, Refused, REFUSED, archive_policy_problem
 
 VIEW = "https://api.bilibili.com/x/web-interface/view?bvid={bvid}"
 TAGS = "https://api.bilibili.com/x/tag/archive/tags?bvid={bvid}"
@@ -81,20 +81,24 @@ def _part_name_problem(title: str) -> str | None:
     return None
 
 
-def upload(config: Config, *, video: Path, cover: Path, title: str, tags: list[str], desc: str, log: Path,
-           timeout: float = 1700) -> tuple[int, str | None, bool]:
-    """(biliup's return code, the BV it was given, whether the account's submission quota refused it).  The part is a hard link
-    `<title>.mp4` to the sealed video beside it (never a copy), removed afterwards."""
+def upload(config: Config, *, video: Path, cover: Path, title: str, tags: list[str], desc: str, policy: Mapping[str, Any],
+           log: Path, timeout: float = 1700) -> tuple[int, str | None, bool]:
+    """(biliup's return code, the BV it was given, whether the account's submission quota refused it), posted with `policy`
+    (the manifest's `publish_policy`: tid, copyright, source).  The part is a hard link `<title>.mp4` to the sealed video
+    beside it (never a copy), removed afterwards."""
     if problem := _part_name_problem(title):
         raise Refused(REFUSED, f"标题当不了分 P 文件名：{problem}")
-    policy = Publish.load()
+    if problem := archive_policy_problem(policy):
+        raise Refused(REFUSED, f"投稿类型不成立：{problem}")
     holder = Path(tempfile.mkdtemp(prefix=".upload-", dir=video.parent))
     try:
         part = holder / f"{title}.mp4"
         part.hardlink_to(video)
+        # --copyright is always given: biliup's own default is 1 (自制).  An archive without a declared type has no
+        # source, and biliup sends an absent --source as the same empty string.
         argv = [str(config.biliup_bin), "-u", config.cookies.name, "upload", str(part), "--cover", str(cover),
-                "--copyright", str(policy.copyright), "--source", policy.source, "--tid", str(policy.tid),
-                "--title", title, "--tag", ",".join(tags), "--desc", desc, "--submit", "app"]
+                "--copyright", str(policy["copyright"]), *(["--source", policy["source"]] if policy["source"] else []),
+                "--tid", str(policy["tid"]), "--title", title, "--tag", ",".join(tags), "--desc", desc, "--submit", "app"]
         rc = RUN(argv, cwd=config.cookies.parent, log=log, timeout=timeout)
     finally:
         shutil.rmtree(holder, ignore_errors=True)

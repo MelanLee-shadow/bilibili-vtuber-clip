@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import Any
 
 from src.autoslice.unresolved_findings_gate import unresolved_findings_problem
+from src.autoslice.upload_tag_policy import apply_tag_policy
 
-from . import authority
+from . import authority, cover_rotation
 from .common import GATE, REFUSED, Publish, Refused, bind, drift, now, read_json, write_json
 
 SCHEMA = "lane-publish-manifest.v1"
@@ -71,15 +72,28 @@ def make(*, video: Path, cover: Path, package_audit: Path, title: str, tags: str
         "recording_date": str(record.get("recording_date") or seal.get("date") or ""),
         "video": bind(video), "cover": bind(cover), "title": title,
         "description": (package / f"{name}.description.txt").read_text(encoding="utf-8").strip(),
-        "publish_policy": {k: getattr(Publish.load(), k) for k in ("tid", "copyright", "source")},
         "season": _season(), "package_attestation": attestation,
         "authorization": {"by": authorized_by, "quote": quote, "at": now()}, "created_at": now()}
+    if final_human_review is None and (selection := cover_rotation.freeze(out.absolute(), doc)):
+        doc["cover_rotation"] = selection
     if doc["candidate_id"] != name:
         raise Refused(GATE, f"封存清单的 candidate_id「{doc['candidate_id']}」不是包名「{name}」")
     if final_human_review is None:
-        doc["tags"] = [t.strip() for t in (tags or "").split(",") if t.strip()]
-        if not doc["tags"]:
+        raw_tags = [t.strip() for t in (tags or "").split(",")] if (tags or "").strip() else []
+        if not raw_tags:
             raise Refused(REFUSED, "首发要有标签（--tags）")
+        record_tags = (record.get("upload_tags") or {}).get("final_tags")
+        settled = apply_tag_policy(
+            raw_tags,
+            previous=record_tags if isinstance(record_tags, list) else None,
+            on_overflow="refuse",
+        )
+        if not settled.ok:
+            raise Refused(REFUSED, f"标签不符合策略（{'；'.join(settled.reasons)}）：{raw_tags}")
+        doc["tags"] = list(settled.tags)
+        # what the new BV is posted with (upload refuses a manifest whose policy is no longer the rule's, and reads the
+        # public page back against it); a revision posts none and leaves the published archive's own zone, type and source
+        doc["publish_policy"] = Publish.load().archive_policy()
     else:
         review = read_json(final_human_review, "成品审查回执")
         if review.get("verdict") != "PASS":

@@ -1,4 +1,4 @@
-"""bcut's rate limit is waited out across the host, not turned into a failed clip (U152/U304: 「限流就等/换接口」;
+"""bcut's rate limit is waited out across the host, not turned into a failed clip (the channel's request (/U304);
 11-23: eleven clips at once got 412 at task/result and 「bcut task failed」, and seven stopped at step 8)."""
 
 from __future__ import annotations

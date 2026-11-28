@@ -1,24 +1,22 @@
 """Channel-owned mechanical publish envelope: one definition, two outputs.
 
-Authority: 公开规则：给出格式的检查格式的应该来自同一个定义……两个输出
-而已，像这种机械的规则……直接脚本生成就行了 and 「涉及两个主播的都要放。而且
-李豆沙在前」; the title/cover skill's 「CP 名或 【李豆沙×对方】，简介附对方空间链接」.
+Authority: the channel's request; the title/cover skill's 「CP 名或 【李豆沙×对方】，简介附对方空间链接」.
 
 Every mechanical envelope field is produced and checked here only:
 
 * talk-title prefix — ``render_talk_title_prefix(partners)`` builds
- ``【host】`` or ``【host×p1×p2】`` from the selected profile's talk prefix;
- ``parse_talk_title(title)`` returns the partners again and accepts only that
- render's range (host first, U+00D7, partner non-empty without ``【】×`` or edge
- whitespace, no duplicate, never the host itself);
+  ``【host】`` or ``【host×p1×p2】`` from the selected profile's talk prefix;
+  ``parse_talk_title(title)`` returns the partners again and accepts only that
+  render's range (host first, U+00D7, partner non-empty without ``【】×`` or edge
+  whitespace, no duplicate, never the host itself);
 * description related-streamer lines — ``render_publish_description(base,
- partners)`` appends one ``相关主播：<canonical> <homepage>`` line per partner,
- resolved from the profile's structured streamer registry
- (``streamer_registry_sources`` ``reviewed_accounts``); ``parse_publish_description``
- inverts it and accepts only that render's range.
+  partners)`` appends one ``相关主播：<canonical> <homepage>`` line per partner,
+  resolved from the profile's structured streamer registry
+  (``streamer_registry_sources`` ``reviewed_accounts``); ``parse_publish_description``
+  inverts it and accepts only that render's range.
 
 Both outputs take the same structured partner tuple, so ``parse(render(p)) == p``
-holds for each, and title and description agree by construction. Models and
+holds for each, and title and description agree by construction.  Models and
 people write only the free body; the envelope is rendered by this script.
 """
 

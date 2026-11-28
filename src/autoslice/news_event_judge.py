@@ -20,6 +20,9 @@ EVENT_KINDS = ("event", "project", "group")
 PARTICIPANT_KINDS = ("person", "group", "project", "event", "community")
 RELATIONS = ("member_of", "founded", "participates_in", "related_to")
 CATALOG_KINDS = ("person", "group", "project", "event")
+WORK_CATALOG_KINDS = ("work", "character")
+WORK_PRONOUNS = ("他", "她", "它")
+MAX_WORK_CHARACTERS = 20
 CATALOG_CANDIDATE_LIMIT = 250
 MAX_NAME_CHARS = 40
 MAX_SUMMARY_CHARS = 160
@@ -61,6 +64,149 @@ class Finding:
     summary: str = ""
     valid_from: str | None = None
     valid_until: str | None = None
+
+
+@dataclass(frozen=True)
+class WorkCharacter:
+    name: str
+    url: str
+    aliases: tuple[str, ...] = ()
+    summary: str = ""
+    pronoun: str | None = None
+
+
+@dataclass(frozen=True)
+class WorkResult:
+    name: str
+    url: str
+    characters: tuple[WorkCharacter, ...]
+    id: str | None = None
+    aliases: tuple[str, ...] = ()
+    summary: str = ""
+
+
+def work_catalog(graph: Graph) -> list[dict[str, JsonValue]]:
+    """Known work and character nodes CPA may reference by id."""
+    out: list[dict[str, JsonValue]] = []
+    for node in graph.nodes.values():
+        if node.kind in WORK_CATALOG_KINDS and node.status != "retired":
+            out.append({"id": node.id, "kind": node.kind, "name": node.names["display"], "aliases": list(node.aliases[:4])})
+    return out
+
+
+def work_prompt(category: str, work: str, aliases: Sequence[str], nodes: Sequence[Mapping[str, JsonValue]],
+                rows: Sequence[Row]) -> str:
+    alias_text = "、".join(aliases) if aliases else "无"
+    return (
+        f"你在整理频道常提到的作品及其主要角色（以百合题材为主，具体题材以检索结果为准；分类提示：{category}），"
+        f"供字幕与作品核查使用。目标作品：「{work}」（别称：{alias_text}）。下面给出了网页检索结果（标题、网址、摘要）。\n\n"
+        "任务：只依据所给标题与摘要确认该作品与它的主要登场角色；不要补充自己记得的内容，"
+        "结果未确认目标作品或没有主要角色时返回 work=null、characters=[]。\n"
+        "规则：\n"
+        "1. 每个 url 必须逐字取自下面的检索结果。\n"
+        "2. 只能输出目标作品本身，不能把别的作品填进来；work.id 若与已知 work 节点中同一作品匹配则填其 id，否则不填；work.name 写作品通行中文全称。\n"
+        "3. characters 列主要角色（最多 20 位）：name 写中文全名（如有），aliases 写简称/日文原名/外文名，"
+        "pronoun 取 他/她/它（不确定填 null），summary 一两句简要介绍。\n\n"
+        f"已知节点：{json.dumps(list(nodes), ensure_ascii=False)}\n\n"
+        f"检索材料：{json.dumps(list(rows), ensure_ascii=False)}\n\n"
+        '只输出 JSON：{"work": {"id"?: str, "name": str, "aliases"?: [str], "summary"?: str, "url": str} | null, '
+        '"characters": [{"name": str, "aliases"?: [str], "summary"?: str, "pronoun"?: "他"|"她"|"它"|null, "url": str}]}')
+
+
+def _work_key(text: str) -> str:
+    return "".join(ch for ch in text.casefold() if ch.isalnum())
+
+
+def _clean_aliases(raw: JsonValue, *, skip: str) -> tuple[str, ...]:
+    if raw in (None, ""):
+        return ()
+    if not isinstance(raw, list):
+        raise JudgeError("aliases must be a list")
+    cleaned = (a.strip() for a in raw if isinstance(a, str))
+    return tuple(dict.fromkeys(a for a in cleaned if a and a != skip and len(a) <= MAX_NAME_CHARS))[:MAX_ALIASES]
+
+
+def parse_work_judgement(raw: str, rows: Sequence[Row], *, seed_name: str | None = None,
+                         seed_aliases: Sequence[str] = (), resolved_work_id: str | None = None,
+                         known: Graph | None = None) -> tuple[WorkResult | None, Counter[str]]:
+    """Parse CPA's structured judgement about one work seed and its characters.
+
+    Identity belongs strictly to the requested seed: the returned `work.name` must match `seed_name` or
+    `seed_aliases` (model-returned aliases never establish identity), and when `work.id` is provided it must
+    match the seed's resolved `work` node ID.
+    """
+    obj = _object(raw)
+    work_raw = obj.get("work")
+    rejected: Counter[str] = Counter()
+    if work_raw is None:
+        return None, rejected
+    if not isinstance(work_raw, dict):
+        raise JudgeError("work must be an object or null")
+    valid_urls = {r["url"] for r in rows}
+    work_url = work_raw.get("url")
+    if not isinstance(work_url, str) or work_url not in valid_urls:
+        raise JudgeError("work url is not one of the search results")
+    work_name = _text(work_raw.get("name"), "work.name", limit=MAX_NAME_CHARS)
+    work_id = _id(work_raw.get("id"))
+    if work_id and known is not None and work_id in known.nodes and known.nodes[work_id].kind != "work":
+        rejected["work id is not a work node"] += 1
+        return None, rejected
+    if seed_name is not None:
+        seed_key = _work_key(seed_name)
+        seed_keys = {_work_key(s) for s in (seed_name, *seed_aliases) if _work_key(s)}
+        if _work_key(work_name) not in seed_keys:
+            rejected["work name does not match requested seed"] += 1
+            return None, rejected
+        expected_id = resolved_work_id
+        if expected_id is None and known is not None:
+            accepted_hits = [
+                n for n in known.nodes.values()
+                if n.kind == "work" and n.status == "accepted"
+                and any(_work_key(surface) in seed_keys for surface in n.surfaces())
+            ]
+            if len(accepted_hits) == 1:
+                expected_id = accepted_hits[0].id
+            elif not accepted_hits:
+                candidate_hits = [
+                    n for n in known.nodes.values()
+                    if n.kind == "work" and n.status == "candidate"
+                    and (n.id == f"work:{seed_name}" or (bool(seed_key) and _work_key(n.names["display"]) == seed_key))
+                ]
+                if len(candidate_hits) == 1:
+                    expected_id = candidate_hits[0].id
+        if work_id is not None and (expected_id is None or work_id != expected_id):
+            rejected["work id does not match resolved seed node"] += 1
+            return None, rejected
+    raw_chars = obj.get("characters") or []
+    if not isinstance(raw_chars, list):
+        raise JudgeError("characters must be a list")
+    chars: list[WorkCharacter] = []
+    for entry in raw_chars[:MAX_WORK_CHARACTERS]:
+        if not isinstance(entry, dict):
+            rejected["character must be an object"] += 1
+            continue
+        char_url = entry.get("url")
+        if not isinstance(char_url, str) or char_url not in valid_urls:
+            rejected["character url is not one of the search results"] += 1
+            continue
+        try:
+            char_name = _text(entry.get("name"), "character.name", limit=MAX_NAME_CHARS)
+            char_aliases = _clean_aliases(entry.get("aliases"), skip=char_name)
+            char_summary = _optional_text(entry.get("summary"), "character.summary", limit=MAX_SUMMARY_CHARS)
+        except JudgeError as exc:
+            rejected[str(exc)] += 1
+            continue
+        raw_pronoun = entry.get("pronoun")
+        pronoun = str(raw_pronoun) if isinstance(raw_pronoun, str) and raw_pronoun in WORK_PRONOUNS else None
+        chars.append(WorkCharacter(name=char_name, url=char_url, aliases=char_aliases, summary=char_summary, pronoun=pronoun))
+    return WorkResult(
+        name=work_name,
+        url=work_url,
+        characters=tuple(chars),
+        id=work_id,
+        aliases=(),
+        summary=_optional_text(work_raw.get("summary"), "work.summary", limit=MAX_SUMMARY_CHARS),
+    ), rejected
 
 
 def catalog(graph: Graph) -> list[dict[str, JsonValue]]:

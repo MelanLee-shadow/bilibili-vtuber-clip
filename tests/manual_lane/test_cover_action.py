@@ -68,9 +68,13 @@ def _row(cid, total, *, measured=True, action=False, veto=False):
             "face_status": "MEASURED" if measured else "UNMEASURED", "face_px": 300, "repeat": False}
 
 
+FACE, NOFACE = '{"face": [800, 200, 1000, 420]}', '{"face": null}'     # the face reading answers her face's box
+
+
 def _main_with(pf, monkeypatch, tmp_path, action_t, answers, times="93.3,89.3,97.3"):
     monkeypatch.setattr(pf, "find_action", lambda cut, d, base, key: {"t": action_t} if action_t else {"t": None})
     monkeypatch.setattr(pf, "extract", lambda cut, t, path: f"img-{t}")
+    monkeypatch.setattr(pf, "face_hash", lambda path, box: "0" * 64)
     asked = []
     replies = iter(answers)
     monkeypatch.setattr(pf, "ask", lambda base, key, image, question, **kw: asked.append((kw.get("kind"), image))
@@ -85,7 +89,7 @@ def _main_with(pf, monkeypatch, tmp_path, action_t, answers, times="93.3,89.3,97
 def test_a_clean_frame_that_does_not_show_her_face_is_passed_over(monkeypatch, tmp_path):
     # 1645880 : at the cover line the camera showed only her shoes; the sticker then copied the tiny avatar
     pf = _load()
-    doc, asked = _main_with(pf, monkeypatch, tmp_path, None, ["CLEAN", "NOFACE", "CLEAN", "FACE", '{"person": []}'])
+    doc, asked = _main_with(pf, monkeypatch, tmp_path, None, ["CLEAN", NOFACE, "CLEAN", FACE, '{"person": []}'])
     assert doc["chosen"] == 89.3 and [r.get("face") for r in doc["checked"]] == ["NOFACE", "FACE"]
     assert asked[-1] == ("boxes", "img-89.3")                       # the boxes are read on the chosen frame
 
@@ -93,7 +97,7 @@ def test_a_clean_frame_that_does_not_show_her_face_is_passed_over(monkeypatch, t
 def test_when_no_clean_frame_shows_her_face_the_first_clean_one_stays(monkeypatch, tmp_path):
     pf = _load()
     doc, asked = _main_with(pf, monkeypatch, tmp_path, None,
-                            ["CLEAN", "NOFACE", "DIRTY", "CLEAN", "NOFACE", '{"person": []}'])
+                            ["CLEAN", NOFACE, "DIRTY", "CLEAN", NOFACE, '{"person": []}'])
     assert doc["chosen"] == 93.3 and asked[-1] == ("boxes", "img-93.3")
 
 
@@ -141,6 +145,8 @@ def _screenshot_route(tmp_path, job_extra):
     cover = object.__new__(cc.Run)
     cover.job, cover.rules = {"screenshot_spec": str(shot), **job_extra}, rules("cover")
     cover.frame, cover.guest_boxes, cover.specs, cover.failed, cover.plans = str(frame), [[0, 0, 1, 1]], [], [], {}
+    cover.pack = []                                                  # guests in the frame: none from the person asset pack
+    cover.column, cover.lines = cc.layout.Composition({}, rules("cover")), [{"text": "a"}]   # no template set: the spec's own layout
     cover.head = lambda: (None, None)
     cover.guest_in_frame = lambda: None
     cover.screenshot()

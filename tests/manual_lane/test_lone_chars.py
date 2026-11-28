@@ -135,3 +135,11 @@ def test_a_joined_line_is_shaped_again_and_the_nearer_side_wins():
         assert len(lines) <= audit.DEFAULT_MAX_VISUAL_LINES
         assert all(len(ln) <= audit.DEFAULT_MAX_VISUAL_LINE_CHARS for ln in lines)
     assert "".join(c["text"].replace("\n", "") for c in out[:-1]) == long_line + "，对"
+
+
+# ----- a cut inside one sentence ------------------------------------------------------------------------------------
+def test_a_long_sentence_is_never_cut_down_to_a_lone_character_and_its_punctuation():
+    # 「对。」 counted as two characters, so a 31 s sentence cut by its duration ended on it alone: refused on release
+    pieces = normalize.shape_decided_cues([{"start_s": 0.0, "end_s": 31.0, "text": "我觉得这个东西其实还挺好玩的你们觉得呢。对。"}])
+    assert "".join(p["text"] for p in pieces) == "我觉得这个东西其实还挺好玩的你们觉得呢。对。"
+    assert normalize.lone_char_positions(pieces) == [] and pieces[-1]["end_s"] == 31.0

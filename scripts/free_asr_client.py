@@ -43,8 +43,7 @@ RETRYABLE_HTTP = {412, 429, 500, 502, 503, 504}
 THROTTLE_HTTP = {412, 429}
 MAX_TRIES = 4
 
-# A free recogniser's rate limit is waited out, not turned into a failed clip (U152/U304: 「并发不设人为上限,按真实限流
-# 自适应,免费接口别太猛,限流就等/换接口」; 11-23: 11 clips at once got bcut's 412 at task/result and 「bcut task
+# A free recogniser's rate limit is waited out, not turned into a failed clip (the channel's request (/U304); 11-23: 11 clips at once got bcut's 412 at task/result and 「bcut task
 # failed」, and 7 of them stopped at step 8).  There is no cap on how many calls run; when bcut says too many, every
 # caller on the host backs off together: the waiting time is kept in a shared cooldown file (written by atomic
 # replace, never locked), each throttled answer doubles it up to COOLDOWN_MAX_S, and every bcut request first sleeps

@@ -56,6 +56,9 @@ def test_a_countdown_both_levels_place_in_the_game_is_removed_and_the_package_st
     got = [*records("GS002", rows(("game", 1.0, "10")), rows(("game", 0.9, "ten"))),
            *records("GS005", rows(("game", 0.7, "three two")), rows(("game", 0.6, "three"), ("game", 1.1, "two")))]
     verdicts = gs.decide(cues, wins, got, ["38m", "argon"])
+    # where the game spoke, for the sound events (sound_events: a sound there is not told apart from it)
+    assert [v["line_s"] for v in verdicts] == [[float(cues[1]["start_s"]), float(cues[1]["end_s"])],
+                                               [float(cues[4]["start_s"]), float(cues[4]["end_s"])]]
     kept, left_out = gs.apply(cues, verdicts)
     assert [c["text"] for c in kept] == ["矿工也是很难当", "矿工也是很难当", "哎这居然没中", "冲冲冲"]
     assert [(r["start_s"], r["end_s"], r["text"]) for r in left_out] == [(47.3, 48.22, "10"), (54.68, 55.76, "three two")]

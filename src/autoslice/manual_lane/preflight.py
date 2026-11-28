@@ -151,9 +151,9 @@ def _assets_still_template(report: Report) -> None:
                        "代表色当描边看不清时改用形象的主色（如眼睛颜色）")
 
 
-
-
-
+# 频道的要求 — the outline is the
+# host's representative colour when it reads as an outline, otherwise the image's main colour.  "Reads" is measured as
+# the WCAG contrast between the fill and the outline; the accepted outlines sit at 2.3 (sumire) to 7.2 (lidousha).
 OUTLINE_MIN_CONTRAST = 2.0
 
 

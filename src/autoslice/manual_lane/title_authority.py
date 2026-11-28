@@ -56,6 +56,12 @@ class JudgeVerdict(TypedDict):
     fail_reasons: list[str]
 
 
+class FactVerdict(JudgeVerdict):
+    """The fact judge's verdict on the title, with its verdict on the cover lines apart (`cover`): a cover text that
+    fails is rewritten, the title is not thrown out with it."""
+    cover: JudgeVerdict
+
+
 def _style_sections(text: str) -> str:
     parts = []
     for heading in STYLE_SECTIONS:
@@ -126,8 +132,8 @@ def _source_line(sources: Sequence[Source]) -> str:
 
 
 def title_method(exclude_candidate: str | None = None) -> TitleMethod:
-    """The editorial method the step-6 title prompt carries: skill 四、五 and 八.3 and examples.md, title_style.md's
-    标题 / 封面文案 sections, authorship-labelled corpus, and gates, with source hashes."""
+    """The editorial method the step-6 title prompt carries: skill 三 (where the method has one), 四、五 and 八.3 and
+    examples.md, title_style.md's 标题 / 封面文案 sections, authorship-labelled corpus, and gates, with source hashes."""
     editorial = load_title_editorial_method()
     style, s_style = _read(f"{channel.ASSETS_REL}/title_style.md", TITLE_STYLE)
     corpus, s_corpus = corpus_titles(exclude_candidate)
@@ -153,6 +159,12 @@ def title_method(exclude_candidate: str | None = None) -> TitleMethod:
     return TitleMethod(text=text, sources=sources, corpus_count=len(corpus))
 
 
+def hook_rules() -> str:
+    """Skill section 三 (how the landings of a clip are found), for the prompts that read the clip before the title is
+    written; "" when the channel's method has no such section."""
+    return load_title_editorial_method().hooks
+
+
 def cover_text_rules() -> tuple[str, Source]:
     """Skill section 五 (cover text), for prompts that only rewrite the cover lines."""
     editorial = load_title_editorial_method()
@@ -163,7 +175,7 @@ def review_rules() -> tuple[str, tuple[Source, ...]]:
     """The title rules step 9 reviews by (U74): skill 四、五 and 八.3, with their source line."""
     editorial = load_title_editorial_method()
     source = editorial.sources[0]
-    return (f"（{layout().cover_skill_scripts.parent.name} skill 原文，sha256={source.sha256}）\n"
+    return (f"（{layout().cover_skill_name} skill 原文，sha256={source.sha256}）\n"
             + editorial.sections + "\n\n" + editorial.judge_rules), (source,)
 
 
@@ -241,11 +253,11 @@ def judge_prompt(track_lines: str, title: str, cover_lines: Sequence[str]) -> tu
 
 
 # ----- the writing judge (skill section 八 item 4, references/quality-judge-prompt.md) -------------------------------
-QUALITY_RUNS = 2   # 八.4: 每条标题跑两次，两次都 PASS 才算过
+QUALITY_RUNS = 2   # 八.4: 每条标题跑两次；两次结论不一样时加判第三次取多数（step6_title.title_judge）
 QUALITY_OK = ("named", "mishap", "setup", "open")          # items answered {"ok": true|false}
 QUALITY_NOT_LANDING = ("others", "editor")   # last_clause.whose that never ends a title; the template's other values may
-QUALITY_ITEM = {"named": "没点名这件事涉及的人", "mishap": "第一眼没有第四节要的那一下（张力、她出事或她的狠话）", "setup": "只看标题看不出谁在干嘛",
-                "open": "把经过和结果讲完了，没有停在落点上"}
+QUALITY_ITEM = {"named": "认不出这句话是谁对谁说的", "mishap": "没有第四节要的那一下", "setup": "会被读错，或那句话字面读不懂",
+                "open": "没有停在落点上（后面还有解释、结果，或把经过讲完了）"}
 QUALITY_BANNED = {"editor_comment": "编辑的评语", "editor_question": "编辑抬杠式的发问或感叹",
                   "person_switch": "半路换人称", "flow_list": "流水账", "catalog": "把几段情节串成目录",
                   "colon": "用了冒号", "news_tone": "新闻腔或旁白转述", "machine_words": "机器味词",
@@ -330,12 +342,19 @@ def quality_verdict(parsed: Any) -> JudgeVerdict:
         {"overall": "PASS", "fail_reasons": []}
 
 
-def judge_verdict(parsed: Any) -> JudgeVerdict:
-    """PASS only when the judge's JSON says PASS; an answer without an `overall` is a FAIL with that reason."""
-    if not isinstance(parsed, Mapping) or str(parsed.get("overall") or "").upper() not in {"PASS", "FAIL"}:
-        return {"overall": "FAIL", "fail_reasons": ["判官回包不是规定的 JSON（缺 overall）"]}
-    overall = str(parsed["overall"]).upper()
-    reasons = [str(r) for r in (parsed.get("fail_reasons") or []) if str(r).strip()]
+def _half(parsed: Mapping[str, Any], side: str) -> JudgeVerdict:
+    overall = str(parsed[f"{side}_overall"]).upper()
+    reasons = [str(r) for r in (parsed.get(f"{side}_fail_reasons") or []) if str(r).strip()]
     if overall == "FAIL" and not reasons:
         reasons = ["判官判 FAIL（未写原因）"]
     return {"overall": overall, "fail_reasons": reasons if overall == "FAIL" else []}
+
+
+def judge_verdict(parsed: Any) -> FactVerdict:
+    """The fact judge's two verdicts, as its JSON gives them: the title's (`title_overall`) and the cover lines'
+    (`cover_overall`, with the title and cover read together).  An answer without both fails both, with that reason."""
+    if not isinstance(parsed, Mapping) or any(str(parsed.get(f"{side}_overall") or "").upper() not in {"PASS", "FAIL"}
+                                              for side in ("title", "cover")):
+        missing: JudgeVerdict = {"overall": "FAIL", "fail_reasons": ["判官回包不是规定的 JSON（缺 title_overall 或 cover_overall）"]}
+        return {**missing, "cover": missing}
+    return {**_half(parsed, "title"), "cover": _half(parsed, "cover")}

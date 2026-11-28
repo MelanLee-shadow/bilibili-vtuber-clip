@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from collections.abc import Collection, Sequence
 from difflib import SequenceMatcher
+from itertools import groupby
 from typing import TypedDict, cast
 
 from . import text_overlap
@@ -135,6 +136,25 @@ def merged_timing(bcut: Sequence[SrtCue], final: Sequence[doubt_policy.FinalDoub
             segments.append(Segment(start_s=cues[begin]['start_s'], end_s=cues[end]['end_s'],
                                     chars=labels.count(first)))
         out[cue['id']] = MergedTiming(start_s=cues[lo]['start_s'], end_s=cues[hi]['end_s'], segments=segments)
+    return out
+
+
+def unsplit(partitioned: Sequence[SrtCue], final: Sequence[doubt_policy.FinalDoubt]) -> list[SrtCue]:
+    """The partitioned sentences (partitioned_cues) as one line each: a line's whole final text over the time its parts
+    cover, the earliest start to the latest end.  Only the cut inside a line is undone; the time the agent gave a line
+    stays, so a line that took in its neighbours' words (`first_cue`/`last_cue`) still covers their time.  A line
+    without parts is as partitioned_cues timed it.  A line whose parts do not hold its own final text (the parts carry
+    a neighbour's words that the rows left in the neighbour's `final_text`) stays as its parts: the words written are
+    the parts', as in the release shape, so none of them is lost with a row that has no part of its own."""
+    text = {d['cue_id']: str(d['final_text']) for d in final}
+    out: list[SrtCue] = []
+    for cue_id, group in groupby(partitioned, key=lambda c: c['id']):
+        pieces = list(group)
+        if ''.join(''.join(p['text'] for p in pieces).split()) != ''.join(text[cue_id].split()):
+            out.extend(pieces)
+            continue
+        out.append(cast(SrtCue, dict(pieces[0], start_s=min(p['start_s'] for p in pieces),
+                                     end_s=max(p['end_s'] for p in pieces), text=text[cue_id])))
     return out
 
 

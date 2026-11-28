@@ -1,15 +1,14 @@
 """What each published clip was, how it was chosen and packaged, and how it did (one private record per BV).
 
-公开规则(ledger U412): 「现在就开始记录每一个片子的……播放数据啊、时间呀、然后标签啊、内容啊之类的。你自己定一个
-研究计划。」 The plan (admin, clip-performance-plan-20261117) asks per clip for: identity; the selection-time judgement
+the channel's request  The plan (admin, clip-performance-plan-20261117) asks per clip for: identity; the selection-time judgement
 (seven dimensions, the draws read from the *final subtitles*, collab / guests / owner mark, the day's other candidates);
 the packaging (title, cover words, tags, partition, intro, publish hour and weekday, hours from the stream's end to the
 upload); view / like / coin / favourite / danmaku / reply / share and the account's followers on day 1, 3, 7 and 30; and
 on day 7 where the audience comes from: of the first 200 commenters, how many wear the channel owner's fan medal, own it,
 wear another streamer's medal (whose), or wear none, plus the guests' follower counts.
 
-Records are research data: they live in the host's private state, never in the public repository. Only counts are kept
-about commenters -- no commenter id or name is stored. Nothing here writes to Bilibili: every call is a read.
+Records are research data: they live in the host's private state, never in the public repository.  Only counts are kept
+about commenters -- no commenter id or name is stored.  Nothing here writes to Bilibili: every call is a read.
 The monthly refit reads these records; this module only collects them.
 """
 
@@ -225,6 +224,9 @@ def packaging(lane: Mapping[str, Any] | None, view: Mapping[str, Any], tags: lis
     return out
 
 
+# Selection x title (the channel's request): how late in the clip the line the title ends on is said.
+# 21 of 29 clips said it after 15 s; 29 clips were too few to tell whether that costs plays, so it is recorded per clip
+# and the monthly refit reads it.
 _CUE = re.compile(r"(\d+):(\d+):(\d+)[,.](\d+) --> ")
 _CLAUSE = re.compile(r"[，。！？!?、,.…~～；;：:“”\"「」]+")
 TITLE_LINE_MIN = 5                                  # characters of the title's last clause a cue must say in a row

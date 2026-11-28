@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from .lane_lines import LinePlan
     from .state import ClipInfo, CpaEvent
     from .step3_evidence import CueEvidence
+    from .subtitle_track import TrackCue
 
 EVIDENCE_KEYS = ("asr_notes", "read_aloud", "speaker_note", "other_span_s", "speaker_segments")
 DROPPED_CUES = "subs/dropped_cues.json"
@@ -203,12 +204,28 @@ def trim_neighbour_words(ctx: Ctx, bcut: Sequence[SrtCue],
     return [by_id[d["cue_id"]] for d in doubts]
 
 
+def decided_cues(bcut: Sequence[SrtCue], final_doubts: Sequence[doubt_policy.FinalDoubt]
+                 ) -> tuple[list[TrackCue], list[normalize.NumberHit]]:
+    """The single-speaker playbook's lines when the agent gave no `parts`: every kept cue with CPA's words (pronouns
+    and fillers preserved), its time following the words CPA merged into it (merged_timing), numbers spelt by U136
+    (code, not the agent: G4).  Not yet shaped: write_subtitles cuts a line over the visual limit."""
+    by_id = {d['cue_id']: d for d in final_doubts if not doubt_policy.is_dropped(d)}
+    merged = merged_timing(bcut, final_doubts)
+    decided = [cast(SrtCue, dict(c, text=by_id[c['id']]['final_text'] or c['text'], **merged.get(c['id'], {})))
+               for c in bcut if c['id'] in by_id]
+    return normalize.numeral_cues(decided)
+
+
 def write_subtitles(ctx: Ctx, bcut: Sequence[SrtCue], final_doubts: Sequence[doubt_policy.FinalDoubt],
-                    lines: LinePlan | None = None, *, preserve_decisions: bool = False) -> tuple[Path, Path, SubtitleLog]:
+                    lines: LinePlan | None = None, *, decided: Sequence[TimedText] | None = None
+                    ) -> tuple[Path, Path, SubtitleLog]:
     """doubts.json and final.srt (the cues as decided, normalised for release; `lines`: lane_lines.LinePlan).  The
     doubt rows and the cues handed to the writer are the same rows, so a dropped sentence (doubt_policy.is_dropped)
     is carried into the normalisation log (`drop_cues`); historical refusals remain in `refused_cues`.  Both are
-    recorded in subs/dropped_cues.json and PROCESS.  Returns (doubts path, final path, log)."""
+    recorded in subs/dropped_cues.json and PROCESS.  `decided`: the single-speaker playbook's lines as it laid them
+    out (playbook_step3: CPA gives every cue and all text conventions in one decision); they are written as given,
+    only a line over the visual limit is cut, inside its own time (normalize.shape_decided_cues).  Returns (doubts
+    path, final path, log)."""
     trimmed = trim_neighbour_words(ctx, bcut, final_doubts)
     for original, row in zip(final_doubts, trimmed, strict=True):
         if isinstance(original, dict):
@@ -226,19 +243,11 @@ def write_subtitles(ctx: Ctx, bcut: Sequence[SrtCue], final_doubts: Sequence[dou
 
     normalized: Sequence[TimedText]
     base_log: normalize.NormalizeLog
-    if preserve_decisions:
-        # The single-speaker playbook gives CPA every cue and all text conventions in one decision.
-        # Preserve its words, pronouns and fillers. Only cues exceeding the visual limit are split;
-        # the resulting pieces stay inside the BCUT intervals of the sentences the line's words came from.
-        by_id = {d['cue_id']: d for d in kept}
-        merged = merged_timing(bcut, final_doubts)   # time follows the words CPA merged into a line
-        decided = [cast(SrtCue, dict(c, text=by_id[c['id']]['final_text'] or c['text'], **merged.get(c['id'], {})))
-                   for c in bcut if c['id'] in by_id]
-        decided, number_hits = normalize.numeral_cues(decided)   # U136 number spelling: code, not the agent (G4)
+    if decided is not None:
         shaped = normalize.shape_decided_cues(decided)
         normalized = shaped
         base_log = {'canon_replacements': [], 'extra_cues_from_split': len(shaped) - len(decided), 'adjacent_repeats': [],
-                    'lone_chars': [], 'numerals': number_hits}
+                    'lone_chars': [], 'numerals': []}
     else:
         normalized, base_log = _final_cues(bcut, kept, one_speaker=not linked_session(ctx.session), lines=lines)
     norm_log = cast(SubtitleLog, base_log)

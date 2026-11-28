@@ -3,7 +3,8 @@
 finished cover (cover_import: its picture and lines).
 
 His authority covers only the sentences he edited (imported["owner_edited"], owner_edits; a push without a baseline: all
-of them).  The review's subtitle, speaker and hold proposals for one of those, a doubt decision on one, its title fix
+of them), and for who says a line, every line he labelled by name (guest_identity.state_owner_rows: the review may
+object to his label, it does not change it).  The review's subtitle, speaker and hold proposals for one of those, a doubt decision on one, its title fix
 for a picked title and its cover fix for an imported cover (the image is never replaced) are not adopted: each becomes an
 objection (Dissent) that dissent_register keeps in the clip's state, in full, with the default disposition "keep his writing"
 (the owner-final rule): it does not stop the clip.  The same proposals for a sentence he did not touch are adopted like
@@ -22,6 +23,7 @@ from src.autoslice.title_editorial_method import AuthorityError
 
 from . import cover_import, normalize, owner_edits, subtitle_track, title_verdicts
 from .runner import Ctx
+from .speaker_v8 import GUEST_LABEL, HOST
 from .step_import import IMPORT_DIR, imported, owner_decided
 
 if TYPE_CHECKING:
@@ -115,18 +117,25 @@ def _text_dissent(review: ReviewAnswer, fixes: ReviewFixes, track: Sequence[subt
     return out
 
 
+def same_speaker(cue: subtitle_track.TrackCue, name: str | None, label: str) -> bool:
+    """`label` (the host's label, a guest's name or the guest label) says who the cue already says: its own label, the
+    name it carries (guest_identity.speaker_names), or the guest label on a guest line."""
+    return label in {cue.get("speaker"), name}
+
+
 def _speaker_dissent(review: ReviewAnswer, fixes: ReviewFixes, track: Sequence[subtitle_track.TrackCue],
-                     his: Callable[[Any], bool]) -> list[Dissent]:
+                     his: Callable[[Any], bool], names: Sequence[str | None]) -> list[Dissent]:
     out: list[Dissent] = []
     kept: list[ReviewFix | None] = []
     for fix in fixes.pop("speakers", []):
         at, label = cue_number((fix or {}).get("cue_id"), len(track)), str((fix or {}).get("speaker") or "").strip()
         if not his((fix or {}).get("cue_id")):
             kept.append(fix)
-        elif at is not None and label and track[at - 1].get("speaker") != label:
+        elif at is not None and label and not same_speaker(track[at - 1], names[at - 1], label):
             why = "：".join(str((fix or {}).get(k) or "").strip() for k in ("evidence", "quote")).strip("：")
             out.append({"kind": "speaker", "cue": at, "text": subtitle_track.plain_text(track[at - 1]["text"]),
-                        "proposed": f"{track[at - 1].get('speaker') or '无'} → {label}", "value": label,
+                        "proposed": f"{names[at - 1] or track[at - 1].get('speaker') or '无'} → {label}",
+                        "value": HOST if label == HOST else GUEST_LABEL,     # the label resolve-dissent --apply writes
                         "reason": why or _note_for(review, at, len(track))})
     if kept:
         fixes["speakers"] = kept
@@ -175,9 +184,14 @@ def split(ctx: Ctx, review: ReviewAnswer, skipped: list[str]) -> tuple[ReviewAns
     """The answer apply_fixes may adopt, and the objections it must not (None: neither kind applies to this clip, nothing
     changes).  Owner-decided subtitles, for the sentences he edited: text fixes, speaker fixes, holds, and doubt decisions
     that would hold a sentence (低 and changes the meaning) are dropped as objections; for the others they stay in the
-    answer.  A picked title: the title fix is dropped.  An imported cover: the cover fix is dropped.  Everything else is kept."""
+    answer.  Lines the owner labelled by name (guest_identity.state_owner_rows): a speaker fix that names someone else
+    is an objection, whether or not he decided the subtitles.  A picked title: the title fix is dropped.  An imported cover: the cover
+    fix is dropped.  Everything else is kept."""
     subtitles, title, cover = owner_decided(ctx), _title_picked(ctx, skipped), cover_import.imported_cover(ctx)
-    if not (subtitles or title or cover):
+    from .guest_identity import names_by_overlap, speaker_names, state_owner_rows
+
+    labels = state_owner_rows(ctx.state)       # the lines he labelled by name lock who says them
+    if not (subtitles or title or cover or labels):
         return review, None
     dissent: list[Dissent] = []
     fixes = cast("ReviewFixes", dict(review.get("fixes") or {}))
@@ -195,12 +209,19 @@ def split(ctx: Ctx, review: ReviewAnswer, skipped: list[str]) -> tuple[ReviewAns
             dissent.append({"kind": "title", "cue": None, "text": current, "proposed": proposed, "value": proposed,
                             "reason": NO_REASON})
     answer = cast("ReviewAnswer", dict(review, fixes=fixes))
-    if not subtitles:
+    if not (subtitles or labels):
         return answer, dissent
     track = subtitle_track.read_track(ctx.clip_dir)
+    labelled = {i for i, n in enumerate(names_by_overlap(track, labels), 1) if n}
+    names = speaker_names(ctx.clip_dir, track)
+    if not subtitles:
+        if labelled:
+            dissent += _speaker_dissent(review, fixes, track, lambda raw: cue_number(raw, len(track)) in labelled, names)
+        return answer, dissent
     mine = _owner_numbers(ctx, track)
     his = partial(_is_his, count=len(track), mine=mine)
-    dissent += _text_dissent(review, fixes, track, his) + _speaker_dissent(review, fixes, track, his)
+    dissent += _text_dissent(review, fixes, track, his)
+    dissent += _speaker_dissent(review, fixes, track, lambda raw: his(raw) or cue_number(raw, len(track)) in labelled, names)
     dissent += _hold_dissent(answer, track, his) + _decision_dissent(ctx, answer, mine)
     return answer, dissent
 

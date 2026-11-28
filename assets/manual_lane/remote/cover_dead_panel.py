@@ -12,10 +12,13 @@ SIDE = 192     # the picture is measured on a copy this wide
 
 def widest_dead_block(frame_path, crop, rules):
     """The widest dead block of the cropped frame as a share of its width (columns) or height (rows), whichever is
-    larger.  `crop` is the cover's [x, y, width] of a 16:9 window, or None for the whole frame."""
+    larger.  `crop` is the cover's [x, y, width] of a 16:9 window, a box [x0, y0, x1, y1] of the frame (the frame's
+    own part of a window that reaches past its edge, cover_side.in_frame), or None for the whole frame."""
     with Image.open(frame_path) as raw:
         im = raw.convert("RGB")
-    if crop:
+    if crop and len(crop) == 4:
+        im = im.crop(tuple(int(v) for v in crop))
+    elif crop:
         x, y, w = (int(v) for v in crop[:3])
         im = im.crop((x, y, x + w, y + round(w * 9 / 16)))
     w, h = SIDE, round(SIDE * im.height / im.width)

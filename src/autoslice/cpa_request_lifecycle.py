@@ -86,7 +86,7 @@ class StartedEvent(AttemptIdentity):
     physical_binding: NotRequired[PhysicalBinding]
 
 
-FailureStatus: TypeAlias = Literal["NOT_DISPATCHED", "OUTCOME_UNKNOWN", "PERMANENT_FAILURE"]
+FailureStatus: TypeAlias = Literal["NOT_DISPATCHED", "OUTCOME_UNKNOWN", "PERMANENT_FAILURE", "QUOTA_REFUSED"]
 
 
 class FailureEvent(AttemptIdentity):
@@ -125,7 +125,7 @@ class TextRetryObservation(TypedDict):
     wire_request_identity: str
     attempt: int
     max_attempts: int
-    status: Literal["UNKNOWN", "NOT_DISPATCHED", "PERMANENT_FAILURE"]
+    status: Literal["UNKNOWN", "NOT_DISPATCHED", "PERMANENT_FAILURE", "QUOTA_REFUSED"]
     error_type: str
     reason_code: str
     error_category: str | None
@@ -274,7 +274,7 @@ def _validated_event(value: JsonValue, reserved: int) -> DispatchEvent:
                     or digest(physical) != value['input_identity']):
                 refuse(reason)
         return cast(StartedEvent, value)
-    if status in ("NOT_DISPATCHED", "OUTCOME_UNKNOWN", "PERMANENT_FAILURE"):
+    if status in ("NOT_DISPATCHED", "OUTCOME_UNKNOWN", "PERMANENT_FAILURE", "QUOTA_REFUSED"):
         calls = value.get("provider_calls")
         if (
             not isinstance(value.get("error_type"), str)
@@ -298,19 +298,13 @@ def _validated_state(
     reason = "CPA_TEXT_REQUEST_STATE_INVALID"
     document = json_object(value, reason)
     reserved = document.get("reserved_attempts")
-    # Retain the original policy, binding, budget and contiguous reservation
-    # checks. Check the remaining shapes before treating the document as state.
-    if (
-        document.get("binding") != binding
-        or document.get("policy") != RECOVERY_POLICY
-        or type(document.get("max_attempts")) is not int
-        or document.get("max_attempts") != CPA_TEXT_MAX_ATTEMPTS
-        or type(reserved) is not int
-        or not 0 <= reserved <= limit
-    ):
-        refuse(reason)
     raw_events = document.get("events")
     if not isinstance(raw_events, list):
+        refuse(reason)
+    exempt = sum(1 for e in raw_events if isinstance(e, dict) and e.get("status") == "QUOTA_REFUSED")
+    if (document.get("binding") != binding or document.get("policy") != RECOVERY_POLICY
+            or type(document.get("max_attempts")) is not int or document.get("max_attempts") != CPA_TEXT_MAX_ATTEMPTS
+            or type(reserved) is not int or not 0 <= reserved <= limit + exempt):
         refuse(reason)
     events = [_validated_event(event, reserved) for event in raw_events]
     if any(event['status'] == 'STARTED' and event.get('physical_binding') is not None
@@ -636,10 +630,9 @@ class TextRequest:
                 for e in self.state["events"]
             ):
                 refuse("CPA_TEXT_COMPLETED_OR_REJECTED_RESPONSE_NOT_REUSABLE")
-            if (self.grant is not None
-                    and not self.grant.accepts(key, physical["input_sha256"])):
+            if (self.grant is not None and not self.grant.accepts(key, physical["input_sha256"])):
                 refuse("CPA_TEXT_RETRY_GRANT_INPUT_MISMATCH")
-            if self.state["reserved_attempts"] >= self.limit:
+            if self.state["reserved_attempts"] - sum(1 for e in self.state["events"] if e["status"] == "QUOTA_REFUSED") >= self.limit:
                 refuse(CPA_TEXT_RETRY_EXHAUSTED)
             delay = max(0, self.state["next_not_before_epoch"] - time.time())
             remaining = terminal_retry_remaining_seconds()
@@ -688,6 +681,7 @@ class TextRequest:
                 )
             except BaseException as exc:
                 not_sent = type(exc) is CallNotDispatched
+                from .cpa_model_ladder import is_definite_quota_exception
                 from .infra_retry_policy import cpa_text_failure_category
                 from .llm_client import LlmCallError
 
@@ -699,10 +693,9 @@ class TextRequest:
                 if transient:
                     setattr(exc, "dispatch_outcome", "UNKNOWN")
                 status: FailureStatus = (
-                    "NOT_DISPATCHED"
-                    if not_sent
-                    else "OUTCOME_UNKNOWN"
-                    if transient or getattr(exc, "response_received", None) is not True
+                    "NOT_DISPATCHED" if not_sent
+                    else "QUOTA_REFUSED" if is_definite_quota_exception(exc)
+                    else "OUTCOME_UNKNOWN" if transient or getattr(exc, "response_received", None) is not True
                     else "PERMANENT_FAILURE"
                 )
                 delay = (

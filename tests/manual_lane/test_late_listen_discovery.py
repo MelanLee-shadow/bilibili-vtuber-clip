@@ -159,7 +159,7 @@ def test_requests_from_separate_adjudication_batches_are_both_recorded(tmp_path,
     batch2 = [_answer(11, requests=[{"cue_id": 12, "reason": "另一批重复"},
                                     {"cue_id": 13, "reason": "另一批发现"}])]
     texts = ["甲乙丙", "丁戊己", "庚辛壬", "癸子丑", "寅卯辰", "巳午未", "申酉戌",
-             "亥天地", "玄黄宇", "宙洪荒", "日月盈", "昃辰宿", "列张寒", "来暑往"]
+             "亥天地", "玄黄宇", "宙洪荒", "日月盈", "昃辰宿", "列张寒", "秋收冬"]
     ctx, cpa, calls = _scenario(tmp_path, monkeypatch, [batch1, batch2, [_answer(12), _answer(13)]],
                                 review_ids=range(1, 12), texts=texts)
     out = si.step3_subtitles(ctx)

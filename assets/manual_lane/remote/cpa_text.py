@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""cpa_text.py PROMPT_FILE OUT_JSON [--model gpt-6.1-sol] [--effort medium] [--max-tokens 16000] [--stream]
+"""cpa_text.py PROMPT_FILE OUT_JSON [--model gpt-6.2-sol] [--effort medium] [--max-tokens 16000] [--stream]
 
 The manual-lane CPA text client.  Same request shape and streaming aggregation as the title judge's
-cpa_text.py (lidousha-title-cover judge-prompt.md): /responses, gpt-6.1-sol, effort medium, stream on.
+cpa_text.py (lidousha-title-cover judge-prompt.md): /responses, gpt-6.2-sol, effort medium, stream on.
 Non-streaming long outputs hit the ~100-125 s Cloudflare/sudocode limit and come back as 524.
 
 Deviation from the title judge's copy, per the 10-31 CPA diagnosis (cpa-503-20261031/RESULT.md):
@@ -43,9 +43,18 @@ COOLDOWN_SECONDS = 150.0
 IDLE_TIMEOUT_SECONDS = 600
 RETRYABLE_STATUS = (408, 429)
 TERMINAL_EVENTS = ("response.completed", "response.incomplete", "response.failed", "error")
+QUOTA_CODES = frozenset({
+    "organization_spend_limit_exceeded",
+    "insufficient_quota",
+    "insufficient_user_quota",
+    "credit_balance_exhausted",
+    "billing_hard_limit_reached",
+    "usage_limit_reached",
+})
+QUOTA_TYPES = frozenset({"insufficient_quota", "usage_limit_reached"})
 
 
-def build_body(prompt, model="gpt-6.1-sol", effort="medium", max_tokens=16000, stream=True):
+def build_body(prompt, model="gpt-6.2-sol", effort="medium", max_tokens=16000, stream=True):
     body = {"model": model, "input": prompt, "reasoning": {"effort": effort}, "max_output_tokens": max_tokens}
     if stream:
         body["stream"] = True
@@ -170,9 +179,9 @@ def previous_output(path, prompt, a):
     return value
 
 
-def quota_refusal(row):
-    """Only a finished, text-free provider error with a definite quota code/type is exempt."""
-    if row.get("status") != "FINISHED" or row.get("complete") is True or row.get("chars", 0) != 0:
+def definite_quota_failure(row):
+    """Any finished incomplete attempt whose provider/terminal error carries a definite quota code/type."""
+    if row.get("status") != "FINISHED" or row.get("complete") is True:
         return False
     http = row.get("http")
     if type(http) is not int or not (http == 200 or 400 <= http <= 599):
@@ -193,8 +202,23 @@ def quota_refusal(row):
                 error = error["error"]
         except (TypeError, ValueError):
             return False
-    return isinstance(error, dict) and (error.get("code") in {"organization_spend_limit_exceeded", "insufficient_quota"}
-                                       or error.get("type") == "insufficient_quota")
+    return isinstance(error, dict) and (error.get("code") in QUOTA_CODES
+                                        or error.get("type") in QUOTA_TYPES)
+
+
+def _fast_break_quota(log, ledger, journal_path):
+    if not definite_quota_failure(log[-1]):
+        return False
+    log[-1]["quota_refusal"] = quota_refusal(log[-1])
+    ledger["next_not_before"] = 0
+    if journal_path:
+        write_json(journal_path, ledger)
+    return True
+
+
+def quota_refusal(row):
+    """Only a finished, text-free provider error with a definite quota code/type is exempt."""
+    return row.get("chars", 0) == 0 and definite_quota_failure(row)
 
 
 def initial_journal(path, previous, request_key):
@@ -230,7 +254,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("prompt_file")
     ap.add_argument("out_json")
-    ap.add_argument("--model", default="gpt-6.1-sol")
+    ap.add_argument("--model", default="gpt-6.2-sol")
     ap.add_argument("--effort", default="medium")
     ap.add_argument("--max-tokens", type=int, default=16000)
     ap.add_argument("--tries", type=int, default=10)
@@ -310,7 +334,7 @@ def dispatch(a, prompt, body, request_key, base, key):
                            reason=completion["reason"])
             if isinstance(completion.get("error"), dict):
                 log[-1]["provider_error"] = {k: completion["error"].get(k) for k in ("code", "type")}
-            if completion["complete"]:
+            if completion["complete"] or _fast_break_quota(log, ledger, journal_path):
                 break
             wait = wait_seconds(attempt)
         except urllib.error.HTTPError as exc:
@@ -327,7 +351,7 @@ def dispatch(a, prompt, body, request_key, base, key):
             completion = {"complete": False, "reason": f"HTTP {exc.code}"}
             retry = exc.code in RETRYABLE_STATUS or exc.code >= 500 or (
                 exc.code == 400 and "group_capability_unavailable" in msg)
-            if not retry:
+            if _fast_break_quota(log, ledger, journal_path) or not retry:
                 break
             wait = wait_seconds(attempt, exc.code, exc.headers.get("Retry-After"))
         except (OSError, http.client.HTTPException, ValueError) as exc:  # network, timeout, cut or garbled stream
@@ -343,7 +367,7 @@ def dispatch(a, prompt, body, request_key, base, key):
         row["quota_refusal"] = quota_refusal(row)
     budget_attempts = sum(not quota_refusal(row) for row in log)
     reason = (completion or {}).get("reason") or "CPA_TEXT_RETRY_EXHAUSTED"
-    if not complete and log and quota_refusal(log[-1]):
+    if not complete and log and definite_quota_failure(log[-1]):
         reason = "CPA_QUOTA_REFUSED: " + reason
     out = {"model": a.model, "effort": a.effort, "max_output_tokens": a.max_tokens, "stream": a.stream,
            "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(), "complete": complete,

@@ -57,7 +57,10 @@ def auto_problems_and_findings(auto: Mapping[str, Any]) -> tuple[list[str], list
         problems.append("FMR_AUTO_CHECKS_INCOMPLETE")
     for check_id, item in rows.items():
         status = item.get("status")
-        if status in {"PASS", "FLAG"}:
+        if status == "PASS":
+            continue
+        if status == "FLAG":
+            findings.append(f"{check_id}:FLAG:" + ",".join(item.get("reason_codes") or []))
             continue
         if status in {"SKIPPED_DISABLED", "SKIPPED_UNAVAILABLE"} and check_id in SKIP_ALLOWED:
             continue

@@ -33,7 +33,7 @@ REMOTE_PY = _LAYOUT.remote_py
 # the active channel and the lane's own state root, for every tool run on the media host (goldfish 5: a tool left at the
 # default base read the production publication registry under another channel's profile)
 PROFILE_ENV = f"AUTOSLICE_PROFILE={shlex.quote(channel.PROFILE_ID)} AUTOSLICE_BASE={shlex.quote(_LAYOUT.autoslice_base)}"
-CPA_JUDGE_MODEL = "gpt-6.1-sol"
+CPA_JUDGE_MODEL = "gpt-6.2-sol"
 CPA_JUDGE_EFFORT = "medium"
 # How many attempts one answer gets, read by both layers that make an answer: cpa_text.py gets this number as --tries
 # (its own default, now named once), and step_io._ask_cpa asks the same prompt again this many times when the text
@@ -357,7 +357,7 @@ def recover_cpa_terminal(remote: Remote, *, call_id: str, prompt_text: str, mode
 
 class SshCpaJudge:
     """CPA text judge on OCI3.  Same client as the lidousha title judge (cpa_text.py): /responses,
-    gpt-6.1-sol, effort medium, stream on.  The root wrapper (root_script) loads cpa.env inside the script; the key
+    gpt-6.2-sol, effort medium, stream on.  The root wrapper (root_script) loads cpa.env inside the script; the key
     is never printed.  Streaming avoids the 524 that non-streaming high-effort calls hit (10-31 diagnosis)."""
 
     def __init__(self, remote: Remote):

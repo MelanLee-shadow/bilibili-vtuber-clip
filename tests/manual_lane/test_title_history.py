@@ -187,7 +187,7 @@ def test_a_label_word_she_says_herself_may_stand_in_the_title():
     assert 'label_as_name' in step6_title.title_checks(cand, ['李豆沙'], label)['failed']
 
 
-def test_cover_text_that_writes_the_unnamed_guest_label_as_a_person_fails_every_candidate(tmp_path, monkeypatch):
+def test_cover_text_that_writes_the_unnamed_guest_label_as_a_person_is_rewritten_and_the_title_kept(tmp_path, monkeypatch):
     from src.autoslice.manual_lane import subtitle_track
     fake_title_skill(tmp_path, monkeypatch)
     monkeypatch.setattr(title_history, 'load_publication_registry', lambda: {'entries': []})
@@ -199,11 +199,15 @@ def test_cover_text_that_writes_the_unnamed_guest_label_as_a_person_fails_every_
     leaky = json.loads(cpa.responses[0])
     leaky['cover_lines'] = ['连线说', '炸弹取暖']
     cpa.responses[0] = json.dumps(leaky, ensure_ascii=False)
-    cpa.responses.append(answer('队友提议炸弹取暖'))
-    assert not isinstance(step6_title.pick_title(ctx), StepOutcome)
+    cpa.responses.append(json.dumps({'cover_lines': ['队友说', '炸弹取暖']}, ensure_ascii=False))     # the cover text fix
+    picked = step6_title.pick_title(ctx)
+    assert not isinstance(picked, StepOutcome), picked
     record = json.loads((ctx.clip_dir / 'title/candidates.json').read_text())
-    assert all('label_as_name' in c['checks']['failed'] for c in record['candidates'] if c['round'] == 0)
-    assert '连线' not in ''.join(record['cover_lines'])
+    # the cover text's own fault no longer throws out the round's titles (11-24 178410: two rounds of eight went that way)
+    assert all(c['checks']['ok'] for c in record['candidates']) and record['rounds'] == ['title']
+    assert 'cover-text-fix-1' in cpa.calls and '「连线」是说话人标签' in cpa.prompts[cpa.calls.index('cover-text-fix-1')]
+    assert record['cover_lines'] == ['队友说', '炸弹取暖'] and picked[1] == ['队友说', '炸弹取暖']
+    assert any(line.startswith('封面文字重写（第 1 次，标题不变）：队友说 / 炸弹取暖') for line in picked[2])
 
 
 def test_clips_of_one_batch_pick_their_titles_one_after_another(tmp_path, monkeypatch):

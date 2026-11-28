@@ -1,21 +1,29 @@
 #!/usr/bin/env python3
-"""OCI3 only.  The speaker truth store and the retraining loop of the voiceprint speaker classifier (维护者 11-23:
-「你至少得根据我的标注，不断的提升我们自己流水线的区分说话人的能力啊」).
+"""OCI3 only.  The speaker truth store and the retraining loop of the voiceprint speaker classifier (the channel's request).
 
-Every label set 维护者 gives (a labelling page export) becomes one set in the store: the clip's audio, one unit per
-labelled line, the labels, and the v8 features of those units (CAM++ embedding, microphone features, voice statistics,
-computed by the frozen v8 code through speaker_v8_run.sh, so training and production read the same features).  The
-frozen v8 workspace (the 10-30 trio session, 1013 lines) is the base set.
+His labels live in one place, the repo's speaker truth store (assets/<channel>/speaker_truth/, written by
+scripts/speaker_label_page.py truth).  On the host each clip of a truth set becomes one feature set: the clip's audio,
+one unit per labelled line, the labels, and the v8 features of those units (CAM++ embedding, microphone features, voice
+statistics, computed by the frozen v8 code through speaker_v8_run.sh, so training and production read the same
+features).  The frozen v8 workspace (the 10-30 trio session, 1013 lines) is the base set.
 
-  add-set   one label export -> one set (features computed on the host)
+  add-set   one clip of a truth set (--truth F --clip CID) -> one feature set (features computed on the host); the
+            older page exports (--labels) are kept for the sets built before the store existed
   retrain   fit the v8 recipe (late-fusion stacking: per-block LR on emb / mic / voice -> LR) on the base and every
             training set, and measure it against the classifier production uses now on lines it was not trained on:
             each set is scored by a model fitted without its whole session (and, separately, without only that set);
             the base set by 8-fold question-grouped cross-validation.  Writes report.json and a version directory with
             the layout speaker_v8_run.sh reads (code/, in/truth_rows.json, out/final/classifier.json, score.py).
 
-Nothing here switches production: the profile's speaker_v8 paths are changed by a commit, after the report shows the
-new version is better on the held-out lines (scripts/speaker_label_page.py, docs/pipeline/manual-lane-supervision.md).
+  session   one session's own voice samples (src/autoslice/manual_lane/session_voices.py `samples_doc`): features
+            per clip, the v8 recipe on the base plus the samples, and the self-check the switch rule reads: the owner-
+            labelled lines of each sample clip scored by the frozen v8 and by the session classifier fitted without
+            that clip.  Writes session.json and the session classifier's version directory; whether a session's clips
+            use it is `session_voices.switch` over session.json, run by step 4 (session_voices.v8_env;
+            docs/pipeline/manual-lane-supervision.md, 说话人真值与本场样本).
+
+Nothing else here switches production: the profile's speaker_v8 paths are changed by a commit, after the report shows
+the new version is better on the held-out lines (scripts/speaker_label_page.py, docs/pipeline/manual-lane-supervision.md).
 """
 from __future__ import annotations
 
@@ -85,6 +93,13 @@ def srt_cues(path):
 
 def labelled_lines(a):
     """[(key, start_ms, end_ms, speaker as written, text)] in the media's timeline."""
+    if a.truth:                   # a speaker-truth.v1 set: the rows of this clip (and its revisions), on its clock
+        doc = json.loads(Path(a.truth).read_text(encoding="utf-8"))
+        rows = [(r["id"], r["start_ms"] + a.offset_ms, r["end_ms"] + a.offset_ms, r["speaker"], r["text"])
+                for r in doc["rows"] if re.sub(r"_r\d+$", "", r["clip"]) == re.sub(r"_r\d+$", "", a.clip)]
+        if not rows:
+            sys.exit(f"{a.truth}: no rows of {a.clip}")
+        return doc, rows
     doc = json.loads(Path(a.labels).read_text(encoding="utf-8"))
     labels = doc.get("labels", doc)
     rows = []
@@ -124,7 +139,8 @@ def add_set(a):
         uid = f"{a.set}-u{i}"
         units.append(dict(id=uid, seg=a.set, s=int(s), e=int(e), lw=int(e), kind="line"))
         labels.append(dict(id=uid, key=str(k), speaker=sp, written=str(spk), text=text, dur_s=round((e - s) / 1000, 2)))
-    meta = dict(set=a.set, session=a.session, use=a.use, media=str(a.media), offset_ms=a.offset_ms, labels_file=str(a.labels),
+    meta = dict(set=a.set, session=a.session, use=a.use, media=str(a.media), offset_ms=a.offset_ms,
+                labels_file=str(a.truth or a.labels), truth_set=doc.get("set") if a.truth else None,
                 exported_at=doc.get("exported_at"), page=doc.get("page") or doc.get("package") or doc.get("cues_version"),
                 changed=len(doc.get("changed") or []), n_units=len(units), skipped=skipped,
                 speakers={s: sum(1 for r in labels if r["speaker"] == s) for s in sorted({r["speaker"] for r in labels})},
@@ -200,12 +216,18 @@ def load_base(R, base, host):
     log("base rows", n)
 
 
-def load_sets(R, root, host, skip=()):
+def load_sets(R, root, host, skip=(), legacy=False):
+    """The feature sets under root/sets.  Only those built from the truth store (meta truth_set) unless `legacy`: a
+    set built from an older page export may hold labels a later truth set replaced (11-23's trio-* sets: his 11-25
+    relabelling of the same clips is 2026-11-23.owner-20261125)."""
     metas = []
     for d in sorted((root / "sets").glob("*")):
         if not (d / "meta.json").exists() or not (d / "emb_units.npz").exists() or d.name.startswith(tuple(skip)):
             continue
         meta = json.load(open(d / "meta.json"))
+        if not meta.get("truth_set") and not legacy:
+            log("set", meta["set"], "skipped: not built from the truth store (--legacy-sets to use it)")
+            continue
         U = json.load(open(d / "units.json"))["units"]
         lab = {r["id"]: r for r in json.load(open(d / "labels.json"))["rows"]}
         E, F = np.load(d / "emb_units.npz"), np.load(d / "feats.npz")
@@ -296,18 +318,28 @@ def fit_stack(R, tr, classes):
         if any(bl == ("text",) for bl, _ in SPECS):
             return None                      # the text base is not exported to production yet (evaluation only)
         bases = []
-        for (bl, C), (pre, m) in zip(SPECS, fs):
+        for (bl, C), (pre, m) in zip(SPECS, fs, strict=True):
             full = np.zeros((K, m.coef_.shape[1]))
             icp = np.full(K, -30.0)
+            coef, intercept = softmax_rows(m)
             for j, c in enumerate(m.classes_):
-                full[int(c)] = m.coef_[j]
-                icp[int(c)] = m.intercept_[j]
+                full[int(c)] = coef[j]
+                icp[int(c)] = intercept[j]
             bases.append(dict(blocks=list(bl), C=C, coef=full.tolist(), intercept=icp.tolist(),
                               standardize={b: dict(mean=np.nan_to_num(pre.stat[b][0]).tolist(), sd=pre.stat[b][1].tolist(),
                                                    block_scale=float(pre.stat[b][2])) for b in bl}))
         assert list(stk.classes_) == list(range(K)), "every class needs training rows"
-        return dict(bases=bases, stacker=dict(C=1.0, coef=stk.coef_.tolist(), intercept=stk.intercept_.tolist()))
+        coef, intercept = softmax_rows(stk)
+        return dict(bases=bases, stacker=dict(C=1.0, coef=coef.tolist(), intercept=intercept.tolist()))
     return predict, export
+
+
+def softmax_rows(m):
+    """A fitted LR's weights as one row per class for the scorer's softmax: a two-class LR keeps one row (the second
+    class's log-odds), which is softmax over rows [0, w] and intercepts [0, b]."""
+    if m.coef_.shape[0] == 1 and len(m.classes_) == 2:
+        return np.vstack([np.zeros_like(m.coef_[0]), m.coef_[0]]), np.array([0.0, float(m.intercept_[0])])
+    return m.coef_, m.intercept_
 
 
 def calibrate(P, y):
@@ -348,7 +380,7 @@ def retrain(a):
     host = a.host
     R = Rows()
     load_base(R, base, host)
-    metas = load_sets(R, root, host, [s for s in a.skip.split(",") if s])
+    metas = load_sets(R, root, host, [s for s in a.skip.split(",") if s], legacy=a.legacy_sets)
     R.done()
     named = [s for s in sorted(set(R.spk[R.use == "train"])) if s != GUEST_ANY]
     counts = {s: int(((R.spk == s) & (R.use == "train")).sum()) for s in named}
@@ -414,7 +446,13 @@ def retrain(a):
                class_order=classes, n_train=int(len(tr)), temperature=T, **exported,
                trained_on=dict(base="20261030 trio (frozen v8 truth)", sets=[m["set"] for m in metas if m["use"] == "train"]),
                usage="per block x=(raw-mean)/sd*block_scale (NaN->0), p=softmax(coef@x+intercept); stacker input = log p of each base in order; softmax(stacker); then softmax(log p * temperature)")
-    vd = out / a.version
+    vd = write_version(out / a.version, base, clf)
+    (out / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
+    log("wrote", vd, "report", out / "report.json")
+
+
+def write_version(vd, base, clf):
+    """A classifier as a workspace with the frozen v8 layout speaker_v8_run.sh reads."""
     (vd / "code").mkdir(parents=True, exist_ok=True)
     (vd / "in").mkdir(exist_ok=True)
     (vd / "out" / "final").mkdir(parents=True, exist_ok=True)
@@ -424,8 +462,130 @@ def retrain(a):
     (vd / "in" / "truth_rows.json").write_text("[]", encoding="utf-8")
     (vd / "out" / "final" / "classifier.json").write_text(json.dumps(clf, ensure_ascii=False), encoding="utf-8")
     shutil.copy(Path(__file__).with_name("speaker_score.py"), vd / "score.py")
-    (out / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
-    log("wrote", vd, "report", out / "report.json")
+    return vd
+
+
+# ------------------------------------------------------------------------------------------------ session
+def v8_features(a, name, media, units, work):
+    """The frozen v8's features and predictions for `units` of one media file (cached in `work`)."""
+    if not (work / "pred.json").exists():
+        work.mkdir(parents=True, exist_ok=True)
+        (work / "units.json").write_text(json.dumps({"units": units}, ensure_ascii=False), encoding="utf-8")
+        env = dict(os.environ, SPEAKER_V8_CODE_DIR=a.v8_code, SPEAKER_V8_PYTHON=a.v8_python, SPEAKER_V8_MODEL=a.v8_model,
+                   SPEAKER_V8_SCORE=a.v8_score)
+        r = subprocess.run(["bash", a.run_script, name, str(media), str(work / "work"), str(work / "units.json")], env=env,
+                           capture_output=True, text=True, check=False)
+        if "SPEAKER_V8_DONE" not in r.stdout:
+            sys.exit(f"features failed for {name}: {r.stdout[-300:]} {r.stderr[-300:]}")
+        for f in ("emb_units.npz", "feats.npz", "pred.json"):
+            shutil.copy(work / "work" / "out" / f, work / f)
+        shutil.rmtree(work / "work", ignore_errors=True)
+    return np.load(work / "emb_units.npz"), np.load(work / "feats.npz"), json.loads((work / "pred.json").read_text())
+
+
+def add_samples(a, R, doc, root):
+    """Each sample clip's lines into R (set = the clip, use = the sample's tier, label = its class); returns the clips
+    used and those whose media is missing."""
+    clips, missing, used = {}, {}, []
+    for s in doc["samples"]:
+        clips.setdefault(s["clip"], []).append(s)
+    for cid, rows in sorted(clips.items()):
+        media = Path(doc["media"][cid])
+        if not media.is_file():
+            missing[cid] = str(media)
+            continue
+        units = [dict(id=f"{cid}:{s['start_ms']}", seg=cid, s=s["start_ms"], e=s["end_ms"], lw=s["end_ms"], kind="line")
+                 for s in rows]
+        E, F, pred = v8_features(a, cid, media, units, root / "clips" / cid)
+        k_of = {str(i): k for k, i in enumerate(E["ids"])}
+        probs = {p["id"]: p["probs"] for p in pred["predictions"]}
+        for u, s in zip(units, rows, strict=True):
+            k = k_of.get(u["id"])
+            if k is None or not E["ok"][k]:
+                continue
+            R.add(E["emb"][k], F["feats"][k], F["voice"][k], s["cls"], cid, "session", f"{cid}:{s['start_ms']}",
+                  (s["end_ms"] - s["start_ms"]) / 1000, s["tier"], probs.get(u["id"]), bre=F["bre"][k], text=s.get("text", ""))
+        used.append(cid)
+    return used, missing
+
+
+def session(a):
+    """Self-check and version directory of one session's classifier (see the module doc).  Classes: the samples
+    document's (session_voices.classes_of: the host and every participant, guests on one shared voice path as that
+    path); the base's lines of a participant on the shared path count as that path.  Measured on the owner-labelled
+    lines only: each sample clip that has them is left out, the classifier fitted on the base and the other sample
+    clips, and the clip's owner lines scored by it and by the frozen v8, each at step 4's host threshold for its own
+    classes (--host-min-known when every participant is one of its classes, else --host-min)."""
+    root, base = Path(a.out), Path(a.base)
+    if (root / "session.json").exists():
+        sys.exit(f"{root / 'session.json'} exists: one directory per run")
+    doc = json.loads(Path(a.samples).read_text(encoding="utf-8"))
+    classes, people = doc["classes"], set(doc["session"]["participants"])
+    if classes[0] != a.host:
+        sys.exit(f"classes {classes}: the host {a.host} first")
+    path_of = {p: s["person"] for s in doc["samples"] for p in s.get("among", ())}
+    R = Rows()
+    load_base(R, base, a.host)
+    R.spk = [path_of.get(x, x) for x in R.spk]
+    used, missing = add_samples(a, R, doc, root)
+    R.done()
+    base_idx = np.where((R.set == "base-20261030") & np.isin(R.spk, classes))[0]
+    mine = R.set != "base-20261030"
+    counts = {c: dict(lines=int(((R.spk == c) & mine).sum()), seconds=round(float(R.dur[(R.spk == c) & mine].sum()), 1))
+              for c in classes}
+
+    def threshold(names):
+        return a.host_min_known if people <= set(names) else a.host_min
+
+    def score(P, idx, thr):
+        y = np.array([classes.index(R.spk[k]) for k in idx])
+        top = P.argmax(1)
+        said_host = (top == 0) & (P[:, 0] >= thr)
+        hi = P.max(1) >= 0.9
+        return dict(n=int(len(idx)), person_err=int((top != y).sum()), hg_err=int((said_host != (y == 0)).sum()),
+                    hi_n=int(hi.sum()), hi_err=int((hi & (top != y)).sum()))
+
+    def frozen(idx):
+        P = np.zeros((len(idx), len(classes)))
+        for j, k in enumerate(idx):
+            for c, v in (R.v8[k] or {}).items():
+                c2 = path_of.get(c, c)
+                if c2 in classes:
+                    P[j, classes.index(c2)] += float(v)
+        return P
+
+    frozen_names = sorted({c for k in np.where(mine)[0] for c in (R.v8[k] or {})})
+    thresholds = dict(frozen=threshold(frozen_names), session=threshold(classes))
+    report = dict(schema="speaker-session.v2", session=doc["session"], classes=classes, host=a.host, thresholds=thresholds,
+                  clips=used, missing_media=missing, counts=counts, measured_on="owner-labelled lines of the left-out clip",
+                  self_check=None, per_clip={}, version=None,
+                  method="v8 recipe (fit_stack) on the frozen base + the samples, unweighted; leave one sample clip out")
+    trainable = all(((R.spk == c) & ((R.set == "base-20261030") | mine)).any() for c in classes)
+    if len(used) >= 2 and trainable:
+        total = {k: dict(n=0, person_err=0, hg_err=0, hi_n=0, hi_err=0) for k in ("frozen", "session")}
+        for cid in used:
+            test = np.where((R.set == cid) & (R.use == "owner"))[0]
+            if not len(test):
+                continue
+            others = np.where(np.isin(R.set, [c for c in used if c != cid]))[0]
+            pred, _ = fit_stack(R, np.r_[base_idx, others], classes)
+            report["per_clip"][cid] = {"frozen": score(frozen(test), test, thresholds["frozen"]),
+                                       "session": score(pred(test), test, thresholds["session"])}
+            for k, v in report["per_clip"][cid].items():
+                for f in total[k]:
+                    total[k][f] += v[f]
+            log("self-check", cid, json.dumps(report["per_clip"][cid]))
+        report["self_check"] = total
+        pred, export = fit_stack(R, np.r_[base_idx, np.where(mine)[0]], classes)
+        clf = dict(type="late-fusion stacking: per-block multinomial LR -> second-level multinomial LR", version=a.version,
+                   class_order=classes, n_train=int(len(base_idx) + mine.sum()), temperature=1.0,
+                   **export(), trained_on=dict(base="20261030 trio (frozen v8 truth)", session_clips=used),
+                   usage="as speaker_score.py; temperature 1: the self-check measured these probabilities uncalibrated")
+        report["version"] = str(write_version(root / a.version, base, clf))
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "session.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
+    log("session", json.dumps(report["self_check"]), "counts", json.dumps(counts, ensure_ascii=False), "missing media",
+        list(missing))
 
 
 def main():
@@ -437,7 +597,9 @@ def main():
     s.add_argument("--session", required=True)
     s.add_argument("--use", choices=("train", "eval"), default="train")
     s.add_argument("--media", required=True)
-    s.add_argument("--labels", required=True)
+    src = s.add_mutually_exclusive_group(required=True)
+    src.add_argument("--truth", default="", help="a set of the truth store (speaker-truth.v1); with --clip")
+    src.add_argument("--labels", default="", help="an older page export")
     s.add_argument("--offset-ms", type=int, default=0, help="media time = label time + offset")
     s.add_argument("--key-prefix", default="")
     s.add_argument("--srt", default="", help="speaker_label_page.py export: the clip's final.srt (cue times)")
@@ -455,9 +617,23 @@ def main():
     r.add_argument("--min-rows", type=int, default=30)
     r.add_argument("--skip", default="", help="comma-separated set-name prefixes to leave out (ablation)")
     r.add_argument("--blocks", default="emb,mic,voice", help="base models of the stack: emb,mic,voice[,bre][,text]")
+    r.add_argument("--legacy-sets", action="store_true", help="also the sets built from older page exports")
+    e = sub.add_parser("session")
+    e.add_argument("--samples", required=True, help="session_voices.py samples output")
+    e.add_argument("--base", required=True)
+    e.add_argument("--out", required=True)
+    e.add_argument("--version", required=True)
+    e.add_argument("--host", required=True)
+    e.add_argument("--host-min", type=float, required=True, help="step 4's host threshold for this session")
+    e.add_argument("--host-min-known", type=float, required=True,
+                   help="step 4's host threshold when every participant is one of the classifier's classes")
+    for k in ("v8-code", "v8-python", "v8-model", "v8-score", "run-script"):
+        e.add_argument("--" + k, required=True)
     a = ap.parse_args()
     if a.cmd == "add-set":
         add_set(a)
+    elif a.cmd == "session":
+        session(a)
     else:
         SPECS[:] = [((b,), BLOCK_C[b]) for b in a.blocks.split(",")]
         retrain(a)

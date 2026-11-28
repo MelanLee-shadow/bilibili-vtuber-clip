@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 
 from .layout import layout
+from .publication_id import lineage
 from .state import ClipState, StateError, sha256_file
 
 if TYPE_CHECKING:
@@ -24,9 +25,22 @@ if TYPE_CHECKING:
     from .state import ClipInfo
 
 
+class CandidateQuality(TypedDict, total=False):
+    reason: str
+
+
 class SelectionScorecard(TypedDict, total=False):
     start_cue: str | int | float
     end_cue: str | int | float
+    candidate_quality: CandidateQuality
+
+
+class Peak(TypedDict):
+    """One of the moments of a candidate the selection says most deserve to be seen (the entry's `peaks`, core_draws)."""
+    quote: str      # the words, as the selection's transcript has them
+    who: str        # who says them, "" when the selection cannot tell
+    at_ms: int      # about when: on the recording's clock; a joined clip's on the joined clock (step 6 reads no time)
+    why: str
 
 
 class EntrySource(TypedDict, total=False):
@@ -43,32 +57,76 @@ class SelectionEntry(TypedDict):
     selection_scorecard: NotRequired[SelectionScorecard]
     hook: NotRequired[JsonValue]
     owner_mark: NotRequired[JsonValue]   # discover_select: the owner's mark in the chat this candidate was seated for
+    peaks: NotRequired[JsonValue]        # core_draws.label: the candidate's key moments [{quote, who, at_ms, why}], at_ms on
+                                         # the recording's clock (a joined clip: on the joined clock); the title step's landing
 
 
 class SelectionDocument(TypedDict):
     input_pool: NotRequired[list[SelectionEntry]]
 
 
-def selection_entry(selection_path: Path, cid: str) -> SelectionEntry:
-    """The entry of `cid` in a selection file (StateError when it is not there)."""
-    data = cast(SelectionDocument, json.loads(Path(selection_path).read_text(encoding="utf-8")))
+def _entry_in(data: SelectionDocument, cid: str) -> SelectionEntry | None:
     # discover's clip id is the candidate's id plus the recording start (lane_cid: _MMDDHHMM); the recording's own
     # selection file (recall.json) names the candidate without it -- goldfish 4 had to edit the file to init a clip
     bare = re.sub(r"_\d{8}$", "", cid)
-    for entry in data.get("input_pool", []):
-        if entry.get("cid") in (cid, bare):
+    return next((entry for entry in data.get("input_pool", []) if entry.get("cid") in (cid, bare)), None)
+
+
+def selection_entry(selection_path: Path, cid: str) -> SelectionEntry:
+    """The entry of `cid` in a selection file (StateError when it is not there)."""
+    entry = _entry_in(cast(SelectionDocument, json.loads(Path(selection_path).read_text(encoding="utf-8"))), cid)
+    if entry is None:
+        raise StateError(f"candidate {cid} not found in {selection_path}")
+    return entry
+
+
+def clip_entry(clip: ClipInfo) -> SelectionEntry | None:
+    """The entry of a clip in the selection file `init` made it from; None for a clip made without one (by hand, in
+    tests).  A successor keeps the file of the clip it was made from (revise_run copies `selection_file`; a trimmed
+    clip's own file names the trimmed clip), so the clip id is looked up, then the ids it was made from, nearest first
+    (publication_id.lineage: `a_trim_r4` -> `a_trim` -> `a`).  A file that is gone or names none of them is an error."""
+    path = clip.get("selection_file")
+    if not path:
+        return None
+    if not Path(path).is_file():
+        raise StateError(f"selection file of {clip.get('cid')} is gone: {path}")
+    data = cast(SelectionDocument, json.loads(Path(path).read_text(encoding="utf-8")))
+    cid = str(clip.get("cid") or "")
+    for name in sorted(lineage(cid), key=len, reverse=True):
+        if (entry := _entry_in(data, name)) is not None:
             return entry
-    raise StateError(f"candidate {cid} not found in {selection_path}")
+    raise StateError(f"candidate {cid} (nor any clip it was made from) not found in {path}")
 
 
 def owner_marked(clip: ClipInfo) -> bool:
     """The clip was seated for the channel owner's mark in the chat (discover_select: an entry with `owner_mark`, 11-15
-    「我要自动流水线能切出这一块来」), read from the selection file `init` made it from.  A clip made without one (by
-    hand, in tests) is not marked; a selection file that is gone or no longer names the clip is an error."""
-    path = clip.get("selection_file")
-    if not path:
-        return False
-    return bool(selection_entry(Path(path), str(clip.get("cid") or "")).get("owner_mark"))
+    弹幕里标记的那一段，流水线要自己切出来), read from the selection file `init` made it from (clip_entry)."""
+    entry = clip_entry(clip)
+    return bool(entry and entry.get("owner_mark"))
+
+
+def entry_reason(entry: SelectionEntry) -> str:
+    """The selection's most detailed account of why this stretch was chosen and what must stay in it
+    (`selection_scorecard.candidate_quality.reason`); "" when the entry carries none (a hand-made or compiled entry)."""
+    return str((entry.get("selection_scorecard") or {}).get("candidate_quality", {}).get("reason") or "")
+
+
+class SelectionNotes(TypedDict):
+    hook: str
+    reason: str
+    peaks: list[Peak]
+
+
+def selection_notes(clip: ClipInfo) -> SelectionNotes:
+    """What the selection wrote down about a clip, for the title step: the hook, the detailed reason and the peaks, as
+    `clip_from_entry` stored them.  A state made before the reason was stored (no `selection_reason` key, revisions of
+    such a clip too) reads it from its selection file (clip_entry); it has no peaks."""
+    reason = clip.get("selection_reason")
+    if reason is None:
+        entry = clip_entry(clip)
+        reason = entry_reason(entry) if entry else ""
+    return {"hook": str(clip.get("hook") or ""), "reason": str(reason or ""),
+            "peaks": cast("list[Peak]", list(clip.get("peaks") or []))}
 
 
 def entry_source_name(entry: SelectionEntry) -> str:
@@ -105,6 +163,8 @@ def clip_from_entry(entry: SelectionEntry, *, cid: str, recording_date: str, bcu
         "end_cue": end_cue,
         "proposal": {"start_cue": start_cue, "end_cue": end_cue},
         "hook": str(entry.get("hook", "")),
+        "selection_reason": entry_reason(entry),
+        **({"peaks": entry["peaks"]} if entry.get("peaks") else {}),
         "mac_bcut_srt": str(bcut_srt),
         "bcut_source_zero_ms": bcut_source_zero_ms,
         "remote_dir": f"{remote_root or layout().session_root(recording_date)}/{cid}",

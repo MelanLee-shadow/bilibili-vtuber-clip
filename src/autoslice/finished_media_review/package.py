@@ -118,6 +118,9 @@ def write_record(
         "unresolved_findings_disclosed": [],
         "auto_checks_sha256": file_sha(ctx.root / EVIDENCE_DIR / AUTO_CHECKS_NAME),
     }
+    for key in ("owner_cue_numbers", "subtitle_duration_ms"):
+        if key in ctx.member:
+            record[key] = ctx.member[key]
     if repair_authority is not None:
         record["recovery_publication_authority"] = dict(repair_authority)
     if title_receipt is not None:
