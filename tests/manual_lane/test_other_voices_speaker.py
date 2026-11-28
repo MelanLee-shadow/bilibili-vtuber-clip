@@ -409,14 +409,17 @@ def test_the_guests_the_day_already_knows_are_named_before_the_speakers_are_told
     _heard(ctx, 0.728, 22)
     cache = tmp_path / collab_guests.CACHE.format(date=ctx.session["recording_date"])
     cache.parent.mkdir(parents=True)
-    cache.write_text(json.dumps({"date": "d", "guests": ["礼墨Sumi", "安晚awa"]}, ensure_ascii=False), encoding="utf-8")
+    cache.write_text(json.dumps({"date": "d", "chat_guests": ["礼墨Sumi", "安晚awa"],
+                                 "guests": ["礼墨Sumi", "安晚awa"],
+                                 "dynamics": {"linked": {"礼墨Sumi": ["矿工"], "安晚awa": ["矿工"]}}}, ensure_ascii=False),
+                     encoding="utf-8")
     out = si.step4_speaker(ctx)
     assert out.ok, out.reason
     assert [g[0] for g in ctx.session["participants"]] == ["李豆沙", "礼墨Sumi", "安晚awa"]
     decision = json.loads((ctx.clip_dir / "speaker/decision.json").read_text(encoding="utf-8"))
     assert decision["mode"].startswith("linked_v8") and "(3 people" in decision["rule"] and "p>=0.8" in decision["rule"]
     assert _labels(ctx) == [H, G, G, G]                 # 0.75: the host's for two people, not for a trio the classifier knows
-    assert any("本场连线：本片场次写进 礼墨Sumi（整场弹幕与动态的判断）、安晚awa（整场弹幕与动态的判断）" in line for line in out.process)
+    assert any("本场连线：本片场次写进 礼墨Sumi（整场弹幕与动态的判断＋动态或直播间标题关联）、安晚awa（整场弹幕与动态的判断＋动态或直播间标题关联）" in line for line in out.process)
     assert not [a for a in cpa.asked if a["call_id"] == "collab-guests"]      # the day was asked before: not again
 
 

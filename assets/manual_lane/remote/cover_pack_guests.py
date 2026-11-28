@@ -32,7 +32,7 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 import cover_background as background
 import cover_collab_layouts as collab_layouts
 import cover_text_fit as text_fit
-from cover_face_crop import CHEST, HOST, protect
+from cover_face_crop import CHEST, HOST, clean_rects, other_person_boxes, protect, source_guest_preflight
 
 FRAME_W, FRAME_H = 1920, 1080
 FACE_MARGIN = 30     # px a face keeps from each side of its panel (the hair beside it may be cut by the panel, the face not)
@@ -189,27 +189,33 @@ def plan(people, rules, top_min, bottom_room=None, face_frac=None, panels=None):
         raise ValueError("PANEL_FACE_UNDER_FLOOR")
     top = min(top_min, math.floor(FRAME_H - size * (1 + rules["chin_margin_frac"])))
     for person in frames if bottom_room is None else ():   # her frame stands on the panel's bottom, so its bottom edge
+        clean = person.get("clean") or (0, 0, FRAME_W, FRAME_H)
         face, scale = person["face"], size / (person["face"][3] - person["face"][1])   # bounds how high her face can be:
-        top = max(top, math.ceil(FRAME_H - (FRAME_H - face[1]) * scale))               # everyone stands level with her
+        top = max(top, math.ceil(FRAME_H - (clean[3] - face[1]) * scale))              # everyone stands level with her
     places = {}
     for person, shape in zip(people, panels, strict=True):
         face = person["face"]
         scale = size / (face[3] - face[1])
         left, right = span(shape, top + size / 2)
         dx, dy = (left + right) / 2 - (face[0] + face[2]) / 2 * scale, top - face[1] * scale
-        if person["kind"] == "frame":      # her frame covers the panel from side to side and down to its bottom (above its
+        clean = person.get("clean")
+        if person["kind"] == "frame":      # her frame (or clean crop) covers the panel from side to side and down to its bottom
+            cx0, cy0, cx1, cy1 = clean or (0, 0, FRAME_W, FRAME_H)
             low, high = min(x for x, _ in shape), max(x for x, _ in shape)      # top edge, under the lines, `paint` blurs it on)
-            if FRAME_W * scale < high - low:
+            if (cx1 - cx0) * scale < high - low:
                 raise ValueError("PANEL_FRAME_TOO_SMALL_FOR_PANEL")
-            dx = min(max(dx, high - FRAME_W * scale), low)
+            dx = min(max(dx, high - cx1 * scale), low - cx0 * scale)
             if bottom_room is None:
-                dy = max(dy, FRAME_H - FRAME_H * scale)
+                dy = max(dy, FRAME_H - cy1 * scale)
+                if round(dy + face[3] * scale) > FRAME_H + 1:
+                    raise ValueError("PANEL_HOST_FACE_OUTSIDE_FRAME_REACH")
         elif person.get("cut_bottom") and dy + person["fig"][3] * scale < FRAME_H:
             raise ValueError("PANEL_FIGURE_ENDS_ABOVE_FRAME_BOTTOM")      # her picture's own bottom cut would show
         placed = [round(dx + face[0] * scale), round(dy + face[1] * scale), round(dx + face[2] * scale), round(dy + face[3] * scale)]
-        if placed[0] < left + FACE_MARGIN - 1 or placed[2] > right - FACE_MARGIN + 1:
+        if placed[0] < left + FACE_MARGIN - 1 or placed[2] > right - FACE_MARGIN + 1 or placed[1] < 0 or placed[3] > FRAME_H + 1:
             raise ValueError("PANEL_HOST_FACE_OUTSIDE_FRAME_REACH")       # the frame's side edge keeps her out of the middle
-        places[person["name"]] = {"scale": scale, "dx": round(dx), "dy": round(dy), "face": placed}
+        places[person["name"]] = {"scale": scale, "dx": round(dx), "dy": round(dy), "face": placed,
+                                  **({"clean": list(clean)} if clean else {})}
     return {"shapes": panels, "face_px": round(size), "face_top": top, "places": places, "bottom_room": bottom_room}
 
 
@@ -224,34 +230,45 @@ def paint(people, made, renderer, stickers, grounds, blur, rules, out_path, divi
         if person["kind"] == "frame":
             with Image.open(person["src"]) as im:
                 picture = im.convert("RGB")
-            for x0, y0, x1, y1 in blur or []:      # the renderer's own blur of a frame's boxes, in the frame's pixels
+            clean = place.get("clean") or person.get("clean")
+            cx0, cy0, cx1, cy1 = clean or (0, 0, picture.width, picture.height)
+            if clean:                      # Crop BEFORE blur so guest pixels outside `clean` never bleed inward.
+                picture = picture.crop((cx0, cy0, cx1, cy1))
+                frame_blur = [[b[0] - cx0, b[1] - cy0, b[2] - cx0, b[3] - cy0] for b in blur or []]
+                frame_blur = [b for b in frame_blur if b[0] < picture.width and b[2] > 0 and b[1] < picture.height and b[3] > 0]
+            else:
+                frame_blur = blur or []
+            for x0, y0, x1, y1 in frame_blur:      # the renderer's own blur of a frame's boxes, in the frame's pixels
                 mask = Image.new("L", picture.size, 0)
                 ImageDraw.Draw(mask).rectangle((x0, y0, x1, y1), fill=255)
                 picture = Image.composite(picture.filter(ImageFilter.GaussianBlur(22 / scale)), picture,
                                           mask.filter(ImageFilter.GaussianBlur(30 / scale)))
-            x0, y0 = max(0, math.floor(-dx / scale)), max(0, math.floor(-dy / scale))
-            x1, y1 = min(picture.width, math.ceil((FRAME_W - dx) / scale)), min(picture.height, math.ceil((FRAME_H - dy) / scale))
-            part = picture.crop((x0, y0, x1, y1)).resize((round((x1 - x0) * scale), round((y1 - y0) * scale)), Image.LANCZOS)
+            x0, y0 = max(0, math.floor(-dx / scale - cx0)), max(0, math.floor(-dy / scale - cy0))
+            x1 = min(picture.width, math.ceil((FRAME_W - dx) / scale - cx0))
+            y1 = min(picture.height, math.ceil((FRAME_H - dy) / scale - cy0))
+            part = picture.crop((x0, y0, x1, y1)).resize((max(1, round((x1 - x0) * scale)), max(1, round((y1 - y0) * scale))), Image.LANCZOS)
             part = ImageEnhance.Color(part).enhance(renderer.FRAME_SATURATION)
             fade = Image.new("L", part.size, 255)
-            if dy > 0:          # her face stands lower than her frame's top edge allows: above the frame, the frame's own top
+            top_y = round(dy + (cy0 + y0) * scale)
+            left_x = round(dx + (cx0 + x0) * scale)
+            if top_y > 0:          # her face stands lower than her frame's top edge allows: above the frame, the frame's own top
                 reach = min(FADE, part.height)      # rows blurred and stretched up (the lines stand there), fading into the frame
-                content = part.crop((0, 0, part.width, reach)).resize((part.width, round(dy) + reach)).filter(ImageFilter.GaussianBlur(40))
+                content = part.crop((0, 0, part.width, reach)).resize((part.width, top_y + reach)).filter(ImageFilter.GaussianBlur(40))
                 canvas_part = Image.new("RGB", (FRAME_W, FRAME_H))
-                canvas_part.paste(content, (round(dx + x0 * scale), 0))
+                canvas_part.paste(content, (left_x, 0))
                 fade.paste(Image.linear_gradient("L").resize((part.width, reach)), (0, 0))
                 content = canvas_part
             else:
                 content = Image.new("RGB", (FRAME_W, FRAME_H))
-            content.paste(part, (round(dx + x0 * scale), round(dy + y0 * scale)), fade)
-            low = round(dy + y0 * scale) + part.height
+            content.paste(part, (left_x, top_y), fade)
+            low = top_y + part.height
             if low < FRAME_H:   # panels-bottom: the frame ends above the canvas's bottom; its own bottom rows, blurred, go on under the band
                 reach = min(FADE, part.height)
                 tail = part.crop((0, part.height - reach, part.width, part.height)).resize((part.width, FRAME_H - low + reach))
                 tail = tail.filter(ImageFilter.GaussianBlur(40))
                 mask_tail = Image.new("L", tail.size, 255)
                 mask_tail.paste(Image.linear_gradient("L").resize((part.width, reach)), (0, 0))
-                content.paste(tail, (round(dx + x0 * scale), low - reach), mask_tail)
+                content.paste(tail, (left_x, low - reach), mask_tail)
         else:
             ground = renderer.pastel({"bg": grounds[person["name"]]}).convert("RGBA")
             renderer.paste_sticker(ground, stickers[person["name"]])
@@ -388,7 +405,8 @@ def collage(run, route, host, note, main_emote, blur, family):
     measured = [face_map[name] for name in guests]
     run.people_faces[route], run.grounds[route] = face_map, grounds
     run.sides[route] = "left" if row[0] == run.host_name else "right" if row[-1] == run.host_name else "middle"
-    run.plans[route] = {"row": row, "layout": family}
+    run.plans[route] = {"row": row, "layout": family,
+                        **({"clean_crop": host["clean_used"]} if host.get("clean_used") else {})}
     spec = {"id": route, "frame": picture, "crop": [0, 0, FRAME_W], "saturation": 1.0,
             "composition": f"collab_{family}", **run.column.text(route, run.lines),
             "face": protect(list(face_map.values())), "keep": measured}
@@ -429,35 +447,44 @@ def cover(run, route, host, note, main_emote=None, blur=None):
         if template["text"] == "bottom" and words is None:
             return run.fail(route, "GUESTS_DO_NOT_FIT:PUNCHLINE_TOO_WIDE")
         top_min, bottom_room = room(template, words, run.rules, run.pack_top_min)
+    cleans = host.get("clean_rects") or [None]
+    made = why = chosen_clean = people_painted = None
     for row in rows:
-        people = [dict(host, name=name) if name == run.host_name
-                  else dict(next(g for g in run.pack if g["name"] == name), kind="layer", cut_bottom=True) for name in row]
-        try:
-            cuts = ([0, 480, 960, FRAME_W] if row[-1] == run.host_name else [0, 960, 1440, FRAME_W]) if family == "pair" else None
-            panels = [[(a, 0), (b, 0), (b, FRAME_H), (a, FRAME_H)] for a, b in zip(cuts, cuts[1:], strict=False)] if cuts else None
-            made = plan(people, run.rules, top_min, bottom_room, template["framing"].get("face_frac"), panels)
+        for clean in cleans:
+            host_try = dict(host, clean=clean) if clean else host
+            people = [dict(host_try, name=name) if name == run.host_name
+                      else dict(next(g for g in run.pack if g["name"] == name), kind="layer", cut_bottom=True) for name in row]
+            try:
+                cuts = ([0, 480, 960, FRAME_W] if row[-1] == run.host_name else [0, 960, 1440, FRAME_W]) if family == "pair" else None
+                panels = [[(a, 0), (b, 0), (b, FRAME_H), (a, FRAME_H)] for a, b in zip(cuts, cuts[1:], strict=False)] if cuts else None
+                made = plan(people, run.rules, top_min, bottom_room, template["framing"].get("face_frac"), panels)
+                chosen_clean = clean
+                people_painted = people
+                break
+            except ValueError as exc:
+                why = why or str(exc)
+        if made is not None:
             break
-        except ValueError as exc:
-            why = why or str(exc)
     if made is None:
         return run.fail(route, f"GUESTS_DO_NOT_FIT:{why}")
     style = run.text_ink({"lines": run.lines})[0]
     sha_ = run.job.get("content_sha256") or run.renderer.default_content_sha256({"id": route, "lines": run.lines})
     stickers = {p["name"]: sticker(p, made["places"][p["name"]], lambda *a: painted_box(*a, run.renderer))
-                for p in people if p["kind"] == "layer"}
+                for p in people_painted if p["kind"] == "layer"}
     grounds = {name: background.ground(run.renderer, [layer], len(run.lines), made["face_top"], style, route, run.job, sha_)
                for name, layer in stickers.items()}
     picture = os.path.join(run.out, f"{route}.panels.png")
     if family == "pair":
         grounds[guests[1]] = grounds[guests[0]]
-    paint(people, made, run.renderer, stickers, {name: g["colors"] for name, g in grounds.items()}, blur, run.rules, picture,
+    paint(people_painted, made, run.renderer, stickers, {name: g["colors"] for name, g in grounds.items()}, blur, run.rules, picture,
           divider_indices=({1} if row[-1] == run.host_name else {0}) if family == "pair" else None)
     faces = {name: place["face"] for name, place in made["places"].items()}
     measured = [faces[name] for name in guests]
     run.people_faces[route], run.grounds[route] = faces, grounds
     run.sides[route] = "left" if row[0] == run.host_name else "right" if row[-1] == run.host_name else "middle"
     run.plans[route] = {"face_px": made["face_px"], "face_top": made["face_top"], "row": row,
-                        "row_why": run.row_why if row == run.row else f"{run.row_why}排不下（{why}），改排"}
+                        "row_why": run.row_why if row == run.row else f"{run.row_why}排不下（{why}），改排",
+                        **({"clean_crop": list(chosen_clean)} if chosen_clean else {})}
     spec = {"id": route, "frame": picture, "crop": [0, 0, FRAME_W], "saturation": 1.0, "composition": "collab_pair" if family == "pair" else "split_panels",
             **run.column.text(route, run.lines), "face": protect(list(faces.values())), "keep": measured}
     spec["lines"] = anchor(spec["lines"], run.speakers, faces, run.host_name)
@@ -470,8 +497,85 @@ def cover(run, route, host, note, main_emote=None, blur=None):
     return None
 
 
+def frame_size(path):
+    """(width, height) of an image file when present, else the 1920x1080 cover canvas."""
+    if not os.path.exists(path):
+        return FRAME_W, FRAME_H
+    with Image.open(path) as im:
+        return im.size
+
+
+def screenshot(run, hf, blur):
+    """Prepare the host's source-frame panel for `pack`: exclude detected other people in source pixels."""
+    run.pack_frame_excluded = False
+    w, h = frame_size(run.frame)
+    others, err = other_person_boxes(run.job, hf, w, h)
+    if err:
+        return run.fail("screenshot", err)
+    if others:
+        rects = clean_rects(hf, others, w, h)
+        if not rects:
+            return run.fail("screenshot", "PACK_FRAME_CONTAINS_OTHER_PERSON")
+        run.pack_frame_excluded = True
+        return cover(run, "screenshot", {"kind": "frame", "src": run.frame, "face": hf, "clean_rects": rects},
+                     "直播截图，弹幕框模糊", blur=blur)
+    return cover(run, "screenshot", {"kind": "frame", "src": run.frame, "face": hf}, "直播截图，弹幕框模糊", blur=blur)
+
+
+def stock_emote(run, sha_fn, read_face):
+    """Fallback host route using `job['host_asset']` when no sticker emote matched."""
+    verified, dropped = usable([run.job["host_asset"]], sha_fn)
+    measured, unread = faces(verified, run.out, read_face)
+    if dropped or unread or not measured:
+        run.pack_dropped.extend([*dropped, *unread])
+        return run.fail("emote", (dropped or unread or [{"code": "HOST_FACE_NOT_FOUND"}])[0]["code"])
+    layer_host_item = dict(measured[0], kind="layer", cutout="alpha", cut_bottom=True)
+    return cover(run, "emote", layer_host_item, f"主播官方图（{layer_host_item['asset_id']}）当{HOST}")
+
+
+def cutout_ref(run):
+    """Return `(ref_src_path, error_code)` for pack `cutout`: crop reference to clean source rect if others exist."""
+    if err := source_guest_preflight(run.job):
+        return None, err
+    w, h = frame_size(run.frame)
+    hf, _ = run.head()
+    if hf is None:
+        return None, "HOST_FACE_NOT_FOUND"
+    others, err = other_person_boxes(run.job, hf, w, h)
+    if err:
+        return None, err
+    if not others:
+        return run.frame, None
+    rects = clean_rects(hf, others, w, h)
+    if not rects:
+        return None, "PACK_FRAME_CONTAINS_OTHER_PERSON"
+    ref_src = os.path.join(run.out, "ref-cutout.png")
+    with Image.open(run.frame) as im:
+        im.crop(tuple(rects[0])).save(ref_src)
+    return ref_src, None
+
+
+def sticker_region(run, face, region):
+    """Return `(crop_region, error_code)` for pack `ai_sticker`: clip reference inside a clean source rect."""
+    w, h = frame_size(run.frame)
+    others, err = other_person_boxes(run.job, face, w, h)
+    if err:
+        return None, err
+    if not others:
+        return region, None
+    rects = clean_rects(face, others, w, h)
+    if not rects:
+        return None, "PACK_FRAME_CONTAINS_OTHER_PERSON"
+    rx0, ry0, rx1, ry1 = rects[0]
+    clipped = [max(region[0], rx0), max(region[1], ry0), min(region[2], rx1), min(region[3], ry1)]
+    contains = clipped[0] <= face[0] and face[2] <= clipped[2] and clipped[1] <= face[1] and face[3] <= clipped[3]
+    return (clipped if contains else [rx0, ry0, rx1, ry1]), None
+
+
 def cutout(run, host_face, figures):
-    """The cut-out route with pack guests: the host's cut-out figure in her panel."""
+    """The cut-out route with pack guests: the host's cut-out figure in her panel (source exclusion runs pre-gen)."""
+    if err := source_guest_preflight(run.job):
+        return run.fail("cutout", err)
     located = host_face(run.job, run.cut_png, run.out)
     fig = next((f for f in figures(run.cut_png, run.renderer, raw=True)
                 if located and f[0] <= (located[0] + located[2]) / 2 <= f[2] and f[1] <= (located[1] + located[3]) / 2 <= f[3]), None)

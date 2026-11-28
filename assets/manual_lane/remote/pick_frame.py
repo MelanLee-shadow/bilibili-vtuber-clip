@@ -114,7 +114,10 @@ BOX_QUESTION = ("这是直播画面（1920x1080 像素）。请给出四类矩�
                 "压在人物身上的也框；一块一个框，框住整列文字，宁大勿小）；\n"
                 "person：主播" + HOST + "本人的身体范围" + (BODY_HINT or "，依据名牌和画面辨认") + "；\n"
                 "face：主播" + HOST + "的脸，只框眉毛到下巴、两颊之间（不含头发、耳朵、发饰）" + ("，" + FACE_HINT.strip("，；。") if FACE_HINT else "") + "；\n"
-                "guest：画面里另一位主播（不是" + HOST + "）的身体范围。\n"
+                "guest：画面里除主播" + HOST + "以外的每一位其他人物/主播（无论前景或背景、是否遮挡别人，须包含头饰、角、帽子、发丝和全部可见身体），"
+                "每人一个框，宁大勿小；有几位就给几个框。\n"
+                "画面里同时出现多位人物（哪怕同为白发或戴帽子）时，先按当场外貌特征与站位认出主播" + HOST
+                + "本人放进 person，其余所有人物全部放进 guest，不要漏人，也不要把别的人物放进 person。\n"
                 "只输出一个 JSON 对象：{\"danmaku\": [[x0,y0,x1,y1]], \"person\": [[x0,y0,x1,y1]], \"face\": [[x0,y0,x1,y1]], "
                 "\"guest\": [[x0,y0,x1,y1]]}；"
                 "找不到的类别写空数组，不要编造。")
@@ -215,9 +218,65 @@ def find_action(cut, frame_dir, base, key):
     return {"t": t, "what": what, "seen": [{"t": f[0], "what": f[1]} for f in found]}
 
 
-# Every box of the cover is read and placed in 1920x1080 (the questions say so, cover_face_crop.FRAME_W/H): a source of
-# another size is scaled into it (goldfish 4, a 1280x720 stream: every screenshot crop fell outside the frame)
+# Every box of the cover is read in a 1920x1080 view (`fit_1920x1080` / `FRAME_SIZE_FILTER`) and converted back into the
+# source frame's own pixel coordinates before anything uses or stores it (goldfish 4 / 1280x720 streams).
+BOX_VIEW_W, BOX_VIEW_H = 1920, 1080
 FRAME_SIZE_FILTER = "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
+
+
+def video_size(cut):
+    """(width, height) of the first video stream of `cut` via ffprobe."""
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", cut],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip().splitlines()[0]
+    w, h = (int(v) for v in out.split("x", 1))
+    if w <= 0 or h <= 0:
+        raise ValueError(f"invalid video dimensions: {out}")
+    return w, h
+
+
+def _letterbox_params(src_w, src_h):
+    """(scale, ox, oy) mapping source `(src_w, src_h)` into `(BOX_VIEW_W, BOX_VIEW_H)` with aspect-ratio padding."""
+    scale = min(BOX_VIEW_W / src_w, BOX_VIEW_H / src_h)
+    iw, ih = round(src_w * scale), round(src_h * scale)
+    return scale, (BOX_VIEW_W - iw) / 2, (BOX_VIEW_H - ih) / 2
+
+
+def fit_1920x1080(im):
+    """RGB 1920x1080 image matching `FRAME_SIZE_FILTER` (aspect-ratio decrease + centered black padding)."""
+    from PIL import Image
+
+    rgb = im.convert("RGB")
+    src_w, src_h = rgb.size
+    if (src_w, src_h) == (BOX_VIEW_W, BOX_VIEW_H):
+        return rgb
+    scale, ox, oy = _letterbox_params(src_w, src_h)
+    iw, ih = max(1, round(src_w * scale)), max(1, round(src_h * scale))
+    canvas = Image.new("RGB", (BOX_VIEW_W, BOX_VIEW_H), (0, 0, 0))
+    canvas.paste(rgb.resize((iw, ih), Image.LANCZOS), (round(ox), round(oy)))
+    return canvas
+
+
+def to_source_box(box, src_w=BOX_VIEW_W, src_h=BOX_VIEW_H):
+    """Convert one [x0, y0, x1, y1] box from the 1920x1080 view into source pixels, clipped; None if invalid/empty."""
+    if not (isinstance(box, (list, tuple)) and len(box) == 4
+            and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in box)):
+        return None
+    vx0, vy0, vx1, vy1 = (float(v) for v in box)
+    if vx0 >= vx1 or vy0 >= vy1:
+        return None
+    if (src_w, src_h) == (BOX_VIEW_W, BOX_VIEW_H):
+        sx0, sy0, sx1, sy1 = vx0, vy0, vx1, vy1
+    else:
+        scale, ox, oy = _letterbox_params(src_w, src_h)
+        sx0, sy0 = (vx0 - ox) / scale, (vy0 - oy) / scale
+        sx1, sy1 = (vx1 - ox) / scale, (vy1 - oy) / scale
+    x0 = max(0, min(src_w, round(sx0)))
+    y0 = max(0, min(src_h, round(sy0)))
+    x1 = max(0, min(src_w, round(sx1)))
+    y1 = max(0, min(src_h, round(sy1)))
+    return [x0, y0, x1, y1] if x0 < x1 and y0 < y1 else None
 
 
 def extract(cut, t, path):
@@ -356,8 +415,12 @@ def read_face(text):
     return None
 
 
-def read_boxes(text):
-    """{'danmaku': [...], 'person': [...]} from the model's JSON, keeping only four-number boxes in the frame."""
+def read_boxes(text, frame_size=(BOX_VIEW_W, BOX_VIEW_H)):
+    """{'danmaku': [...], 'person': [...] | None, 'face': [...], 'guest': [...] | None} in `frame_size` pixels.
+
+    Strict keys (`person`, `guest`): missing key, null, non-list, or any invalid/out-of-frame box yields `None`
+    so callers keep unknown distinct from an explicit empty `[]`.
+    """
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if not match:
         return None
@@ -365,15 +428,28 @@ def read_boxes(text):
         raw = json.loads(match.group(0))
     except ValueError:
         return None
+    if not isinstance(raw, dict):
+        return None
+    src_w, src_h = frame_size
     out = {}
-    for key in ("danmaku", "person", "face", "guest"):
+    for key in ("person", "guest"):
+        val = raw.get(key)
+        if not isinstance(val, list):
+            out[key] = None
+            continue
         boxes = []
-        for box in raw.get(key) or []:
-            if isinstance(box, list) and len(box) == 4 and all(isinstance(v, (int, float)) for v in box):
-                x0, y0, x1, y1 = (int(v) for v in box)
-                if 0 <= x0 < x1 <= 1920 and 0 <= y0 < y1 <= 1080:
-                    boxes.append([x0, y0, x1, y1])
-        out[key] = boxes
+        valid = True
+        for box in val:
+            converted = to_source_box(box, src_w, src_h)
+            if converted is None:
+                valid = False
+                break
+            boxes.append(converted)
+        out[key] = boxes if valid else None
+    for key in ("danmaku", "face"):
+        val = raw.get(key)
+        out[key] = ([c for b in val if (c := to_source_box(b, src_w, src_h)) is not None]
+                    if isinstance(val, list) else [])
     return out
 
 
@@ -408,7 +484,35 @@ def fallback(first_repeat, first_clean, image):
 
 
 def main(argv):
+    if len(argv) >= 4 and argv[1] == "--boxes-only":
+        from PIL import Image
+
+        frame_path, out_json = argv[2], argv[3]
+        base_url = os.environ.get("CPA_BASE_URL", "").rstrip("/")
+        key = os.environ.get("CPA_API_KEY", "")
+        if not base_url or not key:
+            raise SystemExit("CPA_BASE_URL / CPA_API_KEY not set (load cpa.env first)")
+        with Image.open(frame_path) as im:
+            frame_size = im.size
+            rgb = fit_1920x1080(im)
+            buf = io.BytesIO()
+            rgb.save(buf, format="JPEG", quality=88)
+        image_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        try:
+            boxes = read_boxes(ask(base_url, key, image_b64, BOX_QUESTION, max_tokens=400, kind="boxes"),
+                               frame_size=frame_size)
+        except (urllib.error.URLError, OSError, ValueError):
+            boxes = None
+        with open(out_json, "w", encoding="utf-8") as fh:
+            json.dump({"boxes": boxes, "frame_size": list(frame_size), "calls": CALLS,
+                       "question": BOX_QUESTION, "model": answered_model()},
+                      fh, ensure_ascii=False, indent=1)
+        return 0
     cut, frame_dir, out_json, times = argv[1], argv[2], argv[3], [float(x) for x in argv[4].split(",") if x]
+    try:
+        frame_size = video_size(cut)
+    except (subprocess.CalledProcessError, OSError, ValueError):
+        frame_size = (BOX_VIEW_W, BOX_VIEW_H)
     avoid = {}
     if len(argv) > 5:
         with open(argv[5], encoding="utf-8") as fh:
@@ -459,11 +563,13 @@ def main(argv):
         chosen, base, image = fallback(first_repeat, first_clean, image)
     if chosen is not None:
         try:
-            boxes = read_boxes(ask(base_url, key, image, BOX_QUESTION, max_tokens=300, kind="boxes", t=chosen))
+            boxes = read_boxes(ask(base_url, key, image, BOX_QUESTION, max_tokens=400, kind="boxes", t=chosen),
+                               frame_size=frame_size)
         except (urllib.error.URLError, OSError, ValueError):
             boxes = None
     with open(out_json, "w", encoding="utf-8") as fh:
-        json.dump({"chosen": chosen, "checked": checked, "boxes": boxes, "calls": CALLS, "times": asked, "question": READING_KEY,
+        json.dump({"chosen": chosen, "checked": checked, "boxes": boxes, "frame_size": list(frame_size),
+                   "calls": CALLS, "times": asked, "question": READING_KEY,
                    "model": CALLS[-1]["model"] if CALLS else MODEL,
                    "action": action, "looked_at": times, "avoid": avoid, "base": base},
                   fh, ensure_ascii=False, indent=1)

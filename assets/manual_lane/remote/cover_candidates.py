@@ -664,6 +664,7 @@ class Run:
 
     def screenshot(self):
         clock.route("screenshot")
+        self.pack_frame_excluded = False
         job, frame = self.job, self.frame
         with open(job["screenshot_spec"], encoding="utf-8") as fh:
             spec = json.load(fh)
@@ -675,13 +676,7 @@ class Run:
         if hf is None:                          # a cover of her without her face is not made
             return self.fail("screenshot", "HOST_FACE_NOT_FOUND")
         if self.pack:
-            if job.get("source_guest_boxes_unknown"):
-                return self.fail("screenshot", "PACK_FRAME_GUESTS_UNCHECKED")
-            # A partially detected guest is deliberately not laid out from the frame, but her pixels have not
-            # disappeared from it. Reject the whole frame: a bounding box can omit a horn or hat outside the box.
-            if job.get("source_guest_boxes"):
-                return self.fail("screenshot", "PACK_FRAME_CONTAINS_OTHER_PERSON")
-            return pack.cover(self, "screenshot", {"kind": "frame", "src": frame, "face": hf}, "直播截图，弹幕框模糊", blur=spec.get("blur"))
+            return pack.screenshot(self, hf, spec.get("blur"))
         gf = self.guest_in_frame()
         if not self.guest_boxes:            # a solo frame: framed as the template says (cover_side)
             side_shot.solo(self, spec, hf, head_top, clock)
@@ -700,6 +695,8 @@ class Run:
     def emote(self, emote):
         clock.route("emote")
         job, out, frame, guest_box, renderer = self.job, self.out, self.frame, self.guest_box, self.renderer
+        if emote is None and self.pack and job.get("host_asset"):
+            return pack.stock_emote(self, sha, lambda src, name, box: guest_face(job, src, out, name, box, strict=True))
         solo = not guest_box and not job.get("fans_emote")           # nothing beside it: a cut side may go to the canvas edge
         cutout, (layer, flush, _) = "alpha", emote_layer.layer_for(emote["hd"], emote["mask"], out, self.rules, solo)
         guest = ({"src": frame, "cutout": "none", "crop": half(guest_box), "h": GUEST_H} if guest_box else None)
@@ -743,7 +740,12 @@ class Run:
         layer, never generates it; the free stage does not need it at all."""
         clock.route("cutout")
         if "cutout" in self.routes:
-            res = generate(self.job, "cutout", self.redraw.build_prompt(self.brief, "cutout"), self.frame, self.cut_png,
+            ref_src = self.frame
+            if self.pack:
+                ref_src, err = pack.cutout_ref(self)
+                if err:
+                    return self.fail("cutout", err)
+            res = generate(self.job, "cutout", self.redraw.build_prompt(self.brief, "cutout"), ref_src, self.cut_png,
                            keep_canvas)
             ready = self.cut_png if res.get("status") in ("REUSED", "AI_BACKGROUND_READY") else None
             if ready is None:
@@ -876,15 +878,23 @@ class Run:
         if self.group_failed or (self.expected_people > 2 and not self.guest_layers):
             self.failed.append({"id": "ai_sticker", "route": "ai_sticker", "failure": "PEOPLE_LAYERS_UNAVAILABLE"})
             return
+        if self.pack:
+            if err := crop_mod.source_guest_preflight(self.job):
+                return self.fail("ai_sticker", err)
         ref = os.path.join(self.out, "ref-host.png")
         face = host_face(self.job, self.frame, self.out, name="locate-screenshot")
         if face is None:                  # the reference must show her face: a body box alone can be only legs
             return self.fail("ai_sticker", "HOST_FACE_NOT_IN_FRAME")
+        w, h = pack.frame_size(self.frame)
         region = self.host_box
         if not contains_face(face, region):
             fw, fh = face[2] - face[0], face[3] - face[1]
             region = [max(0, face[0] - fw), max(0, face[1] - 2 * fh),
-                      min(1920, face[2] + fw), min(1080, face[3] + 2 * fh)]
+                      min(w, face[2] + fw), min(h, face[3] + 2 * fh)]
+        if self.pack:
+            region, err = pack.sticker_region(self, face, region)
+            if err:
+                return self.fail("ai_sticker", err)
         with Image.open(self.frame) as im:
             im.crop(tuple(region)).save(ref)
         sticker_png = os.path.join(self.out, "gen-sticker.png")
@@ -1053,8 +1063,8 @@ def main(argv):
     run = Run(job)
     if "screenshot" in run.routes:
         cover_compose.compose(run, "screenshot", run.screenshot)
-    if job.get("emote") and "emote" in run.routes:
-        cover_compose.compose(run, "emote", lambda: run.emote(job["emote"]))
+    if (job.get("emote") or (run.pack and job.get("host_asset"))) and "emote" in run.routes:
+        cover_compose.compose(run, "emote", lambda: run.emote(job.get("emote")))
     if "cutout" in run.routes:
         cover_compose.compose(run, "cutout", run.cutout)
     elif "ai_sticker" in run.routes:

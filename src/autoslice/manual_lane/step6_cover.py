@@ -274,18 +274,51 @@ def blur_boxes(danmaku: Sequence[Sequence[int]] | None, person: Sequence[Sequenc
     return [b for b in clamped if b[2] > b[0] and b[3] > b[1]]
 
 
-def _valid_boxes(raw: JsonValue) -> list[list[int]]:
+def _doc_frame_size(doc: Mapping[str, object]) -> tuple[int, int]:
+    raw = doc.get("frame_size")
+    if (isinstance(raw, (list, tuple)) and len(raw) == 2
+            and all(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in raw)):
+        return int(raw[0]), int(raw[1])
+    return COVER_FRAME_W, COVER_FRAME_H
+
+
+def _checked_box_list(raw: object, frame_size: tuple[int, int] | None = None) -> list[list[int]] | None:
+    """Strictly validate a list of boxes; missing/non-list/invalid/empty-after-clip returns `None`, never `[]`."""
+    if not isinstance(raw, list):
+        return None
+    out: list[list[int]] = []
+    for box in raw:
+        if not (isinstance(box, (list, tuple)) and len(box) == 4
+                and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in box)):
+            return None
+        bx0, by0, bx1, by1 = (round(v) for v in box)
+        if bx0 >= bx1 or by0 >= by1:
+            return None
+        if frame_size is not None:
+            fw, fh = frame_size
+            x0, y0 = max(0, min(fw, bx0)), max(0, min(fh, by0))
+            x1, y1 = max(0, min(fw, bx1)), max(0, min(fh, by1))
+        else:
+            x0, y0, x1, y1 = bx0, by0, bx1, by1
+        if x0 < 0 or y0 < 0 or x0 >= x1 or y0 >= y1:
+            return None
+        out.append([x0, y0, x1, y1])
+    return out
+
+
+def _valid_boxes(raw: JsonValue, frame_size: tuple[int, int] = (COVER_FRAME_W, COVER_FRAME_H)) -> list[list[int]]:
+    fw, fh = frame_size
     out = []
-    for box in cast("list[JsonValue]", raw or []):
-        if isinstance(box, list) and len(box) == 4 and all(isinstance(v, (int, float)) for v in box):
-            x0, y0, x1, y1 = (int(v) for v in cast("list[int | float]", box))
-            if 0 <= x0 < x1 <= COVER_FRAME_W and 0 <= y0 < y1 <= COVER_FRAME_H:
+    for box in cast("list[JsonValue]", raw if isinstance(raw, list) else []):
+        if isinstance(box, list) and len(box) == 4 and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in box):
+            x0, y0, x1, y1 = (round(v) for v in cast("list[int | float]", box))
+            if 0 <= x0 < x1 <= fw and 0 <= y0 < y1 <= fh:
                 out.append([x0, y0, x1, y1])
     return out
 
 
 def _pick_cover_frame(ctx: Ctx, cues: Sequence[SrtCue], cover_lines: Sequence[str],
-                      cut_len: float) -> tuple[float, str, dict[str, list[list[int]]] | None]:
+                      cut_len: float) -> tuple[float, str, dict[str, list[list[int]] | None] | None]:
     """Among frames near the cover moment, the first one CPA vision judges free of unrelated pages (CLEAN) that does not
     repeat the base frame of a cover this stream already has (base_avoid; when all do, the first of them, recorded),
     and the danmaku and person boxes read from that frame.  Falls back to the default moment and says so."""
@@ -338,12 +371,20 @@ def _reading_key() -> str:
 
 
 def _frame_choice(doc: FrameDocument, t0: float, times: Sequence[float], *, reused: bool = False
-                  ) -> tuple[float, str, dict[str, list[list[int]]] | None]:
+                  ) -> tuple[float, str, dict[str, list[list[int]] | None] | None]:
     tail = (_action_note(doc) + _repeat_note(doc)
             + ("（沿用上次同一批候选帧的判读，未再调用）" if reused else ""))
-    raw_boxes = doc.get("boxes") or {}
-    boxes = ({k: _valid_boxes(raw_boxes.get(k)) for k in ("danmaku", "person", "face", "guest")}
-             if isinstance(raw_boxes, dict) else None)
+    raw_boxes = doc.get("boxes")
+    if isinstance(raw_boxes, Mapping) and raw_boxes:
+        fs = _doc_frame_size(doc)
+        boxes: dict[str, list[list[int]] | None] | None = {
+            "danmaku": _valid_boxes(cast("JsonValue", raw_boxes.get("danmaku")), fs),
+            "face": _valid_boxes(cast("JsonValue", raw_boxes.get("face")), fs),
+            "person": _checked_box_list(raw_boxes.get("person"), fs),
+            "guest": _checked_box_list(raw_boxes.get("guest"), fs),
+        }
+    else:
+        boxes = None
     if doc.get("chosen") is not None:
         note = f"CPA 看图选帧 {float(cast(float, doc['chosen'])):.2f}s（无无关页面）"
         return (float(cast(float, doc["chosen"])), note + ("，弹幕框与人物框由 CPA 给出" if boxes else "，框坐标未给出，用固定位置") + tail,
@@ -543,7 +584,7 @@ def cover_peers(ctx: Ctx) -> CoverPeers:
     return {"peers": linked_session(ctx.session) and len(participant_names(ctx.session)) >= 2, "names": names, "source": "session.participants"}
 
 
-def cover_host_side(plan: CoverPlan, boxes: Mapping[str, list[list[int]]] | None) -> tuple[str, str]:
+def cover_host_side(plan: CoverPlan, boxes: Mapping[str, list[list[int]] | None] | None) -> tuple[str, str]:
     """Which side the host stands on.  The source frame decides (the host's box right of the guest's), except for
     equal participants: who stands left is not the story's, so it rotates, the other side from the previous cover
     (U98: 风格都应该变一变).  Returns (side, reason)."""
@@ -788,7 +829,21 @@ def peer_face_vetoes(row: CoverCandidate, plan: CoverPlan) -> list[str]:
     return out
 
 
-def _cover_job(ctx: Ctx, cover_lines: Sequence[str], plan: CoverPlan, boxes: Mapping[str, list[list[int]]] | None,
+def source_guest_state(boxes: Mapping[str, list[list[int]] | None] | None,
+                       roster: Mapping[str, object] | None, names: Sequence[str] = (),
+                       *, frame_size: tuple[int, int] | None = None) -> dict[str, JsonValue]:
+    """Other-person measurement fields passed to remote cover tools: missing/unparseable/invalid stays unknown."""
+    pack_mode = bool(roster and roster.get("source") == "pack")
+    persons = _checked_box_list(boxes.get("person"), frame_size) if isinstance(boxes, Mapping) else None
+    guests = _checked_box_list(boxes.get("guest"), frame_size) if isinstance(boxes, Mapping) else None
+    unknown = bool(pack_mode and (boxes is None or guests is None or persons is None))
+    return {"source_person_boxes": cast("JsonValue", persons or []),
+            "source_guest_boxes": cast("JsonValue", guests or []),
+            "source_guest_boxes_unknown": unknown}
+
+
+def _cover_job(ctx: Ctx, cover_lines: Sequence[str], plan: CoverPlan,
+               boxes: Mapping[str, list[list[int]] | None] | None,
                title: str, names: Sequence[str], identity: str, routes: Sequence[str]) -> dict[str, JsonValue]:
     """The job every route's tool run starts from (cover_candidates.py reads it; each run adds its own routes, work dir and
     result name).  `rules` are lane_rules `cover` (the numbers carry their sources there)."""
@@ -804,12 +859,12 @@ def _cover_job(ctx: Ctx, cover_lines: Sequence[str], plan: CoverPlan, boxes: Map
     # candidate is made in is the media-host tool's (cover_layout_rotation through the channel's table)
     rows = cover_column.rows_of(cover_lines, (plan.get("brief") or {}).get("column_rows"), rules("cover"))
     rotation = plan.get("rotation") or {}
+    host_name = names[0] if names else channel.HOST
     return {"guest_assets": cast("JsonValue", (roster.get("layers") if roster else None) or []),
-            "source_guest_boxes": cast("JsonValue", [list(b) for b in ((boxes or {}).get("guest") or [])]),
-            "source_guest_boxes_unknown": bool(roster and roster["source"] == "pack"
-                                               and (boxes is None or boxes.get("guest") is None)),
+            "host_asset": cast("JsonValue", cover_guests.host_layer(host_name) if (roster and roster.get("source") == "pack") else None),
+            **source_guest_state(boxes, roster, names),
             "needed_on_cover": cast("JsonValue", (roster.get("required") if roster else None) or []),
-            "wordy": bool(plan.get("wordy")), "host_name": names[0] if names else channel.HOST,
+            "wordy": bool(plan.get("wordy")), "host_name": host_name,
             "line_speakers": cast("JsonValue", (roster.get("line_speakers") if roster else None) or []),
             "column_rows": cast("JsonValue", rows or []), "layouts": f"{rd}/cover/layouts.json",
             "template_history": cast("JsonValue", list(rotation.get("template_history") or [])),
@@ -838,7 +893,7 @@ def _cover_job(ctx: Ctx, cover_lines: Sequence[str], plan: CoverPlan, boxes: Map
 def _render_cover(ctx: Ctx, cues: Sequence[SrtCue], cover_lines: Sequence[str],
                   frame_t: float | None = None, *, blur: Sequence[Sequence[int]] | None = None,
                   keep: Sequence[Sequence[int]] | None = None, plan: CoverPlan | None = None,
-                  boxes: Mapping[str, list[list[int]]] | None = None, title: str = "", names: Sequence[str] = (),
+                  boxes: Mapping[str, list[list[int]] | None] | None = None, title: str = "", names: Sequence[str] = (),
                   frame_s: float | None = None, budget: RetryBudget | None = None) -> CoverRenderResult:
     """Make the free routes at once (cover_stages: screenshot, emote), score them on the measured face and choose the first
     eligible one whose 180 px thumbnail passes; only when none does, make ONE generated picture and choose among all of
@@ -855,7 +910,8 @@ def _render_cover(ctx: Ctx, cues: Sequence[SrtCue], cover_lines: Sequence[str],
     rd = ctx.remote_dir
     plan = plan or cover_plan(ctx, cover_lines, {}, names)
     plan = cast(CoverPlan, {**plan, "roster": cover_guests.roster(
-        ctx, names, boxes, cover_lines, recent_assets=(plan.get("rotation") or {}).get("guest_asset_history"))})
+        ctx, names, boxes, cover_lines, title=title,
+        recent_assets=(plan.get("rotation") or {}).get("guest_asset_history"))})
     cut_len = (clip["end_ms"] - clip["start_ms"]) / 1000
     moment = _cover_frame_time(cues, cover_lines, cut_len, clip_peaks(ctx, cut_len))
     t = frame_t if frame_t is not None else moment

@@ -53,7 +53,8 @@ class FrameDocument(TypedDict, total=False):
     question: str
     model: str | None
     chosen: float | None
-    boxes: dict[str, list[JsonValue]] | None
+    frame_size: list[int]
+    boxes: dict[str, list[JsonValue] | None] | None
     reused: bool
     calls: list[FrameCall]
     checked: list[FrameCall]

@@ -29,7 +29,7 @@ from pathlib import Path
 from .adapters import Adapters
 from .config import SessionBlock
 from .parallel import slot
-from .state import ClipState, CpaEvent
+from .state import ClipState, CpaEvent, is_recut_pending
 
 UPLOAD_STEP = 10
 
@@ -204,7 +204,8 @@ class _Schedule:
             if step.number == UPLOAD_STEP and not self.upload:
                 self.report.halted_before_upload = self.halted = True
                 return
-            if state.step(step.key).get("status") == "DONE" and _products_exist(state, step.key):
+            if (state.step(step.key).get("status") == "DONE" and _products_exist(state, step.key)
+                    and not (step.key == "cut" and is_recut_pending(state.data))):
                 self.events.append((self.round, i, "reused", step.number))
                 self.settled.add(i)
                 self.ended.add(i)

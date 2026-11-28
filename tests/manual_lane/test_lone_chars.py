@@ -56,7 +56,7 @@ def test_a_linked_clip_joins_its_lone_character_after_step_4_labels_the_lines(tm
     monkeypatch.setattr(sp, "_fmr", _fake_fmr)
     monkeypatch.setattr(sp, "description_text", lambda t, p=None: "简介")
     remote = _remote()
-    text = srt(40).replace("\n句子12\n", "\n对\n").encode()
+    text = srt(35).replace("\n句子12\n", "\n对\n").encode()   # the fake cut is 70 s long
     remote.files["/r/clip/asr/bcut.srt"] = text
     remote.files["/r/clip/asr/jianying.srt"] = text
     cpa = ScriptedCpa({"boundary": BOUNDARY, "title": [TITLE], "review": [_review(verdict="PASS")]})

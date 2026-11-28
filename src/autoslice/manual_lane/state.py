@@ -36,6 +36,26 @@ SCHEMA = "manual-lane-clip.v2"
 DEFAULT_BCUT_SOURCE_ZERO_MS = 0
 CLIP_RUN_LOCK_BUSY = "CLIP_RUN_LOCK_BUSY"
 CLIP_RUN_LOCK_STALE = "CLIP_RUN_LOCK_STALE"
+RECUT_PENDING = "recut_pending"
+RECUT_CLEANUP_FAILED = "RECUT_CLEANUP_FAILED"
+TRANSCRIPT_CUT_MISMATCH = "TRANSCRIPT_CUT_MISMATCH"
+
+
+class RecutPending(TypedDict):
+    cleaned: bool
+    products: NotRequired[list[str]]
+    rebuild: NotRequired[bool]
+
+
+def is_recut_pending(data: Mapping[str, object]) -> bool:
+    """True whenever `recut_pending` is set (whether boolean legacy or `{"cleaned": bool, ...}`)."""
+    return bool(data.get(RECUT_PENDING))
+
+
+def recut_cleanup_needed(data: Mapping[str, object]) -> bool:
+    """True when `recut_pending` is set and cleanup or source rebuild still needs to finish before cutting."""
+    marker = data.get(RECUT_PENDING)
+    return marker is True or (isinstance(marker, Mapping) and (not marker.get("cleaned") or bool(marker.get("rebuild"))))
 
 
 class ClipProposal(TypedDict):
@@ -171,6 +191,7 @@ class ClipData(TypedDict, total=False):
     reviewed_tags: ReviewedTags
     revisions: JsonValue
     manual_import: JsonValue
+    recut_pending: bool | RecutPending
 
 
 class StateError(RuntimeError):

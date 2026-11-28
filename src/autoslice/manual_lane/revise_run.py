@@ -231,6 +231,10 @@ def revise_clip(*, task: Path, cid: str, reason: str, adapters_for: AdaptersFor,
         if fresh_cover:      # the revision is about the cover: step 6 draws a new one (cover_import.published_cover)
             cast("dict[str, object]", state.data["revised_from"])["fresh_cover"] = True
             state.save()
+        if state_x.data["session"].get("guest_evidence") is not None:
+            from . import collab_guests
+
+            collab_guests.migrate_day_record(task, str(state_x.data["session"].get("recording_date") or ""))
         done = supersede_candidate(
             task_dir=task, cid=cid, by=successor, authority=f"修订（revise 命令）：{cid}", quote=reason,
             reason=f"已发布稿件的修订：{reason}；另建 {successor}，原片与它的成品包保持原样")

@@ -30,6 +30,32 @@ ROUTE_FAILURES = ("IMAGE_EDIT_", "HOST_FACE_NOT_FOUND", "HOST_FACE_NOT_IN_FRAME"
 # ... unless the failure under that prefix is the template's own (the cut-out reports its placement under
 # PEOPLE_LAYERS_UNAVAILABLE: a template that leaves her picture's bottom cut inside the canvas, cover_layout.place_solo)
 TEMPLATE_FAILURES = ("FIGURE_CUT_ENDS_ABOVE_FRAME_BOTTOM",)
+CLEAN_CROP_FAILURES = (
+    "COLLAB_CLEAN_CROP_TOO_SMALL",
+    "PANEL_FRAME_TOO_SMALL_FOR_PANEL",
+    "PANEL_HOST_FACE_OUTSIDE_FRAME_REACH",
+)
+TEMPLATE_SKIP_FAILURES = (
+    "COLLAB_LAYOUT_REQUIRES_TWO_GUESTS",
+    "COLLAB_LAYOUT_REQUIRES_SCREENSHOT",
+    "PORTRAIT_ONLY",
+    "GUESTS_DO_NOT_FIT:LINE_TOO_WIDE",
+    "GUESTS_DO_NOT_FIT:PUNCHLINE_TOO_WIDE",
+)
+
+
+def _is_clean_crop_only(route, run, exc, attempts, draw_failed):
+    """True only when every refused template failed due to the clean-crop constraint, never a render/text refusal."""
+    failure = str(exc)
+    if not (isinstance(exc, layouts.TemplateRefused) and route == "screenshot"
+            and getattr(run, "pack_frame_excluded", False) and not draw_failed
+            and "RENDER_REFUSED" not in failure and "PIXEL_AUDIT_FAILED" not in failure):
+        return False
+    if not attempts:
+        return any(code in failure for code in CLEAN_CROP_FAILURES)
+    saw_clean = any(any(code in f for code in CLEAN_CROP_FAILURES) for f in attempts)
+    all_geom_or_skip = all(any(code in f for code in (*CLEAN_CROP_FAILURES, *TEMPLATE_SKIP_FAILURES)) for f in attempts)
+    return saw_clean and all_geom_or_skip
 
 
 class RouteFailed(Exception):
@@ -57,6 +83,8 @@ def compose(run, route, make):
     none could be made (a renderer refusal in every template keeps status RENDER_FAILED: the caller shortens the words)."""
     taken = list(run.job.get("background_taken") or [])
     tried = []
+    attempts = []
+    draw_failed = [False]
 
     def attempt(template):
         run.column.template = template
@@ -70,12 +98,16 @@ def compose(run, route, make):
             item = run.specs.pop()
             row = run.draw(*item)
             if row.get("status") != "RENDERED":
-                raise layouts.TemplateRefused(row.get("failure") or "RENDER_FAILED")
+                draw_failed[0] = True
+                reason = row.get("failure") or "RENDER_FAILED"
+                attempts.append(reason)
+                raise layouts.TemplateRefused(reason)
             return {"punch": row["punch_font_size"], "row": row, "item": item,
                     "background_taken": list(run.job.get("background_taken") or [])}
         failure = run.failed.pop()["failure"] if len(run.failed) > n_failed else "NO_CANDIDATE"
         if failure.startswith(ROUTE_FAILURES) and not any(t in failure for t in TEMPLATE_FAILURES):
             raise RouteFailed(failure)
+        attempts.append(failure)
         raise layouts.TemplateRefused(failure)
 
     known = facts(run, route)
@@ -87,8 +119,13 @@ def compose(run, route, make):
     except (RouteFailed, layouts.TemplateRefused) as exc:
         run.column.template = None
         run.job["background_taken"] = taken
-        run.layouts[route] = {"failure": str(exc), "tried": tried}
-        run.fail(route, str(exc))
+        failure = str(exc)
+        if _is_clean_crop_only(route, run, exc, attempts, draw_failed[0]):
+            run.layouts[route] = {"failure": "PACK_FRAME_CONTAINS_OTHER_PERSON", "detail": failure, "tried": tried}
+            failure = "PACK_FRAME_CONTAINS_OTHER_PERSON"
+        else:
+            run.layouts[route] = {"failure": failure, "tried": tried}
+        run.fail(route, failure)
         if isinstance(exc, layouts.TemplateRefused) and "RENDER_REFUSED" in str(exc):
             run.failed[-1]["status"] = "RENDER_FAILED"
         return

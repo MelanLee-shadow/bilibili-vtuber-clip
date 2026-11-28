@@ -27,6 +27,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 
+from src.autoslice.channel_envelope import parse_talk_title
+
 from . import text_overlap
 from .layout import REPO_ROOT, layout
 
@@ -127,6 +129,23 @@ def portrait_options(person: Mapping[str, object], root: str) -> list[dict[str, 
     return options
 
 
+def host_layer(name: str, recent: Sequence[str] = ()) -> GuestLayer | None:
+    """The host's own verified pack picture (if listed in `person_assets.v1.json`) for clean fallback panels."""
+    manifest = load_manifest()
+    if not manifest:
+        return None
+    people = {str(p["name"]): p for p in cast("list[Mapping[str, object]]", manifest.get("people") or [])}
+    person = people.get(name)
+    if not person:
+        return None
+    layer = cover_layer(person, media_root(cast("Mapping[str, object]", manifest)), recent)
+    if isinstance(layer, str):
+        return None
+    layer["portrait_options"] = portrait_options(person, media_root(cast("Mapping[str, object]", manifest)))
+    layer["recent_asset_ids"] = list(recent)
+    return layer
+
+
 def _named(line: str, names: Sequence[str]) -> str | None:
     """The speaker a cover line names itself (「名字：原话」, 70-cover), when that name is a participant."""
     written = line.replace(":", "：")
@@ -167,10 +186,13 @@ def clip_guests(track: Sequence[Mapping[str, object]], known: Mapping[int, str],
     return [g for g in guests if g in there]
 
 
-def roster(ctx: Ctx, names: Sequence[str], boxes: Mapping[str, list[list[int]]] | None,
-           cover_lines: Sequence[str], *, recent_assets: Mapping[str, Sequence[str]] | None = None) -> CoverRoster:
+def roster(ctx: Ctx, names: Sequence[str], boxes: Mapping[str, list[list[int]] | None] | None,
+           cover_lines: Sequence[str], *, title: str = "",
+           recent_assets: Mapping[str, Sequence[str]] | None = None) -> CoverRoster:
     """This clip's cover roster (see the module doc).  `names`: the session's participants, host first; `boxes`: the
-    frame reading (its `guest` boxes are the other streamers the host's own frame shows)."""
+    frame reading (its `guest` boxes are the other streamers the host's own frame shows); `title`: the clip's title,
+    whose prefix names the people of this clip: a guest of the session it does not name is not put on the cover unless
+    a cover line is hers (a clip of the host alone, titled as hers, drew two colleagues who were not in it)."""
     from . import subtitle_track
     from .guest_identity import saved_lines
     from .speaker_v8 import HOST as HOST_LABEL
@@ -179,6 +201,8 @@ def roster(ctx: Ctx, names: Sequence[str], boxes: Mapping[str, list[list[int]]] 
     known = saved_lines(ctx)
     speakers = line_speakers(track, known, cover_lines, names, host_label=HOST_LABEL)
     guests = clip_guests(track, known, names, speakers, host_label=HOST_LABEL)
+    if (envelope := parse_talk_title(title)) is not None:
+        guests = [g for g in guests if g in envelope.partners or g in speakers]
     in_frame = len((boxes or {}).get("guest") or [])
     mentioned = named_not_present(ctx, [str(cue["text"]) for cue in track], names)
     out: CoverRoster = {"present": list(names[1:]), "mentioned": mentioned, "needed_on_cover": guests, "source": "none",
@@ -188,9 +212,10 @@ def roster(ctx: Ctx, names: Sequence[str], boxes: Mapping[str, list[list[int]]] 
     if not guests:
         out["line"] += "联动嘉宾：这条片里没有嘉宾说话，封面字也没引嘉宾的话，封面不加嘉宾" if len(names) > 1 else ""
         return out
-    if in_frame >= len(names) - 1:
-        # her own frame shows every other streamer of the session: they are taken from the frame (who is which box is
-        # not known; the judge reads who is on the picture)
+    if in_frame >= len(names) - 1 and len(guests) == len(names) - 1:
+        # her own frame shows every other streamer of the session and the cover needs them all: they are taken from the
+        # frame (who is which box is not known; the judge reads who is on the picture).  A cover that needs only some
+        # of them cannot take them from a frame that shows all
         out["source"] = "frame"
         out["required"] = guests
         out["line"] += f"联动嘉宾：源画面里有 {in_frame} 位别的主播，嘉宾取自源画面"

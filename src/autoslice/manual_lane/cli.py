@@ -216,27 +216,36 @@ def _run_with_trim(args: argparse.Namespace, task: Path, ctx: Ctx, progress: Pro
 
 def _refresh_guests(args: argparse.Namespace, task: Path, cid: str) -> None:
     """For a clip whose session was named from the day's record of who is in the call (collab_guests): what its
-    products show is put into that record, and when the record holds people the session lacks, the clip is redone from
-    the speaker step with them (redo.redo_clip, with its refusals: an uploaded clip, a package that went online), so
-    its speakers, title, cover and tags are made for the people who were there.  A refused clip is said and left as it
-    is: what is online is the owner's to change."""
+    products show is put into that record, and when the record disagrees with the session (gained confirmed guests or
+    dropped unconfirmed candidates), the clip is redone from the speaker step with the updated list (redo.redo_clip,
+    with its refusals: an uploaded clip, a package that went online), so its speakers, title, cover and tags are made
+    for the confirmed people.  A refused clip is said and left as it is: what is online is the owner's to change."""
     from . import collab_guests
+    from .config import participant_names
     from .redo import redo_clip
 
-    missing = collab_guests.behind(_ctx(task, cid, on_media_host=args.on_media_host))      # adds this clip's evidence to the day's record
-    if not missing:
+    ctx0 = _ctx(task, cid, on_media_host=args.on_media_host)
+    before = set(participant_names(ctx0.session))
+    changed = collab_guests.behind(ctx0)      # adds this clip's evidence and recomputes the day's record
+    if not changed:
         return
-    names = "、".join(missing)
+    added = [g for g in changed if g not in before]
+    removed = [g for g in changed if g in before]
+    if added and not removed:
+        what, how = f"后来补进了 {'、'.join(added)}", "补人之前的名单"
+    else:
+        parts = ([f"补进了 {'、'.join(added)}"] if added else []) + ([f"移出了未证实候选 {'、'.join(removed)}"] if removed else [])
+        what, how = "、".join(parts), "更正之前的名单"
     try:
         redo_clip(task=task, cid=cid, start="speaker", adapters_for=_adapters_for(args.on_media_host))
     except StateError as exc:
-        say(f"[{cid}] 当天连线名单后来补进了 {names}，本片是按之前的名单做的；没有重做：{exc}")
+        say(f"[{cid}] 当天连线名单{what}，本片是按{how}做的；没有重做：{exc}")
         return
     ctx = _ctx(task, cid, on_media_host=args.on_media_host)
     collab_guests.catch_up(ctx)
     with (ctx.clip_dir / "PROCESS.md").open("a", encoding="utf-8") as fh:
-        fh.write(f"- 重做原因：{collab_guests.process_line(ctx, missing)}；本片此前按补人之前的名单做过，从说话人一步起按现在的名单重做\n")
-    say(f"[{cid}] 当天连线名单补进了 {names}：已从说话人一步起重做")
+        fh.write(f"- 重做原因：{collab_guests.process_line(ctx, changed)}；本片此前按{how}做过，从说话人一步起按现在的名单重做\n")
+    say(f"[{cid}] 当天连线名单{what}：已从说话人一步起重做")
 
 
 def _run_clip_cid(args: argparse.Namespace, task: Path, cid: str, progress: Progress | None) -> int:
