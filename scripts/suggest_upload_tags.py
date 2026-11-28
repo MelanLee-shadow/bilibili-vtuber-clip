@@ -66,7 +66,7 @@ CONTENT_PROMPT = _UPLOAD_TAG_POLICY.content_prompt_template
 
 # Keep the normal tag consumer on the current CPA policy lane.  The adapter
 # rejects dated GPT-5 routes before credentials/network use; this is an
-# explicit GPT-6.1 Sol request so ordinary production calls exercise the same
+# explicit GPT-6.2 Sol request so ordinary production calls exercise the same
 # current provider policy as the other semantic packaging stages.
 CPA_COMMAND = f"bash {ROOT}/scripts/llm_via_cpa.sh {{prompt_file}} {{completion_file}} '{TOP_CPA_MODEL}' medium"
 

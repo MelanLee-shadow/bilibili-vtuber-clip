@@ -410,3 +410,17 @@ def test_a_kept_published_title_is_judged_again_by_the_writing_judge_alone(tmp_p
     assert out.ok, out.note
     assert sorted(c for c in ctx.adapters.cpa.calls if "title-judge" in c) == ["current-title-judge-q1", "current-title-judge-q2"]
     assert json.loads((ctx.clip_dir / title_acceptance.RECEIPT).read_text(encoding="utf-8"))["by"] == "online"
+
+
+def test_a_kept_published_title_the_current_skill_fails_stays_with_the_objection(tmp_path, monkeypatch):
+    """60-title: a revision changes its title only by the owner's word, so a skill change does not send it back to step 6
+    (which would only keep it again): the receipt becomes online_kept with the writing judge's reasons."""
+    ctx = _clip(tmp_path, FINAL, None)
+    _judged_by_older_skill(ctx, by="online")
+    ctx.adapters.cpa.quality = [quality_fail("流水账")]
+    out, _rec = _title_refused(ctx, monkeypatch)
+    assert out.ok, out.note
+    receipt = json.loads((ctx.clip_dir / title_acceptance.RECEIPT).read_text(encoding="utf-8"))
+    assert receipt["by"] == "online_kept" and any("流水账" in why for why in receipt["objections"])
+    assert title_acceptance.objections(ctx.clip_dir) == receipt["objections"]
+    assert any("照样沿用、不换题" in line for line in out.process)

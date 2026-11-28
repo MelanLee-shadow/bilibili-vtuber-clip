@@ -14,7 +14,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
-from . import content_compare, doubt_policy
+from . import content_compare, doubt_policy, mishearing
 from .lane_rules import rules
 
 if TYPE_CHECKING:
@@ -77,7 +77,7 @@ def lexicon_hits(cue_text: str, pairs: Sequence[LexiconSurface]) -> list[str]:
     hits = []
     for pair in pairs:
         misheard = str(pair.get("misheard") or "")
-        if len(misheard) >= 2 and misheard in cue_text:
+        if len(misheard) >= 2 and mishearing.surface_matches(pair, cue_text):
             hits.append(misheard)
     return sorted(set(hits))
 

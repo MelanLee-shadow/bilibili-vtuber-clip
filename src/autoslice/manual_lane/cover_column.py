@@ -1,21 +1,16 @@
-"""Step 6 cover: which text layout a cover takes, and the rows of a column.
+"""Step 6 cover: the rows of a column of cover words.
 
-Owner every cover had one line top left and one line bottom right; the layout should change from cover to
-cover (the words all in a column on the left, or all on the right).  The skill renderer has the layouts; the lane used
-one.  Here the lane takes turns: a cover takes the first layout of lane_rules `cover.text_layouts` that the last
-`text_layout_recent_covers` covers did not use.  A column needs the words broken into short rows at word boundaries:
-the cover brief (one model call, which reads the lines anyway) proposes the rows, and `rows_of` keeps them only when
-they are the cover lines, letter for letter, within the row lengths the column has room for.  Whether the column then
-fits beside the person is the media-host tool's to measure (cover_layout.Column); what does not fit stays on top.
+The column templates of the channel's composition table (cover_layout_templates.json, cover_layout_rotation; owner
+the words all in a column on the left, or all on the right) need the cover lines broken into short rows at
+word boundaries: the cover brief (one model call, which reads the lines anyway) proposes the rows, and `rows_of` keeps
+them only when they are the cover lines, letter for letter, within the row lengths the column has room for.  Whether a
+column then fits beside the person is the media-host tool's to find out (cover_candidates.Run.compose).
 """
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from typing import Any
 from . import text_overlap
-
-TOP = "top"
-COLUMNS = ("left", "right")
 
 
 def rows_of(lines: Sequence[str], answer: object, rules: Mapping[str, Any]) -> list[dict[str, Any]] | None:
@@ -38,26 +33,3 @@ def rows_of(lines: Sequence[str], answer: object, rules: Mapping[str, Any]) -> l
         if text_overlap.letters("".join(part)) != text_overlap.letters(text) or any(len(row) > most for row in part):
             return None
     return rows
-
-
-def next_layout(recent: Sequence[str | None], rules: Mapping[str, Any], session: Sequence[str | None] = ()
-                ) -> tuple[str, str]:
-    """(layout, why) for the next cover: the first of `text_layouts` that neither the recent covers nor the covers of
-    this recording day (`session`) used.  When the day has used them all, a column the day used once comes round again
-    (a screenshot then stands beside it without the colour panel: its second look, cover_side), the one used longest
-    ago first.  Without a day's covers to go by: the first the recent covers did not use, else the one used longest
-    ago.  Owner the covers of one stream all looked the same."""
-    order = [str(x) for x in rules["text_layouts"]]
-    used = [x for x in recent if x in order][-int(rules["text_layout_recent_covers"]):]
-    today = [x for x in session if x in order]
-    fresh = [x for x in order if x not in used and x not in today]
-    again = [x for x in order if x in COLUMNS and today.count(x) == 1] if set(order) <= set(today) else []
-    if fresh:
-        pick = fresh[0]
-    elif again:
-        pick = min(again, key=lambda x: max(i for i, u in enumerate(today) if u == x))
-    else:
-        rest = [x for x in order if x not in used]
-        pick = rest[0] if rest else min(order, key=lambda x: max(i for i, u in enumerate(used) if u == x))
-    return pick, (f"最近 {len(used)} 张用过 {'、'.join(used) or '无'}" + (f"，本场用过 {'、'.join(today)}" if today else "")
-                  + f"，这张轮到 {pick}")

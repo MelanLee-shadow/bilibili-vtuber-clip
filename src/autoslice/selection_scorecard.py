@@ -8,11 +8,12 @@ recall time and by the unattended runner when it allocates delivery slots.
 
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 from typing import Mapping
 
-from src.autoslice.channel_profile import load_channel_profile
+from src.autoslice.channel_profile import ChannelProfile, load_channel_profile
 
 
 # schema 按 profile 派生（默认 profile 渲染与历史字面量逐字相同）；定义见 _CHANNEL_PROFILE 加载后。
@@ -47,14 +48,39 @@ CANDIDATE_QUALITY_SCHEMA = "candidate-selection-quality.v1"
 QUALITY_WATCHABILITY_VALUES = frozenset({"STRONG", "ORDINARY", "THIN"})
 QUALITY_DIFFERENTIATION_VALUES = frozenset({"DISTINCTIVE", "ORDINARY", "THIN"})
 QUALITY_DISPOSITION_VALUES = frozenset({"PRODUCTION", "RESERVE", "HOLD"})
-# Historical v1 cards have no policy field; v2/v3 retain their original rules
+# Historical v1 cards have no policy field; v2/v3/v4 retain their original rules
 # because card bytes and Tier facts may be receipt-bound.
 LEGACY_ADMISSION_POLICY = "selection-scorecard-admission.v2"
 PREVIOUS_ADMISSION_POLICY = "selection-scorecard-admission.v3"
-CURRENT_ADMISSION_POLICY = "selection-scorecard-admission.v4"
+CUTE_ADMISSION_POLICY = "selection-scorecard-admission.v4"
+# v5 : Tier 1 no longer asks self_contained >= 3, for a channel whose
+# selection has its own pass/fail gate of whether a viewer of the circle who missed
+# the stream can follow a clip (its draws asset names stories: manual_lane/core_draws.gate
+# `understood`).  A channel without that gate keeps v4: the threshold inside the
+# Tier is then its only readability gate.
+FOLLOW_GATED_ADMISSION_POLICY = "selection-scorecard-admission.v5"
+# the policies that share v3's common quality gate, and those where a cute moment
+# reaches Tier 1 by itself (v4 on)
+_QUALITY_GATED_POLICIES = frozenset({PREVIOUS_ADMISSION_POLICY, CUTE_ADMISSION_POLICY, FOLLOW_GATED_ADMISSION_POLICY})
+_CUTE_POLICIES = frozenset({CUTE_ADMISSION_POLICY, FOLLOW_GATED_ADMISSION_POLICY})
+_KNOWN_POLICIES = frozenset({LEGACY_ADMISSION_POLICY}) | _QUALITY_GATED_POLICIES
 _CHANNEL_PROFILE = load_channel_profile(
     Path(__file__).resolve().parents[2]
 )
+
+
+def channel_has_follow_gate(profile: ChannelProfile) -> bool:
+    """Whether the channel's selection judges, pass or fail, whether a viewer of the circle can follow a clip: its draws
+    asset (assets/<profile>/core_draws.json, read by manual_lane/core_draws) names stories."""
+    path = profile.asset_root / "core_draws.json"
+    return path.exists() and "stories" in json.loads(path.read_text(encoding="utf-8"))
+
+
+# the policy of a new card of this channel; with it, whether Tier 1 asks self_contained >= 3
+CURRENT_ADMISSION_POLICY = (
+    FOLLOW_GATED_ADMISSION_POLICY if channel_has_follow_gate(_CHANNEL_PROFILE) else CUTE_ADMISSION_POLICY
+)
+SELF_CONTAINED_IN_TIER_ONE = CURRENT_ADMISSION_POLICY != FOLLOW_GATED_ADMISSION_POLICY
 SCHEMA_VERSION = f"{_CHANNEL_PROFILE.profile_id}-selection-scorecard.v1"
 
 
@@ -75,7 +101,7 @@ def _performance_tier_one_admitted(
 ) -> bool:
     """Check performance admission without changing receipt-bound old policies."""
 
-    if admission_policy == CURRENT_ADMISSION_POLICY:
+    if admission_policy in _CUTE_POLICIES:
         return len(evidence_cues) >= 1
     admitted = (
         dimensions["relationship_interaction"] >= 3
@@ -106,12 +132,12 @@ def _v3_quality_gate(quality: Mapping[str, object] | None) -> bool:
     )
 
 
-def _v3_common_dimensions_gate(dimensions: Mapping[str, int]) -> bool:
-    """Return whether the v3 common content dimensions are substantive."""
+def _v3_common_dimensions_gate(dimensions: Mapping[str, int], admission_policy: str | None) -> bool:
+    """Return whether the common content dimensions are substantive (v3, v4: also self-contained; v5: not)."""
 
     return (
         dimensions["audience_salience"] >= 2
-        and dimensions["self_contained"] >= 3
+        and (admission_policy == FOLLOW_GATED_ADMISSION_POLICY or dimensions["self_contained"] >= 3)
         and dimensions["comedic_payoff"] >= 3
     )
 
@@ -220,7 +246,7 @@ def _normalize_selection_scorecard(
     tier_basis = str(raw.get("tier_basis") or "").strip()
     if tier_basis not in TIER_BASES:
         return None
-    if tier_basis == "cute_performance" and admission_policy != CURRENT_ADMISSION_POLICY:
+    if tier_basis == "cute_performance" and admission_policy not in _CUTE_POLICIES:
         return None
     quality: dict[str, object] | None = None
     if CANDIDATE_QUALITY_FIELD in raw:
@@ -241,7 +267,7 @@ def _normalize_selection_scorecard(
         )
         performance_admitted = (
             (tier_basis == "audience_driven_performance" or (
-                tier_basis == "cute_performance" and admission_policy == CURRENT_ADMISSION_POLICY
+                tier_basis == "cute_performance" and admission_policy in _CUTE_POLICIES
             ))
             and _performance_tier_one_admitted(
                 dimensions,
@@ -255,8 +281,8 @@ def _normalize_selection_scorecard(
             and (dimensions["lidousha_centrality"] >= 3 or dimensions["stance_intensity"] >= 3)
             and len(evidence_cues) >= 1
         )
-        if admission_policy in {PREVIOUS_ADMISSION_POLICY, CURRENT_ADMISSION_POLICY}:
-            admitted = _v3_common_dimensions_gate(dimensions) and v3_quality_admitted and (
+        if admission_policy in _QUALITY_GATED_POLICIES:
+            admitted = _v3_common_dimensions_gate(dimensions, admission_policy) and v3_quality_admitted and (
                 relationship_admitted
                 or performance_admitted
                 or v3_personal_or_event_admitted
@@ -268,9 +294,9 @@ def _normalize_selection_scorecard(
         if not admitted:
             tier = 2
             reason_codes.append("TIER1_ADMISSION_DOWNGRADED")
-            if admission_policy in {PREVIOUS_ADMISSION_POLICY, CURRENT_ADMISSION_POLICY} and not v3_quality_admitted:
+            if admission_policy in _QUALITY_GATED_POLICIES and not v3_quality_admitted:
                 reason_codes.append("TIER1_COMMON_QUALITY_GATE_FAILED")
-            if admission_policy in {PREVIOUS_ADMISSION_POLICY, CURRENT_ADMISSION_POLICY} and not _v3_common_dimensions_gate(dimensions):
+            if admission_policy in _QUALITY_GATED_POLICIES and not _v3_common_dimensions_gate(dimensions, admission_policy):
                 reason_codes.append("TIER1_COMMON_DIMENSION_GATE_FAILED")
 
     # A clip whose hook/payoff cannot stand on its own is the metric's Tier 3,
@@ -303,7 +329,7 @@ def _normalize_selection_scorecard(
     }
     if quality is not None:
         normalized[CANDIDATE_QUALITY_FIELD] = quality
-    if admission_policy in {PREVIOUS_ADMISSION_POLICY, CURRENT_ADMISSION_POLICY}:
+    if admission_policy in _QUALITY_GATED_POLICIES:
         normalized[ADMISSION_POLICY_FIELD] = admission_policy
     return normalized
 
@@ -314,7 +340,7 @@ def normalize_selection_scorecard(
     start_cue: int,
     end_cue: int,
 ) -> dict[str, object] | None:
-    """Normalize a new v4 card; validate historical cards under their own policy."""
+    """Normalize a new card under the channel's current policy; validate historical cards under their own."""
 
     if not isinstance(raw, Mapping):
         return None
@@ -386,7 +412,7 @@ def selection_scorecard_production_admission(raw: object) -> dict[str, object]:
     """Return the candidate-scoped production disposition.
 
     Historical cards have no ``admission_policy`` and retain their original
-    admission fact.  v2/v3 cards retain their original quality gate.  New
+    admission fact.  v2/v3/v4 cards retain their original quality gate.  New
     cards use the current rubric before a normal semantic candidate can take
     a fresh production seat.
     This gate never changes Tier or either seven-dimension score.
@@ -399,7 +425,7 @@ def selection_scorecard_production_admission(raw: object) -> dict[str, object]:
         }
     assert isinstance(raw, Mapping)
     policy = raw.get(ADMISSION_POLICY_FIELD)
-    if policy not in {LEGACY_ADMISSION_POLICY, PREVIOUS_ADMISSION_POLICY, CURRENT_ADMISSION_POLICY}:
+    if policy not in _KNOWN_POLICIES:
         return {
             "status": "ADMIT",
             "reason_code": "HISTORICAL_SCORECARD_COMPATIBILITY",
@@ -461,11 +487,7 @@ def selection_scorecard_is_valid(raw: object) -> bool:
         return False
     admission_policy: str | None
     if ADMISSION_POLICY_FIELD in raw:
-        if raw.get(ADMISSION_POLICY_FIELD) not in {
-            LEGACY_ADMISSION_POLICY,
-            PREVIOUS_ADMISSION_POLICY,
-            CURRENT_ADMISSION_POLICY,
-        }:
+        if raw.get(ADMISSION_POLICY_FIELD) not in _KNOWN_POLICIES:
             return False
         admission_policy = str(raw[ADMISSION_POLICY_FIELD])
     else:

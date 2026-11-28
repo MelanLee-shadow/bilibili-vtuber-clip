@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 if TYPE_CHECKING:
     from src.autoslice.cpa_gemini_client import JsonValue
 
+    from .cover_guests import CoverRoster
     from .cover_thumb import ThumbVerdict
     from .state import CpaEvent
 
@@ -20,6 +21,10 @@ class FrameCall(TypedDict, total=False):
     model: str | None
     elapsed_s: float | None
     usage: JsonValue
+    repeat: str | None      # why this frame repeats a cover of this stream (pick_frame.repeat_of), None when it does not
+    fallback_from: str
+    fallback_reason: str
+    fallback_note: str
 
 
 class FrameAction(TypedDict, total=False):
@@ -28,15 +33,32 @@ class FrameAction(TypedDict, total=False):
     why: str
 
 
+class BaseFrame(TypedDict, total=False):
+    """The live frame a cover is made on, as the next covers of the stream avoid it (step6_cover.base_avoid)."""
+    cid: str
+    source: str | None          # the recording it is cut from
+    t_source: float | None      # its time on that recording's clock (None: a cut pieced together has none)
+    dhash: str | None           # her face's 16x16 dHash in it (pick_frame.face_hash); None when her face was not read
+
+
+class BaseAvoid(TypedDict):
+    source: str | None          # this clip's recording
+    offset_s: float | None      # the cut's start on that recording's clock (None: a cut pieced together)
+    covers: list[BaseFrame]     # the base frames of this stream's covers so far
+
+
 class FrameDocument(TypedDict, total=False):
     action: FrameAction
     times: list[float]
     question: str
+    model: str | None
     chosen: float | None
     boxes: dict[str, list[JsonValue]] | None
     reused: bool
     calls: list[FrameCall]
     checked: list[FrameCall]
+    avoid: BaseAvoid
+    base: dict[str, JsonValue]  # the chosen frame: t, face, dhash (repeat_forced when every frame repeated a cover)
 
 
 class CoverBrief(TypedDict, total=False):
@@ -64,8 +86,11 @@ class CoverRotation(TypedDict, total=False):
     recent_background_ids: list[str]
     session_background_ids: list[str]
     previous_host_side: str | None
-    recent_layouts: list[str | None]
+    template_history: list[str | None]           # the composition template of every earlier cover, oldest first
+    template_session_history: list[str | None]   # the same for this stream's covers
+    route_run: str | None                        # the route the last covers all used (cover_repeats)
     session_compositions: list[list[str]]
+    guest_asset_history: dict[str, list[str]]
 
 
 class CoverEmote(TypedDict, total=False):
@@ -81,6 +106,7 @@ class CoverRender(TypedDict, total=False):
     host_side: str | None
     colors: list[str] | None
     composition: str | None
+    template_id: str | None
 
 
 class CoverPeople(TypedDict, total=False):
@@ -126,6 +152,8 @@ class CoverCandidate(TypedDict, total=False):
     guest_face_measured: JsonValue
     guest_faces_measured: JsonValue
     expected_guest_count: int
+    guests_on_cover: list[dict[str, JsonValue]]       # the pack's guests the tool put on this candidate (cover_pack_guests.py)
+    guest_assets_dropped: list[dict[str, str]]        # pack pictures the media host could not use: name, why, code, src
     face_method: JsonValue
     final_path: str
     score: CoverScore
@@ -136,6 +164,7 @@ class CoverCandidate(TypedDict, total=False):
     face_frac: float | None
     punch_ink_h: int | None
     background: dict[str, JsonValue] | None    # the pastel background chosen for this candidate and why (cover_background.py)
+    pixel_audit: dict[str, JsonValue] | None     # local glyph/mask/background replay; not portable-package acceptance
     punch_floor_px: int
     punch_below_floor: bool
     text_plan: dict[str, JsonValue] | None
@@ -143,7 +172,10 @@ class CoverCandidate(TypedDict, total=False):
     render_s: float
     phases_s: dict[str, float]      # where this route's seconds went inside the tool (cover_clock.py)
     thumb: ThumbVerdict | None
-    repeat: bool
+    repeat: str | None              # why it repeats the covers before it (step6_cover.cover_repeats), or None
+    look_repeat: bool               # it looks like a cover this stream already has (step6_cover.cover_looks_repeated)
+    cover_layout: dict[str, JsonValue] | None   # the media-host tool's template selection (cover_layout_rotation.select)
+    cover_layout_note: str | None
     on_action: bool             # a screenshot at the host's signature move (step6_cover.on_action)
 
 
@@ -159,6 +191,9 @@ class CoverCandidateCall(TypedDict, total=False):
     status: str | None
     usage: JsonValue
     reason_code: str | None
+    fallback_from: str
+    fallback_reason: str
+    fallback_note: str
 
 
 class CoverCandidateResult(TypedDict, total=False):
@@ -186,6 +221,8 @@ class CoverChoice(TypedDict):
     background_id: str | None
     punch_font_size: int | None
     composition_key: list[str]
+    template_id: str | None                  # the composition template (cover_layout_rotation)
+    cover_layout: dict[str, JsonValue] | None   # the selection: the template taken, the ones passed over and why
 
 
 class CoverRoute(TypedDict):
@@ -196,6 +233,8 @@ class CoverRoute(TypedDict):
     chosen: CoverChoice
     peers: CoverPeers | None
     host_side_reason: str
+    guests: dict[str, object]                         # cover_guests' four sets, who is missing, the pack pictures on the cover
+    base_frame: NotRequired[BaseFrame]               # the live frame the cover is made on (the stream's next covers avoid it)
     image_generation_used: bool
     image_gen_model: str
     reported_model: str | None
@@ -230,6 +269,9 @@ class RecentCover(TypedDict):
     layout: str | None
     composition_key: list[str] | None
     background_id: str | None
+    template_id: str | None
+    base_frame: BaseFrame | None
+    guest_assets: dict[str, str]
 
 
 class CoverAction(TypedDict):
@@ -246,8 +288,9 @@ class CoverPlan(TypedDict, total=False):
     brief: CoverBrief
     rotation: CoverRotation
     peers: CoverPeers
-    text_layout: str            # the text layout this cover takes its turn at (cover_column.next_layout)
     action_frame: CoverAction | None   # the cover frame is the host's signature move (step6_cover.chosen_action)
+    roster: CoverRoster         # the guests this clip's cover must show and where their pictures come from (cover_guests.roster)
+    wordy: bool                 # three or more people and words that could not be written short (cover_layout_rotation.punch_floor)
 
 
 @dataclass

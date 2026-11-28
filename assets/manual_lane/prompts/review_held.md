@@ -12,7 +12,7 @@
 - 既有封面图判读只是提供的历史记录，本次文字请求并未独立看图；没有音视频时不能声称新听或核验切点。
 
 只输出一个 JSON 对象：
-{"fixes": {"subtitles": [{"cue_id": 序号, "text": "改后的整条字幕文字", "reason": "为什么这样改，依据是什么"}], "speakers": [{"cue_id": 序号, "speaker": "{host} 或 {guest}", "evidence": "自称 或 只能出自一方", "quote": "本句中的逐字证据"}]}, "doubt_decisions": [{"id": "指定的稳定 id", "confidence": "高 或 低", "affects_meaning": true 或 false, "reason": "剩余不确定性及可核对依据"}], "notes": [], "review_md": "仅对指定疑点的处置和依据"}
+{"fixes": {"subtitles": [{"cue_id": 序号, "text": "改后的整条字幕文字", "reason": "为什么这样改，依据是什么"}], "speakers": [{"cue_id": 序号, "speaker": "{host}、嘉宾的名字或 {guest}", "evidence": "自称 或 只能出自一方", "quote": "本句中的逐字证据"}]}, "doubt_decisions": [{"id": "指定的稳定 id", "confidence": "高 或 低", "affects_meaning": true 或 false, "reason": "剩余不确定性及可核对依据"}], "notes": [], "review_md": "仅对指定疑点的处置和依据"}
 
 没有必要修改的项写空数组。材料：
 {materials}

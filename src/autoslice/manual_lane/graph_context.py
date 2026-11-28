@@ -15,7 +15,7 @@ from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, NotRequired, TypedDict
 from urllib.parse import urlparse
 
 from src.autoslice import name_initials
@@ -24,6 +24,7 @@ from src.autoslice.knowledge_graph import EDGES_FILE, NODES_FILE, Edge, Graph, N
 from src.autoslice.combined_knowledge_graph import load_layers
 from src.autoslice.crawl_window import CrawlWindow
 
+from . import text_overlap
 from .lane_rules import rules
 from .layout import REPO_ROOT, layout
 
@@ -39,11 +40,14 @@ KIND = {"person": "人物", "group": "团体", "project": "企划", "event": "�
 RELATION = {"member_of": "隶属于", "founded": "创立了", "participates_in": "参与了", "fan_name_of": "是粉丝名，属于",
             "character_of": "是角色，出自", "related_to": "相关于"}
 STATUS_TEXT = {COMBINED: "仓库图加运行时候选", REPO_ONLY: "只用仓库图", NONE: "没有用图"}
+CLUES_PER_ENTITY = 4             # candidate edge clues kept per entity, separate from accepted neighbours_per_entity
+CLUES_PER_CLIP = 10              # candidate clue lines kept per clip, separate from accepted lines_per_clip
 
 
 class GraphRecord(TypedDict):
     status: str                      # combined, repo_only or none
-    reason: str                      # why the graph is not whole ("" when combined)
+    reason: str                      # why the graph is not whole or which lower-layer ids were shadowed ("" when clean)
+    shadowed: NotRequired[list[str]] # lower-layer node/edge ids shadowed by a higher-authority layer
     mentioned: list[dict[str, str]]  # graph nodes with a spelling in the subtitles: id, status
     in_prompt: list[dict[str, str]]  # the nodes the prompt lines are about: id, status
     lines: dict[str, int]            # verified / clues: lines in the prompt
@@ -67,6 +71,7 @@ class GraphContext:
     graph: Graph | None = None
     mentioned: tuple[Node, ...] = ()
     lines: tuple[Line, ...] = ()
+    shadowed: tuple[str, ...] = ()
 
     def block(self) -> str:
         parts = ((VERIFIED_HEAD, [x.text for x in self.lines if x.verified]),
@@ -74,23 +79,23 @@ class GraphContext:
         return "\n\n".join("\n".join([head, *(f"- {r}" for r in rows)]) for head, rows in parts if rows)
 
     def covers(self, term: str) -> bool:
-        """The graph knows this reference and its background is in the prompt."""
-        shown = {i for line in self.lines for i in line.ids}
-        return self.graph is not None and any(n.id in shown for n in self.graph.find(term.strip()) if n.status != "retired")
+        """The graph knows this reference via accepted material and its accepted background is in the prompt."""
+        shown = {i for line in self.lines if line.verified for i in line.ids}
+        return self.graph is not None and any(n.id in shown for n in self.graph.find(term.strip()) if n.status == "accepted")
 
     def same_initials(self, term: str) -> list[str]:
-        """The graph's people, characters and groups one of whose spellings has the term's pinyin first letters
+        """The graph's accepted people, characters and groups one of whose spellings has the term's pinyin first letters
         (name_initials: a circle nickname is often made from the letters of the name): leads for the lookup."""
         if self.graph is None:
             return []
         return name_initials.same_letters(term, ((n.names["display"], n.surfaces()) for n in self.graph.nodes.values()
-                                                 if n.status != "retired" and n.kind in ("person", "character", "group")))
+                                                 if n.status == "accepted" and n.kind in ("person", "character", "group")))
 
     def record(self, skipped: Sequence[str] = ()) -> GraphRecord:
         shown = sorted({i for line in self.lines for i in line.ids})
         graph = self.graph
         return GraphRecord(
-            status=self.status, reason=self.reason, skipped_search=list(skipped),
+            status=self.status, reason=self.reason, shadowed=list(self.shadowed), skipped_search=list(skipped),
             mentioned=[{"id": n.id, "status": n.status} for n in self.mentioned],
             in_prompt=[{"id": i, "status": graph.nodes[i].status} for i in shown] if graph else [],
             lines={"verified": sum(x.verified for x in self.lines), "clues": sum(not x.verified for x in self.lines)})
@@ -98,6 +103,14 @@ class GraphContext:
 
 def _why(what: str, exc: Exception) -> str:
     return f"{what}：{type(exc).__name__}: {str(exc)[:200]}"
+
+
+def _shadow_detail(ids: Sequence[str]) -> str:
+    if not ids:
+        return ""
+    shown = "、".join(ids[:10])
+    tail = f" 等 {len(ids)} 项" if len(ids) > 10 else ""
+    return f"低层同名由高层覆盖：{shown}{tail}"
 
 
 SHARED_ROOT = REPO_ROOT / "assets" / "manual_lane"   # circle-wide terms every channel reads (U430: 嗦面 is the genre's word)
@@ -112,23 +125,30 @@ def load(ctx: Ctx) -> GraphContext:
         repo = load_layers([SHARED_ROOT, repo_root])
     except Exception as exc:  # noqa: BLE001 - the step is never blocked by the graph
         return GraphContext(NONE, _why("仓库图读不到", exc))
+    repo_shadow = _shadow_detail(repo.shadowed)
     with tempfile.TemporaryDirectory(prefix="graph-context-") as tmp:
         try:
             for rel in (NODES_FILE, EDGES_FILE):
                 ctx.adapters.remote.get(f"{layout().news_graph_root}/{rel}", Path(tmp) / rel)
         except Exception as exc:  # noqa: BLE001 - no runtime directory, or the host cannot be reached
-            return GraphContext(REPO_ONLY, _why("运行时候选图读不到", exc), repo)
+            detail = _why("运行时候选图读不到", exc)
+            return GraphContext(REPO_ONLY, f"{detail}；{repo_shadow}" if repo_shadow else detail,
+                                repo, shadowed=repo.shadowed)
         try:
-            return GraphContext(COMBINED, "", load_layers([SHARED_ROOT, repo_root, Path(tmp)]))
+            combined = load_layers([SHARED_ROOT, repo_root, Path(tmp)])
         except Exception as exc:  # noqa: BLE001 - candidate files that do not parse or do not fit the repository graph
-            return GraphContext(REPO_ONLY, _why("运行时候选图损坏", exc), repo)
+            detail = _why("运行时候选图损坏", exc)
+            return GraphContext(REPO_ONLY, f"{detail}；{repo_shadow}" if repo_shadow else detail,
+                                repo, shadowed=repo.shadowed)
+        return GraphContext(COMBINED, _shadow_detail(combined.shadowed), combined, shadowed=combined.shadowed)
 
 
 def _spelled(surface: str, text: str, least: int, common: set[str]) -> bool:
     """detection's exclusions: a Latin spelling needs `latin_min_letters` letters, is no common word and matches as a
-    whole word in any case; a spelling in other scripts needs two characters."""
+    whole word in any case; a spelling in other scripts needs two characters and is not the seam of another word said
+    twice (text_overlap.stands: 「晚安晚安」 does not name 安晚)."""
     if not surface.isascii():
-        return len(surface) >= 2 and surface in text
+        return len(surface) >= 2 and text_overlap.stands(surface, text)
     if sum(ch.isalpha() for ch in surface) < least or surface.lower() in common:
         return False
     return re.search(rf"(?<![A-Za-z0-9]){re.escape(surface)}(?![A-Za-z0-9])", text, re.ASCII | re.IGNORECASE) is not None
@@ -181,11 +201,14 @@ def _placed(valid: dict[str, str | None] | None, around: CrawlWindow | None) -> 
 
 
 def _edge_line(graph: Graph, edge: Edge, hub: Node, other: Node, conn: int, on: dt.date | None = None) -> Line:
-    verified = edge.status == hub.status == other.status == "accepted"
+    verified = edge.status == hub.status == other.status == "accepted" and edge.type != "alias_of"
     window = edge.valid or other.valid or {}
     source, target, nearby = (graph.name(i, "display") for i in (edge.from_id, edge.to_id, other.id))
-    text = (f"{source}{RELATION[edge.type]}{target}；{nearby}（{KIND[other.kind]}）"
-            + (f"：{other.summary}" if other.summary else "") + _when(window, on))
+    if edge.type == "alias_of":
+        text = f"{source}可能是{target}的别名（未核实）" + _when(window, on)
+    else:
+        text = (f"{source}{RELATION[edge.type]}{target}；{nearby}（{KIND[other.kind]}）"
+                + (f"：{other.summary}" if other.summary else "") + _when(window, on))
     if not verified:
         text += _clue([*edge.sources, *(s for n in (hub, other) if n.status != "accepted" for s in n.sources)])
     stamps = [s.at or "" for s in (*edge.sources, *other.sources)] + [v or "" for v in window.values()]
@@ -193,32 +216,56 @@ def _edge_line(graph: Graph, edge: Edge, hub: Node, other: Node, conn: int, on: 
 
 
 def background(graph: Graph, nodes: Sequence[Node], on: dt.date | None = None) -> GraphContext:
-    """One-hop background of the named entities (nodes linked by alias_of are one entity), as ranked, capped lines.
-    With the clip's day `on`, what lies outside nine months back / six ahead of it is left out and what is over by
-    then is said to be over."""
+    """One-hop background of the named entities (nodes linked by accepted alias_of are one entity), as ranked, capped
+    lines.  Accepted lines are selected first under `neighbours_per_entity`/`lines_per_clip` exactly as on the
+    repository graph alone; candidate clue lines follow under `CLUES_PER_ENTITY`/`CLUES_PER_CLIP` and never displace
+    accepted lines or change `covers`.  With the clip's day `on`, items outside nine months back / six ahead are left
+    out and ended items are marked over."""
     cfg = rules("graph_context")
     around = CrawlWindow.around(on) if on is not None else None
     nodes = [n for n in nodes if _placed(n.valid, around)]
     kinds, per_entity, cap = cfg["neighbour_kinds"], cfg["neighbours_per_entity"], cfg["lines_per_clip"]
     group_of = {i: tuple(g) for g in graph.alias_groups() for i in g}
-    entities = sorted({group_of[n.id] for n in nodes})
-    found = []
-    for group in entities:
-        rows = {e.id: (e, hub, o) for hub in (graph.nodes[i] for i in group)
-                for e, o in graph.neighbors(hub.id, status=("accepted", "candidate"))
-                if e.type != "alias_of" and o.kind in kinds and o.id not in group
-                and _placed(e.valid, around) and _placed(o.valid, around)}
-        found.append([rows[k] for k in sorted(rows)])
-    conn = Counter(i for rows in found for i in {o.id for _, _, o in rows})
-    lines: list[Line] = []
-    for group, rows in zip(entities, found, strict=True):
+
+    accepted_entities = sorted({group_of[n.id] for n in nodes if n.status == "accepted"})
+    accepted_found: list[list[tuple[Edge, Node, Node]]] = []
+    for group in accepted_entities:
+        by_edge = {e.id: (e, hub, o) for hub in (graph.nodes[i] for i in group)
+                   for e, o in graph.neighbors(hub.id, status=("accepted",))
+                   if e.type != "alias_of" and o.kind in kinds and o.id not in group
+                   and _placed(e.valid, around) and _placed(o.valid, around)}
+        accepted_found.append([by_edge[k] for k in sorted(by_edge)])
+    accepted_conn = Counter(i for found in accepted_found for i in {o.id for _, _, o in found})
+    accepted_raw: list[Line] = []
+    for group, links in zip(accepted_entities, accepted_found, strict=True):
         for hub in (graph.nodes[i] for i in group):
-            if hub.summary and hub.status != "retired":
+            if hub.summary and hub.status == "accepted":
                 text = f"{graph.name(hub.id, 'display')}（{KIND[hub.kind]}）：{hub.summary}{_when(hub.valid, on)}"
-                lines.append(Line(hub.status == "accepted", True, 1, max(s.at or "" for s in hub.sources),
-                                  text if hub.status == "accepted" else text + _clue(hub.sources), group))
-        lines.extend(_ranked([_edge_line(graph, e, hub, o, conn[o.id], on) for e, hub, o in rows])[:per_entity])
-    return GraphContext(COMBINED, "", graph, tuple(nodes), tuple(_ranked(lines)[:cap]))
+                accepted_raw.append(Line(True, True, 1, max(s.at or "" for s in hub.sources), text, group))
+        accepted_raw.extend(_ranked([_edge_line(graph, e, hub, o, accepted_conn[o.id], on)
+                                     for e, hub, o in links])[:per_entity])
+    accepted_lines = _ranked(accepted_raw)[:cap]
+
+    all_entities = sorted({group_of[n.id] for n in nodes})
+    clue_found: list[list[tuple[Edge, Node, Node]]] = []
+    for group in all_entities:
+        by_edge = {e.id: (e, hub, o) for hub in (graph.nodes[i] for i in group)
+                   for e, o in graph.neighbors(hub.id, status=("accepted", "candidate"))
+                   if (e.type == "alias_of" or o.kind in kinds) and o.id not in group
+                   and not (e.status == hub.status == o.status == "accepted" and e.type != "alias_of")
+                   and _placed(e.valid, around) and _placed(o.valid, around)}
+        clue_found.append([by_edge[k] for k in sorted(by_edge)])
+    clue_conn = Counter(i for found in clue_found for i in {o.id for _, _, o in found})
+    clue_raw: list[Line] = []
+    for group, links in zip(all_entities, clue_found, strict=True):
+        for hub in (graph.nodes[i] for i in group):
+            if hub.summary and hub.status == "candidate":
+                text = f"{graph.name(hub.id, 'display')}（{KIND[hub.kind]}）：{hub.summary}{_when(hub.valid, on)}"
+                clue_raw.append(Line(False, True, 1, max(s.at or "" for s in hub.sources), text + _clue(hub.sources), group))
+        clue_raw.extend(_ranked([_edge_line(graph, e, hub, o, clue_conn[o.id], on)
+                                 for e, hub, o in links])[:CLUES_PER_ENTITY])
+    clue_lines = _ranked(clue_raw)[:CLUES_PER_CLIP]
+    return GraphContext(COMBINED, "", graph, tuple(nodes), tuple([*accepted_lines, *clue_lines]))
 
 
 def clip_day(ctx: Ctx) -> dt.date | None:

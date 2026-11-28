@@ -14,7 +14,7 @@ import pytest
 
 from src.autoslice import bilibili_member_api
 from src.autoslice import publication_registry
-from src.autoslice.lane_publish import audit, authority, bili, first, manifest, metadata, registry, repair
+from src.autoslice.lane_publish import audit, authority, bili, cover_rotation, first, manifest, metadata, registry, repair
 from src.autoslice.publication_registry import load_publication_registry
 from src.autoslice.lane_publish.cli import main
 from src.autoslice.lane_publish.common import LOCK_BUSY
@@ -35,6 +35,8 @@ class FakeBili:
         self.runs, self.appends, self.edits, self.seasons = [], [], [], []
         self.next_cid = 1000
         self.hide_new_parts = 0        # how many archive views a freshly appended part stays unlisted
+        self.stored_type: int | None = None   # the declared type Bilibili stores whatever was submitted (None: as submitted)
+        self.public_without: tuple[str, ...] = ()    # fields the public page does not give
 
     def _cid(self) -> int:
         self.next_cid += 1
@@ -52,8 +54,11 @@ class FakeBili:
         flags = dict(zip(argv[5::2], argv[6::2]))
         bvid = f"BV1test{len(self.runs):05d}"
         cid = self._cid()
-        self.archives[bvid] = {"aid": 7000 + len(self.runs), "bvid": bvid, "title": flags["--title"], "desc": "https://live.bilibili.com/\n" + flags["--desc"],   # Bilibili puts the source ahead
-                               "tag": flags["--tag"], "cover": "https://upload/first.png", "copyright": 2, "tid": 27,
+        kind, source = self.stored_type or int(flags["--copyright"]), flags.get("--source", "")
+        self.archives[bvid] = {"aid": 7000 + len(self.runs), "bvid": bvid, "title": flags["--title"],
+                               "desc": (source + "\n" if source else "") + flags["--desc"],   # Bilibili puts a repost's source ahead
+                               "tag": flags["--tag"], "cover": "https://upload/first.png", "copyright": kind, "source": source,
+                               "no_reprint": int(kind == 1), "tid": int(flags["--tid"]),
                                "videos": [{"cid": cid, "filename": "n1", "title": flags["--title"]}]}
         self._publish(bvid)
         Path(log).write_text(f'ResponseData {{ data: {{ "bvid": String("{bvid}") }} }}\n', encoding="utf-8")
@@ -63,7 +68,10 @@ class FakeBili:
         a = self.archives[bvid]
         self.public[bvid] = {"aid": a["aid"], "bvid": bvid, "cid": a["videos"][0]["cid"], "title": a["title"], "desc": a["desc"],
                              "pic": a["cover"].replace("https://upload/", "http://i0.hdslb.com/bfs/archive/"),
+                             "copyright": a["copyright"], "rights": {"no_reprint": a.get("no_reprint", 0)},
                              "pages": [{"cid": v["cid"], "part": v["title"]} for v in a["videos"]]}
+        for field in self.public_without:
+            self.public[bvid].pop(field)
 
     # the creator-centre session
     def __call__(self, _config):
@@ -129,8 +137,11 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+REPOST_SOURCE = "https://live.bilibili.com/"     # the source of the archives published as reposts (before)
+
+
 def package(root: Path, *, video: bytes = b"video-1", cover: bytes = PNG, title: str = TITLE, extra: dict | None = None,
-            name: str = "fm-20261114-clip-a") -> Path:
+            name: str = "fm-20261114-clip-a", description: str = "简介第一行\n第二行\n") -> Path:
     """A package as step 9 seals it: the files, review_manifest.json binding them, the finished-media review receipt."""
     pkg = root / name
     pkg.mkdir(parents=True)
@@ -146,14 +157,14 @@ def package(root: Path, *, video: bytes = b"video-1", cover: bytes = PNG, title:
         (pkg / file).write_bytes(data)
         item[key], item[f"{key}_sha256"] = file, _sha(pkg / file)
     (pkg / f"{name}.title.txt").write_text(title + "\n", encoding="utf-8")
-    (pkg / f"{name}.description.txt").write_text("https://live.bilibili.com/\n简介第一行\n第二行\n", encoding="utf-8")
+    (pkg / f"{name}.description.txt").write_text(description, encoding="utf-8")
     (pkg / "review_manifest.json").write_text(json.dumps({"schema_version": "finished-media-review-package.v1",
                                                           "candidate_id": name, "date": "2026-11-14", "items": [item]}))
     return pkg
 
 
-def _first(host, tmp_path, capsys, title: str = TITLE) -> tuple[Path, dict]:
-    pkg = package(tmp_path / "pkg1", title=title)
+def _first(host, tmp_path, capsys, title: str = TITLE, **package_fields) -> tuple[Path, dict]:
+    pkg = package(tmp_path / "pkg1", title=title, **package_fields)
     name, out = pkg.name, tmp_path / "upload1"
     out.mkdir()
     assert main(["audit", str(pkg), "--json"]) == 0
@@ -182,9 +193,164 @@ def test_a_first_publication_is_one_bv_in_the_collection_with_a_receipt_the_lane
     chain = receipt_chain.resolve(rows[0]["publication_reconciliation"]["authority"])
     assert chain.first_receipt == first.receipt_path(tmp_path / "upload1/authorized-upload-manifest.json")
     assert receipt_chain.used_packages(chain)[0]["package_root"] == str(pkg)
-    assert receipt_chain.first_manifest_meta(chain.first_receipt) == (("虚拟主播", "切片"), "https://live.bilibili.com/\n简介第一行\n第二行")
-    # the source line Bilibili puts ahead is not sent too: the page shows it once (11-15 to 11-18 it showed twice)
-    assert host.archives[receipt["bvid"]]["desc"] == "https://live.bilibili.com/\n简介第一行\n第二行"
+    assert receipt_chain.first_manifest_meta(chain.first_receipt) == (("虚拟主播", "切片"), "简介第一行\n第二行")
+    # posted without a declared type: copyright 3, no source given, and the description has no source line
+    sent, online = host.runs[0], host.archives[receipt["bvid"]]
+    assert sent[sent.index("--copyright") + 1] == "3" and "--source" not in sent
+    assert (online["copyright"], online["source"], online["desc"]) == (3, "", "简介第一行\n第二行")
+    assert (receipt["public"]["copyright"], receipt["public"]["no_reprint"]) == (3, 0)
+    man = json.loads((tmp_path / "upload1/authorized-upload-manifest.json").read_text())
+    assert man["publish_policy"] == {"tid": 27, "copyright": 3, "source": ""}
+
+
+def test_a_package_written_for_a_repost_is_submitted_without_its_source_line(host, tmp_path, capsys):
+    """A package sealed before carries the source line a reposted archive shows first; posted now, without a
+    declared type, that line is not part of the description (sent along 11-15 to 11-18, it showed twice)."""
+    _pkg, receipt = _first(host, tmp_path, capsys, description=REPOST_SOURCE + "\n简介第一行\n第二行\n")
+    assert host.archives[receipt["bvid"]]["desc"] == "简介第一行\n第二行"
+
+
+@pytest.mark.parametrize("stored,without,shown", [
+    (1, (), "copyright=1"),                    # Bilibili took 3 as 自制: the archive now claims to be our own work
+    (2, (), "copyright=2"),
+    (None, ("copyright",), "copyright=None"),  # the page gives no type: not known is not right
+    (None, ("rights",), "no_reprint=None"),
+])
+def test_a_bv_online_with_another_declared_type_than_the_rule_is_not_registered_and_stops_new_bvs(host, tmp_path, capsys,
+                                                                                                  stored, without, shown):
+    host.stored_type, host.public_without = stored, without
+    pkg = package(tmp_path / "pkg1")
+    out = tmp_path / "upload1"
+    out.mkdir()
+    (out / "a.json").write_text(json.dumps(audit.audit(pkg)))
+    man = out / "m.json"
+    manifest.make(video=pkg / f"{pkg.name}.mp4", cover=pkg / f"{pkg.name}.cover.png", package_audit=out / "a.json", title=TITLE,
+                  tags="虚拟主播,切片", final_human_review=None, authorized_by="x", quote="y", out=man)
+    assert main(["upload", "--manifest", str(man)]) == 5
+    err = capsys.readouterr().err
+    assert "与清单不符" in err and shown in err and "没有登记" in err
+    bvid = next(iter(host.archives))
+    assert not first.receipt_path(man).exists() and registry.rows_for(registry.load()["entries"], bvid=bvid) == []
+    assert host.seasons == []                                      # nothing more was done to the archive
+    row = [r for r in registry.ledger_rows() if r["event"] == first.TYPE_MISMATCH][-1]
+    assert row["bvid"] == bvid and row["public"]["copyright"] == (None if "copyright" in without else stored or 3)
+    # the same manifest again reads the same BV again (never a second post) and still does not register it
+    assert main(["upload", "--manifest", str(man)]) == 5 and len(host.runs) == 1
+    capsys.readouterr()
+    # no other new BV while that one has not been looked at
+    host.stored_type, host.public_without = None, ()
+    other = package(tmp_path / "pkg2", name="fm-20261114-clip-b")
+    (out / "b.json").write_text(json.dumps(audit.audit(other)))
+    man2 = out / "m2.json"
+    manifest.make(video=other / f"{other.name}.mp4", cover=other / f"{other.name}.cover.png", package_audit=out / "b.json",
+                  title=TITLE, tags="虚拟主播,切片", final_human_review=None, authorized_by="x", quote="y", out=man2)
+    assert main(["upload", "--manifest", str(man2)]) == 3 and len(host.runs) == 1
+    assert bvid in capsys.readouterr().err
+    registry.ledger_add(first.TYPE_CLEARED, bvid=bvid, note="looked at")
+    assert main(["upload", "--manifest", str(man2)]) == 0 and len(host.runs) == 2
+
+
+def _repost_rule(monkeypatch) -> None:
+    """lane_rules upload.publish as it was before a repost of the live room."""
+    import dataclasses
+
+    from src.autoslice.lane_publish.common import Publish
+
+    before = dataclasses.replace(Publish.load(), copyright=2, source=REPOST_SOURCE)
+    monkeypatch.setattr(Publish, "load", classmethod(lambda _cls: before))
+
+
+def _made(host, tmp_path, name: str = "fm-20261114-clip-a") -> Path:
+    pkg = package(tmp_path / f"pkg-{name}", name=name)
+    out = tmp_path / f"upload-{name}"
+    out.mkdir()
+    (out / "a.json").write_text(json.dumps(audit.audit(pkg)))
+    man = out / "m.json"
+    manifest.make(video=pkg / f"{pkg.name}.mp4", cover=pkg / f"{pkg.name}.cover.png", package_audit=out / "a.json", title=TITLE,
+                  tags="虚拟主播,切片", final_human_review=None, authorized_by="x", quote="y", out=man)
+    return man
+
+
+def test_a_bv_sent_as_a_repost_before_the_rule_changed_is_checked_for_what_it_was_sent_as(host, tmp_path, capsys, monkeypatch):
+    """A BV posted under the repost rule and still in review when the rule became 3: the run after the change reads it back
+    against its manifest (2 and the live room), registers it, and new BVs are not stopped."""
+    import itertools
+
+    with monkeypatch.context() as before:
+        _repost_rule(before)
+        man = _made(host, tmp_path)
+        assert json.loads(man.read_text())["publish_policy"] == {"tid": 27, "copyright": 2, "source": REPOST_SOURCE}
+        post = host.run
+
+        def in_review(argv, **kw):
+            rc = post(argv, **kw)
+            host.public.pop(next(reversed(host.archives)))
+            return rc
+
+        before.setattr(bili, "RUN", in_review)
+        before.setattr(first, "CLOCK", itertools.count(0, 10_000).__next__)
+        assert main(["upload", "--manifest", str(man)]) == 7
+    bvid = next(iter(host.archives))
+    assert host.archives[bvid]["copyright"] == 2
+    sent = host.runs[0]
+    assert sent[sent.index("--copyright") + 1] == "2" and sent[sent.index("--source") + 1] == REPOST_SOURCE
+    host._publish(bvid)                                         # the review is over; the rule is now 3
+    assert main(["upload", "--manifest", str(man)]) == 0 and len(host.runs) == 1
+    receipt = json.loads(first.receipt_path(man).read_text())
+    assert (receipt["bvid"], receipt["public"]["copyright"]) == (bvid, 2)
+    assert [r for r in registry.ledger_rows() if r["event"] == first.TYPE_MISMATCH] == []
+    capsys.readouterr()
+    assert main(["upload", "--manifest", str(_made(host, tmp_path, "fm-20261114-clip-b"))]) == 0 and len(host.runs) == 2
+
+
+def test_a_manifest_made_under_the_repost_rule_and_not_sent_is_refused_before_anything_is_sent(host, tmp_path, capsys,
+                                                                                                 monkeypatch):
+    with monkeypatch.context() as before:
+        _repost_rule(before)
+        man = _made(host, tmp_path)
+    assert main(["upload", "--manifest", str(man)]) == 3
+    assert first.STALE_POLICY in capsys.readouterr().err
+    assert host.runs == [] and [r for r in registry.ledger_rows() if r.get("manifest_sha256") == _sha(man)] == []
+    # made again under the rule as it is: posted as 3, and the dispatch row says what was sent
+    again = _made(host, tmp_path, "fm-20261114-clip-b")
+    assert main(["upload", "--manifest", str(again)]) == 0
+    sent = host.runs[0]
+    assert sent[sent.index("--copyright") + 1] == "3" and "--source" not in sent
+    row = [r for r in registry.ledger_rows() if r["event"] == "dispatched"][-1]
+    assert row["publish_policy"] == {"tid": 27, "copyright": 3, "source": ""}
+
+
+def test_a_manifest_without_a_policy_a_new_bv_can_have_is_refused(host, tmp_path, capsys):
+    man = _made(host, tmp_path)
+    doc = json.loads(man.read_text())
+    for policy in (None, {"tid": 27, "copyright": 1, "source": ""}, {"tid": 27, "copyright": 3, "source": REPOST_SOURCE}):
+        doc["publish_policy"] = policy
+        man.write_text(json.dumps(doc, ensure_ascii=False))
+        assert main(["upload", "--manifest", str(man)]) == 2 and "publish_policy" in capsys.readouterr().err
+    assert host.runs == []
+
+
+def test_the_rule_posts_no_declared_type_and_never_a_claim_of_own_work(monkeypatch):
+    from src.autoslice.lane_publish.common import Publish, Refused
+    from src.autoslice.manual_lane import lane_rules
+
+    policy = Publish.load()
+    assert (policy.tid, policy.copyright, policy.source) == (27, 3, "")
+    waits = {"public_wait_s": 1, "public_poll_s": 1, "new_part_wait_s": 1}
+    for kind, source in ((1, ""), (3, REPOST_SOURCE), (2, "")):
+        monkeypatch.setattr(lane_rules, "rules", lambda _section, kind=kind, source=source: {
+            "publish": {"tid": 27, "copyright": kind, "source": source, **waits}})
+        with pytest.raises(Refused):
+            Publish.load()
+
+
+def test_a_repair_keeps_the_source_line_of_an_archive_published_as_a_repost():
+    repost = {"copyright": 2, "source": REPOST_SOURCE}
+    assert repair.stored_description("甲\n乙", repost) == REPOST_SOURCE + "\n甲\n乙"
+    assert repair.stored_description(REPOST_SOURCE + "\n甲\n乙", repost) == REPOST_SOURCE + "\n甲\n乙"    # a package sealed before
+    undeclared = {"copyright": 3, "source": ""}
+    assert repair.stored_description("甲\n乙", undeclared) == "甲\n乙"
+    assert repair.stored_description(REPOST_SOURCE + "\n甲\n乙", undeclared) == "甲\n乙"
 
 
 def test_the_channels_repair_authority_builder_takes_this_tools_receipt(host, tmp_path, capsys):
@@ -218,6 +384,187 @@ def test_upload_again_or_after_a_stop_never_posts_a_second_bv(host, tmp_path, ca
     assert json.loads(first.receipt_path(man).read_text())["bvid"] == receipt["bvid"]
 
 
+def test_pack_cover_is_checked_against_the_last_actual_lane_publication(host, tmp_path, capsys, monkeypatch):
+    # Only this test's runtime rows, not the channel's pre-existing published history.
+    monkeypatch.setattr(registry, "load", lambda root=None: json.loads(registry.path().read_text())
+                        if registry.path().is_file() else {"entries": []})
+
+    def make_clip(name, template):
+        clip = tmp_path / "task" / "clips" / name
+        pkg = package(clip / "fmr", name=f"fm-20261114-{name}", video=name.encode())
+        (clip / "title").mkdir(parents=True)
+        (clip / "cover").mkdir()
+        (clip / "cover" / "cover.png").write_bytes((pkg / f"{pkg.name}.cover.png").read_bytes())
+        cand_dir = clip / "cover" / "cand"
+        cand_dir.mkdir()
+        (cand_dir / "screenshot.png").write_bytes((clip / "cover" / "cover.png").read_bytes())
+        choice = cand_dir / "choose.json"
+        choice.write_text(json.dumps({"chosen": "screenshot", "rows": [{"id": "screenshot",
+                                      "cover_layout": {"template_id": template}}]}), encoding="utf-8")
+        candidate = clip / "title" / "candidates.json"
+        candidate.write_text(json.dumps({"cover_route": {"method": "skill.candidates", "guests": {"source": "pack"},
+                              "chosen": {"id": "screenshot", "template_id": template}}}), encoding="utf-8")
+        out = clip / "upload"
+        out.mkdir()
+        (out / "audit.json").write_text(json.dumps(audit.audit(pkg)))
+        man = out / "authorized-upload-manifest.json"
+        manifest.make(video=pkg / f"{pkg.name}.mp4", cover=pkg / f"{pkg.name}.cover.png",
+                      package_audit=out / "audit.json", title=TITLE, tags="虚拟主播,切片", final_human_review=None,
+                      authorized_by="x", quote="y", out=man)
+        return man, candidate, choice, pkg
+
+    first_man, first_candidate, _, _ = make_clip("clip-a", "panels-top")
+    assert main(["upload", "--manifest", str(first_man)]) == 0
+    original = first_candidate.read_text()
+    first_candidate.write_text("{}")
+    first.receipt_path(first_man).unlink()
+    registry.path().write_text(json.dumps({"schema_version": registry.SCHEMA, "entries": []}))
+    assert main(["upload", "--manifest", str(first_man)]) == 0 and len(host.runs) == 1
+    first_candidate.write_text(original)
+    second_man, candidate, choice, pkg = make_clip("clip-b", "panels-diagonal")
+    first_candidate.write_text(original + " ")
+    assert main(["upload", "--manifest", str(second_man)]) == 3 and len(host.runs) == 1
+    assert "sha256 不符" in capsys.readouterr().err
+    first_candidate.write_text(original)
+    assert main(["upload", "--manifest", str(second_man)]) == 3
+    assert "都是 collab-split" in capsys.readouterr().err and len(host.runs) == 1
+    data = json.loads(candidate.read_text())
+    data["cover_route"]["chosen"]["template_id"] = "collab-dialogue"
+    candidate.write_text(json.dumps(data), encoding="utf-8")
+    assert main(["upload", "--manifest", str(second_man)]) == 3 and len(host.runs) == 1
+    selected = json.loads(choice.read_text())
+    selected["rows"][0]["cover_layout"]["template_id"] = "collab-dialogue"
+    choice.write_text(json.dumps(selected), encoding="utf-8")
+    manifest.make(video=pkg / f"{pkg.name}.mp4", cover=pkg / f"{pkg.name}.cover.png",
+                  package_audit=second_man.parent / "audit.json", title=TITLE, tags="虚拟主播,切片", final_human_review=None,
+                  authorized_by="x", quote="y", out=second_man)
+    assert main(["upload", "--manifest", str(second_man)]) == 0 and len(host.runs) == 2
+
+
+def test_pack_cover_allows_frozen_forced_adjacent_repeat_but_refuses_unforced_and_tampered(host, tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(registry, "load", lambda root=None: json.loads(registry.path().read_text())
+                        if registry.path().is_file() else {"entries": []})
+    tick = iter(range(1, 30))
+
+    def fixed_now():
+        return f"2026-11-28T01:00:{next(tick):02d}Z"
+
+    monkeypatch.setattr(registry, "now", fixed_now)
+    monkeypatch.setattr(first, "now", fixed_now)
+
+    def make_clip(name, template, *, fallback=None, record_layout=None):
+        clip = tmp_path / "task" / "clips" / name
+        pkg = package(clip / "fmr", name=f"fm-20261114-{name}", video=name.encode())
+        (clip / "title").mkdir(parents=True)
+        (clip / "cover").mkdir()
+        (clip / "cover" / "cover.png").write_bytes((pkg / f"{pkg.name}.cover.png").read_bytes())
+        cand_dir = clip / "cover" / "cand"
+        cand_dir.mkdir()
+        (cand_dir / "screenshot.png").write_bytes((clip / "cover" / "cover.png").read_bytes())
+        choice = cand_dir / "choose.json"
+        choice.write_text(json.dumps({"chosen": "screenshot", "rows": [{"id": "screenshot",
+                                      "cover_layout": {"template_id": template, "fallback": fallback}}]}), encoding="utf-8")
+        chosen = {"id": "screenshot", "template_id": template}
+        if record_layout is not None:
+            chosen["cover_layout"] = record_layout
+        candidate = clip / "title" / "candidates.json"
+        candidate.write_text(json.dumps({"cover_route": {"method": "skill.candidates", "guests": {"source": "pack"},
+                                                         "chosen": chosen}}), encoding="utf-8")
+        out = clip / "upload"
+        out.mkdir()
+        (out / "audit.json").write_text(json.dumps(audit.audit(pkg)))
+        man = out / "authorized-upload-manifest.json"
+        manifest.make(video=pkg / f"{pkg.name}.mp4", cover=pkg / f"{pkg.name}.cover.png",
+                      package_audit=out / "audit.json", title=TITLE, tags="虚拟主播,切片", final_human_review=None,
+                      authorized_by="x", quote="y", out=man)
+        return man, choice
+
+    first_man, _ = make_clip("clip-1", "panels-top", fallback=None)
+    assert main(["upload", "--manifest", str(first_man)]) == 0 and len(host.runs) == 1
+
+    # Unforced and non-adjacent fallbacks of the same family as the last published cover are still refused.
+    for tag, fb in (("unforced", None), ("recent", "recent_repeat_forced"), ("below", "punch_below_floor")):
+        bad_man, bad_choice = make_clip(f"clip-2-{tag}", "panels-bottom", fallback=fb)
+        assert main(["upload", "--manifest", str(bad_man)]) == 3 and len(host.runs) == 1
+        assert "都是 collab-split" in capsys.readouterr().err
+        if tag == "unforced":
+            # Tampering choose.json after freezing without re-freezing must fail hash verification.
+            tampered = json.loads(bad_choice.read_text(encoding="utf-8"))
+            tampered["rows"][0]["cover_layout"]["fallback"] = "adjacent_repeat_forced"
+            bad_choice.write_text(json.dumps(tampered), encoding="utf-8")
+            assert main(["upload", "--manifest", str(bad_man)]) == 3 and len(host.runs) == 1
+            assert "sha256 不符" in capsys.readouterr().err
+
+    # Mismatch between candidates.json cover_layout and choose.json cover_layout is refused at freeze/check.
+    from src.autoslice.lane_publish.common import Refused
+    with pytest.raises(Refused, match="回退记录不一致"):
+        make_clip("clip-2-mismatch", "panels-bottom", fallback="adjacent_repeat_forced",
+                  record_layout={"template_id": "panels-bottom", "fallback": None})
+
+    # Properly frozen forced adjacent repeat passes (both pure and +punch_below_floor).
+    forced_man, _ = make_clip("clip-2-forced", "panels-bottom", fallback="adjacent_repeat_forced")
+    assert main(["upload", "--manifest", str(forced_man)]) == 0 and len(host.runs) == 2
+
+    forced_below_man, _ = make_clip(
+        "clip-3-forced-below", "panels-diagonal", fallback="adjacent_repeat_forced+punch_below_floor",
+        record_layout={"template_id": "panels-diagonal", "fallback": "adjacent_repeat_forced+punch_below_floor"},
+    )
+    assert main(["upload", "--manifest", str(forced_below_man)]) == 0 and len(host.runs) == 3
+
+    # An unforced same-family successor after a forced cover is still refused.
+    unforced_after, _ = make_clip("clip-4-unforced-after-forced", "panels-top", fallback=None)
+    assert main(["upload", "--manifest", str(unforced_after)]) == 3 and len(host.runs) == 3
+    assert "都是 collab-split" in capsys.readouterr().err
+
+    # Pending-upload checks stay strict even for forced-repeat manifests.
+    with pytest.raises(Refused, match="实际先后尚未确定"):
+        cover_rotation.check(forced_man, json.loads(forced_man.read_text(encoding="utf-8")),
+                             [{"event": "posted", "manifest_sha256": "other"}], [])
+
+
+def test_pack_cover_refuses_an_unresolved_prior_dispatch_and_a_changed_cover(tmp_path):
+    clip = tmp_path / "task" / "clips" / "current"
+    (clip / "title").mkdir(parents=True)
+    (clip / "cover").mkdir()
+    (clip / "upload").mkdir()
+    (clip / "cover" / "cover.png").write_bytes(PNG)
+    (clip / "cover" / "cand").mkdir()
+    (clip / "cover" / "cand" / "screenshot.png").write_bytes(PNG)
+    (clip / "cover" / "cand" / "choose.json").write_text(json.dumps({"chosen": "screenshot", "rows": [
+        {"id": "screenshot", "cover_layout": {"template_id": "collab-pair"}}]}))
+    (clip / "title" / "candidates.json").write_text(json.dumps({"cover_route": {
+        "method": "skill.candidates", "guests": {"source": "pack"},
+        "chosen": {"id": "screenshot", "template_id": "collab-pair"}}}))
+    man = clip / "upload" / "manifest.json"
+    man.write_text("{}")
+    doc = {"cover": {"sha256": _sha(clip / "cover" / "cover.png")}}
+    doc["cover_rotation"] = cover_rotation.freeze(man, doc)
+    from src.autoslice.lane_publish.common import Refused
+
+    with pytest.raises(Refused, match="实际先后尚未确定"):
+        cover_rotation.check(man, doc, [{"event": "posted", "manifest_sha256": "other"}], [])
+    prior = [{"event": "published", "manifest_sha256": "previous", "bvid": "BV1prior", "at": "2026-11-24T17:00:00Z"}]
+    elsewhere = [{"status": "published", "bvid": "BV1other", "publication_reconciliation": {
+        "status": "VERIFIED_PUBLIC", "reconciled_at": "2026-11-24T12:00:00-05:00"}}]
+    with pytest.raises(Refused, match="另一个投稿入口"):
+        cover_rotation.check(man, doc, prior, elsewhere)
+    (clip / "cover" / "cover.png").write_bytes(b"different")
+    with pytest.raises(Refused, match="文件变了"):
+        cover_rotation.check(man, doc, [], [])
+
+
+def test_lane_first_publication_uses_the_legacy_upload_lock_too(host):
+    import fcntl
+
+    from src.autoslice.lane_publish.common import Refused
+
+    with (host.base / "upload.lock").open("a") as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(Refused, match=LOCK_BUSY):
+            with registry.first_upload_locked():
+                pytest.fail("the first-publication gate entered while the older uploader held the lock")
+
+
 def test_a_dispatch_without_a_bv_quota_and_a_held_lock_are_refused_with_step_10s_codes(host, tmp_path, capsys, monkeypatch):
     pkg = package(tmp_path / "p")
     out = tmp_path / "u"
@@ -225,7 +572,7 @@ def test_a_dispatch_without_a_bv_quota_and_a_held_lock_are_refused_with_step_10s
     (out / "a.json").write_text(json.dumps(audit.audit(pkg)))
     man = out / "m.json"
     manifest.make(video=pkg / f"{pkg.name}.mp4", cover=pkg / f"{pkg.name}.cover.png", package_audit=out / "a.json", title=TITLE,
-                  tags="a,b", final_human_review=None, authorized_by="x", quote="y", out=man)
+                  tags="虚拟主播,切片", final_human_review=None, authorized_by="x", quote="y", out=man)
 
     def quota(argv, *, cwd, log, timeout):
         Path(log).write_text("code: 21566 投稿过于频繁")
@@ -266,7 +613,7 @@ def test_a_package_with_an_unresolved_subtitle_doubt_is_not_sent(host, tmp_path,
     out.mkdir()
     (out / "a.json").write_text(json.dumps(dict(audit.audit(pkg), passed=True)))     # an audit that let it through
     args = dict(video=pkg / f"{pkg.name}.mp4", cover=pkg / f"{pkg.name}.cover.png", package_audit=out / "a.json", title=TITLE,
-                tags="a,b", final_human_review=None, authorized_by="x", quote="y", out=out / "m.json")
+                tags="虚拟主播,切片", final_human_review=None, authorized_by="x", quote="y", out=out / "m.json")
     with pytest.raises(manifest.Refused, match="POSTBURN_UNRESOLVED_FINDINGS"):
         manifest.make(**args)
     clean = package(tmp_path / "q")
@@ -304,7 +651,7 @@ def _successor(host, tmp_path, capsys, *, first_receipt: Path, video: bytes, cov
     man = out / "replace-manifest.json"
     assert main(["make-manifest", "--video", str(pkg / f"{name}.mp4"), "--cover", str(pkg / f"{name}.cover.png"),
                  "--package-audit", str(pkg / "package_audit.json"), "--title", TITLE, "--final-human-review",
-                 str(pkg / f"{name}.finished-media-review.json"), "--authorized-by", "频道主", "--quote", "修复完的可以编辑上传",
+                 str(pkg / f"{name}.finished-media-review.json"), "--authorized-by", "频道主", "--quote", "修好的稿件可以编辑上传（示例频道的授权；换成你自己的授权文字）",
                  "--out", str(man)]) == 0
     capsys.readouterr()
     return pkg, man
@@ -425,7 +772,7 @@ def test_the_commands_step_10_sends_are_lane_publish_commands(host, tmp_path, ca
     pkg2 = package(tmp_path / "pkg2", video=b"video-2", extra={"recovery_publication_authority": auth})
     out2 = tmp_path / "clip2/upload"
     out2.mkdir(parents=True)
-    job2 = Job("replace_video", receipt["bvid"], pkg2, out2, TITLE, "", None, "频道主", "修复完的可以编辑上传", **tools)
+    job2 = Job("replace_video", receipt["bvid"], pkg2, out2, TITLE, "", None, "频道主", "修好的稿件可以编辑上传（示例频道的授权；换成你自己的授权文字）", **tools)
     assert _send(commands.audit(job2), capsys, journal) == 0
     (pkg2 / "package_audit.json").write_text((out2 / "package_audit.json").read_text())
     for body, rc in ((commands.make_manifest(job2), 0), (commands.verify_manifest(job2), 0),
@@ -467,7 +814,7 @@ def test_a_bv_the_older_upload_tool_registered_is_repaired_in_the_same_one_regis
                                        "cid": cid, "title": TITLE, "authority": row_authority,
                                        "reconciled_at": "2026-11-14T00:00:00Z"}}]}, ensure_ascii=False))
     host.archives[bvid] = {"aid": aid, "bvid": bvid, "title": TITLE, "desc": "https://live.bilibili.com/\n简介第一行\n第二行", "tag": "虚拟主播,切片",
-                           "cover": "https://upload/old.png", "copyright": 2, "tid": 27,
+                           "cover": "https://upload/old.png", "copyright": 2, "source": REPOST_SOURCE, "tid": 27,
                            "videos": [{"cid": cid, "filename": "n1", "title": TITLE}]}
     host._publish(bvid)
 
@@ -481,13 +828,18 @@ def test_a_bv_the_older_upload_tool_registered_is_repaired_in_the_same_one_regis
     repl = out / "replace-manifest.json"
     assert main(["make-manifest", "--video", str(pkg / f"{name}.mp4"), "--cover", str(pkg / f"{name}.cover.png"),
                  "--package-audit", str(pkg / "package_audit.json"), "--title", TITLE, "--final-human-review",
-                 str(pkg / f"{name}.finished-media-review.json"), "--authorized-by", "频道主", "--quote", "修复完的可以编辑上传",
+                 str(pkg / f"{name}.finished-media-review.json"), "--authorized-by", "频道主", "--quote", "修好的稿件可以编辑上传（示例频道的授权；换成你自己的授权文字）",
                  "--out", str(repl)]) == 0
     plan, journal, done = out / "plan.json", tmp_path / "base/reports/same_bv_repair_ledger.jsonl", out / "done.json"
     assert main(["cover-repair-plan", "--manifest", str(repl), "--bvid", bvid, "--out", str(plan), "--journal", str(journal)]) == 0
     walk = ["--plan", str(plan), "--journal", str(journal)]
     assert main(["cover-repair-run", *walk]) == 0
     assert main(["cover-repair-verify-live", *walk, "--out", str(done)]) == 0
+    # the archive was published as a repost and stays one: its type, its source and the source line ahead of its description
+    # are sent back as they are, though the successor package's own description has no such line
+    assert "publish_policy" not in json.loads(repl.read_text())
+    assert (host.edits[-1]["copyright"], host.edits[-1]["source"]) == (2, REPOST_SOURCE)
+    assert host.edits[-1]["desc"] == host.archives[bvid]["desc"] == REPOST_SOURCE + "\n简介第一行\n第二行"
     rows = [r for r in load_publication_registry(runtime_path=registry.path())["entries"] if r.get("bvid") == bvid]
     assert [(r["candidate_id"], r["publication_reconciliation"]["status"], r["publication_reconciliation"]["cid"])
             for r in rows] == [(name, "VERIFIED_SAME_BV_COVER", cid)]
@@ -514,6 +866,7 @@ def test_a_metadata_edit_changes_only_the_title_tags_and_description_by_the_regi
     bvid, first_receipt = receipt["bvid"], first.receipt_path(tmp_path / "upload1/authorized-upload-manifest.json")
     shutil.rmtree(pkg.parent)                     # the package, its video and cover are gone (the recording long before)
     src = "https://live.bilibili.com/\n"
+    host.archives[bvid].update(copyright=2, source=REPOST_SOURCE)   # a repost, as every archive of that time
     host.archives[bvid]["desc"] = src + src + "简介第一行\n第二行"      # what 11-15 to 11-18 first publications show
     host._publish(bvid)
     before = dict(host.archives[bvid], videos=list(host.archives[bvid]["videos"]))

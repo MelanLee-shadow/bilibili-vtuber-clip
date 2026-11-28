@@ -9,6 +9,7 @@ step start and end of each clip, and the log paths.  Exit code: the worst of the
 
 from __future__ import annotations
 
+import json
 import threading
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -16,7 +17,7 @@ from pathlib import Path
 from typing import TextIO
 
 from .runner import Step, StepOutcome
-from .state import utc_now
+from .state import ClipRunBusyError, utc_now
 
 _SINK = threading.local()          # the log file of the clip the current thread is running, when several clips run
 _TERMINAL = threading.Lock()
@@ -52,9 +53,11 @@ def clip_ids(cids: Sequence[str] | None, cids_file: str | None) -> list[str]:
 
 
 def run_many(cids: Sequence[str], run_one: Callable[[str, Progress], int], *, log_dir: Path,
-             errors: tuple[type[Exception], ...]) -> int:
+             errors: tuple[type[Exception], ...],
+             on_busy: Callable[[str, ClipRunBusyError], None] | None = None) -> int:
     """`run_one(cid, progress)` for every clip, all at once; the worst exit code.  An exception in `errors`
-    ends only its clip (code 2, the message in its log)."""
+    ends only its clip (code 2, the message in its log).  When `on_busy` is set, a live clip run lock
+    (`ClipRunBusyError`) ends the clip attempt with code 0, logs its state code, and calls `on_busy(cid, exc)`."""
     log_dir.mkdir(parents=True, exist_ok=True)
     stamp = utc_now().replace(":", "")
 
@@ -68,16 +71,33 @@ def run_many(cids: Sequence[str], run_one: Callable[[str, Progress], int], *, lo
             _terminal(line)
             say(line)
 
+        busy: ClipRunBusyError | None = None
         with path.open("a", encoding="utf-8") as log:
             _SINK.log = log
             try:
                 code = run_one(cid, progress)
+            except ClipRunBusyError as exc:
+                if on_busy is None:
+                    say(f"error: {exc}")
+                    code = 2
+                else:
+                    busy = exc
+                    say(json.dumps({
+                        "cid": cid,
+                        "status": "SKIPPED_BUSY",
+                        "state_code": exc.code,
+                        "reason": exc.code,
+                        "owner_pid": exc.owner_pid,
+                        "detail": str(exc),
+                    }, ensure_ascii=False))
+                    on_busy(cid, exc)
+                    code = 0
             except errors as exc:
                 say(f"error: {exc}")
                 code = 2
             finally:
                 _SINK.log = None
-        _terminal(f"[{cid}] 结束 退出码 {code}")
+        _terminal(f"[{cid}] 跳过 {busy.code}" if busy is not None else f"[{cid}] 结束 退出码 {code}")
         return code
 
     with ThreadPoolExecutor(max_workers=len(cids), thread_name_prefix="lane-clip") as pool:

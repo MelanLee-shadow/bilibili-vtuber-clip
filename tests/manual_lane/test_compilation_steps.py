@@ -178,7 +178,7 @@ def test_step6_passes_compilation_facts_to_both_prompts_and_preserves_ordinary_b
         prompt_dir = Path(step6_title.__file__).resolve().parents[3] / "assets/manual_lane/prompts"
         old_title = (prompt_dir / "title.md").read_text().replace("{compilation_context}", "")
         old_cover = (prompt_dir / "cover_brief.md").read_text().replace("{compilation_context}", "")
-        assert hashlib.sha256(old_title.encode()).hexdigest() == "08e11fe65b64c467e577e9830804fcff127cf0050c32317e06263a318c147e19"
+        assert hashlib.sha256(old_title.encode()).hexdigest() == "c8018e985b3c259da1fd86adddcbc004df124256ac1bbb85aa9ad2ead2a67808"
         assert hashlib.sha256(old_cover.encode()).hexdigest() == "d8c28bd7f7d6aa6b2de38b08790b7f7d814d86cbd6e74c48e8db38663539bfd4"
         old_title, old_cover = channel.fill(old_title), channel.fill(old_cover)     # the channel's names come from the profile
         track, lines, _ = step6_title.title_inputs(ctx, names)
@@ -206,7 +206,12 @@ def test_both_review_prompts_share_compilation_context_and_ordinary_bytes(tmp_pa
     for name, expected in (("review.md", "2c90d3892a9a93def2595f250b6380fb0ef2115083d441d2dd8b67f8c683db9b"),
                            ("review_held.md", "3297be8de6e8651240b4b7e08cc7df859bfc969da5b83731cb32950dd82e0213")):
         original = (prompt_dir / name).read_text().replace("{compilation_context}", "")
-        assert hashlib.sha256(original.encode()).hexdigest() == expected
+        # review-names deliberately permits a named guest in both responses;
+        # every other ordinary prompt byte still matches the existing baseline.
+        named_guest = "{host}、嘉宾的名字或 {guest}"
+        assert original.count(named_guest) == 1
+        baseline = original.replace(named_guest, "{host} 或 {guest}")
+        assert hashlib.sha256(baseline.encode()).hexdigest() == expected
     manifest = _manifest()
     manifest.update(theme="主题甲{materials}", hook="合集钩子乙{title_rules}")
     manifest["pieces"][0]["why"] = "第一段理由丙{session}"

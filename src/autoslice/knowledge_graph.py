@@ -118,7 +118,7 @@ class Graph:
         return names.get(use) or names["display"]
 
     def alias_groups(self) -> list[list[str]]:
-        """Connected components of nodes linked by non-retired alias_of edges."""
+        """Connected components of accepted nodes linked by accepted alias_of edges."""
         parent = {node_id: node_id for node_id in self.nodes}
 
         def root(node_id: str) -> str:
@@ -128,7 +128,9 @@ class Graph:
             return node_id
 
         for edge in self.edges:
-            if edge.type == "alias_of" and edge.status != "retired":
+            if (edge.type == "alias_of" and edge.status == "accepted"
+                    and self.nodes[edge.from_id].status == "accepted"
+                    and self.nodes[edge.to_id].status == "accepted"):
                 parent[root(edge.from_id)] = root(edge.to_id)
         groups: dict[str, list[str]] = defaultdict(list)
         for node_id in self.nodes:
@@ -219,17 +221,52 @@ def _lines(path: Path) -> list[tuple[str, str]]:
             if line.strip()]
 
 
-def _validate(graph: Graph, node_ids: list[str], edge_ids: list[str]) -> None:
-    for kind, ids in (("node", node_ids), ("edge", edge_ids)):
-        dup = sorted({i for i in ids if ids.count(i) > 1})
-        if dup:
-            raise GraphError(f"duplicate {kind} ids: {dup}")
+def read_nodes(path: Path) -> list[Node]:
+    """Read and parse all node records from a JSONL file."""
+    return [_node(line, where) for where, line in _lines(path)]
+
+
+def read_edges(path: Path) -> list[Edge]:
+    """Read and parse all edge records from a JSONL file."""
+    return [_edge(line, where) for where, line in _lines(path)]
+
+
+def check_unique_ids(kind: str, ids: Sequence[str]) -> None:
+    """Raise GraphError if `ids` contains any duplicate id within one source."""
+    seen: set[str] = set()
+    dups: set[str] = set()
+    for item in ids:
+        if item in seen:
+            dups.add(item)
+        else:
+            seen.add(item)
+    if dups:
+        raise GraphError(f"duplicate {kind} ids: {sorted(dups)}")
+
+
+def validate_edge_id(edge: Edge) -> None:
+    """Raise GraphError if `edge.id` does not match `<from>|<type>|<to>`."""
+    if edge.id != f"{edge.from_id}|{edge.type}|{edge.to_id}":
+        raise _fail(edge.id, "edge id must be <from>|<type>|<to>")
+
+
+def validate_graph(
+    graph: Graph,
+    node_ids: Sequence[str] | None = None,
+    edge_ids: Sequence[str] | None = None,
+) -> None:
+    """Validate id uniqueness, edge id/endpoints, and accepted spelling uniqueness."""
+    check_unique_ids("node", list(graph.nodes) if node_ids is None else node_ids)
+    check_unique_ids("edge", [e.id for e in graph.edges] if edge_ids is None else edge_ids)
     for edge in graph.edges:
-        if edge.id != f"{edge.from_id}|{edge.type}|{edge.to_id}":
-            raise _fail(edge.id, "edge id must be <from>|<type>|<to>")
+        validate_edge_id(edge)
         for end in (edge.from_id, edge.to_id):
             if end not in graph.nodes:
                 raise _fail(edge.id, f"endpoint {end!r} is not a node")
+        if edge.type == "character_of" and (
+            graph.nodes[edge.from_id].kind != "character" or graph.nodes[edge.to_id].kind != "work"
+        ):
+            raise _fail(edge.id, "character_of edge must go from character to work")
     group_of = {nid: i for i, group in enumerate(graph.alias_groups()) for nid in group}
     clashes = []
     for surface, nodes in graph._index.items():
@@ -241,10 +278,10 @@ def _validate(graph: Graph, node_ids: list[str], edge_ids: list[str]) -> None:
 
 
 def load_graph(profile_root: Path) -> Graph:
-    node_rows = [_node(line, where) for where, line in _lines(Path(profile_root) / NODES_FILE)]
-    edge_rows = [_edge(line, where) for where, line in _lines(Path(profile_root) / EDGES_FILE)]
+    node_rows = read_nodes(Path(profile_root) / NODES_FILE)
+    edge_rows = read_edges(Path(profile_root) / EDGES_FILE)
     graph = Graph(node_rows, edge_rows)
-    _validate(graph, [n.id for n in node_rows], [e.id for e in edge_rows])
+    validate_graph(graph, [n.id for n in node_rows], [e.id for e in edge_rows])
     return graph
 
 

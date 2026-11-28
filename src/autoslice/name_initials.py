@@ -1,8 +1,6 @@
 """A circle name that is not the person's own name: where it is written down, and the mechanical sign that ties it to a name.
 
-Owner, after the lane and the crawler both failed to place 「香蕉牛奶」: 「香蕉牛奶是咲间妮娜的昵称，在v圈昵称来源
-经常直接来自名字的首字母缩写，然后发展出别的昵称，例如，xjnn就变成了香蕉牛奶。…这个知识本质上也来自于我刚刚b站上查了一下，
-我认为理论上新闻爬虫应该有这个能力查到」.  Two things were missing, and both are here for the lane's lookup
+Owner, after the lane and the crawler both failed to place 「香蕉牛奶」: 香蕉牛奶是咲间妮娜的圈内昵称，取自名字拼音首字母 xjnn；这类昵称新闻爬虫应当查得到.  Two things were missing, and both are here for the lane's lookup
 (manual_lane/circle_context.py) and the crawler (clip_name_identity.py) alike:
 
 - where to look: the circle's encyclopedias list a streamer's other names under 别名.  "<name> <host>" and "<name> 虚拟主播"

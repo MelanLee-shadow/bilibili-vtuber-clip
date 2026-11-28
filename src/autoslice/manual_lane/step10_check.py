@@ -1,7 +1,8 @@
 """What step 10 checks itself, and the small helpers its modules share.
 
 Before anything is sent: the package is sealed by step 9, the chosen cover carries no vetoed-material flag (choose.json
-`material_flag`: the cover step has already redone a vetoed cover, so a flag still there means it could not be made right).
+`material_flag`: the cover step has already redone a vetoed cover, so a flag still there means it could not be made right),
+and a clip named from the day's list of who is in the call does not lack one of the day's guests (`guests_current`).
 After the plan dry run: the plan the tool froze is the one for this package (BV, title, cover, and for a video replacement the
 video; each against the package files and against revision.json) - the check the hand run made before it built the real plan."""
 
@@ -23,6 +24,7 @@ HELD = "UPLOAD_HELD"
 HOLD_FILE = "upload/HOLD"
 COVER_UNCHECKED = "UPLOAD_COVER_RECORD_MISSING"
 PLAN_MISMATCH = "UPLOAD_PLAN_MISMATCH"
+GUESTS_BEHIND = "UPLOAD_GUESTS_BEHIND"
 
 
 class Stop(Exception):
@@ -87,6 +89,18 @@ def cover_material(ctx: Ctx) -> None:
         stop(COVER_UNCHECKED, f"读不到 {path}，无法确认封面素材没有被否决：{type(exc).__name__}: {exc!s:.200}")
     if flag:
         stop(COVER_VETOED, f"封面素材被否决（choose.json material_flag：{json.dumps(flag, ensure_ascii=False)[:400]}）：不发，封面步骤重做封面后再来")
+
+
+def guests_current(ctx: Ctx) -> None:
+    """The day's list of who is in the call (collab_guests) gained people after this clip was named from it: its
+    session, speakers, title prefix and cover were made without them, so it is not sent; `run --refresh-guests` redoes
+    it from the speaker step (every unattended round does so before it gets here)."""
+    from . import collab_guests
+
+    if missing := collab_guests.lacking(ctx):
+        cid = ctx.state.data["clip"]["cid"]
+        stop(GUESTS_BEHIND, f"当天连线名单后来补进了 {'、'.join(missing)}，本片的场次、说话人、标题前缀和封面是按之前的名单做的："
+                            f"不发；先 `run --refresh-guests {cid}` 从说话人一步起重做")
 
 
 def plan_problems(job: Job, clip_dir: Path) -> list[str]:

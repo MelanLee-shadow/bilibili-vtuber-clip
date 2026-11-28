@@ -48,17 +48,9 @@ CPA 改字和 owner；这同时适用于有声学证词与明确的 context-only
 缺失/非法证词链、选中字面不符仍走原未注册回退。该例外不伪造 `reconciliation`、不改空实体的
 普通 final-text owner、不跳过矛盾检查或最终内容/时间/发布门。
 
-## CPA 模型与推理档位（2026-09-25）
+## CPA 模型与推理档位
 
-当前文字质量默认是 `gpt-6-sol`；`gpt-6-luna` 只用于不裁决内容的健康探针。
-`gpt-6-astra` 不再是生产默认，也不是 Sol 失败后的自动升级档；只有显式、单次、另有
-授权的高价值实验才可点名使用。普通 `correct=cpa` 的完整文字首轮仍采用 `low`；
-代词专项继续 `low`，复杂裁决/最终审查保持各调用点原有的 `medium` 或 `high`。
-本次只换模型，不借机降低 reasoning effort，因而模型迁移不取消 BCUT、独立声学条件、
-CPA 最终权限或最终字节验收。选型依据和冻结样本结果见
-[`2026-09-25-gpt6-model-selection.md`](../reviews/2026-09-25-gpt6-model-selection.md)。
-`llm_via_cpa.sh` 不隐式回退 GPT-5.6/5.5/5.4；旧 GPT-5 固定路由在请求前拒绝，
-按既有失败恢复处理，不能把未执行误报为零改动。历史回执保留历史模型身份。
+当前文字与看图质量默认 `gpt-6.2-sol`（仅主路由明确额度不足时回退 `gemini-4-neon`，恢复后切回；超时、5xx、截断或普通限流不回退）；`gpt-6-luna` 仅作健康探针，`gpt-6-astra` 仅限显式授权单次实验。普通 `correct=cpa` 首轮与代词专项保持 `low`，复杂裁决/终审保持原有 `medium` 或 `high`；模型迁移不取消 BCUT、独立声学条件、CPA 终裁或最终字节验收。初代选型与样本见 [`2026-09-25-gpt6-model-selection.md`](../reviews/2026-09-25-gpt6-model-selection.md)。`llm_via_cpa.sh` 不隐式回退 GPT-5.6/5.5/5.4，旧 GPT-5 路由请求前拒绝，历史回执保留原模型身份。
 
 CPA judge 缓存 v2 同时绑定完整 prompt、实际调用模型和思考档位；未知调用身份不得
 探测或写入共享 judge 缓存，不能借迁移复用旧模型裁决。预算用尽后的 cache-only
@@ -266,7 +258,7 @@ CPA 的原闭集 prompt 消费同一范围说明，继续考虑片段词形及�
      子串，注册器只在 before→after 哈希、CPA mutation receipt、相同几何及旧子串确实
      被新文本移除全部成立时显式退役旧 owner；仅有时间重叠不得退役。这样 CPA 终裁
      不会被较早的聊天文字 owner 反向阻断，同时仍保留逐 owner 的可审计继承链。
-4. **infra 失败不是裁决**：AGY 额度耗尽导致的 UNCERTAIN 不许偷换成 keep-current；已有完整文字闭集时必须继续交 CPA 纯文字裁决，只有 CPA 本身不可用、或候选本身必须由新的声学事实生成时，才以 `FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED` 拒绝带伤交付，runner 按 provider_transient 有界重试。correction discovery/routing 本身异常时，对 SRT 与 chat audit 必须原子回滚，保存 typed `AUDITOR_UNAVAILABLE` 原因、空 findings 与零 applied；后续 exact-final 空扫描不能洗白，只允许 `final_review_correction_discovery` 有界重试。若 CPA 返回非空 findings 但全部违反 finding schema，同一 discovery 最多追加一次 CPA schema-repair 复审；第二次 prompt 必须携带机器的逐行拒绝原因，要求每个怀疑要么补成有界 `proposed_full_cue`、要么撤回，仍无效才继续 fail closed，禁止把坏响应折叠成 CLEAN。`spoken_unit` 的小范围插入或删除只会产生完整 cue 闭集候选：须通过有界单段 diff、候选无关 AGY 见证、CPA 明确选中 `PROPOSED` 和 typed mutation receipt 才能落盘；整 cue 删除仍只走 `acoustic_drop_cue`。终审 transport 的内部模型链必须能在 caller 的外层 deadline 内完整耗尽：当前终审请求 GPT‑6 Sol，沿既有有界瞬态重试与400秒派发deadline，单次curl最长180秒、外层600秒；不得再配置成内部最坏 27 分钟、外层 5 分钟而必然被中途杀死的假 failover。
+4. **infra 失败不是裁决**：AGY 额度耗尽导致的 UNCERTAIN 不许偷换成 keep-current；已有完整文字闭集时必须继续交 CPA 纯文字裁决，只有 CPA 本身不可用、或候选本身必须由新的声学事实生成时，才以 `FINAL_REVIEW_ADJUDICATION_INFRA_UNRESOLVED` 拒绝带伤交付，runner 按 provider_transient 有界重试。correction discovery/routing 本身异常时，对 SRT 与 chat audit 必须原子回滚，保存 typed `AUDITOR_UNAVAILABLE` 原因、空 findings 与零 applied；后续 exact-final 空扫描不能洗白，只允许 `final_review_correction_discovery` 有界重试。若 CPA 返回非空 findings 但全部违反 finding schema，同一 discovery 最多追加一次 CPA schema-repair 复审；第二次 prompt 必须携带机器的逐行拒绝原因，要求每个怀疑要么补成有界 `proposed_full_cue`、要么撤回，仍无效才继续 fail closed，禁止把坏响应折叠成 CLEAN。`spoken_unit` 的小范围插入或删除只会产生完整 cue 闭集候选：须通过有界单段 diff、候选无关 AGY 见证、CPA 明确选中 `PROPOSED` 和 typed mutation receipt 才能落盘；整 cue 删除仍只走 `acoustic_drop_cue`。终审 transport 的内部模型链必须能在 caller 的外层 deadline 内完整耗尽：当前终审请求 `gpt-6.2-sol`（明确额度不足回退 `gemini-4-neon`），沿既有有界瞬态重试与400秒派发deadline，单次curl最长180秒、外层600秒；不得再配置成内部最坏 27 分钟、外层 5 分钟而必然被中途杀死的假 failover。
    exact-final 结转 finding 后，chat authority 可比先写的 review-flags 多
    `carryover_persisted_count`；该单一 additive receipt 不构成审计面矛盾，不能把原本
    `CORRECTION_DISCOVERY_INCOMPLETE` 的 provider transient 错分成 terminal contract。
@@ -526,7 +518,7 @@ CPA 的原闭集 prompt 消费同一范围说明，继续考虑片段词形及�
 人工审片二审阶段的教训机制化——人工审片能抓近音变体靠的是「拼音近似 + 弹幕零背书」，这两条都能编译：
 
 - **词表拼音候选发现**（原欠账 #5）：逐 cue 滑窗 vs 注册实体 readings 的音节序列相似度；命中未注册面→临时混淆组送声学仲裁。校准夹具取自真实历史误听案例（多组近音变体→登记词面映射）。已注册面/钦定词面（含被窗口包含）一律跳过——那是精确通道的辖区。cap=4/片、按分取前 N（噪声不许饿死真命中）。
-- **短语级重复分歧编译器**（原欠账 #0，公开规则说的「语义编译器」）：跨句 3-6 字 n-gram 重复 + 单字近音差 → 混淆组（例如同音或近音字造成的短语重复分歧）。语气词对儿（了/啦）不编、分歧字位落在钦定词面（侄女/和成天下）让位词表权威、长 gram 先行去重。
+- **短语级重复分歧编译器**（原欠账 #0，即「语义编译器」）：跨句 3-6 字 n-gram 重复 + 单字近音差 → 混淆组（例如同音或近音字造成的短语重复分歧）。语气词对儿（了/啦）不编、分歧字位落在钦定词面（侄女/和成天下）让位词表权威、长 gram 先行去重。
 - **上线纪律：两条 lane 目前为披露专用（phase 1）**——产出只写进 `post_semantic_entity_policy.*_disclosure_only` 审计字段供审片员/人工复核，不进声学仲裁、不产生改写。首次接入黑帧强制二选一的生产实证表明：叠名场景下（滑窗骑在重复称呼上）单次黑帧确认会让仲裁顺从确认伪候选并落盘改写——单次黑帧确认不满足保向铁律的证据门（本句音节+结构化弹幕/重复槽位支持）。扫描器已加叠名守卫（窗口与注册面出现位置重叠即跳过）。phase 2（见证充分的裁决通道）记欠账 #11。
 
 ## 答谢完整性 + 称呼串（`chat_repair.py`/`surface_canon.py`）

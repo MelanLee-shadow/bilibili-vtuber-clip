@@ -1,0 +1,109 @@
+{
+  "schema_version": "vtuber-slice.work-seeds.v1",
+  "category": "yuri",
+  "description": "频道常提到的作品种子列表（以百合题材为主，具体题材以公开条目为准）；供新闻与实体爬虫补全候选作品与角色节点。",
+  "works": [
+    {
+      "name": "魔法少女的魔女审判",
+      "aliases": [
+        "魔法少女ノ魔女裁判",
+        "魔法少女的魔女裁判",
+        "魔裁",
+        "まのさば",
+        "Manosaba",
+        "Magical Girl Witch Trials"
+      ],
+      "note": "推理 ADV 游戏"
+    },
+    {
+      "name": "少女歌剧",
+      "aliases": [
+        "少女☆歌剧 Revue Starlight"
+      ],
+      "note": "跨媒体音乐剧与动画"
+    },
+    {
+      "name": "BanG Dream! Ave Mujica",
+      "aliases": [
+        "Ave Mujica",
+        "mujica"
+      ],
+      "note": "跨媒体乐队企划与动画"
+    },
+    {
+      "name": "BanG Dream! It's MyGO!!!!!",
+      "aliases": [
+        "MyGO!!!!!",
+        "MyGO"
+      ],
+      "note": "跨媒体乐队企划与动画"
+    },
+    {
+      "name": "BanG Dream! YUME∞MITA",
+      "aliases": [
+        "梦限大",
+        "梦限大MewType"
+      ],
+      "note": "跨媒体虚拟乐队企划"
+    },
+    {
+      "name": "莉可丽丝",
+      "aliases": [
+        "Lycoris Recoil",
+        "lycoris"
+      ],
+      "note": "原创电视动画"
+    },
+    {
+      "name": "上伊那牡丹",
+      "aliases": [
+        "上伊那牡丹，醉姿如百合"
+      ],
+      "note": "日常饮酒漫画作品"
+    },
+    {
+      "name": "与你相恋到生命尽头",
+      "aliases": [
+        "恋死"
+      ],
+      "note": "奇幻漫画与动画"
+    },
+    {
+      "name": "安达与岛村",
+      "aliases": [],
+      "note": "轻小说与动画"
+    },
+    {
+      "name": "终将成为你",
+      "aliases": [
+        "终将"
+      ],
+      "note": "漫画与动画"
+    },
+    {
+      "name": "利兹与青鸟",
+      "aliases": [],
+      "note": "剧场版动画电影"
+    },
+    {
+      "name": "女友不在",
+      "aliases": [],
+      "note": "漫画作品"
+    },
+    {
+      "name": "纯白少女的狼人杀",
+      "aliases": [],
+      "note": "学园悬疑漫画作品"
+    },
+    {
+      "name": "恋人不行",
+      "aliases": [],
+      "note": "轻小说与漫画/动画"
+    },
+    {
+      "name": "恋青",
+      "aliases": [],
+      "note": "频道讨论过的作品名"
+    }
+  ]
+}

@@ -1,15 +1,15 @@
-"""The day's song clip (docs/pipeline/50-song-lane.md; 公开规则：默认是每天5条限额和一条歌切).
+"""The day's song clip (docs/pipeline/50-song-lane.md; 默认每天 5 条谈话切片、1 条歌切).
 
 Discover keeps a recording's song windows in recall.json (kind "song") but seats only talk: a song has its own producer,
-the song lane's private-directory entry, which `scripts/manual_lane_song.py` calls on the media host. Until
+the song lane's private-directory entry, which `scripts/manual_lane_song.py` calls on the media host.  Until
 nothing called it once the old runner was switched off, and no song was made after .
 
-Each unattended round (auto_run) makes at most one song attempt. A day takes part once discover has settled it; its
+Each unattended round (auto_run) makes at most one song attempt.  A day takes part once discover has settled it; its
 song windows are tried in recording order, skipping a title the lane already made for another day (the producer itself
-refuses a title already published). The first PRODUCED ends the day (one song a day at most; no song is forced when none
-is deliverable). A REJECTED window is not tried again; a WAITING one (a provider or the media away) is asked again next
-round, at most WAIT_LIMIT times before the next window is tried. A day whose recording was reclaimed is closed. What
-is produced is a prepared package: it is reviewed before anything is uploaded (公开规则：不要放行无人值守自动发布。).
+refuses a title already published).  The first PRODUCED ends the day (one song a day at most; no song is forced when none
+is deliverable).  A REJECTED window is not tried again; a WAITING one (a provider or the media away) is asked again next
+round, at most WAIT_LIMIT times before the next window is tried.  A day whose recording was reclaimed is closed.  What
+is produced is a prepared package: it is reviewed before anything is uploaded (the channel's request).
 The ledger `<task>/songs/ledger.json` keeps every attempt."""
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ PRODUCED, WAITING, REJECTED, SOURCE_GONE = "PRODUCED", "WAITING", "REJECTED", "S
 DAY_DONE, DAY_NONE = "SONG_PRODUCED", "NO_DELIVERABLE_SONG"
 WAIT_LIMIT = 6          # the song lane's own infrastructure retry cap (SONG_INFRA_RETRY_CAP)
 PRODUCER = Path(__file__).resolve().parents[3] / "scripts" / "manual_lane_song.py"   # absent where the song lane is not shipped
-PAUSED = '公开规则：目前暂停歌切。不需要去发歌切了，你把它暂停掉吧。'   # "" resumes the song attempt
+PAUSED = "the channel's request"   # "" resumes the song attempt
 
 
 def enabled() -> bool:

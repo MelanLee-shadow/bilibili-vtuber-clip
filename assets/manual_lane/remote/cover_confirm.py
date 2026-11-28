@@ -15,53 +15,64 @@ def nth(n):
     return "" if n == 1 else f".{n}"
 
 
-def judge_axes(verdict, host):
-    """What in one judge answer vetoes the candidate (title_cover_scoring): a flag that is not a pass, the host not among
-    the people present.  None when the answer is not an object."""
+def judge_axes(verdict, host, needed=()):
+    """What in one judge answer vetoes the candidate (title_cover_scoring, step6 cover_guests.roster_vetoes): a flag that
+    is not a pass, the host not among the people present, a guest the cover must show (`needed`) not among them.  None
+    when the answer is not an object."""
     if not isinstance(verdict, dict):
         return None
     people = verdict.get("people") if isinstance(verdict.get("people"), dict) else {}
     present = people.get("present") if isinstance(people.get("present"), list) else []
     return {**{k: isinstance(verdict.get(k), dict) and verdict[k].get("pass") is True for k in JUDGE_FLAGS},
-            "host_present": host in present}
+            "host_present": host in present, **({"needed_present": set(needed) <= set(present)} if needed else {})}
 
 
-def settled_verdict(verdicts, settled, host):
+PEOPLE_AXES = ("host_present", "needed_present")     # the axes read off the verdict's `people`
+
+
+def settled_verdict(verdicts, settled, host, needed=()):
     """One judge verdict from the readings taken: the first reading that agrees with every settled axis as it is (its
     boxes, people and score belong together), else the first judged one with each axis from a reading that says so."""
-    seen = [judge_axes(v, host) for v in verdicts]
+    seen = [judge_axes(v, host, needed) for v in verdicts]
     want = {axis: vote["pass"] for axis, vote in settled.items()}
     whole = next((v for v, axes in zip(verdicts, seen) if axes == want), None)
     if whole is not None:
         return whole
     merged = dict(next(v for v, axes in zip(verdicts, seen) if axes is not None))
     for axis, vote in settled.items():
-        key = "people" if axis == "host_present" else axis
+        key = "people" if axis in PEOPLE_AXES else axis
         merged[key] = verdicts[vote["from"]].get(key)
     return merged
 
 
-def confirm_judge(ask, parse, host):
+def confirm_judge(ask, parse, host, needed=()):
     """(answer text, reused, votes): the text of the settled verdict when it took more than one reading, and each axis's
     {pass, fails, judged}.  A single clean reading, or no verdict (then the first answer is kept: a picture nobody
-    judged is not accepted either), has votes None."""
-    taken, settled = veto.confirm(ask, lambda got: judge_axes(parse(got[0]), host))
+    judged is not accepted either), has votes None.  `needed`: the guests the cover must show; whether the picture
+    shows them is the judge's reading of the pixels, confirmed like a veto (who stands where is the tool's own word)."""
+    taken, settled = veto.confirm(ask, lambda got: judge_axes(parse(got[0]), host, needed))
     first, reused = taken[0]["answer"]
     if len(taken) == 1 or settled is None:
         return first, reused, None
     verdicts = [parse(t["answer"][0]) if t["answer"] else None for t in taken]
     votes = {axis: {k: vote[k] for k in ("pass", "fails", "judged")} for axis, vote in settled.items()}
-    return json.dumps(settled_verdict(verdicts, settled, host), ensure_ascii=False), reused, votes
+    return json.dumps(settled_verdict(verdicts, settled, host, needed), ensure_ascii=False), reused, votes
 
 
-def confirm_found(ask, found):
+def confirm_found(ask, found, strict=False):
     """What a reading located (`found(answer)`, None = not there), or None when the first call failed or most readings
-    found nothing.  The first asking keeps its name, so a picture that was located once gives the same answer again."""
+    found nothing.  The first asking keeps its name, so a picture that was located once gives the same answer again.
+    `strict`: a failed call raises (veto.FAILED) instead, when nothing was located: "not there" is then the readings'
+    word, never a call that gave no answer (a guest's pack picture whose face is "not there" leaves her off the cover)."""
     try:
         taken, settled = veto.confirm(ask, lambda got: {"found": found(got[0]) is not None})
     except veto.FAILED:
+        if strict:
+            raise
         return None
     if settled is None or not settled["found"]["pass"]:
+        if strict and (errors := [t["error"] for t in taken if t.get("error")]):
+            raise ValueError(f"locating readings failed: {'; '.join(errors)}")
         return None
     return found(taken[settled["found"]["from"]]["answer"][0])
 

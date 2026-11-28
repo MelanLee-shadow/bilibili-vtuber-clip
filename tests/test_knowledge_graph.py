@@ -246,3 +246,26 @@ def test_a_pronoun_is_kept_through_load_and_dump_and_must_be_a_known_one(tmp_pat
     _write(tmp_path, [dict(_node("person", "甲"), pronoun="TA")], [])
     with pytest.raises(GraphError):
         load_graph(root)
+
+
+def test_yuri_work_and_character_nodes_present_and_projected():
+    graph = _real()
+    work_id = "work:魔法少女的魔女审判"
+    char_id = "character:黑部奈叶香"
+    assert work_id in graph.nodes and graph.nodes[work_id].kind == "work"
+    assert "魔法少女ノ魔女裁判" in graph.nodes[work_id].aliases
+    assert char_id in graph.nodes and graph.nodes[char_id].kind == "character"
+    assert graph.nodes[char_id].names["subtitle"] == "奈叶香"
+    assert graph.nodes[char_id].pronoun == "她"
+    assert {"奈叶香", "黒部ナノカ", "Kurobe Nanoka"} <= set(graph.nodes[char_id].aliases)
+    edge_ids = {e.id for e in graph.edges}
+    assert f"{char_id}|character_of|{work_id}" in edge_ids
+    other12 = ("樱羽艾玛", "二阶堂希罗", "夏目安安", "城崎诺亚", "莲见蕾雅", "佐伯米莉亚",
+               "宝生玛格", "紫藤亚里沙", "橘雪莉", "远野汉娜", "泽渡可可", "冰上梅露露")
+    for name in other12:
+        cid = f"character:{name}"
+        assert cid in graph.nodes and f"{cid}|character_of|{work_id}" in edge_ids
+    rows = json.loads(TABLE.read_text(encoding="utf-8"))
+    by_name = {row["name"]: row for row in rows}
+    assert by_name["黑部奈叶香"]["canonical"] == "奈叶香"
+    assert "内向" not in by_name["黑部奈叶香"]["variants"]

@@ -4,6 +4,9 @@
 2. Every clip of the task that is not finished is run on (`run` resumes by products: a finished step is not made again).
    Finished means its last step is DONE - the upload when the round uploads, else the review.
    A reviewed clip someone kept back (`<clip>/upload/HOLD`) is left to them.
+   A reviewed clip that is not online and was named from the day's list of who is in the call is run on too when that
+   list has gained people since (`lagging`, collab_guests.behind): it is redone for them before anything sends it
+   (with publishing paused, six reviewed clips of the day were finished for the round and never caught up).
 3. A clip that stopped at the same step for the same reason `STUCK_AFTER` rounds in a row is left alone and listed: someone
    has to look, and running it again would only spend the same calls - until another version is deployed: it may hold the
    fix, so the clip is run once more (1084420 sat stuck after its step-8 fix went live).  A clip waiting for the platform (the upload still
@@ -33,15 +36,17 @@ import json
 import shlex
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, TypedDict
 
 from .adapters import Remote, root_script
 from .discover_media import write_json
+from .gates import BOUNDARY_SHORT_QUEUED
 from .lane_rules import rules
 from .layout import TOPOLOGY_FILE, layout
 from .stages import STEPS
-from .state import ClipState, StateError, utc_now
+from .state import CLIP_RUN_LOCK_BUSY, ClipState, StateError, inspect_clip_run_lock, utc_now
 from .step10_check import HOLD_FILE
 from .step10_run import WAITING_LIVE, WAITING_LOCK, WAITING_QUOTA
 
@@ -104,25 +109,33 @@ def finished(state: ClipState, *, upload: bool) -> bool:
     return state.step("upload" if upload else "review").get("status") == "DONE"
 
 
-def pending(task: Path, ledger: dict[str, Any], *, upload: bool,
-            version: str | None = None) -> tuple[list[str], list[dict[str, Any]]]:
-    """(the clips to run this round, the clips left alone as stuck under this deployed `version`)."""
+def pending(task: Path, ledger: dict[str, Any], *, upload: bool, version: str | None = None,
+            lagging: Callable[[list[str]], list[str]] | None = None) -> tuple[list[str], list[dict[str, Any]]]:
+    """(the clips to run this round, the clips left alone as stuck under this deployed `version`).  `lagging` is given
+    the finished clips that are not online and whose session was named from the day's record of who is in the call,
+    and returns those whose session now lacks one of the day's guests: they are run too."""
     version = deployed_version() if version is None else version
-    run, stuck = [], []
+    run, stuck, reviewed = [], [], []
     for path in sorted((task / "state").glob("*.json")):
         state = ClipState.load(path)
         cid = state.data["clip"]["cid"]
-        if state.data["clip"].get("status") == "SUPERSEDED" or finished(state, upload=upload):
+        if state.data["clip"].get("status") == "SUPERSEDED":
             continue
         if (task / "clips" / cid / HOLD_FILE).is_file():
             continue                                  # kept back by someone: not run on (clips held mid-way kept using models)
+        if stopped_at(state) == ("boundary", BOUNDARY_SHORT_QUEUED):
+            continue                                  # a short must-cut clip waits in the compilation queue (short_queue), not stuck
+        if finished(state, upload=upload):
+            if state.step("upload").get("status") != "DONE" and state.data["session"].get("guest_evidence") is not None:
+                reviewed.append(cid)
+            continue
         seen = ledger["clips"].get(cid, {}).get("stopped")
         if (seen and seen["times"] >= STUCK_AFTER and stopped_at(state) == (seen["step"], seen["reason"])
                 and seen.get("version", "") == version):
             stuck.append({"cid": cid, **seen})
         else:
             run.append(cid)
-    return run, stuck
+    return run + (lagging(reviewed) if lagging is not None and reviewed else []), stuck
 
 
 def _record(task: Path, ledger: dict[str, Any], cids: Sequence[str]) -> list[str]:
@@ -188,12 +201,12 @@ def recordings_released(task: Path, days: dict[str, Any], states: dict[str, Clip
 
 
 def reclaim_recordings(task: Path, ledger: dict[str, Any], remote: Remote) -> list[dict[str, Any]]:
-    """公开规则：旧录像我说过了，切片发出去后AND上传到网盘后就可以删掉. For each day the lane is done with
- (`recordings_released`), the lane's copy of each of the day's videos (its ledger segments, a broadcast day's own files:
- `discover_media.broadcast_days`, U429; not its calendar directory, which may hold the small hours of the day before) is
- deleted when 115 has a file of the same name and size (the archive, layout `archive_room_dir`) and the recorder's spool
- no longer holds it (the spool mover lets go of a segment only after 115 and 123 both reported it finished). Chat files stay (small, and
- a released clip may still read them). A day is noted in the ledger once nothing large of it is left."""
+    """the channel's request.  For each day the lane is done with
+    (`recordings_released`), the lane's copy of each of the day's videos (its ledger segments, a broadcast day's own files:
+    `discover_media.broadcast_days`, U429; not its calendar directory, which may hold the small hours of the day before) is
+    deleted when 115 has a file of the same name and size (the archive, layout `archive_room_dir`) and the recorder's spool
+    no longer holds it (the spool mover lets go of a segment only after 115 and 123 both reported it finished).  Chat files stay (small, and
+    a released clip may still read them).  A day is noted in the ledger once nothing large of it is left."""
     from .discover import load_ledger as discover_ledger
     from .discover import mark_recordings_reclaimed
     from .discover_media import archive_dir, direct_room
@@ -277,10 +290,55 @@ def reclaim(task: Path, ledger: dict[str, Any], remote: Remote, *, now: float) -
     return done
 
 
-def auto_round(task: Path, *, discover_days: Callable[[], dict[str, Any]], run_clips: Callable[[list[str]], int],
+class SkippedBusyEntry(TypedDict):
+    cid: str
+    code: str
+    owner_pid: int | None
+
+
+class TookOverEntry(TypedDict):
+    cid: str
+    previous_pid: int | None
+
+
+@dataclass(frozen=True)
+class SkippedBusyClip:
+    """A clip skipped by an unattended round because a live run held its lock (`CLIP_RUN_LOCK_BUSY`)."""
+
+    cid: str
+    code: str = CLIP_RUN_LOCK_BUSY
+    owner_pid: int | None = None
+
+    def to_dict(self) -> SkippedBusyEntry:
+        return {"cid": self.cid, "code": self.code, "owner_pid": self.owner_pid}
+
+
+@dataclass(frozen=True)
+class TookOverLock:
+    """A clip whose unheld lock file carried leftover metadata from a terminated run and was taken over."""
+
+    cid: str
+    previous_pid: int | None = None
+
+    def to_dict(self) -> TookOverEntry:
+        return {"cid": self.cid, "previous_pid": self.previous_pid}
+
+
+@dataclass(frozen=True)
+class ClipRunBatch:
+    """Outcome of `run_clips` in an unattended round: exit code, skipped live-busy clips, and lock takeovers."""
+
+    exit_code: int
+    skipped_busy: tuple[SkippedBusyClip, ...] = ()
+    took_over: tuple[TookOverLock, ...] = ()
+
+
+def auto_round(task: Path, *, discover_days: Callable[[], dict[str, Any]],
+               run_clips: Callable[[list[str]], int | ClipRunBatch],
                upload: bool, remote: Remote | None = None, now: float | None = None,
-               run_songs: Callable[[], list[dict[str, Any]]] | None = None) -> dict[str, Any]:
-    """One round; returns what it did ({discover, ran, stuck, finished, songs} or {status: BUSY})."""
+               run_songs: Callable[[], list[dict[str, Any]]] | None = None,
+               lagging: Callable[[list[str]], list[str]] | None = None) -> dict[str, Any]:
+    """One round; returns what it did ({discover, ran, skipped_busy, took_over, stuck, finished, songs} or {status: BUSY}); `lagging` as `pending`."""
     (task / "auto").mkdir(parents=True, exist_ok=True)
     with (task / "auto" / ".lock").open("w") as lock:
         try:
@@ -289,12 +347,40 @@ def auto_round(task: Path, *, discover_days: Callable[[], dict[str, Any]], run_c
             return {"status": BUSY}
         found = discover_days()
         ledger = _load(task)
-        run, stuck = pending(task, ledger, upload=upload) if (task / "state").is_dir() else ([], [])
-        code = run_clips(run) if run else 0
-        waiting = _record(task, ledger, run)
-        done = [cid for cid in run if finished(ClipState.load(task / "state" / f"{cid}.json"), upload=upload)]
+        run, stuck = pending(task, ledger, upload=upload, lagging=lagging) if (task / "state").is_dir() else ([], [])
+        to_run: list[str] = []
+        busy_by_cid: dict[str, SkippedBusyClip] = {}
+        took_over_by_cid: dict[str, TookOverLock] = {}
+        for cid in run:
+            lock_status = inspect_clip_run_lock(task / "state" / f"{cid}.json")
+            if lock_status.code == CLIP_RUN_LOCK_BUSY:
+                busy_by_cid[cid] = SkippedBusyClip(cid=cid, code=CLIP_RUN_LOCK_BUSY, owner_pid=lock_status.owner_pid)
+            else:
+                if lock_status.leftover:
+                    took_over_by_cid[cid] = TookOverLock(cid=cid, previous_pid=lock_status.owner_pid)
+                to_run.append(cid)
+        if to_run:
+            batch = run_clips(to_run)
+            if isinstance(batch, ClipRunBatch):
+                code = batch.exit_code
+                for item in batch.skipped_busy:
+                    busy_by_cid.setdefault(item.cid, item)
+                for taken in batch.took_over:
+                    took_over_by_cid[taken.cid] = taken
+            else:
+                code = batch
+        else:
+            code = 0
+        skipped_busy = [busy_by_cid[cid].to_dict() for cid in run if cid in busy_by_cid]
+        ordered_took_over = [cid for cid in run if cid in took_over_by_cid and cid not in busy_by_cid]
+        ordered_took_over += [cid for cid in took_over_by_cid if cid not in run and cid not in busy_by_cid]
+        took_over = [took_over_by_cid[cid].to_dict() for cid in ordered_took_over]
+        ran = [cid for cid in run if cid not in busy_by_cid]
+        waiting = _record(task, ledger, ran)
+        done = [cid for cid in ran if finished(ClipState.load(task / "state" / f"{cid}.json"), upload=upload)]
         songs = run_songs() if run_songs is not None else []
         reclaimed = reclaim(task, ledger, remote, now=time.time() if now is None else now) if remote is not None else []
         reclaimed += reclaim_recordings(task, ledger, remote) if remote is not None else []
-        return {"status": "ROUND_DONE", "discover": found, "ran": run, "finished": done, "stuck": stuck, "run_exit_code": code,
+        return {"status": "ROUND_DONE", "discover": found, "ran": ran, "skipped_busy": skipped_busy,
+                "took_over": took_over, "finished": done, "stuck": stuck, "run_exit_code": code,
                 "reclaimed": reclaimed, "waiting_provider": waiting, "songs": songs}

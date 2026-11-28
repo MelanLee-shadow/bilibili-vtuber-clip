@@ -383,7 +383,7 @@ def test_default_chain_is_sol_without_gpt5_downgrade(tmp_path):
 
     assert completed.returncode == 1
     models = [body["model"] for body in capture["bodies"]]
-    assert models == ["gpt-6.1-sol"] * 3 + ["gpt-6-sol"] * 3
+    assert models == ["gpt-6.2-sol"] * 3 + ["gpt-6.1-sol"] * 3
     assert {body["reasoning"]["effort"] for body in capture["bodies"]} == {"medium"}
 
 
@@ -404,13 +404,13 @@ def test_argv_chain_and_effort_override_env(tmp_path):
 @pytest.mark.parametrize('failure', ['503', '429', 'timeout', 'empty'])
 def test_ranked_model_pin_exhausts_retries_then_falls_back_with_provenance(tmp_path, failure):
     completed, capture, completion, _ = _run_bridge(tmp_path,
-        extra_args=('gpt-6.1-sol', 'medium', '1'),
+        extra_args=('gpt-6.2-sol', 'medium', '1'),
         status_sequence=(failure, failure, failure, '200'),
         env_overrides={'CPA_BACKOFF_MAX_TOTAL_SECONDS': '0'})
     assert completed.returncode == 0, completed.stderr
-    assert [body['model'] for body in capture['bodies']] == ['gpt-6.1-sol'] * 3 + ['gpt-6-sol']
+    assert [body['model'] for body in capture['bodies']] == ['gpt-6.2-sol'] * 3 + ['gpt-6.1-sol']
     assert {body['reasoning']['effort'] for body in capture['bodies']} == {'medium'}
-    assert json.loads(Path(str(completion) + '.provenance.json').read_text())['answering_model'] == 'gpt-6-sol'
+    assert json.loads(Path(str(completion) + '.provenance.json').read_text())['answering_model'] == 'gpt-6.1-sol'
 
 
 @pytest.mark.parametrize('seconds', [None, '173'])
@@ -423,13 +423,13 @@ def test_bridge_attempt_timeout_parameter(tmp_path, seconds):
 
 def test_bridge_usage_records_answering_model(tmp_path):
     usage = tmp_path / 'usage.jsonl'
-    completed, _, _, _ = _run_bridge(tmp_path, extra_args=('gpt-6.1-sol', 'medium'),
+    completed, _, _, _ = _run_bridge(tmp_path, extra_args=('gpt-6.2-sol', 'medium'),
         status_sequence=('503', '503', '503', '200'),
         env_overrides={'AUTOSLICE_CPA_USAGE_FILE': str(usage)})
     assert completed.returncode == 0, completed.stderr
     rows = [json.loads(line) for line in usage.read_text().splitlines()]
     assert sum(row['event_type'] == 'http_attempt' for row in rows) == 4
-    assert rows[-1]['event_type'] == 'completion' and rows[-1]['answering_model'] == 'gpt-6-sol'
+    assert rows[-1]['event_type'] == 'completion' and rows[-1]['answering_model'] == 'gpt-6.1-sol'
 
 
 def test_stage_can_bound_one_attempt_per_model_to_fit_outer_deadline(tmp_path):

@@ -33,7 +33,7 @@ def test_committed_song_grant_has_exact_human_authority():
     default = document["default_policy"]["song"]
     assert default["cap"] == 1
     assert default["authority"].startswith('公开规则T21:42:45.772Z（逐字，')
-    assert "「默认是每天5条限额和一条歌切」" in default["authority"]
+    assert "默认每天 5 条谈话切片、1 条歌切" in default["authority"]
 
 
 @pytest.mark.parametrize("legacy", [False, True])

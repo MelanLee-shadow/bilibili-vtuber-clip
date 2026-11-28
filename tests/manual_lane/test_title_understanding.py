@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from fakes import MERGE, READING, UNDERSTANDING_CALLS, FakeCpa, FakeRemote, make_ctx, srt
+from fakes import LANDINGS, MERGE, READING, UNDERSTANDING_CALLS, FakeCpa, FakeRemote, make_ctx, srt
 
 from src.autoslice.manual_lane import stage_impl as si
 from src.autoslice.manual_lane import channel_facts, title_names, title_understanding
@@ -19,8 +19,11 @@ SOLO = dict(SESSION, participants=[["李豆沙"]])
 
 
 def _cand(body, on_stage=("李豆沙",)):
-    return {"title_body": body, "on_stage": list(on_stage), "punchline_person": "她越长大越讨厌看那种有规矩的",
-            "swap_check": {"holds_with_other_host": False, "reason": "换主播不成立"}}
+    return {"title_body": body, "on_stage": list(on_stage), "landing": 1}
+
+
+LANDINGS_LINE = ("1. [李豆沙] “我才不买呢，顶多买一点”（第 3 句）——她先嘴硬，接着自己拆台〔选片点出〕；"
+                 "2. [李豆沙] “那你知道我在直播还给我打电话”（第 5 句）——她反过来问对方")
 
 
 def _answer(*cands):
@@ -45,8 +48,7 @@ def _record(ctx):
 # ----- the readings and the merge reach candidates.json, PROCESS and every title round --------------------------
 @pytest.mark.parametrize("hook,hook_word", [("她嘴硬那一段", "成立"), ("", "无")])
 def test_two_readings_and_a_merge_are_recorded_and_carried_by_every_title_round(tmp_path, hook, hook_word):
-    bad = _cand("她半分钟后真的破防了", ("李豆沙",))
-    bad["swap_check"]["holds_with_other_host"] = True            # round 0 fails its self-check, so round 1 is asked
+    bad = _cand("她半分钟后真的破防了", ("路人甲",))               # round 0 fails a check (not a participant): round 1 is asked
     ctx, cpa, picked = _pick(tmp_path, [_answer(bad), _answer(_cand("她半分钟后真的破防了"))], hook=hook)
     assert not isinstance(picked, StepOutcome), picked
     assert cpa.calls[:4] == [*UNDERSTANDING_CALLS, "title"]
@@ -56,17 +58,23 @@ def test_two_readings_and_a_merge_are_recorded_and_carried_by_every_title_round(
     merge = cpa.prompts[cpa.calls.index("title-merge")]
     assert (hook or "（无）") in merge and "李豆沙讲了她的主线" in merge          # the readings are in the merge prompt
     found = _record(ctx)["understanding"]
-    assert found["readings"] == [{"main_line": "李豆沙讲了她的主线", "punchline": "她先嘴硬，接着自己拆台（序号 3）",
+    assert found["readings"] == [{"main_line": "李豆沙讲了她的主线", "landings": LANDINGS, "punchline": LANDINGS_LINE,
                                   "host_role": "主角"}] * 2
-    assert found["merged"] == json.loads(MERGE) and found["hook"] == hook
+    assert found["merged"] == dict(json.loads(MERGE), punchline=LANDINGS_LINE) and found["hook"] == hook
+    assert found["selection"] == {"hook": hook, "reason": "", "peaks": []}
+    for prompt in (read_1, merge):                                # both see what the selection wrote
+        assert ("- 一句话：" + hook if hook else "选片时写下的“为什么选这段”：（无）") in prompt
     assert any(f"本片主线：李豆沙讲了她的主线（两份阅读一致；选片理由{hook_word}）" == line for line in picked[2])
     assert len(cpa.title_prompts) == 2
     for prompt in cpa.title_prompts:                              # the block closes the method text in each round
-        block = prompt.split("## 本片主线（已由两次独立阅读核对；标题必须建在它上面）", 1)[1].split("## 本流水线的输入", 1)[0]
-        assert block.index("- 主线：李豆沙讲了她的主线") < block.index("- 笑点：她先嘴硬，接着自己拆台（序号 3）")
-        assert "- 指代：它＝她的小号\n" in block and "- 岔话题（不要拿来当标题主体）：顺带聊了晚饭\n" in block
-        assert "- 人名、作品名用正式写法：李豆沙（不要写成：李豆莎）；雾深Girimi\n" in block
-        assert "前缀里已经有的联动对象，正文不再写一遍" in block
+        block = prompt.split("## 本片主线和落点（已由两次独立阅读核对；标题必须建在它上面）", 1)[1].split("## 本流水线的输入", 1)[0]
+        assert block.index("李豆沙讲了她的主线") < block.index("  1. [李豆沙] “我才不买呢，顶多买一点”（第 3 句）——她先嘴硬，接着自己拆台〔选片点出〕\n")
+        assert "  2. [李豆沙] “那你知道我在直播还给我打电话”（第 5 句）——她反过来问对方\n" in block
+        assert "每处落点至少写 2 条" in block
+        assert "- 指代：它＝她的小号\n" in block and "- 和主线无关的岔话题（不要拿来当标题主体）：顺带聊了晚饭\n" in block
+        assert "- 人名、作品名的写法（括号里是不要写成的错字）：李豆沙（不要写成：李豆莎）；雾深Girimi\n" in block
+        assert "前缀里已经有全名的联动对象，正文里不再写全名" in block
+        assert ("- 一句话：" + hook if hook else "选片时写下的“为什么选这段”：（无）") in block     # the writer sees it too
         assert prompt.index("## 最近标题的称呼") < prompt.index("## 本片主线")
 
 
@@ -89,13 +97,15 @@ def test_an_unusable_merge_is_asked_again_and_the_good_answer_is_used(tmp_path):
     ctx, cpa, picked = _pick(tmp_path, [_answer(_cand("她半分钟后真的破防了"))], merges=[bad, MERGE])
     assert not isinstance(picked, StepOutcome)
     assert [c for c in cpa.calls if c.startswith("title-merge")] == ["title-merge", "title-merge--reply-2"]
-    assert _record(ctx)["understanding"]["merged"] == json.loads(MERGE)
+    assert _record(ctx)["understanding"]["merged"] == dict(json.loads(MERGE), punchline=LANDINGS_LINE)
     rejected = [c for c in picked[3] if c["call_id"] == "title-merge"][0]["rejected_answers"]
     assert [r["reason"] for r in rejected] == ["TITLE_UNDERSTANDING_SHAPE (who_is_who must be a list of objects with "
                                                "term and means)"]
 
 
-@pytest.mark.parametrize("field,value", [("main_line", ""), ("punchline", "  "), ("main_line", 3),
+@pytest.mark.parametrize("field,value", [("main_line", ""), ("landings", []), ("main_line", 3),
+                                         ("landings", [{"quote": "", "who": "", "cues": [], "why": ""}]),
+                                         ("landings", [dict(LANDINGS[0], cues=["3"])]),
                                          ("who_is_who", [{"term": "它"}]), ("side_topics", [1])])
 def test_a_merge_that_never_meets_the_contract_stops_the_step_as_unreadable(tmp_path, field, value):
     bad = json.dumps(dict(json.loads(MERGE), **{field: value}))
@@ -106,10 +116,27 @@ def test_a_merge_that_never_meets_the_contract_stops_the_step_as_unreadable(tmp_
     assert len([c for c in cpa.calls if c.startswith("title-merge")]) == 10     # CPA_TEXT_TRIES
 
 
+def test_more_landings_than_the_cap_keep_the_first_ones_and_the_merge_names_the_rest(tmp_path):
+    """11-23 1493180: the selection had marked six beats; ten merges listing all six were rejected and the clip
+    stopped.  The landings come most important first, so the first LANDINGS_MAX are kept and the rest are named."""
+    six = [dict(LANDINGS[0], quote=f"第{n}下", cues=[n]) for n in range(1, 7)]
+    many = json.dumps(dict(json.loads(MERGE), landings=six), ensure_ascii=False)
+    reading = json.dumps(dict(json.loads(READING), landings=six), ensure_ascii=False)
+    cands = [dict(_cand(body), landing=n) for n in range(1, 5) for body in ("她半分钟后真的破防了", "她半分钟后破防了")]
+    ctx, cpa, picked = _pick(tmp_path, [_answer(*cands)], merges=[many], readings=reading)
+    assert not isinstance(picked, StepOutcome), picked
+    assert [c for c in cpa.calls if c.startswith("title-merge")] == ["title-merge"]     # not asked again
+    found = _record(ctx)["understanding"]
+    assert [x["quote"] for x in found["merged"]["landings"]] == ["第1下", "第2下", "第3下", "第4下"]
+    assert all(len(r["landings"]) == title_understanding.LANDINGS_MAX for r in found["readings"])
+    assert [c for c in found["merged"]["conflicts"] if "第5下" in c or "第6下" in c] == found["merged"]["conflicts"][-2:]
+    assert "第5下" not in cpa.title_prompts[0]
+
+
 def test_a_reading_that_is_not_an_object_with_both_fields_is_asked_again_then_unreadable(tmp_path):
     _, cpa, picked = _pick(tmp_path, [], readings=json.dumps({"main_line": "只有主线"}))
     assert isinstance(picked, StepOutcome) and picked.reason == "CPA_RESPONSE_UNPARSEABLE"
-    assert "punchline missing" in picked.note and "title-merge" not in cpa.calls
+    assert "landings must be one or more objects" in picked.note and "title-merge" not in cpa.calls
     assert len([c for c in cpa.calls if c.startswith("title-read-1")]) == 10
 
 
@@ -144,7 +171,10 @@ def test_both_readings_and_the_merge_carry_the_selection_tiers_and_pick_the_high
     for prompt in (cpa.prompts[0], merge):
         assert tiers in prompt and "标题落点" in prompt and "哪怕它只占一小段" in prompt
     assert "它必须属于主线" not in cpa.prompts[0]
-    assert "以笑点为准" in cpa.prompts[cpa.calls.index("title")]
+    for prompt in (cpa.prompts[0], merge):          # a group of landings; the selection's moments first within a tier
+        assert "同一层里，选片点出的在前" in prompt and '"landings": [{"quote"' in prompt
+    assert "不放这里，放 landings" in cpa.prompts[0] and "不归到 side_topics" in merge
+    assert "同一层看点里以它为准" in cpa.prompts[cpa.calls.index("title")]
 
 
 def test_a_metric_without_the_tier_section_stops_the_step_naming_it(tmp_path, monkeypatch):
@@ -166,7 +196,7 @@ def _roles(read_1, read_2, merged, why="她只说了 4、16 两句，主线靠�
 @pytest.mark.parametrize("read_1,read_2", [("旁观", "旁观"), ("旁观", "参与"), ("参与", "旁观")])
 def test_a_clip_whose_main_line_is_other_peoples_business_stops_before_any_title(tmp_path, read_1, read_2):
     """11-23 625460: 礼墨Sumi grabbing stones and melting down, 李豆沙 three lines; three title rounds all failed the
-    swap test and the step stopped TITLE_NOT_ACCEPTED.  Owner: selection is 「围绕李豆沙」."""
+    swap test and the step stopped TITLE_NOT_ACCEPTED.  selection is about the host herself."""
     from src.autoslice.manual_lane import auto_run
 
     ctx, cpa, picked = _pick(tmp_path, [_answer(_cand("她半分钟后真的破防了"))], **_roles(read_1, read_2, "旁观"))
@@ -391,3 +421,60 @@ def test_a_subtitle_code_for_a_person_is_not_a_title_spelling():
     names = title_names.canonical_names("今天和星汐一起，xxsk 也来了\n", ["李豆沙"])
     assert "xxsk" not in names.prompt_text()
     assert names.non_formal("星汐来了") == []
+
+
+
+# ----- what the selection wrote reaches the reading, the merge and the title prompt ------------------------------------
+def test_the_selections_reason_and_peaks_reach_all_three_prompts_and_the_record(tmp_path):
+    """标题没落在最关键的那一下，就是流水线的问题.  11-24 1254550: the selection wrote
+    「必须保留她先答应每天来、随即改口」 and only its 80-character hook reached one of the step's calls."""
+    peaks = [{"quote": "哦，不对，你不能每天都来", "who": "", "at_ms": 1_281_000, "why": "刚答应就改口"}]
+    cpa = FakeCpa([_answer(_cand("她半分钟后真的破防了"))])
+    ctx = make_ctx(tmp_path, remote=FakeRemote(), cpa=cpa, session=SESSION)
+    ctx.state.data["clip"].update(hook="坚持轮流配对", selection_reason="必须保留她先答应每天来、随即改口", peaks=peaks)
+    (ctx.clip_dir / "subs").mkdir(parents=True, exist_ok=True)
+    (ctx.clip_dir / "subs/final.srt").write_text(srt(3), encoding="utf-8")
+    picked = si.pick_title(ctx)
+    assert not isinstance(picked, StepOutcome), picked
+    for call in ("title-read-1", "title-merge", "title"):
+        prompt = cpa.prompts[cpa.calls.index(call)]
+        assert "- 一句话：坚持轮流配对\n- 看点说明：必须保留她先答应每天来、随即改口\n" in prompt, call
+        assert "  1. “哦，不对，你不能每天都来”——刚答应就改口" in prompt and "事实以字幕为准" in prompt
+    assert _record(ctx)["understanding"]["selection"] == {"hook": "坚持轮流配对", "reason": "必须保留她先答应每天来、随即改口",
+                                                          "peaks": peaks}
+
+
+def test_a_state_made_before_the_reason_was_stored_reads_it_from_its_selection_file(tmp_path):
+    from src.autoslice.manual_lane import clip_init
+
+    entry = {"start_ms": 0, "end_ms": 1000, "source": {"path": "/r/a.flv"}, "hook": "一句话", "peaks": [{"quote": "q", "who": "", "at_ms": 5, "why": "w"}],
+             "selection_scorecard": {"start_cue": 1, "end_cue": 2, "candidate_quality": {"reason": "最细的那段"}}}
+    sel = _selection(tmp_path, "semantictalk_1_2", **entry)
+    clip = clip_init.clip_from_entry(clip_init.selection_entry(tmp_path / "discover/semantictalk_1_2.json", "semantictalk_1_2"),
+                                     cid="semantictalk_1_2", recording_date="2026-11-24", bcut_srt=tmp_path / "b.srt",
+                                     bcut_source_zero_ms=0, remote_root="/w", source_dir=None,
+                                     selection_file=tmp_path / "discover/semantictalk_1_2.json")
+    assert clip["selection_reason"] == "最细的那段" and clip["peaks"] == entry["peaks"]
+    assert clip_init.selection_notes(clip) == {"hook": "一句话", "reason": "最细的那段", "peaks": entry["peaks"]}
+    old = {"cid": "semantictalk_1_2", "hook": "一句话", "selection_file": sel}             # no selection_reason key
+    assert clip_init.selection_notes(old) == {"hook": "一句话", "reason": "最细的那段", "peaks": []}
+    # a revision (revise_run copies the clip, `selection_file` too) and a revision of a trimmed clip: the file names the
+    # clip they were made from (11-24: semantictalk_583860_806500_11232100_r4 on the host)
+    for successor in ("semantictalk_1_2_11231200_r4", "semantictalk_1_2_trim_r2"):
+        assert clip_init.selection_notes(dict(old, cid=successor))["reason"] == "最细的那段"
+    from src.autoslice.manual_lane.state import StateError
+    with pytest.raises(StateError, match="gone"):              # as owner_marked: a file that is gone is an error
+        clip_init.selection_notes(dict(old, selection_file=str(tmp_path / "discover/gone.json")))
+    with pytest.raises(StateError, match="not found"):
+        clip_init.selection_notes(dict(old, cid="semantictalk_9_9_r2"))
+    assert clip_init.selection_notes({"cid": "x", "hook": "h"}) == {"hook": "h", "reason": "", "peaks": []}   # made by hand
+    bare = clip_init.clip_from_entry({"cid": "c", "start_ms": 0, "end_ms": 1, "segment_path": "/r/a.flv", "cue_ids": [1, 2]},
+                                     cid="c", recording_date="d", bcut_srt=tmp_path / "b.srt", bcut_source_zero_ms=0,
+                                     remote_root="/w", source_dir=None, selection_file=tmp_path / "discover/semantictalk_1_2.json")
+    assert bare["selection_reason"] == "" and "peaks" not in bare
+
+
+def test_the_owners_draw_replaces_the_landings(tmp_path):
+    assert title_understanding.owner_landing("LLBZ 会被误解成李李不直") == [
+        {"quote": "", "who": "", "cues": [], "why": "LLBZ 会被误解成李李不直", "owner": True}]
+    assert title_understanding.landings_line(title_understanding.owner_landing("他说的看点")) == "1. 他说的看点〔频道主说的看点〕"

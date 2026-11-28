@@ -1,7 +1,6 @@
 """After a clip is sealed: what it shows of the host that stays true in other clips.
 
-Owner ("人设资料我记得应该也有个机制，就是随着切片来更新吧") and ("流水线最好是能够自己在做切片
-的时候，顺带的就把人物性格给补完，都放在……Persona那里").  The accepted persona (persona.md, rendered from the fact
+Owner (人设资料应当随切片更新) and ("流水线做片时顺带补全人物性格，写进人设").  The accepted persona (persona.md, rendered from the fact
 ledger) changes only by a commit; what the clips show in between is kept here, with the lane's task:
 
 - `after_run` (every run of a clip ends in cli._finish_run): once the review is done, one model call reads the final

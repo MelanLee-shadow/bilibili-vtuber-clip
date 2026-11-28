@@ -17,7 +17,7 @@ from typing import Any
 
 from . import step4_other_voices as ov
 from .runner import Ctx
-from .step_io import REMOTE_TOOLS
+from .step_io import REMOTE_TOOLS, raise_if_vision_unavailable
 
 TOOL = "frame"
 SCRIPT = REMOTE_TOOLS / "look_at_frames.py"
@@ -47,7 +47,8 @@ def look(ctx: Ctx, req: dict[str, Any], cut_len: float, tag: str, pay: Callable[
     for call in got.calls:
         pay(dict(call))
     spent = {"cpa": list(got.calls)} if got.calls else {}
-    if got.error:       # unknown, not absent; what it cost is still counted
+    if got.error:       # unknown, not absent; what it cost is still counted (unless both vision routes are unavailable)
+        raise_if_vision_unavailable(got.error)
         return {"question": question.strip(), "error": f"读取失败，结果未知（不是没有）：{got.error}"[:400], **spent}
     frames = [{"t": f["t"], **({"seen": f.get("seen"), "answer": f.get("answer")} if f["ok"] else {"error": f.get("error")})}
               for f in got.frames]

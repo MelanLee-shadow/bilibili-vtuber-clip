@@ -152,7 +152,7 @@ def test_a_complete_answer_is_one_request_and_cached(tmp_path, monkeypatch):
     out = json.loads(oci.out.read_text(encoding="utf-8"))
     assert oci.request_bodies[0]["input"] == "提示词：写标题\n"
     assert out["prompt_sha256"] == hashlib.sha256("提示词：写标题\n".encode()).hexdigest()
-    assert (out["model"], out["effort"], out["stream"]) == ("gpt-6.1-sol", "medium", True)
+    assert (out["model"], out["effort"], out["stream"]) == ("gpt-6.2-sol", "medium", True)
 
 
 def test_normal_ask_still_dispatches_a_changed_question(tmp_path, monkeypatch):
@@ -231,7 +231,7 @@ def test_pick_frame_reading_cut_by_the_provider_is_an_error_not_a_verdict(tmp_pa
 
 def test_pick_frame_complete_reading_still_gives_its_verdict(tmp_path, monkeypatch):
     pf = _load(REMOTE / "pick_frame.py", "pick_frame_control")
-    answers = iter([_payload("completed", "CLEAN"), _payload("completed", "FACE"),
+    answers = iter([_payload("completed", "CLEAN"), _payload("completed", '{"face": null}'),
                     _payload("completed", '{"danmaku": [], "person": [], "guest": []}')])
     monkeypatch.setattr(pf.urllib.request, "urlopen",
                         lambda req, timeout: _JsonResp(json.dumps(next(answers)).encode()))
@@ -247,10 +247,10 @@ def test_pick_frame_complete_reading_still_gives_its_verdict(tmp_path, monkeypat
 def test_cover_vision_answer_cut_by_the_provider_is_raised_and_not_kept(tmp_path, monkeypatch):
     cc = _load(REMOTE / "cover_candidates.py", "cover_candidates_guard")
     payload = _payload("incomplete", '{"face": [1, 2', {"reason": "max_output_tokens"})
-    monkeypatch.setattr(cc.urllib.request, "urlopen",
+    monkeypatch.setattr(cc.cover_vision.urllib.request, "urlopen",
                         lambda req, timeout: _JsonResp(json.dumps(payload).encode()))
-    monkeypatch.setattr(cc, "b64_jpeg", lambda path, width=1280: "aW1n")
-    monkeypatch.setattr(cc, "sha", lambda path: "0" * 64)
+    monkeypatch.setattr(cc.cover_vision, "b64_jpeg", lambda path, width=1280: "aW1n")
+    monkeypatch.setattr(cc.cover_vision, "sha", lambda path: "0" * 64)
     monkeypatch.setenv("CPA_BASE_URL", "https://cpa.invalid/v1")
     job = {"judge_model": "gpt-6.1-sol"}
     with pytest.raises(ValueError):

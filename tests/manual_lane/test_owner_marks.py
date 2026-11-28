@@ -1,4 +1,4 @@
-"""The owner's marks in the danmaku are clip requests (「我在弹幕里标记了一处地点…我要自动流水线能切出这一块来」)."""
+"""The owner's marks in the danmaku are clip requests (弹幕里标记的那一段，流水线要自己切出来)."""
 import json
 import types
 

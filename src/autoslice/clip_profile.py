@@ -1,34 +1,34 @@
 """Clip profile: the one definition of a delivered clip's form.
 
-公开规则:04Z：「在这种与李豆沙相关的，李豆沙不是主角的切片里，不需要加李豆沙片头」
-公开规则：给出格式的检查格式的应该来自同一个定义…两个输出而已
+the channel's request
+频道的要求
 
 A clip's form used to be implied by ``lane`` (talk/song) alone, so a related
 clip in which the host is not the protagonist inherited the talk intro and the
-default talk collection. The form is now declared once, in the producer spec
+default talk collection.  The form is now declared once, in the producer spec
 as ``spec["clip_profile"]``; a record or upload manifest only transcribes the
-declared document. Everything that needs the form derives it here:
+declared document.  Everything that needs the form derives it here:
 
 * ``requires_intro(profile)`` — whether the delivered video carries the
- channel intro. The intro belongs only to talk clips whose protagonist is the
- host; songs (SONG-07「不放片头直接进歌」) and non-protagonist related clips are
- derived members of the same rule, not separate exemptions. Callers gate
- their existing ``require_branding_intro`` call on it, so the channel manifest
- switch and the ``AUTOSLICE_BRANDING_INTRO=off`` test/emergency hatch stay
- where they are.
+  channel intro.  The intro belongs only to talk clips whose protagonist is the
+  host; songs (SONG-07「不放片头直接进歌」) and non-protagonist related clips are
+  derived members of the same rule, not separate exemptions.  Callers gate
+  their existing ``require_branding_intro`` call on it, so the channel manifest
+  switch and the ``AUTOSLICE_BRANDING_INTRO=off`` test/emergency hatch stay
+  where they are.
 * ``season_for(profile)`` — the collection the archive joins.
 * ``intro_binding_problem(profile, binding, ...)`` — the delivery-gate check
- that a burned intro binding agrees with the form.
+  that a burned intro binding agrees with the form.
 
 Only ``host_is_protagonist`` and ``delivery_kind`` feed these derivations.
 ``input_kind`` and ``watched_media`` are declared here so later consumers read
-one definition; no derivation in this module consumes them. ``watched_media``
+one definition; no derivation in this module consumes them.  ``watched_media``
 keeps its existing single declaration site, the spec's top-level
 ``watched_media`` field; the spec's ``clip_profile`` block must not repeat it.
 
 A spec, record or manifest without a declaration derives the historical lane
-default in memory. The default is never written back, so existing bytes and
-their hash bindings are unchanged. The account-bound collection/section IDs
+default in memory.  The default is never written back, so existing bytes and
+their hash bindings are unchanged.  The account-bound collection/section IDs
 live only in ``SEASON_IDS``.
 """
 

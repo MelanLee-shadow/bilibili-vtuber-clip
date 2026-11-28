@@ -8,6 +8,18 @@ from fakes import RealMediaHost
 
 
 @pytest.fixture(autouse=True)
+def _isolated_cover_history_root(tmp_path, monkeypatch):
+    """On-host fakes must never use the media host's real shared cover lock or history."""
+    from types import SimpleNamespace
+
+    from src.autoslice.manual_lane import cover_scope
+
+    work = tmp_path / "cover-work"
+    (work / "lane").mkdir(parents=True)
+    monkeypatch.setattr(cover_scope, "layout", lambda: SimpleNamespace(work_root=str(work)))
+
+
+@pytest.fixture(autouse=True)
 def _adjudicate_full_by_default(monkeypatch):
     monkeypatch.setenv("MANUAL_LANE_ADJUDICATE_MODE", "full")
     monkeypatch.setenv("MANUAL_LANE_LADDER", "gemini")

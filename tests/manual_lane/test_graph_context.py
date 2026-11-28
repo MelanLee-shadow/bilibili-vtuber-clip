@@ -3,14 +3,17 @@ small made-up ones written to a temporary directory (invented names, no real cli
 
 from __future__ import annotations
 
+import os
 import json
 import random
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from fakes import MERGE, FakeCpa, FakeRemote, FakeSearch, make_ctx
 
-from src.autoslice.knowledge_graph import Edge, Graph, Node, Source, dump_graph
+from src.autoslice.combined_knowledge_graph import load_layers
+from src.autoslice.knowledge_graph import Edge, Graph, GraphError, Node, Source, dump_graph
 from src.autoslice.manual_lane import circle_context as cc
 from src.autoslice.manual_lane import graph_context as gc
 from src.autoslice.manual_lane import stage_impl as si
@@ -195,9 +198,12 @@ def test_a_reference_the_graph_knows_is_not_searched_and_an_unknown_one_still_is
     context = gc.read(ctx, ["乙乙来了，还提到了丁大会"])
     search = FakeSearch(configured=True)
     found = _gather(ctx, context, "乙乙", "丁大会", "没人知道的词", search=search)
-    assert [t["term"] for t in found["terms"]] == ["没人知道的词"]
-    assert search.queries == ["没人知道的词 李豆沙", "没人知道的词 虚拟主播", *["没人知道的词 别名 虚拟UP主"] * 2]
-    assert found["graph"]["skipped_search"] == ["乙乙", "丁大会"]       # an accepted node and a candidate one
+    assert [t["term"] for t in found["terms"]] == ["丁大会", "没人知道的词"]
+    assert search.queries == [
+        "丁大会 李豆沙", "丁大会 虚拟主播", *["丁大会 别名 虚拟UP主"] * 2,
+        "没人知道的词 李豆沙", "没人知道的词 虚拟主播", *["没人知道的词 别名 虚拟UP主"] * 2,
+    ]
+    assert found["graph"]["skipped_search"] == ["乙乙"]       # accepted node skips search; candidate node is still searched
 
 
 def test_a_reference_in_the_graph_but_without_background_in_the_prompt_is_still_searched(repo, tmp_path):
@@ -308,8 +314,9 @@ def test_shared_circle_terms_join_every_channel_graph_and_never_collide():
         root = nodes.parent.parent
         if root == gc.SHARED_ROOT:
             continue
-        combined = gc.load_layers([gc.SHARED_ROOT, root])     # raises on a duplicate id or a dangling edge
+        combined = gc.load_layers([gc.SHARED_ROOT, root])     # raises on within-layer duplicate id or a dangling edge
         assert "term:嗦面" in combined.nodes, root
+        assert not combined.shadowed, (root, combined.shadowed)
 
 
 def test_chat_brings_in_circle_terms_but_not_the_people_it_names(repo, tmp_path):
@@ -318,3 +325,280 @@ def test_chat_brings_in_circle_terms_but_not_the_people_it_names(repo, tmp_path)
     assert "term:嗦面" in named and MEMBER.id not in named
     assert "嗦面" in context.block()
     assert not [m for m in gc.read(_ctx(tmp_path / "b"), ["谢谢大家一直陪着我"]).record()["mentioned"] if m["id"] == "term:嗦面"]
+
+
+# ----- layered shadowing across authority layers -----------------------------------------------------------------
+def test_load_layers_shadows_lower_layer_duplicate_node_and_edge_ids_and_resolves_edges(tmp_path):
+    shared_src = (Source("owner", "u1", "2026-11-01T00:00:00Z"),)
+    shared = _write(tmp_path / "shared", Graph([
+        node("甲词", "term", summary="共享层释义", aliases=("甲甲",), sources=shared_src),
+        node("候词", "term", summary="共享候选", status="candidate", sources=LEDGER),
+    ], []))
+    channel = _write(tmp_path / "channel", Graph([MEMBER, PROJECT], [edge(MEMBER, "participates_in", PROJECT)]))
+    runtime = _write(tmp_path / "runtime", Graph([
+        node("甲词", "term", summary="低层释义", aliases=("低层别名",), status="candidate", sources=SEARCH),
+        node("候词", "term", summary="低层升级", aliases=("低层升级",), status="accepted", sources=SEARCH),
+        node("丁某", "person", summary="运行时人物", status="candidate", sources=SEARCH),
+    ], [
+        Edge("term:甲词|related_to|person:丁某", "related_to", "term:甲词", "person:丁某", "candidate", SEARCH),
+        edge(MEMBER, "participates_in", PROJECT, status="candidate"),
+    ]))
+
+    combined = load_layers([shared, channel, runtime])
+    standing_term = combined.nodes["term:甲词"]
+    assert standing_term.status == "accepted"
+    assert standing_term.aliases == ("甲甲",)
+    assert standing_term.summary == "共享层释义"
+    assert standing_term.sources == shared_src
+
+    standing_cand = combined.nodes["term:候词"]
+    assert standing_cand.status == "candidate"
+    assert standing_cand.aliases == ()
+    assert standing_cand.summary == "共享候选"
+
+    assert combined.nodes["person:丁某"].status == "candidate"
+    assert combined.neighbors("term:甲词") == []
+    assert [o.id for _, o in combined.neighbors("term:甲词", status=("accepted", "candidate"))] == ["person:丁某"]
+
+    standing_edge = next(e for e in combined.edges if e.id == "person:乙某|participates_in|project:丙企划")
+    assert standing_edge.status == "accepted" and standing_edge.sources == LEDGER
+
+    assert combined.shadowed_nodes == ("term:候词", "term:甲词")
+    assert combined.shadowed_edges == ("person:乙某|participates_in|project:丙企划",)
+    assert combined.shadowed == ("term:候词", "term:甲词", "person:乙某|participates_in|project:丙企划")
+
+
+def test_load_layers_rejects_within_layer_duplicates_dangling_edges_and_bad_json(tmp_path):
+    high = _write(tmp_path / "high", Graph([node("甲词", "term", summary="高层")], []))
+
+    dup_node_alone = _write(tmp_path / "dup_node_alone", Graph([], []))
+    row = (high / "knowledge/nodes.jsonl").read_text(encoding="utf-8")
+    (dup_node_alone / "knowledge/nodes.jsonl").write_text(row + row, encoding="utf-8")
+    with pytest.raises(GraphError, match="duplicate node ids"):
+        load_layers([dup_node_alone])
+    with pytest.raises(GraphError, match="duplicate node ids"):
+        load_layers([high, dup_node_alone])
+
+    dup_edge_dir = _write(tmp_path / "dup_edge", Graph([MEMBER, PROJECT], [edge(MEMBER, "participates_in", PROJECT)]))
+    erow = (dup_edge_dir / "knowledge/edges.jsonl").read_text(encoding="utf-8")
+    (dup_edge_dir / "knowledge/edges.jsonl").write_text(erow + erow, encoding="utf-8")
+    with pytest.raises(GraphError, match="duplicate edge ids"):
+        load_layers([dup_edge_dir])
+
+    dangling = _write(tmp_path / "dangling", Graph([], [edge(MEMBER, "participates_in", EVENT, status="candidate")]))
+    with pytest.raises(GraphError, match="is not a node"):
+        load_layers([high, dangling])
+
+    bad_json = _write(tmp_path / "bad_json", Graph([], []))
+    (bad_json / "knowledge/nodes.jsonl").write_text("{not json\n", encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_layers([high, bad_json])
+
+    bad_eid = _write(tmp_path / "bad_eid", Graph([MEMBER, PROJECT], []))
+    (bad_eid / "knowledge/edges.jsonl").write_text(json.dumps({
+        "id": "wrong-id", "type": "participates_in", "from": MEMBER.id, "to": PROJECT.id,
+        "status": "candidate", "sources": [{"kind": "search", "ref": CRAWL, "at": CRAWL_AT}],
+    }, ensure_ascii=False) + "\n", encoding="utf-8")
+    with pytest.raises(GraphError, match="edge id must be"):
+        load_layers([high, bad_eid])
+
+    repo_clean = load_layers([gc.SHARED_ROOT, _write(tmp_path / "clean", REPO)])
+    assert repo_clean.shadowed == ()
+
+    clash = _write(tmp_path / "clash", Graph([node("重复名", "person", aliases=("嗦面",))], []))
+    with pytest.raises(GraphError, match="several accepted nodes"):
+        load_layers([gc.SHARED_ROOT, clash])
+
+
+def test_graph_context_load_shadows_overlap_reports_detail_and_keeps_candidates_unverified(repo, tmp_path, monkeypatch):
+    from src.autoslice.manual_lane import discover_aids
+
+    runtime = Graph([
+        node("嗦面", "term", summary="低层假释义", aliases=("低层假别名",), status="candidate", sources=SEARCH),
+        EVENT,
+    ], [
+        edge(MEMBER, "participates_in", EVENT, status="candidate"),
+        Edge("term:嗦面|related_to|event:丁大会", "related_to", "term:嗦面", EVENT.id, "candidate", SEARCH),
+    ])
+    ctx = _ctx(tmp_path, runtime=runtime)
+    loaded = gc.load(ctx)
+    assert loaded.status == gc.COMBINED
+    assert loaded.shadowed == ("term:嗦面",)
+    assert "term:嗦面" in loaded.reason and "运行时候选图损坏" not in loaded.reason
+    assert loaded.graph is not None
+    assert loaded.graph.nodes["term:嗦面"].status == "accepted"
+    assert "低层假别名" not in loaded.graph.nodes["term:嗦面"].aliases
+    assert loaded.graph.nodes[EVENT.id].status == "candidate"
+
+    context = gc.read(ctx, ["乙乙来了"], chat=["长嗦"])
+    accepted, clues = context.block().split("\n\n")
+    assert "嗦面" in accepted and "低层假释义" not in accepted
+    assert "丁大会" in clues and "丁大会" not in accepted
+    record = context.record()
+    assert record["status"] == gc.COMBINED
+    assert record["shadowed"] == ["term:嗦面"]
+    assert "term:嗦面" in record["reason"]
+    line = gc.process_line(record)
+    assert line.startswith("知识图：仓库图加运行时候选") and "term:嗦面" in line
+
+    cand_only = _write(tmp_path / "cand_only", Graph([node("候选人", "person", status="candidate", sources=SEARCH)], []))
+    monkeypatch.setattr(discover_aids, "load_channel_profile", lambda _root: SimpleNamespace(asset_root=cand_only))
+    assert discover_aids.reading_aids("候选人今天来了", ["候选人"]) is None
+
+
+def test_real_witness_joins_repository_layers_and_exposes_runtime_nodes():
+    witness = Path(os.environ.get("KNOWLEDGE_RUNTIME_WITNESS") or "/nonexistent-knowledge-runtime-witness")
+    if not (witness / "knowledge/nodes.jsonl").is_file() or not (witness / "knowledge/edges.jsonl").is_file():
+        pytest.skip(f"witness files missing: {witness}")
+    repo_only = load_layers([gc.SHARED_ROOT, gc.REPO_ROOT / "assets/lidousha"])
+    combined = load_layers([gc.SHARED_ROOT, gc.REPO_ROOT / "assets/lidousha", witness])
+    assert combined.shadowed_nodes == ("term:嗦面",)
+    assert combined.shadowed_edges == ()
+    added_nodes = set(combined.nodes) - set(repo_only.nodes)
+    assert len(added_nodes) == 516
+    assert len(combined.nodes) == len(repo_only.nodes) + 516      # the repository graph grows; the runtime layer adds 516
+    assert len(combined.edges) - len(repo_only.edges) == 479
+    assert combined.nodes["term:嗦面"] == repo_only.nodes["term:嗦面"]
+    assert combined.nodes["term:嗦面"].status == "accepted"
+    assert all(combined.nodes[nid].status == "candidate" for nid in added_nodes)
+    assert combined.neighbors("term:嗦面") == []
+    cand_neighbors = combined.neighbors("term:嗦面", status=("accepted", "candidate"))
+    assert len(cand_neighbors) == 2
+    assert all(e.status == "candidate" and o.status == "candidate" for e, o in cand_neighbors)
+
+
+# ----- candidate isolation across readers (round 2) --------------------------------------------------------------
+def test_candidate_alias_never_merges_identities_or_covers_and_only_yields_clue():
+    nan = node("南町", summary="主播南町")
+    hua = node("花礼", summary="主播花礼")
+    dwarf = node("矮人联盟", "group", summary="由花礼发起的团体")
+    shu = node("鼠姐", summary="花礼的昵称", status="candidate", sources=SEARCH)
+    graph = Graph(
+        [nan, hua, dwarf, shu],
+        [
+            edge(nan, "member_of", dwarf),
+            edge(hua, "founded", dwarf),
+            Edge(f"{shu.id}|alias_of|{nan.id}", "alias_of", shu.id, nan.id, "candidate", SEARCH),
+            Edge(f"{shu.id}|alias_of|{hua.id}", "alias_of", shu.id, hua.id, "candidate", SEARCH),
+        ],
+    )
+    groups = [set(g) for g in graph.alias_groups()]
+    assert {nan.id} in groups and {hua.id} in groups and {shu.id} in groups
+
+    bg = gc.background(graph, gc.mentions(graph, ["鼠姐"]))
+    assert [line for line in bg.lines if line.verified] == []
+    assert not bg.covers("鼠姐")
+    assert gc.VERIFIED_HEAD not in bg.block() and gc.CLUES_HEAD in bg.block()
+    assert any("鼠姐可能是南町的别名（未核实）" in line.text for line in bg.lines)
+    assert any("鼠姐可能是花礼的别名（未核实）" in line.text for line in bg.lines)
+    assert gc.GraphContext(gc.COMBINED, "", graph).same_initials("sj") == []
+
+    xiao = node("小南", summary="南町别名")
+    accepted_graph = Graph(
+        [nan, hua, dwarf, shu, xiao],
+        [
+            edge(nan, "member_of", dwarf),
+            edge(hua, "founded", dwarf),
+            edge(xiao, "alias_of", nan),
+            Edge(f"{shu.id}|alias_of|{nan.id}", "alias_of", shu.id, nan.id, "candidate", SEARCH),
+        ],
+    )
+    acc_bg = gc.background(accepted_graph, gc.mentions(accepted_graph, ["小南"]))
+    assert acc_bg.covers("小南")
+    assert any(line.verified and "南町隶属于矮人联盟" in line.text for line in acc_bg.lines)
+
+
+def test_streamers_and_named_not_present_ignore_candidate_persons_and_candidate_aliases(monkeypatch):
+    from src.autoslice.manual_lane import collab_guests, cover_guests
+
+    host = node("李豆沙", aliases=("豆沙",))
+    sumi = node("礼墨Sumi", aliases=("礼墨",), official="礼墨Sumi")
+    xiaoli = node("小礼")
+    panda = node("熊猫", status="candidate", sources=SEARCH)
+    shu = node("鼠姐", status="candidate", sources=SEARCH)
+    stranger = node("野人主播", status="candidate", sources=SEARCH)
+    graph = Graph(
+        [host, sumi, xiaoli, panda, shu, stranger],
+        [
+            edge(xiaoli, "alias_of", sumi),
+            Edge(f"{panda.id}|alias_of|{host.id}", "alias_of", panda.id, host.id, "candidate", SEARCH),
+            Edge(f"{shu.id}|alias_of|{sumi.id}", "alias_of", shu.id, sumi.id, "candidate", SEARCH),
+        ],
+    )
+    monkeypatch.setattr(gc, "load", lambda _ctx: SimpleNamespace(graph=graph))
+    got = collab_guests.streamers(None)
+    assert "熊猫" not in got and "鼠姐" not in got and "野人主播" not in got
+    assert "礼墨Sumi" in got and "小礼" in got["礼墨Sumi"] and "鼠姐" not in got["礼墨Sumi"]
+    assert cover_guests.named_not_present(None, ["因为暗影大熊猫，我是隐藏姿态"], ["李豆沙"]) == []
+    assert cover_guests.named_not_present(None, ["刚才鼠姐和野人主播说话了"], ["李豆沙"]) == []
+    assert cover_guests.named_not_present(None, ["刚才小礼说话了"], ["李豆沙"]) == ["礼墨Sumi"]
+
+
+# ----- candidate clue caps never displace accepted background (round 3) ------------------------------------------
+def test_candidates_never_displace_accepted_lines_or_change_covers_for_any_mentions():
+    import datetime as dt
+
+    fan_nodes, fan_edges, hubs = _fan(5, 5)
+    shared = node("共企", "project", summary="两个实体共有")
+    fan_nodes.append(shared)
+    fan_edges += [edge(hubs[0], "participates_in", shared), edge(hubs[1], "participates_in", shared)]
+
+    seki = node("星甲", summary="", aliases=("小星",))
+    psp = node("星团", "group", summary="")
+    repo_graph = Graph([*fan_nodes, seki, psp], [*fan_edges, edge(seki, "member_of", psp)])
+
+    newer_cand_sources = (Source("crawler", CRAWL, "2026-11-27T00:00:00Z"),)
+    cand_events = [
+        Node(f"event:候活{i}", "event", {"display": f"候活{i}"}, (), f"候选活动{i}", "candidate",
+             newer_cand_sources, {"from": "2026-11-20", "until": None})
+        for i in range(8)
+    ]
+    cand_aliases = [Node(f"person:候别{i}", "person", {"display": f"候别{i}"}, (), "", "candidate", newer_cand_sources)
+                    for i in range(6)]
+    solo_cand = Node("term:纯候选", "term", {"display": "纯候选"}, (), "纯候选词释义", "candidate", newer_cand_sources)
+    cand_edges = [
+        *(Edge(f"{seki.id}|participates_in|{ev.id}", "participates_in", seki.id, ev.id, "candidate",
+               newer_cand_sources, {"from": "2026-11-20", "until": None}) for ev in cand_events),
+        *(Edge(f"{ca.id}|alias_of|{seki.id}", "alias_of", ca.id, seki.id, "candidate", newer_cand_sources)
+          for ca in cand_aliases),
+        *(Edge(f"{h.id}|participates_in|{cand_events[0].id}", "participates_in", h.id, cand_events[0].id,
+               "candidate", newer_cand_sources) for h in hubs[:3]),
+    ]
+    combined_graph = Graph([*repo_graph.nodes.values(), *cand_events, *cand_aliases, solo_cand],
+                           [*repo_graph.edges, *cand_edges])
+
+    day = dt.date(2026, 11, 23)
+    mention_sets = [
+        (["小星"], ("小星", "星甲")),
+        (["小星", "枢0号", "枢1号"], ("小星", "星甲", "枢0号", "枢1号")),
+        (["小星", "枢0号", "枢1号", "枢2号", "枢3号", "枢4号"], ("小星", "星甲", "枢0号", "枢1号", "枢2号", "枢3号", "枢4号")),
+        (["纯候选"], ("小星", "纯候选")),
+    ]
+    for texts, probe_terms in mention_sets:
+        repo_bg = gc.background(repo_graph, gc.mentions(repo_graph, texts), day)
+        comb_bg = gc.background(combined_graph, gc.mentions(combined_graph, texts), day)
+        assert [line for line in comb_bg.lines if line.verified] == [line for line in repo_bg.lines if line.verified]
+        for term in probe_terms:
+            assert comb_bg.covers(term) == repo_bg.covers(term)
+        assert sum(not line.verified for line in comb_bg.lines) <= gc.CLUES_PER_CLIP
+
+    single_bg = gc.background(combined_graph, gc.mentions(combined_graph, ["小星"]), day)
+    assert 0 < sum(not line.verified and not line.own for line in single_bg.lines) <= gc.CLUES_PER_ENTITY
+
+
+def test_real_witness_seki_accepted_background_and_covers_unchanged():
+    import datetime as dt
+
+    witness = Path(os.environ.get("KNOWLEDGE_RUNTIME_WITNESS") or "/nonexistent-knowledge-runtime-witness")
+    if not (witness / "knowledge/nodes.jsonl").is_file() or not (witness / "knowledge/edges.jsonl").is_file():
+        pytest.skip(f"witness files missing: {witness}")
+    repo = load_layers([gc.SHARED_ROOT, gc.REPO_ROOT / "assets/lidousha"])
+    combined = load_layers([gc.SHARED_ROOT, gc.REPO_ROOT / "assets/lidousha", witness])
+    text = (gc.REPO_ROOT / "tests/fixtures/subtitle_audio_anchor_ambiguity/01-kiss.srt").read_text(encoding="utf-8").splitlines()[6]
+    day = dt.date(2026, 11, 23)
+
+    repo_bg = gc.background(repo, gc.mentions(repo, [text]), day)
+    comb_bg = gc.background(combined, gc.mentions(combined, [text]), day)
+    assert [line for line in comb_bg.lines if line.verified] == [line for line in repo_bg.lines if line.verified]
+    assert repo_bg.covers("星汐") is True and comb_bg.covers("星汐") is True
+    assert any(line.verified and "星汐隶属于PSPLive" in line.text for line in comb_bg.lines)

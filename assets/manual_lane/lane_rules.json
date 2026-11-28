@@ -56,7 +56,7 @@
     "_doc": "The listening ladder and the whole-clip ASR witnesses: the production defaults TASK-11 measured and accepted, kept as they were at ed5428bb1 (TASK-29 ruling 1; this file only records them in one place).  asr_first: each doubt window is first re-recognised by MAI and MOSS, Gemini 3.8 then argon only for what that leaves unsettled; the whole clip is also recognised by MAI and MOSS (step 4 then labels speakers by the MOSS clusters named by the host voiceprint, 8c1).  escalate_without_reading (COACH e05 §1.2): on a listening level that has a next level, a doubt whose window gave no reading from that level stays open for the next one even when CPA wrote 高.  change_needs_listening (TASK-30, COACH e05 §2/§4; change_source): on a level that does not listen (window ASR, text only) and has a listening level after it, a doubt CPA decided to change in content while no Gemini reading of it exists stays open for that listening level.  MANUAL_LANE_LADDER / MANUAL_LANE_WHOLE_WITNESS still override for experiments.",
     "source": "TASK-11 (ladder asr_first, whole_witness mai,moss); COACH-ADVICE e05 §1.2 (escalate_without_reading)",
     "models": {
-      "_doc": "Which CPA models each listening level asks, in order; the first that answers is the level's hearing, and one the account or the route refuses is skipped (listen_windows.py, LEVELS); so is one that gives no answer (an empty reply or a timeout after minutes: 2026-11-14 the first level's model did that all afternoon and a clip's subtitles took five hours), so a level with one model waits and asks it again, and a level with two or more skips the one that does not answer. The keys are the level labels and do not change with the model. No Carbon or Argon (公开规则：减少carbon「不能有carbon」, it cost about 0.3 USD a clip and doubles on 2026-12-01). Measured 2026-11-16 on the six training clips (reports/listening-cost-live-20261116/): the second level unavailable, so the agent is handed the MAI and MOSS readings of the window instead, gave 17 and 20 true errors against 16, 17, 16, 18 with Carbon, and 23 and 22 against 21-24 right in the regression set; Gemini 3.8 Flash (High) as the second level left most windows empty. argon therefore names two models no route serves, so the level is always UNAVAILABLE at once. 38m is Gemini 3.8 alone, as measured: it is the last fallback (公开规则：3.8就应该是最终fallback, no weaker model), and the gateway already moves it from the free keys to the paid key and the relays; when it does not answer the level waits and asks again. Measured 2026-11-13 on 14 windows against the finals (pinyin similarity): 3.8 Low 0.88, Argon 0.91, Carbon low/medium/high 0.92/0.93/0.93, Hydrogen low 0.93.",
+      "_doc": "Which CPA models each listening level asks, in order; the first that answers is the level's hearing, and one the account or the route refuses is skipped (listen_windows.py, LEVELS); so is one that gives no answer (an empty reply or a timeout after minutes: 2026-11-14 the first level's model did that all afternoon and a clip's subtitles took five hours), so a level with one model waits and asks it again, and a level with two or more skips the one that does not answer.  The keys are the level labels and do not change with the model.  No Carbon or Argon (the channel's request, it cost about 0.3 USD a clip and doubles on 2026-12-01).  Measured 2026-11-16 on the six training clips (reports/listening-cost-live-20261116/): the second level unavailable, so the agent is handed the MAI and MOSS readings of the window instead, gave 17 and 20 true errors against 16, 17, 16, 18 with Carbon, and 23 and 22 against 21-24 right in the regression set; Gemini 3.8 Flash (High) as the second level left most windows empty.  argon therefore names two models no route serves, so the level is always UNAVAILABLE at once.  38m is Gemini 3.8 alone, as measured: it is the last fallback (the channel's request, no weaker model), and the gateway already moves it from the free keys to the paid key and the relays; when it does not answer the level waits and asks again.  Measured 2026-11-13 on 14 windows against the finals (pinyin similarity): 3.8 Low 0.88, Argon 0.91, Carbon low/medium/high 0.92/0.93/0.93, Hydrogen low 0.93.  Checked 2026-11-26 on lifecycle, cost and 14 windows of 1024780_1219950: Gemini 3.8 Flash (GA 2026-09-02) has no official deprecation notice (lifecycle >= 2027-09-02; 3.7 Flash retired 2026-10-08 and aliases to 3.8) and remains 14/14 OK on CPA at 10.8 s/window, ~0.037 USD/clip (~30 windows at 0.75/3.75 USD per 1M through 2026-12-31, 1.50/7.50 from 2027-01-01).  Replacement candidate when 3.8 retires: Gemini 4 Hydrogen (Low) (1.50/7.50 USD per 1M, ~0.15 USD/clip, half of Carbon; shared-window weighted pinyin similarity 0.866 vs 3.8 Low 0.784, 27.2 s/window; 2026-11-13 six-clip run gave 24 true errors vs 19-27 on 3.8 Low), not Gemini 4 Neon (Low) (3.00/15.00 USD per 1M, ~1.04 USD/clip, 75.6 s/window, 6/14 empty or timed out on CPA) and not 3.6/3.5 Flash (CPA pool silently downgrades 12/13 calls to 3.1-flash-lite) or 3.5-transcribe (HTTP 400 on JSON mode).  Keep 38m on 3.8 Flash (Low) until retirement or until two gates are updated together: (1) cpa_gemini_client.wire_model / model_thinking must map Hydrogen Low to wire model gemini-4-hydrogen with thinkingLevel LOW (literal gemini-4-hydrogen-low stalls ~380 s to empty on CPA relays), and (2) CPA must drop the -high audio-stripping relays on gemini-4-hydrogen (3/14 windows returned HTTP 200 with lines=[] because the relay stripped inline audio/mpeg) or listen_windows.py must treat missing-audio error payloads as UNAVAILABLE; then set 38m to [\"Gemini 4 Hydrogen (Low)\", \"Gemini 3.8 Flash (Low)\"] during grace period and [\"Gemini 4 Hydrogen (Low)\"] after shutdown.",
       "38m": [
         "Gemini 3.8 Flash (Low)"
       ],
@@ -66,7 +66,7 @@
       ]
     },
     "probe_model": "gemini-3.1-flash-lite",
-    "probe_model_doc": "The gateway's cheapest model. The first time a listening model fails in a run, one one-line request goes to it and, when that fails too, one to this model: a relay says why a model is down (公开规则：当前分组「Gemini argon下模型 gemini-3.1-flash-lite 暂无可用服务」), and then the model is not asked again for ten minutes instead of again and again (listen_windows.py, PROBE).",
+    "probe_model_doc": "The gateway's cheapest model.  The first time a listening model fails in a run, one one-line request goes to it and, when that fails too, one to this model: a relay says why a model is down (the gateway's reason that the model is unavailable in its group), and then the model is not asked again for ten minutes instead of again and again (listen_windows.py, PROBE).",
     "ladder": "asr_first",
     "whole_witness": "mai,moss",
     "escalate_without_reading": true,
@@ -109,15 +109,47 @@
   },
   "guest_voiceprint": {
     "_doc": "第 6 步 guest_identity.voiceprint_lines：声纹分类器自己的嘉宾类给 [连线] 句定名。只在场次每位参与者都是分类器的类时用（speaker_v8.known_participants，类表取 speaker/chunks-pred.json 的 classes）。每句取时间上与它重叠的约 1.2 秒分段（只取 ok 的），按重叠毫秒加权：主播概率 <= host_max、嘉宾质量里最多那位的占比 >= share_min、句长 >= min_duration_s、分段盖住句长的比例 >= min_heard，才定成那位嘉宾；其余不定，照旧交频道主标注与 CPA 证据句。频道主的标注永远盖过它。片目录里没有分段文件（修订出的 _r* 片）就不用声纹。",
-    "source": "接管会话 11-24 的选择（不是 公开规则原话），按 公开规则11-24 推送的 11-23 三条片逐句人名（583860、897000、625460）在流水线自己的第 4 步标签上回放：76 句 [连线] 里真值嘉宾 62 句、主播 8 句、无对应真值 6 句。本设定定名 20 句全对（583860 12/12、897000 5/5、625460 3/3），占嘉宾句 32%。留一片交叉（句长、覆盖固定，在两片上选主播与占比线，看第三片）：留出合计 27 句中错 1 句（3.7%，略高于 3% 目标；897000「怎么办？可以暂停吗？」真值礼墨Sumi、声纹安晚awa 占比 0.939，那一折从另两片选出 0.7），另两折 0 错；句长覆盖也放开拟合时留出错 4/26（15%），因留出 583860 那折的两片里 [连线] 只有 1 句主播句，学不到主播线。主播线：公开规则标成主播的「对不起对不起…」「因为你不够 MVP 啊」主播概率 0.086、0.100，嘉宾占比 0.97，0.1 会把这两句写成礼墨的话，故取 0.05；占比 0.9 多一句互换（897000 上句）。句长：短于一段分段（约 1.2 秒）的句子错得多（0.86 秒「怎么办啊？」、0.44 秒「好奇怪。」都换错了人），取 1.0。覆盖：三片实测几乎都是 1.0，0.8 只是结构守卫（句子大半没被分段听到就不判）。宽松对照：主播<=0.5、占比>=0.9、不限句长，定名 40 句错 6（主播 4、互换 2，15%）。未标注的 8 条 11-23 片：397 句 [连线] 定名 87 句（22%）。分类器 10-30 训练，对 11-23 是跨天；错多偏向礼墨Sumi（训练 211 对 143 行）。数据与脚本在接管会话 scratchpad a12/calibrate.py、calibration.json（不入库）。",
+    "source": "公开规则",
     "host_max": 0.05,
     "share_min": 0.95,
     "min_duration_s": 1.0,
     "min_heard": 0.8
   },
+  "collab_guests": {
+    "_doc": "当天连线名单（collab_guests.py）除弹幕与动态那一次 CPA 判断外的三路证据，都取自流水线已有产物、不调模型：voice＝声纹分类器自己的嘉宾类（speaker/chunks-pred.json），一段的最高类是某位嘉宾且概率 >= voice_min_prob 记作她的一段，一条片有 >= voice_min_chunks 段算这条片听到她，当天 >= voice_min_clips 条片听到她这一路才成立；subtitles＝字幕里主播一句点了她的名、之后 answer_within 句内有嘉宾句，当天合计 >= answered_min 次且分布在 >= answered_min_clips 条片；peers＝第 0 步查到并确认是本场的他人切片，标题的【】里同时有主播和她，>= peer_min_videos 条。弹幕判断认的人照旧直接进名单；这三路里有 routes_needed 路成立的人补进名单；名单只加不减。分类器是封闭类（不认识的嘉宾、被看的视频、主播唱歌都会落进某个嘉宾类），所以声纹这一路单独不定人，而且只在其余证据认出的人全是分类器的类的日子才算。别人的声音是被看视频的片（第 4 步 other_voices_video）不记声纹和字幕两路，只记他人切片标题：视频里的声音和主播嘴里的名字不是连线的人。共用一路声音（shared_path）：第 4 步有到达时间证据的片里，一条嘉宾声路上两位名单内嘉宾的把握段，少的一位 >= shared_path_min_chunks 段且占该路全部把握段 >= shared_path_min_share，当天 >= shared_path_min_clips 条片如此，记这两位共用一路。",
+    "source": "公开规则",
+    "routes_needed": 2,
+    "voice_min_prob": 0.8,
+    "voice_min_chunks": 4,
+    "voice_min_clips": 2,
+    "answer_within": 2,
+    "answered_min": 3,
+    "answered_min_clips": 2,
+    "peer_min_videos": 1,
+    "shared_path_min_chunks": 3,
+    "shared_path_min_share": 0.2,
+    "shared_path_min_clips": 2
+  },
+  "cpa": {
+    "_doc": "CPA 文本与看图调用的模型和额度不足自动回退（step_io._ask_cpa、pick_frame.py、cover_candidates.py）。model 是所有未单独指定模型的文本调用默认模型，vision_model 是看图调用默认模型，默认均为 gpt-6.2-sol。只在上游返回明确的额度不足（HTTP 403 insufficient_user_quota / insufficient_quota、HTTP 429 usage_limit_reached、SSE 终态 credit_balance_exhausted / organization_spend_limit_exceeded / billing_hard_limit_reached）时立即回退到 fallback_model（gemini-4-neon），思考档按 fallback_efforts 一对一对应（low→low、medium→medium、high→high）；fallback_min_output_tokens 为回退模型保底输出上限（11-26 实测 gemini-4-neon 的 reasoning_tokens 计入 max_output_tokens，high 档在默认 16000 上限下有 2/30 次判官调用因思考用满 16000 token 被截断，而 32768 上限下思考到 16757 token 的 5/5 次复审均完整返回）；超时、5xx、流截断、内容被拒或普通瞬时限流不回退。每次新调用都先试主模型，额度恢复后自然回到主模型；缓存键带实际作答模型，不互相冒充。回退模型也不可用时停下并同时写出两条路失败的原因。judge_purposes 列出按主模型校准过的判官类用途（title-judge、review）：采用保守做法允许回退以免一条路由断流停摆整条线，但在 PROCESS、cpa[]、title/accepted.json、REVIEW.md 与 FMR reviewer_id 里标出回退模型，并由 manual_lane.py status 单列“由回退模型判定的片”供人工抽查。",
+    "source": "docs/pipeline/41-semantic-repair.md（CPA 模型、推理档位与额度不足回退）",
+    "model": "gpt-6.2-sol",
+    "vision_model": "gpt-6.2-sol",
+    "fallback_model": "gemini-4-neon",
+    "fallback_efforts": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
+    },
+    "fallback_min_output_tokens": 32768,
+    "judge_purposes": [
+      "title-judge",
+      "review"
+    ]
+  },
   "effort": {
     "_doc": "CPA 文本调用按用途分思考档位（U168）。purposes 的 key 是用途（这一次调用要 CPA 做什么），每条给 effort（low/medium/high）与理由/出处；step_io._ask_cpa 按 purpose 读这里，档位随调用写进记录（cpa[].effort）与缓存键（换档不命中旧缓存）；没传或没登记的用途用 default，并在 PROCESS 写一行提示（runner.write_process 打 cpa[].effort_note），不静默。Gemini 听写的档位不在这一段：step3_evidence.LISTEN_MODELS 已是 Low（2026-11-01 协调员），argon 没有思考 token。",
-    "source": "公开规则U168 原话：「类似这种任务可以分不同的思考难度，思考档位。例如说这种想一想自己有没有做错，这种就可以是高思考档位。如果是单纯的听，然后来确认，那就是可以是低思考档位嘛。这个不同思考档位可以分配给不同任务。」归类：想一想自己有没有做错（整片自查复审、判官、复核）-> high；单纯确认（查证、拼接检查、格式化）-> low；其余逐句裁定、生成 -> medium（保持不变）",
+    "source": "频道的要求归类：想一想自己有没有做错（整片自查复审、判官、复核）-> high；单纯确认（查证、拼接检查、格式化）-> low；其余逐句裁定、生成 -> medium（保持不变）",
     "default": "medium",
     "purposes": {
       "boundary": {
@@ -131,7 +163,7 @@
         "source": "U168（其余逐句裁定 -> medium 保持不变）"
       },
       "subtitle-agent": {
-        "model": "gpt-6.1-sol",
+        "model": "gpt-6.2-sol",
         "effort": "high",
         "max_output_tokens": 32768,
         "reason": "字幕代理跨证据取证、逐句裁定并自查修订，包含 U168 的整片复核。",
@@ -139,7 +171,7 @@
       },
       "concat-check": {
         "effort": "low",
-        "reason": "拼接检查：把上一次裁定出来的写法拿回来看是不是把两个候选拼在一起（重复了 3 字以上的连续片段），只判「有没有拼接」、不改字。属于 U168 的「单纯确认」一类。",
+        "reason": "拼接检查：把上一次裁定出来的写法拿回来看是不是把两个候选拼在一起（重复了 3 字以上的连续片段），只判「有没有拼接」、不改字。属于 频道的要求一类。",
         "source": "U168（拼接检查 -> low）"
       },
       "speaker-review": {
@@ -149,8 +181,8 @@
       },
       "speaker-video": {
         "effort": "high",
-        "reason": "有他人声音的单人场（看视频、看动画）的说话人复核：整片逐句过一遍声纹和被看视频画面字幕的读数，定每句是主播还是视频里的人，要权衡两路证据冲突的句子。这是 U168 的「复核」一类，与 speaker-review 同档。",
-        "source": "U168（复核 -> high）；公开规则：看动画的切片里有主播之外的声音，应尽最大努力分辨说话人"
+        "reason": "有他人声音的单人场（看视频、看动画）的说话人复核：整片逐句过一遍声纹和被看视频画面字幕的读数，定每句是主播还是视频里的人，要权衡两路证据冲突的句子。这是 频道的要求一类，与 speaker-review 同档。",
+        "source": "公开规则"
       },
       "title": {
         "effort": "medium",
@@ -184,7 +216,7 @@
       },
       "title-judge": {
         "effort": "high",
-        "reason": "标题判官：按技能的验收条款独立判一条候选标题能不能用（事实/引语/换主播自检/合规），也就是「想一想自己有没有做错」里最典型的一道判官；它判错就会放行一条不能发的标题。两轮都走同一档位。",
+        "reason": "标题判官：按技能的验收条款独立判一条候选标题能不能用（事实/引语/写法/合规），也就是「想一想自己有没有做错」里最典型的一道判官；它判错就会放行一条不能发的标题。两轮都走同一档位。",
         "source": "U168（判官 -> high）"
       },
       "title-pick": {
@@ -204,28 +236,33 @@
       },
       "cover-text": {
         "effort": "low",
-        "reason": "封面字缩短：渲染器报「放不下」，按它的字数/像素上限把封面字压短、意思不变。这是格式化，不是判断对错，属于 U168 的「单纯确认」一类。",
+        "reason": "封面字缩短：渲染器报「放不下」，按它的字数/像素上限把封面字压短、意思不变。这是格式化，不是判断对错，属于 频道的要求一类。",
         "source": "U168（格式化 -> low）"
+      },
+      "cover-text-fix": {
+        "effort": "medium",
+        "reason": "封面字重写：标题已过两位判官，封面字被事实判官或机械检查否决，按理由对着字幕重写封面字、标题不变。属于生成，按 medium。",
+        "source": "U168（生成 -> medium）"
       },
       "review": {
         "effort": "high",
-        "reason": "整片自查复审（第 9 步）：全片字幕、说话人、标题、标签、定不下的句子一起看，找自己前面几步做错的地方并直接改。U168 点名的第一类「想一想自己有没有做错」。",
+        "reason": "整片自查复审（第 9 步）：全片字幕、说话人、标题、标签、定不下的句子一起看，找自己前面几步做错的地方并直接改。U168 点名的第一类（自查有没有做错）。",
         "source": "U168（整片自查复审 -> high）"
       },
       "review-c": {
         "effort": "high",
-        "reason": "整片审读（variant C 第 1 步）：读全片字幕标出需要再听的句子，是整片范围的自查，不是逐句裁定。U168 的「整片自查复审」一类。",
+        "reason": "整片审读（variant C 第 1 步）：读全片字幕标出需要再听的句子，是整片范围的自查，不是逐句裁定。频道的要求一类。",
         "source": "U168（整片自查复审 -> high）"
       },
       "import-meaning": {
         "effort": "low",
-        "reason": "手推导入的低把握句：只判「换成备选写法会不会改变意思」，prompt 明确要求不改写、不判哪个写法对，输出一个布尔量。属于 U168 的「单纯确认」（查证）一类。",
+        "reason": "手推导入的低把握句：只判「换成备选写法会不会改变意思」，prompt 明确要求不改写、不判哪个写法对，输出一个布尔量。属于 频道的要求（查证）一类。",
         "source": "U168（查证/确认 -> low）"
       },
       "writing-canon": {
         "effort": "high",
         "reason": "规范写法：每片一次，逐处判一个非规范写法是不是词表里那个词的同音/谐音/大小写写法（要改成规范形），还是另一个称呼或别的词（要保留）。判错会把别的词改掉，或让同一个词留下两种写法，是对字幕、标题、封面字的把关判断，不是单纯确认。",
-        "source": "U168（判官/复核 -> high）；公开规则：同音词、同义词的两种写法统一用规范写法"
+        "source": "公开规则"
       },
       "name-consistency": {
         "effort": "medium",
@@ -246,6 +283,16 @@
         "effort": "medium",
         "reason": "同场合集选段：从整场字幕里挑出有序的多段，并回答这一场成不成合集。是从材料里挑选、生成一份选择，不是审别人的结论，也不是单纯确认，按「其余生成/裁定」保持 medium。",
         "source": "U168（生成/其余裁定 -> medium）；U184（一场里零散的片段可以剪成合集）；U191（流水线的判断归 CPA）"
+      },
+      "discover-topics": {
+        "effort": "medium",
+        "reason": "discover 的同场同话题归并：读当天全部候选的选片理由和最关键的几句，回答哪几条的看点是同一件事。是从材料里归类、生成一份选择，不是审别人的结论，也不是单纯确认，按「其余生成/裁定」保持 medium。",
+        "source": "U168（生成/其余裁定 -> medium）；同话题的两条应合并成一条；提示词 assets/manual_lane/prompts/discover_topics.md"
+      },
+      "discover-lead-in": {
+        "effort": "medium",
+        "reason": "discover 的往前接前因：对判成圈内观众看不懂的候选，读它片前最多三分钟的字幕（可跨到上一段录像末尾），回答这件事从哪一句开始、接上后看不看得懂。是从材料里找起点、生成一份选择，不是审别人的结论，也不是单纯确认，按「其余生成/裁定」保持 medium，与 discover-recall 自己的悬空回接同档。",
+        "source": "U168（生成/其余裁定 -> medium）；11-24 23:00 那段偶像恋爱的表态前因在 22:30 那段录像末尾，完整召回三遍都判看不懂被刷掉（selection-layers 复核）；提示词 assets/manual_lane/prompts/discover_lead_in.md"
       }
     }
   },
@@ -267,18 +314,18 @@
   "subtitle_agent": {
     "_doc": "单人场字幕代理每条片独立跑几遍（playbook_step3.run），再逐句取多数写法（playbook_vote）。实测（2026-11-11，部署版同版本同片重跑）：每条片每遍有 3–16 个字不同，6 轮里出过真错的 75 处有 55 处在别的遍里是对的；同版本三遍取多数的真错数约等于最好的一遍。1＝只跑一遍（旧行为）。",
     "samples": 3,
-    "source": "公开规则（同一条片同一版本每次跑出来要一样）"
+    "source": "公开规则"
   },
   "name_consistency": {
     "_doc": "One name, one spelling in one clip (e05 §5.6; TASK-36).  After the words are decided, the clip's decided subtitles are scanned for runs of min_syllables..max_syllables Chinese characters whose sound is the same under detection's own pinyin comparison (name_match.sound_key: toneless, zh/z ch/c sh/s n/l, in/ing en/eng merged), plus Latin words whose letters are those syllables' initials (e05 §5.4).  A group with one spelling is not touched and costs no CPA call.  The proper-noun table decides the spelling where it has this sound; otherwise one CPA call per clip decides which groups are names and which places are, and only the places it names are changed (never a global replacement).  A failed call or an unreadable answer leaves every sentence as it was.",
-    "source": "COACH-ADVICE e05 §5.1（专名表及其 note 第一）、§5.4（写法必须来自专名表/弹幕/标题，不许按读音自拼）、§5.6（同一片同一个名字只用一种写法）、§5.7（未定专名）；公开规则U169（能用代码做的留在代码里，判断交给 CPA）",
+    "source": "公开规则",
     "enabled": true,
     "min_syllables": 2,
     "max_syllables": 5
   },
   "knowledge_observe": {
     "_doc": "做片时顺带补知识图（knowledge_observe.py）：每条片复审完成后，一次模型调用读最终字幕和知识图已有的写法，列出最多 observe_max 条知识图里还没有的名字：已有条目的另一个叫法（alias），或还没有的条目（entity）；名字已是图里的写法、alias 指向的条目不存在、或原句不逐字在字幕里且不含这个名字的，不留。留下的写进任务目录 knowledge/observations.json（同一个名字在别的片再出现就多记一个见证），在运行输出里列出来给审片的人入图，并交给新闻爬虫当种子；至少 observed_min_sessions 场直播的切片都见证过的，作为“尚未审定”的线索交给字幕代理。知识图本身只由提交改。",
-    "source": "频道主 2026-11-14：“这种切片过程中补知识图的过程也很重要，李李一听就知道是李豆沙的昵称，你这个补的很对。”",
+    "source": "做片时顺带补知识图很重要（比如听出某个叫法是她的昵称）",
     "observe_max": 5,
     "observed_min_sessions": 2,
     "viewer_thanks": {
@@ -303,14 +350,14 @@
   },
   "persona": {
     "_doc": "做片时顺带补人设（persona_observe.py）：每条片复审完成后，一次模型调用读最终字幕，列出最多 observe_max 条“人设里还没有、换一条片仍成立”的特点，每条要有她自己的原话（逐字出现在她说的句子里才留）。同一个特点（文字相似度不低于 same_statement_ratio）在不同切片里再出现就多记一个见证。至少 observed_min_sessions 场直播的切片都见证过的特点，作为“片中多次观察到、尚未审定”的线索交给读人设的各步（字幕、标题理解）。已审定的人设仍只由台账改（persona_facts → persona.md）。",
-    "source": "频道主 2026-11-10：“人设资料我记得应该也有个机制，就是随着切片来更新吧”；2026-11-13：“流水线最好是能够自己在做切片的时候，顺带的就把人物性格给补完，都放在这个Personality那里，或者是Persona那里”",
+    "source": "人设资料应当随切片更新；2026-11-13：流水线做片时顺带补全人物性格",
     "observe_max": 3,
     "observed_min_sessions": 2,
     "same_statement_ratio": 0.7
   },
   "references": {
     "_doc": "片里指向片外的东西（作品、人名、圈内事件、被引用或化用的现成说法）：每条片查一次、存一份（clips/<cid>/context/references.json），字幕、标题等各步都读这一份（references.py）。定字幕之前先读一遍识别底稿，最多列 spot_max_terms 个底稿没交代的指称；知识图有的不上网，其余用 Search Router 检索、由一次模型调用只按检索结果写说明和规范写法；查到的作为线索交给字幕代理（要与该处的音核对），标题步骤不再重复检索。",
-    "source": "频道主 2026-11-13：“认梗这个事情应该是整个都通用的……很多能力都应该做成单独一个能力，然后各处需要用的时候就直接调这个接口就行了。不应该是什么标题做一遍认梗，然后内容又做一遍认梗”",
+    "source": "频道的要求",
     "spot_max_terms": 5,
     "crawler_kinds": [
       "人物",
@@ -321,11 +368,11 @@
       "其他"
     ],
     "crawler_seeds_keep": 80,
-    "crawler_source": "频道主 2026-11-13：“认梗查出处理论上应该跟新闻crawler是联动的”。两头：查之前先读知识图（仓库图＋新闻爬虫每天更新的候选图），图里有的不上网、背景直接给字幕代理；切片里查过的圈内指称（crawler_kinds：人物、圈内事件、以及标题步骤点名的指称；crawler_kinds_when_found：归不了类的“其他”只有查到了才交——没查到的多半是听写错字，11-14 第一次联动就交过去一个残句和一个单字；名字不足两个字的不交；作品和现成说法由检索自己回答，不交给爬虫）留给新闻爬虫当第二天的种子（<work_root>/assets/reference_seeds.json，保留最新 crawler_seeds_keep 个），爬虫把它们查成带出处的候选节点进图，下一条片就不用再搜。"
+    "crawler_source": "频道的要求。两头：查之前先读知识图（仓库图＋新闻爬虫每天更新的候选图），图里有的不上网、背景直接给字幕代理；切片里查过的圈内指称（crawler_kinds：人物、圈内事件、以及标题步骤点名的指称；crawler_kinds_when_found：归不了类的“其他”只有查到了才交——没查到的多半是听写错字，11-14 第一次联动就交过去一个残句和一个单字；名字不足两个字的不交；作品和现成说法由检索自己回答，不交给爬虫）留给新闻爬虫当第二天的种子（<work_root>/assets/reference_seeds.json，保留最新 crawler_seeds_keep 个），爬虫把它们查成带出处的候选节点进图，下一条片就不用再搜。"
   },
   "other_voices": {
     "_doc": "第 4 步：单人场次（只有主播一位参与者）里有没有他人的声音（主播在看视频、看动画）。判断先看画面：在 screen_frames 个均匀取的帧上让 CPA 视觉读「是否正在播放别人做的视频」，任一帧读到就进入有他人声音的路径（screen_min_hits）。进入后每句在其时间内取 1 到 cue_frames_max 帧（每 cue_frame_every_s 秒多取一帧），让 CPA 视觉读被看视频画面自带的字幕，系统只算该字幕与本句识别文字的吻合度，再与 v8 声纹一起交 CPA 逐句定主播或非主播。看图用封面步的同一个视觉客户端（pick_frame.py），思考档 low；CPA 文本复核的档位见 effort.purposes.speaker-video。screen_frames 为 0 时不看图，单人场一律 uniform host。",
-    "source": "公开规则18:50Z：看动画的切片里有主播之外的声音，应尽最大努力分辨说话人；被看视频的字幕就是别人在说话",
+    "source": "公开规则",
     "whole_witness_only_with_others": true,
     "voice_min_share": 0.05,
     "voice_min_run": 3,
@@ -359,13 +406,13 @@
     "stub_max_bytes_source": "开播瞬间的空壳：小于约 120 KB 的 .flv 没有内容（人工盘点脚本 inventory.py 的 size < 120000）",
     "settle_minutes": 60,
     "broadcast_day_start_hour": 4,
-    "broadcast_day_start_hour_source": "公开规则（U429）：直播日按北京时间凌晨 4 点分界，4 点前开始的算前一天、4 点后算当天；录像归它那场直播开始的那天（discover_media.broadcast_days，选片、录像回收、跳过已回收的天都读它）",
+    "broadcast_day_start_hour_source": "公开规则",
     "stream_gap_minutes": 30,
     "stream_gap_minutes_source": "实现选择：录播姬每 30 分钟切一个文件，断线重连通常几分钟内；一个文件开始时离上一个文件最后写入不超过 30 分钟，就算同一场直播的续段，跨过 4 点的直播整场留在开播那天",
     "lone_danmaku_hours": 24,
     "direct_keep_days": 3,
     "lone_danmaku_hours_source": "2026-11-13 实测：每段的弹幕文件随直播先到归档，录像本身晚 6–12 小时，而且不按顺序到（11-10 一场：弹幕 04:44–06:38Z 到，五段录像 10:47Z、13:53Z、17:48Z、17:49Z、18:21Z 到；11-13 一场开播 5 小时后归档里只有一个空壳录像和五份弹幕）。弹幕到了而录像没到的这一天不算录完；一份弹幕等了 24 小时录像还没来，就当它不会来了。",
-    "settle_minutes_source": "2026-11-15 起（原 90 分钟，公开规则问一条切片要多久）：录像在 OCI3 本机录，每段录完几分钟内就拷到流水线这边，没拷齐时拷贝脚本每两分钟碰一次 .copy_pending，算作当天有写入，所以不再需要等云盘归档。剩下只等“她是不是真下播了”：直播中最新一段每 30 分钟换一次，断线重连通常几分钟内；当天最后一次写入距主机现在超过 60 分钟才算录完。旧说法：录制每 30 分钟一段，再加云盘归档的延迟（未实测，留 60 分钟），合计 90 分钟",
+    "settle_minutes_source": "公开规则",
     "auto_not_before": "2026-11-09",
     "auto_not_before_source": "2026-11-12：无人值守从 2026-11-09 这场开始接手；更早的场次是人工出的片（出版登记里按另一套片号登记），自动再选一遍会选到已经发过的段落。不给 --date 时不看早于这一天的日期目录；要处理更早的日期用 --date 明说",
     "auto_recent_dates": 3,
@@ -381,7 +428,7 @@
   },
   "concurrency": {
     "_doc": "How many of one provider's independent calls the lane's executor (src/autoslice/manual_lane/parallel.py) keeps open at once.  A bound here is a guard against one clip's fan-out, never a claim about the provider: the provider's own 429/quota signal and the adapters' retry decide the real pace (cpa_text.py retries 408/429/5xx and waits out 524/503; listen_windows.py turns a 429 into a QUOTA record; free_asr_paced.py runs one call per provider at a time).  Concurrency already fixed inside a remote tool is not repeated here: listen_windows.py runs 16 window calls (its `workers`), witness_windows.py 4 (WORKERS), witness_asr.py 1 per provider (whole clip: the two providers share one extracted audio file and one out dir, so they stay serial).  `host_encode` is not a provider: it bounds how many of the process's clips run a heavy ffmpeg encode on the media host at once (stages.GATES, and the segment encodes of source_read.HOST_ENCODE); like the provider bounds it is shared by every clip of the process.  The number of clips a `run` drives at once has no bound of its own: one thread per clip, and what limits it are the rows here.",
-    "source": "公开规则/10-22 (memory provider-concurrency-real-limits: a local number is only a guard; the call runs outside any lock) and docs/pipeline/41-semantic-repair.md (the measured shape: 20 items, 8 at once)",
+    "source": "公开规则",
     "cpa": {
       "limit": 8,
       "source": "防呆，非真实限制：CPA has no documented concurrent limit; 8 is the shape docs/pipeline/41-semantic-repair.md measured at (20 items, 8 at once) and leaves the rest of the subscription for other runs.  A 429/503/524 is handled by cpa_text.py's own retry and 150 s cooldown, not here."
@@ -415,7 +462,7 @@
   },
   "cover": {
     "_doc": "第 6 步封面：人物占主体、字给人物让位、缩略图也要过。每个数字旁的 *_source 写依据：「认可批次」指频道主认可的第二版封面（人工制作时留下的实测记录）；「渲染器」指技能 render_cover.py 里写死的常数，这里镜像只为在渲染前反算字号与脸位，不改技能脚本。候选生成、量脸、打分彼此独立的调用同时发出，只受 concurrency.cpa 的共享限流约束，本段不设并发数。",
-    "source": "频道主对认可批次的原话“人物要占主体……新版的就比较不错”",
+    "source": "频道认可的第二版封面：人物占画面主体",
     "face_target_frac": 0.43,
     "face_target_frac_source": "认可批次的实测：v2 目标脸高 470px，470/1080=0.435（制作记录 第 2 节 J8），取约 43%；旧代码的 320px（remote cover_candidates.py FACE_PX）是 29.6%，不是认可批次的水平",
     "face_floor_frac": 0.25,
@@ -559,7 +606,7 @@
         "basis": "样式表 blue 压到近黑的深蓝；白色为主的人物最清楚，粉/橙/黄/绿字对比最大；深色为主的人物会融进去，由人物不融底一条排除"
       }
     ],
-    "backgrounds_source": "频道主原话“如果不用截图背景的话，为什么背景只能是这种灰蓝渐变？能不能换点其他颜色呀？”；每组的 basis 写依据。渐变自上而下（渲染器 pastel：第一个色在顶，第二个色在底）。hue 是色系（同色系不同深浅算同一色系），tone 是浅/深。取法在 assets/manual_lane/remote/cover_background.py：人物不融底、字读得清、近期用过的靠后、同条片不同路线错开色系，余下的按内容哈希取",
+    "backgrounds_source": "频道的要求；每组的 basis 写依据。渐变自上而下（渲染器 pastel：第一个色在顶，第二个色在底）。hue 是色系（同色系不同深浅算同一色系），tone 是浅/深。取法在 assets/manual_lane/remote/cover_background.py：人物不融底、字读得清、近期用过的靠后、同条片不同路线错开色系，余下的按内容哈希取",
     "background_layer_near_distance": 70,
     "background_layer_near_distance_source": "人物图层像素与其所在行的底色 RGB 距离小于此值算“融底”；与样式表 contrast.min_distance=110 同一距离口径（RGB 欧氏距离），取其约 0.6：认可批次那张白衣融底的底 (#dff0ff→#ffe3f1) 与白色的距离约 30–35，远在此内；蓝紫底 (#5aa9ff→#bf9bff) 与白色的距离约 120–190，远在此外",
     "background_layer_max_fused_frac": 0.3,
@@ -574,23 +621,16 @@
       "ai_sticker"
     ],
     "background_route_order_source": "同一条片的各路线并行在不同进程里跑，彼此看不到对方选了什么；各路线按此顺序错开色系起点（起点 = 内容哈希 + 路线序号），不靠共享状态",
-    "text_layouts": [
-      "top",
-      "left",
-      "right"
-    ],
-    "text_layout_recent_covers": 2,
-    "column_face_center_x_frac": 0.74,
     "column_rows_max": 4,
     "column_punch_row_max_chars": 4,
     "column_context_row_max_chars": 8,
-    "text_layouts_source": "频道主 2026-11-13：“封面现在的这个cue全都是左上一个右下一句话，这个版式有点太固定了……什么都在左边竖列的，都在右边竖列的之类的……不一定每次都是左上一句话，然后右下来一句话。”渲染器本来就有 left/right/top 三种，流水线只用了 top。现在按 text_layouts 的顺序轮换：跳过最近 text_layout_recent_covers 张用过的。竖列时人物的脸中心放在画宽的 column_face_center_x_frac（字在左）或其镜像（字在右）；封面字由封面说明那次模型调用按词的边界拆成 2 到 column_rows_max 行，笑点行拆出的每行不超过 column_punch_row_max_chars 字（一侧可用宽度约 860px，4 个字才放得到 200px 以上：851360 的表情包实渲 202px），前面一行拆出的每行不超过 column_context_row_max_chars 字。竖列只用于单人、没有 kmx 表情包的贴纸类候选；人物摆好后笑点行在下限字号放不下的候选仍用 top。",
+    "column_rows_source": "频道的要求封面用哪种构图（竖列、特写、上方两行、斜对角、底部横幅、分屏、表情包拼贴……）只由频道资产 cover_layout_templates.json 和共用选择器 src/autoslice/cover_layout_rotation.py 决定（第 6 步与 title-cover 技能共用），这里只管竖列的字怎么拆：封面字由封面说明那次模型调用按词的边界拆成 2 到 column_rows_max 行，笑点行拆出的每行不超过 column_punch_row_max_chars 字（一侧可用宽度约 860px，4 个字才放得到 200px 以上：851360 的表情包实渲 202px），前面一行拆出的每行不超过 column_context_row_max_chars 字；拆得不对（不是原字、超长）就没有竖列，竖列样板对这张不适用。",
     "panel_slant_px": 110,
     "panel_dot_step_px": 46,
     "panel_dot_radius_px": 5,
     "panel_dot_lift": 22,
     "panel_rule_px": 14,
-    "panel_source": "频道主 2026-11-21：“今天这个新切片全都是同一个标题封面……这个颜色太单一了……它总是左上一行，然后右下一行，太单一了……你能不能根据调研结果重新想想这标封面怎么做”。技能第六节的同行调研：人物和字都很大，字占画面三分之一到一半，背景很简单（浅色渐变、波点、虚化截图）。截图路线原来只有“上方两行”一种构图；现在轮到竖列时把她挪到一侧（脸中心在 column_face_center_x_frac 或其镜像），另一侧画一块底板放竖列的字，底板颜色取 backgrounds 同一张表、同一套轮换（assets/manual_lane/remote/cover_side.py、cover_background.panel）。底板斜边每端倾斜 panel_slant_px、沿边一条 panel_rule_px 的白线；波点间距 panel_dot_step_px、半径 panel_dot_radius_px、比底色亮 panel_dot_lift：这五个数取自 2026-11-21 用当天两张直播画面做的试验图",
+    "panel_source": "同一场的封面全是同一个样子、同一种颜色。技能第六节的同行调研：人物和字都很大，字占画面三分之一到一半，背景很简单（浅色渐变、波点、虚化截图）。截图路线原来只有“上方两行”一种构图；现在竖列和特写样板（cover_layout_templates.json）把她挪到一侧（脸的大小和位置按样板），另一侧画一块底板放竖列的字，底板颜色取 backgrounds 同一张表、同一套轮换（assets/manual_lane/remote/cover_side.py、cover_background.panel）。底板斜边每端倾斜 panel_slant_px、沿边一条 panel_rule_px 的白线；波点间距 panel_dot_step_px、半径 panel_dot_radius_px、比底色亮 panel_dot_lift：这五个数取自 2026-11-21 用当天两张直播画面做的试验图",
     "layout_order": [
       "face_floor",
       "punch_floor",
@@ -646,13 +686,14 @@
       "cover_fallback.main": "none｜候选全被否决后在其中挑一张",
       "pick_frame.find_action": "none｜在整片里找经典动作帧（挑选）",
       "pick_frame.main": "free｜这一帧不干净就看下一帧；读框失败用固定版式",
+      "pick_frame.look_at_face": "free｜看不清她的脸就看下一帧；这一帧像本场已有封面的底帧也看下一帧（只排序）",
       "look_at_frames.look": "none｜字幕代理看画面取证",
       "read_banner.main": "none｜读横幅上的字",
       "read_screen_subtitles.read_frame": "none｜读画面里的字幕",
       "listen_windows._within": "none｜复听取证"
     },
     "purposes": {
-      "boundary": "none｜给出起止句（挑选）",
+      "boundary": "repeated｜判 REJECT 且未给有效修正切点时按否决理由扩窗重问，至多 step_cut.BOUNDARY_MAX_RETRIES 次，仍无有效切点停在第 1 步（BOUNDARY_NOT_ACCEPTED）",
       "adjudicate": "none｜逐句定字和把握度；扣不扣片由 review 定",
       "subtitle-agent": "none｜逐句取证定字；扣不扣片由 review 定",
       "concat-check": "none｜只标出拼接，不拦片",
@@ -664,11 +705,12 @@
       "persona-observe": "none｜生成",
       "reference-spot": "none｜生成",
       "title-context": "none｜查不到就写查不到，不拦片",
-      "title-judge": "repeated｜技能规定判多遍、全过才过（title_authority.JUDGE_RUNS）；不过只重写标题，不换图不扣片",
+      "title-judge": "repeated｜技能规定判多遍：事实两遍都过（title_authority.JUDGE_RUNS），写法两遍、不一致加判第三遍取多数；标题不过只重写标题，封面字不过只重写封面字，不换图不扣片",
       "title-pick": "none｜排序",
       "cover-brief": "none｜生成",
       "cover-emote": "none｜按句意挑表情包，可一张不选（表情包路线不做，截图照做）",
       "cover-text": "none｜把封面字压短",
+      "cover-text-fix": "repeated｜按判官的理由重写封面字、标题不变，重写后再判；至多 step6_title.COVER_TEXT_FIXES 次，仍不过停在第 6 步",
       "review": "repeated｜定不下且影响意思的句子再做两轮宽窗复听（wide_held），仍定不下才扣片",
       "review-c": "none｜标出要再听的句子",
       "import-meaning": "none｜只判换写法会不会变意思；扣不扣片由 review 定",
@@ -676,7 +718,9 @@
       "name-consistency": "none｜逐组定写法",
       "trim": "repeated｜问两遍、两遍都提议才剪",
       "discover-recall": "none｜挑选候选并打分",
-      "compilation-select": "none｜挑选"
+      "compilation-select": "none｜挑选",
+      "discover-topics": "none｜归类；回答不能用时当天不归并照常排座，账本写明",
+      "discover-lead-in": "none｜找前因从哪一句起（挑选）；只问召回已判看不懂的候选，答接不上时候选原样不做、不另扣；回答不能用时当天不接前因照常排座，账本写明"
     }
   },
   "audio_under_subtitle": {
@@ -687,16 +731,16 @@
     "edge_tolerance_s": 0.1
   },
   "upload": {
-    "_doc": "第 10 步（上传）读的数：授权人与授权原话、等线上的间隔与次数、首发配额不足时的重试间隔。授权文字不是每条片手填：首发读 authorization.first_publication，同稿件换视频/换封面读 authorization.revision；任何一项（授权人、原话、规则日期）为空，第 10 步在发出任何命令前以 UPLOAD_RULES_UNSET 失败。等线上：执行命令（repair-run / cover-repair-run）返回 6（仍在推进）时，按 wait.poll_interval_s 隔开重跑同一条命令，最多 wait.max_polls 次；用完仍未完成，步骤停在 UPLOAD_WAITING_LIVE，下次 run 只继续轮询。配额不足（上传命令返回 8）时，步骤停在 UPLOAD_WAITING_QUOTA，可重试的最早时间取工具报出的时刻，工具没报时取现在加 quota.retry_after_s。tools：第 10 步把命令发给哪个上传工具、哪个包审计（scripts 下的脚本名加前置参数）；本部署上传用 lane_publish.py（2026-11-15 起；同一套子命令，见 src/autoslice/lane_publish，与 authorized_upload.py 共用一份出版登记），包审计仍用更严的 audit_lidousha_review_package.py；公开版两样都用 lane_publish.py。publish：lane_publish 投新稿的分区（tid 27）、转载（copyright 2）与来源，以及等公开（public_wait_s，每 public_poll_s 看一次）、等追加的分 P 出现（new_part_wait_s）的秒数。",
-    "source": "wait：2026-11-11 九条片上线实跑，换视频用了 7-10 分钟、只换封面 25 秒-2 分钟（reports/publication-evidence-20261111/README.md），间隔 180 秒、最多 12 次与当时人工脚本一致；quota.retry_after_s 是实现选择（工具的 24 小时滚动估算只给“已满”，不给解除时刻）。authorization：频道主“默认发布”规则的原话（2026-10-15）与修好的稿件编辑上线的原话（2026-07-18）。",
+    "_doc": "第 10 步（上传）读的数：授权人与授权原话、等线上的间隔与次数、首发配额不足时的重试间隔。授权文字不是每条片手填：首发读 authorization.first_publication，同稿件换视频/换封面读 authorization.revision；任何一项（授权人、原话、规则日期）为空，第 10 步在发出任何命令前以 UPLOAD_RULES_UNSET 失败。等线上：执行命令（repair-run / cover-repair-run）返回 6（仍在推进）时，按 wait.poll_interval_s 隔开重跑同一条命令，最多 wait.max_polls 次；用完仍未完成，步骤停在 UPLOAD_WAITING_LIVE，下次 run 只继续轮询。配额不足（上传命令返回 8）时，步骤停在 UPLOAD_WAITING_QUOTA，可重试的最早时间取工具报出的时刻，工具没报时取现在加 quota.retry_after_s。tools：第 10 步把命令发给哪个上传工具、哪个包审计（scripts 下的脚本名加前置参数）；本部署上传用 lane_publish.py（2026-11-15 起；同一套子命令，见 src/autoslice/lane_publish，与 authorized_upload.py 共用一份出版登记），包审计仍用更严的 audit_lidousha_review_package.py；公开版两样都用 lane_publish.py。publish：lane_publish 投新稿的分区（tid 27）、投稿类型（copyright 3＝未声明：不标转载，也不声称自制；source 是转载来源，未声明时留空，上传命令不带 --source）。清单按这里的值做，lane_publish 按清单投；还没投出的清单与这里不一致就不投，第 10 步重做清单。投出后公开页读回的 copyright 必须等于清单里投出的值、rights.no_reprint 必须是 0，不符不登记。已发布的稿件不改类型：同稿件修订保留原稿的类型和来源。以及等公开（public_wait_s，每 public_poll_s 看一次）、等追加的分 P 出现（new_part_wait_s）的秒数。",
+    "source": "wait：2026-11-11 九条片上线实跑，换视频用了 7-10 分钟、只换封面 25 秒-2 分钟（reports/publication-evidence-20261111/README.md），间隔 180 秒、最多 12 次与当时人工脚本一致；quota.retry_after_s 是实现选择（工具的 24 小时滚动估算只给“已满”，不给解除时刻）。authorization：频道默认发布的授权文字（2026-10-15）与修好的稿件编辑上线的原话（2026-07-18）。publish 的投稿类型：频道主 2026-11-24 定为未声明（需求总文件 PUB-03）。",
     "authorization": {
       "authorized_by": "维护者",
       "first_publication": {
-        "quote": "我现在都是默认允许发布的，只要通过了流水线检查没问题就可以发布了，我不知道为什么这个切片在等我发布，需要抽象修复",
+        "quote": "通过流水线检查的切片默认可以发布（示例频道的授权；换成你自己的授权文字）",
         "rule_date": "2026-10-15"
       },
       "revision": {
-        "quote": "修复完的可以编辑上传",
+        "quote": "修好的稿件可以编辑上传（示例频道的授权；换成你自己的授权文字）",
         "rule_date": "2026-07-18"
       }
     },
@@ -718,8 +762,8 @@
     },
     "publish": {
       "tid": 27,
-      "copyright": 2,
-      "source": "https://live.bilibili.com/",
+      "copyright": 3,
+      "source": "",
       "public_wait_s": 600,
       "public_poll_s": 30,
       "new_part_wait_s": 900

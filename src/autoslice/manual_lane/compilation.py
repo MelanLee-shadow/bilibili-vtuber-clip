@@ -569,7 +569,11 @@ def _write_entry(work: Path, cid: str, virtual_path: str, manifest: Manifest, vi
 
 
 def compile_session(*, task: Path, cid: str, theme: str, session: SessionConfig, recordings: Sequence[RecordingInput],
-                    source_dir: str, remote_root: str, adapters: Adapters) -> CompileResult:
+                    source_dir: str, remote_root: str, adapters: Adapters,
+                    decided: Mapping[str, object] | None = None) -> CompileResult:
+    """`decided`: the pieces are already chosen (discover joins the evening's candidates on one matter): an answer in the
+    shape CPA gives (`compilation`, `reason`, `hook`, `segments`), checked like CPA's and kept as selection.json; no
+    call is made."""
     clip_dir = task / "clips" / cid
     work = clip_dir / WORK_DIR
     work.mkdir(parents=True, exist_ok=True)
@@ -583,6 +587,11 @@ def compile_session(*, task: Path, cid: str, theme: str, session: SessionConfig,
         stored = json.loads(selection_file.read_text(encoding="utf-8"))
         selection = parse_selection(json.dumps(stored["answer"], ensure_ascii=False), cues_by_segment)
         cpa_event = cast("CpaEvent | None", stored.get("cpa"))
+    elif decided is not None:
+        selection = parse_selection(json.dumps(decided, ensure_ascii=False), cues_by_segment)
+        cpa_event = None
+        selection_file.write_text(json.dumps({"theme": theme, "answer": decided, "decided_by": "discover_topics"},
+                                             ensure_ascii=False, indent=2), encoding="utf-8")
     else:
         record = _ask_cpa(_selection_ctx(task, cid, remote_dir, adapters), SELECT_PURPOSE,
                           select_prompt(theme, cues_by_segment), purpose=SELECT_PURPOSE)

@@ -163,6 +163,36 @@ def test_host_share_duration_and_coverage_gates_each_block(tmp_path):
     assert _voice(ctx, host_line) == {}
 
 
+def _shared_path(ctx, lines, can_be):
+    """Step 4's arrival evidence with the given lines (1-based) on a sound path the guests `can_be` share."""
+    label = "或".join(can_be)
+    segs = [{"start_ms": 2000 * (n - 1), "end_ms": 2000 * (n - 1) + 1800, "speaker": "g0"} for n in lines]
+    (ctx.clip_dir / 'speaker').mkdir(exist_ok=True)
+    (ctx.clip_dir / 'speaker/arrival.json').write_text(json.dumps(
+        {"segments": segs, "named": {"g0": {"speaker": "连线"}}, "persons": {"g0": label}, "among": {label: can_be}},
+        ensure_ascii=False))
+
+
+def test_on_a_path_guests_share_the_voiceprint_chooses_among_them_and_nobody_else_is_named(tmp_path):
+    # four on the call, 安晚awa with 雾深Girimi on one sound path: a line there is one of the two, never 礼墨Sumi
+    guests = ["安晚awa", "礼墨Sumi", "雾深Girimi"]
+    ctx, _ = _clip(tmp_path, 'v7', guests=tuple([g] for g in guests))
+    near = {"李豆沙": 0.01, "礼墨Sumi": 0.5, "安晚awa": 0.48, "雾深Girimi": 0.01}      # 礼墨Sumi leads, 安晚awa close behind
+    _chunks(ctx, [*_line(2, near), *_line(4, near)], classes=[*CLASSES, "雾深Girimi"])
+    track = subtitle_track.read_track(ctx.clip_dir)
+    assert guest_identity.voiceprint_lines(ctx, track, guests) == {}                # among all three she has half
+    _shared_path(ctx, [4, 6], ["安晚awa", "雾深Girimi"])
+    among = guest_identity.arrival_among(ctx, track)
+    assert among == {4: ["安晚awa", "雾深Girimi"], 6: ["安晚awa", "雾深Girimi"]}
+    assert guest_identity.voiceprint_lines(ctx, track, guests, among) == {4: "安晚awa"}
+    # the model cites 礼墨Sumi's own words on line 6 (a line of the shared path) and 安晚awa on line 2
+    cited = {"anchors": [*ANSWER["anchors"], {"line": 6, "name": "礼墨Sumi", "kind": "说自己的事", "quote": "必杀技"}]}
+    got = _identify(ctx, cited)
+    assert got[4] == "安晚awa" and got[2] == "安晚awa" and 6 not in got
+    assert json.loads((ctx.clip_dir / guest_identity.PATH).read_text())["arrival_among"] == {
+        "4": ["安晚awa", "雾深Girimi"], "6": ["安晚awa", "雾深Girimi"]}
+
+
 def test_a_guest_the_classifier_does_not_know_turns_the_voiceprint_off(tmp_path):
     ctx, _ = _clip(tmp_path, 'v3', guests=(["安晚awa"], ["露医生"]))
     _chunks(ctx, [*_line(4, SUMI), *_line(6, AWA)])
@@ -273,3 +303,47 @@ def test_a_failed_chunk_run_leaves_no_reading_of_other_chunks(tmp_path):
     got, note = step4_speaker.voice_chunks(ctx, [{"id": 1, "start_s": 0.0, "end_s": 2.0, "text": "x"}])
     assert got == {} and "失败" in note
     assert not (ctx.clip_dir / guest_identity.VOICE_PREDS).exists()
+
+
+def test_a_successor_names_its_guest_lines_as_its_predecessor_did_under_the_owner(tmp_path):
+    # a revision or a trim has no arrival or voiceprint of its own: the names its predecessor's step 4 gave come with
+    # its import (speaker/guest_names.json) and are not asked again; the owner's own labels still stand over them
+    ctx, _ = _clip(tmp_path, 'carried')
+    names = {2: "礼墨Sumi", 3: "礼墨Sumi", 4: "安晚awa", 6: "安晚awa"}
+    rows = [{"start_s": 2.0 * (i - 1), "end_s": 2.0 * (i - 1) + 1.8, "text": LINES[i - 1][1], "speaker": n} for i, n in names.items()]
+    path = ctx.clip_dir / 'import/guest_names.json'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(rows, ensure_ascii=False))
+    ctx.state.data['imported'] = {"source": "revise", "from": "x", "authority": "x", "at": "x", "files": {"guest_names.json": str(path)}}
+    asked = []
+    assert _identify(ctx, answer=None, asked=asked) == names and asked == []
+    _owner(ctx, {2: "安晚awa"})
+    ctx.state.data['imported']['files']["guest_names.json"] = str(path)
+    assert _identify(ctx, answer=None)[2] == "安晚awa"
+
+
+def test_his_labels_in_the_truth_store_name_the_guest_lines_as_they_are_his_session_samples(tmp_path, monkeypatch):
+    # one reading of "the lines he labelled" (guest_identity.state_owner_rows): the guest names here, step 4's
+    # interjection lock and the session samples (session_voices.owner_samples) all take the import's speakers.json, then
+    # the truth store's rows of the clip's family (its revisions) that the import does not cover
+    from src.autoslice.manual_lane import channel, session_voices
+
+    store = tmp_path / "speaker_truth"
+    store.mkdir()
+    ctx, _ = _clip(tmp_path, 'semantictalk_1_2_11232000_r3')
+    day = ctx.state.data["session"]["recording_date"]
+    rows = [{"clip": "semantictalk_1_2_11232000", "start_ms": 2000 * (n - 1), "end_ms": 2000 * (n - 1) + 1800, "speaker": who,
+             "text": LINES[n - 1][1]} for n, who in ((2, "礼墨Sumi"), (4, "安晚awa"))]
+    (store / f"{day}.owner-x.json").write_text(json.dumps(
+        {"set": f"{day}.owner-x", "tier": "owner", "supersedes": None, "rows": rows}, ensure_ascii=False))
+    monkeypatch.setattr(channel, "asset", lambda name: tmp_path / name)
+    track = subtitle_track.read_track(ctx.clip_dir)
+    assert guest_identity.owner_lines(ctx, track, ["安晚awa", "礼墨Sumi"]) == {2: "礼墨Sumi", 4: "安晚awa"}
+    # the import's label wins where both have one (line 2), the store's fills the rest (line 4)
+    _owner(ctx, {2: "安晚awa", 3: "未知", 4: "未知", 6: "未知"})
+    (ctx.clip_dir / 'import/speakers.json').write_text(json.dumps(
+        [r for r in json.loads((ctx.clip_dir / 'import/speakers.json').read_text()) if r["text"] != LINES[3][1]],
+        ensure_ascii=False))
+    assert guest_identity.owner_lines(ctx, track, ["安晚awa", "礼墨Sumi"]) == {2: "安晚awa", 4: "安晚awa"}
+    samples = session_voices.owner_samples(ctx.state)
+    assert [(s["start_ms"], s["person"]) for s in samples] == [(0, "李豆沙"), (2000, "安晚awa"), (8000, "李豆沙"), (6000, "安晚awa")]

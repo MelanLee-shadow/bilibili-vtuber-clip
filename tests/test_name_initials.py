@@ -1,7 +1,6 @@
 """A circle nickname that is not the person's name is found where it is listed, by the lane and by the crawler.
 
-Owner 「香蕉牛奶是咲间妮娜的昵称，在v圈昵称来源经常直接来自名字的首字母缩写，然后发展出别的昵称，例如，xjnn就变成了
-香蕉牛奶。…我认为理论上新闻爬虫应该有这个能力查到」.  The clip of that day asked "香蕉牛奶 李豆沙" and "香蕉牛奶 虚拟主播",
+香蕉牛奶是咲间妮娜的圈内昵称，取自名字拼音首字母 xjnn；这类昵称新闻爬虫应当查得到.  The clip of that day asked "香蕉牛奶 李豆沙" and "香蕉牛奶 虚拟主播",
 got pages about a drink and wrote NOT_FOUND; the crawler asked the same and judged events.  Fakes only: no model, no network.
 """
 

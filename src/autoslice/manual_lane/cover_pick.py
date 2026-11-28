@@ -23,7 +23,8 @@ if TYPE_CHECKING:
 
 FRAME_W, FRAME_H = 1920, 1080
 # the measured facts the remote tool leaves on a row, carried into the scored row and choose.json unchanged
-ROW_FACTS = ("punch_ink_h", "punch_floor_px", "punch_below_floor", "text_plan", "crop_plan", "render_s", "phases_s", "background")
+ROW_FACTS = ("punch_ink_h", "punch_floor_px", "punch_below_floor", "text_plan", "crop_plan", "render_s", "phases_s", "background",
+             "cover_layout", "cover_layout_note", "pixel_audit")
 
 
 def valid_box(box: object) -> bool:
@@ -90,7 +91,7 @@ def candidate_record(row: CoverCandidate) -> dict[str, object]:
                                  "face_status": row.get("face_status"), "face_source": row.get("face_source"),
                                  "face_measured": row.get("face_measured"), "face_px": row.get("face_px"),
                                  "face_frac": row.get("face_frac"), "punch_px": row.get("punch_font_size"),
-                                 "score": row["score"], "thumb": row.get("thumb"), "repeat": row.get("repeat"),
+                                 "score": row["score"], "thumb": row.get("thumb"), "repeat": row.get("repeat"), "look_repeat": row.get("look_repeat"),
                                  "failure": row.get("failure")}
     record.update({k: row[k] for k in ROW_FACTS if k in row})      # type: ignore[literal-required]
     return record

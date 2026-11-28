@@ -2,7 +2,7 @@
 from fakes import FakeRemote, IdCpa, make_ctx
 from src.autoslice.manual_lane import normalize, subtitle_track
 from src.autoslice.manual_lane.srt_text import format_srt
-from src.autoslice.manual_lane.step3_doubts import write_subtitles
+from src.autoslice.manual_lane.step3_doubts import decided_cues, write_subtitles
 from src.autoslice.manual_lane.step3_text_classes import merged_timing, partitioned_cues
 
 
@@ -116,7 +116,7 @@ def test_merged_sentences_cover_all_their_sources():
 
 def test_final_cues_follow_the_source_edges(tmp_path):
     ctx = make_ctx(tmp_path, remote=FakeRemote(), cpa=IdCpa())
-    _, final, _ = write_subtitles(ctx, LONG, LONG_FINAL, preserve_decisions=True)
+    _, final, _ = write_subtitles(ctx, LONG, LONG_FINAL, decided=decided_cues(LONG, LONG_FINAL)[0])
     shaped = subtitle_track.parse_blocks(final.read_text(encoding='utf-8'))
     assert [(c['start_s'], c['end_s']) for c in shaped[1:]] == CHECKED_PAGE
     assert all(a['end_s'] <= b['start_s'] for a, b in zip(shaped, shaped[1:]))
@@ -129,7 +129,7 @@ def test_unmerged_clip_writes_what_the_old_rule_wrote(tmp_path):
                 (6., 7., '再见'))
     final = rows(bcut, c3='再见啦')
     ctx = make_ctx(tmp_path, remote=FakeRemote(), cpa=IdCpa())
-    _, path, _ = write_subtitles(ctx, bcut, final, preserve_decisions=True)
+    _, path, _ = write_subtitles(ctx, bcut, final, decided=decided_cues(bcut, final)[0])
     old = normalize.shape_decided_cues([dict(c, text=d['final_text']) for c, d in zip(bcut, final)])
     assert path.read_text(encoding='utf-8') == format_srt(old)
     assert merged_timing(bcut, final) == {}
@@ -149,9 +149,10 @@ def test_agent_path_spells_numbers_by_the_rule(tmp_path):
     bcut = cues((0., 2., '反应了两秒钟'), (3., 5., '等我一下子'))
     final = rows(bcut)
     ctx = make_ctx(tmp_path, remote=FakeRemote(), cpa=IdCpa())
-    _, path, log = write_subtitles(ctx, bcut, final, preserve_decisions=True)
+    lines, hits = decided_cues(bcut, final)
+    _, path, _log = write_subtitles(ctx, bcut, final, decided=lines)
     texts = [c['text'].replace('\n', '') for c in subtitle_track.parse_blocks(path.read_text(encoding='utf-8'))]
     assert texts == ['反应了2秒钟', '等我一下子']
-    assert len(log['numerals']) == 1
+    assert len(hits) == 1
     again, hits = normalize.numerals('反应了2秒钟')
     assert again == '反应了2秒钟' and hits == []

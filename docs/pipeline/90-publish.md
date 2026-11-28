@@ -163,7 +163,7 @@ outer receipt path/hash 冻结进 package attestation，`verify`、`repair-plan`
 
 ## 已受审原稿的同源定点纠正
 
-公开规则明确快车道是“在原本听写稿件上，就地修改我指出的错误然后发布”。对已经发布、
+频道明确快车道是：在原本的听写稿上就地改掉指出的错误，然后发布。对已经发布、
 已有hash固定的受审原稿且不改变源镜头范围的修复，允许独立的
 `original-reviewed-fastlane-package.v1`与`original-fastlane-delta-technical-review.v1`。
 它不是新一次人工全片观看，必须明示`fresh_human_full_playback_claimed=false`；不能把reviewer伪写维护者。

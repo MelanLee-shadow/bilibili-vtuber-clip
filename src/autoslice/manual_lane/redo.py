@@ -36,12 +36,14 @@ step 6 from import_cover/.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import shutil
-from collections.abc import MutableMapping
+import uuid
+from collections.abc import Mapping, MutableMapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, cast
 
-from . import compilation, cover_import, package_guards
+from . import compilation, cover_import, package_guards, title_acceptance
 from .reselect import SUPERSEDED
 from .runner import Ctx, Step
 from .stage_package import forget_review, package_dir
@@ -66,6 +68,7 @@ class RedoResult(TypedDict):
     summary: str
     deleted_files: int
     source_rebuilt: bool
+    fresh_title: bool
     backup: str
 
 
@@ -105,10 +108,70 @@ def _delete_products(state: ClipState, steps: list[Step], clip_dir: Path) -> int
     return deleted
 
 
-def redo_clip(*, task: Path, cid: str, start: str, adapters_for: AdaptersFor) -> RedoResult:
+def _carry_receipt_involved(clip_dir: Path, *, step6_status: str) -> str:
+    """Before `redo` deletes `title/candidates.json`, copy `chosen.involved` into a valid old-format
+    `title/accepted.json` that lacks `involved` ONLY when all three hold: step 6 (`title_cover`) is `DONE` in clip
+    state, `receipt['by'] == 'step6'`, and `title/title.txt` equals the receipt's title (same successful step-6 run,
+    even when writing canon changed `chosen.title`'s spelling).  Returns a note for the redo summary / PROCESS.md when
+    `candidates.json` had `chosen.involved` on a valid receipt lacking `involved` but any condition failed."""
+    receipt = title_acceptance.load_receipt(clip_dir).receipt
+    if receipt is None or receipt.get("involved"):
+        return ""
+    cands_path = clip_dir / "title/candidates.json"
+    if not cands_path.is_file():
+        return ""
+    try:
+        doc = json.loads(cands_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(doc, dict):
+        return ""
+    chosen = doc.get("chosen")
+    if not isinstance(chosen, dict):
+        return ""
+    raw_involved = chosen.get("involved")
+    if not isinstance(raw_involved, list):
+        return ""
+    involved = list(dict.fromkeys(x.strip() for x in raw_involved if isinstance(x, str) and x.strip()))
+    if not involved:
+        return ""
+    if step6_status != "DONE":
+        return (f"旧格式过判回执缺 involved，但第 6 步状态为 {step6_status or '未记录'}（非 DONE），"
+                f"无法确认 title/candidates.json 属于同一次成功的第 6 步，未迁入 involved（{'、'.join(involved)}）")
+    by = str(receipt.get("by") or "")
+    if by != "step6":
+        return (f"旧格式过判回执缺 involved，且回执来源为 {by}（非 step6），"
+                f"与 title/candidates.json 候选不对应，未迁入 involved（{'、'.join(involved)}）")
+    receipt_title = str(receipt["title"]).strip()
+    title_file = clip_dir / "title/title.txt"
+    if not title_file.is_file():
+        return f"旧格式过判回执缺 involved，但 title/title.txt 缺失，无法确认候选对应关系，未迁入 involved（{'、'.join(involved)}）"
+    try:
+        current_title = title_file.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        return f"旧格式过判回执缺 involved，但 title/title.txt 无法读取（{exc}），未迁入 involved"
+    if current_title != receipt_title:
+        return (f"旧格式过判回执缺 involved，且 title/title.txt（「{current_title}」）与回执标题（「{receipt_title}」）不一致，"
+                f"未迁入 involved（{'、'.join(involved)}）")
+    title_acceptance.write(
+        clip_dir,
+        str(receipt["title"]),
+        str(receipt["by"]),
+        cast("Mapping[str, object] | None", receipt.get("judge")),
+        objections=cast("Sequence[str]", receipt.get("objections") or ()),
+        cover_lines=cast("Sequence[str] | None", receipt.get("cover_lines")),
+        involved=involved,
+        retitle_evidence=cast("str | None", receipt.get("retitle_evidence")),
+    )
+    return ""
+
+
+def redo_clip(*, task: Path, cid: str, start: str, adapters_for: AdaptersFor,
+              fresh_title: bool = False) -> RedoResult:
     """Forget step `start` of clip `cid` and its dependants (see the module docstring).  StateError with the reason when it
     cannot be done; then nothing was changed (the joined source is the one thing made before the state is, and is replaced only
-    by a file that is as long as the plan)."""
+    by a file that is as long as the plan).  `title/accepted.json` stays on disk so a step-6 re-run enters the earlier
+    accepted title in round 0 unless `fresh_title=True` explicitly asks for a new title."""
     task = Path(task)
     state = ClipState.load(task / "state" / f"{cid}.json")
     clip = state.data["clip"]
@@ -116,6 +179,10 @@ def redo_clip(*, task: Path, cid: str, start: str, adapters_for: AdaptersFor) ->
         raise StateError(f"{cid} is SUPERSEDED by {clip.get('superseded_by')}; redo the replacement")
     steps = closure(resolve_step(start))
     keys = [step.key for step in steps]
+    if fresh_title and "title_cover" not in keys:
+        raise StateError(f"--fresh-title only applies when title_cover is in the redo closure (not {keys[0]})")
+    if fresh_title and isinstance(state.data.get("revised_from"), dict):
+        raise StateError(f"{cid} is a revision of a published manuscript; a revision's title changes only by the owner's word (retitle / approved title), not --fresh-title")
     if "upload" in keys and state.step("upload").get("status") == "DONE":
         raise StateError(f"{cid} has been uploaded; an uploaded clip is not redone (`revise` makes a successor)")
     clip_dir = task / "clips" / cid
@@ -134,7 +201,36 @@ def redo_clip(*, task: Path, cid: str, start: str, adapters_for: AdaptersFor) ->
     not_recorded = [key for key in keys if key not in cleared]
     summary = (f"范围内的步骤（closure）：{', '.join(keys)}；实际清掉记录的步骤（cleared）：{', '.join(cleared) or '无'}；"
                f"范围内但本来就没有记录、无需清的步骤（not_recorded）：{', '.join(not_recorded) or '无'}")
+    prev_title = ""
+    prev_attempt = 0
+    carry_note = ""
+    if fresh_title:
+        prior = title_acceptance.load_receipt(clip_dir).receipt
+        if prior is not None:
+            prev_title = str(prior["title"]).strip()
+        elif (title_file := clip_dir / "title/title.txt").is_file():
+            prev_title = title_file.read_text(encoding="utf-8").strip()
+        existing_fresh = state.data.get(title_acceptance.FRESH_TITLE_KEY)
+        if isinstance(existing_fresh, dict):
+            if not prev_title and isinstance(existing_fresh.get("previous_title"), str):
+                prev_title = existing_fresh["previous_title"].strip()
+            if isinstance(existing_fresh.get("attempt"), int) and not isinstance(existing_fresh.get("attempt"), bool):
+                prev_attempt = existing_fresh["attempt"]
+    elif "title_cover" in keys:
+        step6_status = str(state.step("title_cover").get("status") or "")
+        carry_note = _carry_receipt_involved(clip_dir, step6_status=step6_status)
+    if carry_note:
+        summary = f"{summary}；{carry_note}"
     deleted = _delete_products(state, steps, clip_dir)
+    if fresh_title:
+        receipt = clip_dir / title_acceptance.RECEIPT
+        if receipt.is_file() and _inside(receipt, clip_dir):
+            receipt.unlink()
+            deleted += 1
+        fresh_payload: dict[str, JsonValue] = {"request": f"{stamp}-{uuid.uuid4().hex[:8]}", "attempt": prev_attempt}
+        if prev_title:
+            fresh_payload["previous_title"] = prev_title
+        cast("MutableMapping[str, JsonValue]", state.data)[title_acceptance.FRESH_TITLE_KEY] = fresh_payload
     for key in cleared:
         state.data["steps"].pop(key)
     if "review" in keys:
@@ -144,7 +240,8 @@ def redo_clip(*, task: Path, cid: str, start: str, adapters_for: AdaptersFor) ->
     state.save()
     with (clip_dir / "PROCESS.md").open("a", encoding="utf-8") as fh:
         fh.write(f"\n## 重做 · 从 {keys[0]} · {stamp}\n\n- {summary}；"
-                 f"状态备份 {backup}；{'拼接源已按记录的方案重新生成' if rebuilt else '画面不来自拼接源，未重建'}\n")
+                 f"状态备份 {backup}；{'拼接源已按记录的方案重新生成' if rebuilt else '画面不来自拼接源，未重建'}"
+                 + ("；要求重起标题（已清除原有过判记录）" if fresh_title else "") + "\n")
     return {"cid": cid, "start": keys[0], "closure": keys, "cleared": cleared, "not_recorded": not_recorded, "summary": summary,
             "deleted_files": deleted,
-            "source_rebuilt": rebuilt, "backup": str(backup)}
+            "source_rebuilt": rebuilt, "fresh_title": fresh_title, "backup": str(backup)}

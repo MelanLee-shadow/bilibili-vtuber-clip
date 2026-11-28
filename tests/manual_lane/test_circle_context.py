@@ -260,13 +260,13 @@ def test_a_revision_the_owner_asked_to_retitle_takes_the_new_pick(tmp_path, monk
     (before / "upload/online.json").write_text('{"bvid": "BV1", "title": "【李豆沙】线上的标题"}', encoding="utf-8")
     ctx.state.data["revised_from"] = {"cid": "published", "reason": "标题", "at": "t"}
     loaded = title_verdicts.load_verdicts()
-    asked = {"evidence": "“标题没体现看点”", "main_line": "她讲改ID，后段撒娇", "punchline": "我可听kmx的啦"}
+    asked = {"evidence": "标题没写出看点", "main_line": "她讲改ID，后段撒娇", "punchline": "我可听kmx的啦"}
     monkeypatch.setattr(type(loaded), "retitle", lambda self, cid: asked)
     picked = si.pick_title(ctx)
     assert not isinstance(picked, StepOutcome), picked
     title, _lines, process, _calls, _path = picked
     assert title != "【李豆沙】线上的标题" and "破防" in title
-    assert any(line.startswith("频道主要求换标题（原话：“标题没体现看点”）") for line in process)
+    assert any(line.startswith("频道主要求换标题（原话：标题没写出看点）") for line in process)
     # the title rounds are written from what he says the draw is, not from the model's own reading of the clip
     assert all("我可听kmx的啦" in p and "她讲改ID，后段撒娇" in p for p in cpa.title_prompts)
     stored = json.loads((ctx.clip_dir / "title/candidates.json").read_text(encoding="utf-8"))["understanding"]["merged"]

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 
-from fakes import UNDERSTANDING_CALLS
 from test_title_regen_and_blur import _cand, _ctx
 
 from src.autoslice.manual_lane import stage_impl as si
@@ -37,16 +36,17 @@ def test_the_overflow_sentence_names_the_line_and_its_limit_and_is_empty_when_al
     assert si.cover_lines_overflow(["只有一行但是太长了啊啊"]) != ""        # a single line is the punchline
 
 
-def test_a_title_round_with_a_too_long_punchline_fails_its_check_and_is_rewritten(tmp_path):
-    ctx, cpa, _ = _ctx(tmp_path, [_answer(["情境", "这是八个字的笑点"]), _answer(["情境", "七个字的笑点行"])],
+def test_a_too_long_punchline_does_not_throw_out_the_rounds_titles(tmp_path):
+    """11-24 178410: a cover line one character over the limit failed all eight titles of the round, twice.  The cover
+    text is shortened before rendering (the next test); the titles of the round are judged as written."""
+    ctx, cpa, _ = _ctx(tmp_path, [_answer(["情境", "这是八个字的笑点"]), json.dumps({"cover_lines": ["情境", "七个字的笑点行"]}, ensure_ascii=False)],
                        frames={"chosen": None, "checked": []})
     out = si.step6_title_cover(ctx)
     assert out.ok, (out.reason, out.note)
-    assert cpa.calls[:len(UNDERSTANDING_CALLS) + 2] == [*UNDERSTANDING_CALLS, "title", "title-regen-1"]
-    assert "封面字过长" in cpa.title_prompts[1] and "笑点行最多 7 字" in cpa.title_prompts[1]
-    assert "封面字过长" not in cpa.title_prompts[0]
+    assert "title-regen-1" not in cpa.calls and "title-judge-r0-1" in cpa.calls and "title-cover-retry-1" in cpa.calls
     cands = json.loads((ctx.clip_dir / "title/candidates.json").read_text(encoding="utf-8"))
-    assert cands["cover_lines"] == ["情境", "七个字的笑点行"] and cands["forced"] is False
+    assert cands["forced"] is False and all(c["checks"]["ok"] for c in cands["candidates"])
+    assert cands["cover_lines"] == ["情境", "七个字的笑点行"]
 
 
 def test_a_punchline_within_the_limit_is_not_rewritten(tmp_path):

@@ -1,24 +1,24 @@
 """Step 3: where a subtitle reads a chat record aloud word for word but for one or two characters, those characters
-are written as the record has them (公开规则11-16: 「只要是知道是念弹幕，就抄着弹幕就完了。弹幕写成什么样就是什么样」).
+are written as the record has them (念的是弹幕就照弹幕原文抄).
 
 The subtitle agent is told to copy a read-aloud record from the chat lookup; when it took the text from the picture
 instead, the picture reading can be a character off (1086800_trim: the SC card 「…唱南町歌，就不想了（」 read back as
-南酮). This settles that mechanically on the decided subtitles, after the agent and before the canonical writing:
+南酮).  This settles that mechanically on the decided subtitles, after the agent and before the canonical writing:
 
 - a record counts when it was sent before the sentence ends and no earlier than its look-back (90 s for a comment,
- the whole broadcast for an SC, as for every read-aloud lookup); gifts and guards are no message bodies;
+  the whole broadcast for an SC, as for every read-aloud lookup); gifts and guards are no message bodies;
 - the sentence and the record are compared on their letters and characters (no punctuation, no spaces); a stretch
- counts when it is the same on both sides but for one or two Chinese characters, with at least four equal characters
- around them, and the sentence reads at least six of the record's characters in all and, of a longer record, eight
- or most of it (a word of her own inside the reading does not count against it: 1677890 「他们提的是黑白小猪的猪屎」) (the difference may start or end both texts: 11-16 「冲b币换电池」 was rewritten
- 充 at the start) -- she is plainly reading it, and only the written form of those characters differs;
+  counts when it is the same on both sides but for one or two Chinese characters, with at least four equal characters
+  around them, and the sentence reads at least six of the record's characters in all and, of a longer record, eight
+  or most of it (a word of her own inside the reading does not count against it: 1677890 「他们提的是黑白小猪的猪屎」) (the difference may start or end both texts: 11-16 「冲b币换电池」 was rewritten
+  充 at the start) -- she is plainly reading it, and only the written form of those characters differs;
 - and what she said is the record's: the written characters are said like the record's (the same pinyin,
- name_match.raw_pinyin: a homophone written another way, 充/冲), or a recogniser heard the record's sound there (the
- blurred pinyin, name_match.sound_key) and not the written one (南酮: both recognisers heard nán tīng, the sound of 南町). When she reads a comment back in
- her own words -- another pronoun, another word, a joke on it (你的ID for 我的ID, 主播 for 主包, 祥子 for 样子) --
- the sound differs and nothing is changed (the 11-18 sweep over 34 lane clips found 27 such stretches);
+  name_match.raw_pinyin: a homophone written another way, 充/冲), or a recogniser heard the record's sound there (the
+  blurred pinyin, name_match.sound_key) and not the written one (南酮: both recognisers heard nán tīng, the sound of 南町).  When she reads a comment back in
+  her own words -- another pronoun, another word, a joke on it (你的ID for 我的ID, 主播 for 主包, 祥子 for 样子) --
+  the sound differs and nothing is changed (the 11-18 sweep over 34 lane clips found 27 such stretches);
 - the sentence's own words around it (her reply, what she adds) are never touched, nor anything when two records
- disagree on the same character.
+  disagree on the same character.
 
 An imported push (an owner's or a ruled text) is its own authority and is not rewritten.
 """

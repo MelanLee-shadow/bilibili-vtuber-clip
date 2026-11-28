@@ -41,12 +41,13 @@ def main(argv):
     try:
         image = frame(cut, t, os.path.join(out_dir, "banner.jpg"))
         answer = pick_frame.ask(base, key, image, question, max_tokens=MAX_TOKENS, kind="banner", t=t)
-    except Exception as exc:  # noqa: BLE001 - any failure is the tool's failure: reason on stderr, non-zero exit
+    except Exception as exc:  # any failure is the tool's failure: reason on stderr, non-zero exit
         raise SystemExit(f"read_banner failed: {type(exc).__name__}: {str(exc)[:300]}") from exc
     call = pick_frame.CALLS[-1]
+    extra = {k: call[k] for k in ("fallback_from", "fallback_reason", "fallback_note") if k in call}
     with open(os.path.join(out_dir, "banner.json"), "w", encoding="utf-8") as fh:
         json.dump({"t": t, "answer": answer, "model": call["model"], "usage": call.get("usage"),
-                   "elapsed_s": call.get("elapsed_s"), "rc": call["rc"]}, fh, ensure_ascii=False, indent=1)
+                   "elapsed_s": call.get("elapsed_s"), "rc": call["rc"], **extra}, fh, ensure_ascii=False, indent=1)
     print(f"{out_dir}/banner.json: {len(answer)} chars")
     return 0
 

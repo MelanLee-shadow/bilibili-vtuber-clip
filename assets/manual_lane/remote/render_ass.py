@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""render_ass.py SRT ASS [FONTSDIR] : ASS from a clean SRT via the deployed repo's own renderer (display-only projection).
-Run on OCI3 with venv-main.  The repo is read-only; nothing is written into it.
+"""render_ass.py SRT ASS [FONTSDIR [PERSONS]] : ASS from a clean SRT via the deployed repo's own renderer (display-only
+projection).  Run on OCI3 with venv-main.  The repo is read-only; nothing is written into it.  PERSONS (step 5,
+burn/speaker.persons.json): {"styles": {style name: ASS style value}, "cues": [per SRT cue, a guest's own style or
+null]}, the guests told apart in their own colours (manual_lane.person_colours).
 
 Then every character the ASS shows must have a glyph in a font the burn can use: a character no font draws is burned
 as an empty box (2026-11-15: 「南町的🔑」 read from a danmaku came out 「南町的□」).  libass falls back to a character's
@@ -56,8 +58,12 @@ def missing(ass_text: str, covered: list[tuple[int, int]]) -> list[str]:
 
 
 if __name__ == "__main__":
+    import json
+
+    persons = json.loads(Path(sys.argv[4]).read_text(encoding="utf-8")) if len(sys.argv) > 4 else {}
     _write_sapphire_ass_from_srt(Path(sys.argv[1]), Path(sys.argv[2]),
-                                         max_chars_per_line=DEFAULT_MAX_VISUAL_LINE_CHARS)
+                                         max_chars_per_line=DEFAULT_MAX_VISUAL_LINE_CHARS,
+                                         person_styles=persons.get("styles"), cue_styles=persons.get("cues"))
     print("ass written", sys.argv[2])
     shown = Path(sys.argv[2]).read_text(encoding="utf-8")
     lost = missing(shown, drawable(Path(sys.argv[3]) if len(sys.argv) > 3 else None, shown))

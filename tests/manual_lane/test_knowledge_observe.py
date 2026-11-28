@@ -1,5 +1,5 @@
 """A sealed clip is read once for the names it uses that the knowledge graph lacks (knowledge_observe; owner
-"这种切片过程中补知识图的过程也很重要").  Fakes only: no model, no network; the graph is a small fixture."""
+"做片时顺带补知识图很重要").  Fakes only: no model, no network; the graph is a small fixture."""
 
 from __future__ import annotations
 

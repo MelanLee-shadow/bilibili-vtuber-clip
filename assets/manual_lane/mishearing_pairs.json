@@ -10,6 +10,24 @@
  ],
  "entries": [
   {
+   "misheard": "3-1",
+   "standard": "三剪一",
+   "evidence": [
+    {
+     "source": "assets/lidousha/entity_confusables.json",
+     "pointer": "/groups/16/entities/0/surfaces/1",
+     "origin": "entity_confusables",
+     "scope": {
+      "kind": "context",
+      "description": "圈内词候选，逐处由声音和语境定。2026-11-24 频道的要求；2026-11-24 片 semantictalk_318080_550480_11242230_trim 第 71 句「有的都是，那都是三剪一。」上一句「我没有那种很猪的切片」。"
+     },
+     "authority": "圈内词候选，逐处由声音和语境定。2026-11-24 频道的要求；2026-11-24 片 semantictalk_318080_550480_11242230_trim 第 71 句「有的都是，那都是三剪一。」上一句「我没有那种很猪的切片」。"
+    }
+   ],
+   "formal_matches": [],
+   "conflicts": []
+  },
+  {
    "misheard": "KO 熊",
    "standard": "kmx",
    "evidence": [
@@ -280,6 +298,42 @@
    "conflicts": []
   },
   {
+   "misheard": "三减一",
+   "standard": "三剪一",
+   "evidence": [
+    {
+     "source": "assets/lidousha/entity_confusables.json",
+     "pointer": "/groups/16/entities/0/surfaces/0",
+     "origin": "entity_confusables",
+     "scope": {
+      "kind": "context",
+      "description": "圈内词候选，逐处由声音和语境定。2026-11-24 频道的要求；2026-11-24 片 semantictalk_318080_550480_11242230_trim 第 71 句「有的都是，那都是三剪一。」上一句「我没有那种很猪的切片」。"
+     },
+     "authority": "圈内词候选，逐处由声音和语境定。2026-11-24 频道的要求；2026-11-24 片 semantictalk_318080_550480_11242230_trim 第 71 句「有的都是，那都是三剪一。」上一句「我没有那种很猪的切片」。"
+    }
+   ],
+   "formal_matches": [],
+   "conflicts": []
+  },
+  {
+   "misheard": "东爱离",
+   "standard": "东爱璃",
+   "evidence": [
+    {
+     "source": "assets/lidousha/entity_confusables.json",
+     "pointer": "/groups/14/entities/0/surfaces/1",
+     "origin": "entity_confusables",
+     "scope": {
+      "kind": "context",
+      "description": "人名位候选，逐处由声音和语境定，不全局替换。2026-10-23 片定稿「我说我不要跟东爱璃再续前缘了」，同一段各家识别写成段离/东爱离（assets/lidousha/reaction_publications/20261023-nanaliya/final_audio_gate/final-r5/01-kiss/final-audio-gate/01-kiss.subtitle-audio-witness.srt（段离）及 final-r6 对应文件（东爱离））；2026-11-24 片 semantictalk_980180_1227730_11242159 各家识别写段里/多里/端粒，主会话据此定为东爱璃。"
+     },
+     "authority": "人名位候选，逐处由声音和语境定，不全局替换。2026-10-23 片定稿「我说我不要跟东爱璃再续前缘了」，同一段各家识别写成段离/东爱离（assets/lidousha/reaction_publications/20261023-nanaliya/final_audio_gate/final-r5/01-kiss/final-audio-gate/01-kiss.subtitle-audio-witness.srt（段离）及 final-r6 对应文件（东爱离））；2026-11-24 片 semantictalk_980180_1227730_11242159 各家识别写段里/多里/端粒，主会话据此定为东爱璃。"
+    }
+   ],
+   "formal_matches": [],
+   "conflicts": []
+  },
+  {
    "misheard": "丰川祥子",
    "standard": "祥子",
    "evidence": [
@@ -310,6 +364,49 @@
       "description": "动捕彩排话题簇（2026-07-22/23 彩排；公开规则立项，误听面 2026-07-24/25 bcut 实测）：动物房=「动捕房」误听、做面粉=「做面部(表情)」误听，正是白色奶龙梗起源语境。误听面出现才触发音频二选一；真动物设施/真做饭食材语境 UNCERTAIN 保留原词，禁止全局替换。"
      },
      "authority": "动捕彩排话题簇（2026-07-22/23 彩排；公开规则立项，误听面 2026-07-24/25 bcut 实测）：动物房=「动捕房」误听、做面粉=「做面部(表情)」误听，正是白色奶龙梗起源语境。误听面出现才触发音频二选一；真动物设施/真做饭食材语境 UNCERTAIN 保留原词，禁止全局替换。"
+    }
+   ],
+   "formal_matches": [],
+   "conflicts": []
+  },
+  {
+   "misheard": "内向",
+   "standard": "奈叶香",
+   "evidence": [
+    {
+     "source": "assets/manual_lane/proper_nouns.json",
+     "pointer": "/160/context_mishearings/0",
+     "origin": "proper_nouns_context",
+     "scope": {
+      "kind": "context",
+      "description": "贴图、表情包或发图语境（如「内向的表情」「发了一个内向的表情」「内向表情包」「一张内向的图」），并结合画面或音频核实；普通词「内向」不替换",
+      "context_patterns": [
+       "(?<![她他你我])内向的表情包?",
+       "内向表情包",
+       "内向[^，。！？,.!?;；\\r\\n]{0,4}(?:表情包|贴纸|头像|截图|梗图|大图)",
+       "(?<![她他你我])内向的(?:(?:那|这|一)?张)?(?:大|小|截|梗)?图(?![书案标形腾钉谋鉴表谱章])",
+       "(?:表情包|贴纸|头像|截图|梗图)[^，。！？,.!?;；\\r\\n]{0,8}内向"
+      ]
+     },
+     "authority": "确指《魔法少女的魔女审判》角色黑部奈叶香（如提及该角色或其表情包）；普通词「内向」不替换"
+    }
+   ],
+   "formal_matches": [],
+   "conflicts": []
+  },
+  {
+   "misheard": "内香",
+   "standard": "奈叶香",
+   "evidence": [
+    {
+     "source": "assets/lidousha/entity_confusables.json",
+     "pointer": "/groups/17/entities/0/surfaces/0",
+     "origin": "entity_confusables",
+     "scope": {
+      "kind": "context",
+      "description": "《魔法少女的魔女审判》角色黑部奈叶香的常用简称「奈叶香」（公开规则确认）。ASR 易将「奈叶香」听成近音面「内香」「奈香」，仅作语境候选，须结合本句发音或画面核实；普通词「内向」不入此表。"
+     },
+     "authority": "《魔法少女的魔女审判》角色黑部奈叶香的常用简称「奈叶香」（公开规则确认）。ASR 易将「奈叶香」听成近音面「内香」「奈香」，仅作语境候选，须结合本句发音或画面核实；普通词「内向」不入此表。"
     }
    ],
    "formal_matches": [],
@@ -400,6 +497,24 @@
       "description": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
      },
      "authority": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+    }
+   ],
+   "formal_matches": [],
+   "conflicts": []
+  },
+  {
+   "misheard": "多里",
+   "standard": "东爱璃",
+   "evidence": [
+    {
+     "source": "assets/lidousha/entity_confusables.json",
+     "pointer": "/groups/14/entities/0/surfaces/3",
+     "origin": "entity_confusables",
+     "scope": {
+      "kind": "context",
+      "description": "人名位候选，逐处由声音和语境定，不全局替换。2026-10-23 片定稿「我说我不要跟东爱璃再续前缘了」，同一段各家识别写成段离/东爱离（assets/lidousha/reaction_publications/20261023-nanaliya/final_audio_gate/final-r5/01-kiss/final-audio-gate/01-kiss.subtitle-audio-witness.srt（段离）及 final-r6 对应文件（东爱离））；2026-11-24 片 semantictalk_980180_1227730_11242159 各家识别写段里/多里/端粒，主会话据此定为东爱璃。"
+     },
+     "authority": "人名位候选，逐处由声音和语境定，不全局替换。2026-10-23 片定稿「我说我不要跟东爱璃再续前缘了」，同一段各家识别写成段离/东爱离（assets/lidousha/reaction_publications/20261023-nanaliya/final_audio_gate/final-r5/01-kiss/final-audio-gate/01-kiss.subtitle-audio-witness.srt（段离）及 final-r6 对应文件（东爱离））；2026-11-24 片 semantictalk_980180_1227730_11242159 各家识别写段里/多里/端粒，主会话据此定为东爱璃。"
     }
    ],
    "formal_matches": [],
@@ -514,6 +629,24 @@
       "description": "公开规则：南町在本场联动中可称大N或小N，连续混合专名为南町nightin。大恩老师/大卫老师/大黄老师/邓老师是高风险近音候选，只触发逐 mention 音频复核；不得把大恩大德、滴水之恩等普通短语全局替换。"
      },
      "authority": "公开规则：南町在本场联动中可称大N或小N，连续混合专名为南町nightin。大恩老师/大卫老师/大黄老师/邓老师是高风险近音候选，只触发逐 mention 音频复核；不得把大恩大德、滴水之恩等普通短语全局替换。"
+    }
+   ],
+   "formal_matches": [],
+   "conflicts": []
+  },
+  {
+   "misheard": "奈香",
+   "standard": "奈叶香",
+   "evidence": [
+    {
+     "source": "assets/lidousha/entity_confusables.json",
+     "pointer": "/groups/17/entities/0/surfaces/1",
+     "origin": "entity_confusables",
+     "scope": {
+      "kind": "context",
+      "description": "《魔法少女的魔女审判》角色黑部奈叶香的常用简称「奈叶香」（公开规则确认）。ASR 易将「奈叶香」听成近音面「内香」「奈香」，仅作语境候选，须结合本句发音或画面核实；普通词「内向」不入此表。"
+     },
+     "authority": "《魔法少女的魔女审判》角色黑部奈叶香的常用简称「奈叶香」（公开规则确认）。ASR 易将「奈叶香」听成近音面「内香」「奈香」，仅作语境候选，须结合本句发音或画面核实；普通词「内向」不入此表。"
     }
    ],
    "formal_matches": [],
@@ -790,6 +923,42 @@
    "conflicts": []
   },
   {
+   "misheard": "段离",
+   "standard": "东爱璃",
+   "evidence": [
+    {
+     "source": "assets/lidousha/entity_confusables.json",
+     "pointer": "/groups/14/entities/0/surfaces/0",
+     "origin": "entity_confusables",
+     "scope": {
+      "kind": "context",
+      "description": "人名位候选，逐处由声音和语境定，不全局替换。2026-10-23 片定稿「我说我不要跟东爱璃再续前缘了」，同一段各家识别写成段离/东爱离（assets/lidousha/reaction_publications/20261023-nanaliya/final_audio_gate/final-r5/01-kiss/final-audio-gate/01-kiss.subtitle-audio-witness.srt（段离）及 final-r6 对应文件（东爱离））；2026-11-24 片 semantictalk_980180_1227730_11242159 各家识别写段里/多里/端粒，主会话据此定为东爱璃。"
+     },
+     "authority": "人名位候选，逐处由声音和语境定，不全局替换。2026-10-23 片定稿「我说我不要跟东爱璃再续前缘了」，同一段各家识别写成段离/东爱离（assets/lidousha/reaction_publications/20261023-nanaliya/final_audio_gate/final-r5/01-kiss/final-audio-gate/01-kiss.subtitle-audio-witness.srt（段离）及 final-r6 对应文件（东爱离））；2026-11-24 片 semantictalk_980180_1227730_11242159 各家识别写段里/多里/端粒，主会话据此定为东爱璃。"
+    }
+   ],
+   "formal_matches": [],
+   "conflicts": []
+  },
+  {
+   "misheard": "段里",
+   "standard": "东爱璃",
+   "evidence": [
+    {
+     "source": "assets/lidousha/entity_confusables.json",
+     "pointer": "/groups/14/entities/0/surfaces/2",
+     "origin": "entity_confusables",
+     "scope": {
+      "kind": "context",
+      "description": "人名位候选，逐处由声音和语境定，不全局替换。2026-10-23 片定稿「我说我不要跟东爱璃再续前缘了」，同一段各家识别写成段离/东爱离（assets/lidousha/reaction_publications/20261023-nanaliya/final_audio_gate/final-r5/01-kiss/final-audio-gate/01-kiss.subtitle-audio-witness.srt（段离）及 final-r6 对应文件（东爱离））；2026-11-24 片 semantictalk_980180_1227730_11242159 各家识别写段里/多里/端粒，主会话据此定为东爱璃。"
+     },
+     "authority": "人名位候选，逐处由声音和语境定，不全局替换。2026-10-23 片定稿「我说我不要跟东爱璃再续前缘了」，同一段各家识别写成段离/东爱离（assets/lidousha/reaction_publications/20261023-nanaliya/final_audio_gate/final-r5/01-kiss/final-audio-gate/01-kiss.subtitle-audio-witness.srt（段离）及 final-r6 对应文件（东爱离））；2026-11-24 片 semantictalk_980180_1227730_11242159 各家识别写段里/多里/端粒，主会话据此定为东爱璃。"
+    }
+   ],
+   "formal_matches": [],
+   "conflicts": []
+  },
+  {
    "misheard": "母鸡卡",
    "standard": "Ave Mujica",
    "evidence": [
@@ -892,6 +1061,24 @@
       "description": "两个高频日语插话（glossary 日语插话节）。2026-07-18 七星案（公开规则确认）：谢礼物语境的 ありがとう 被 ASR 写成人名「林更多」×3——不存在叫林更多的常客，谢礼/谢SC语境优先按 ありがとう 复核；おめでとう 误听面沿 glossary（没得到系）。误听面出现才触发音频复核，规范形 UNCERTAIN 保留。"
      },
      "authority": "两个高频日语插话（glossary 日语插话节）。2026-07-18 七星案（公开规则确认）：谢礼物语境的 ありがとう 被 ASR 写成人名「林更多」×3——不存在叫林更多的常客，谢礼/谢SC语境优先按 ありがとう 复核；おめでとう 误听面沿 glossary（没得到系）。误听面出现才触发音频复核，规范形 UNCERTAIN 保留。"
+    }
+   ],
+   "formal_matches": [],
+   "conflicts": []
+  },
+  {
+   "misheard": "玄素",
+   "standard": "萱师傅",
+   "evidence": [
+    {
+     "source": "assets/lidousha/entity_confusables.json",
+     "pointer": "/groups/15/entities/0/surfaces/2",
+     "origin": "entity_confusables",
+     "scope": {
+      "kind": "context",
+      "description": "萱师傅是萱萱卡娅（Kaya）的昵称。本人公开自我介绍 https://www.bilibili.com/opus/996270943414255636 原文「您可以叫我 魔王大人 也可以叫我萱萱 萱师傅 或者...卡娅」；2026-11-24 片 semantictalk_980180_1227730_11242159 各家识别写轩叔/薛叔/玄素/谢师傅，主会话据此定为萱师傅。只作候选，逐处由声音和语境定。"
+     },
+     "authority": "萱师傅是萱萱卡娅（Kaya）的昵称。本人公开自我介绍 https://www.bilibili.com/opus/996270943414255636 原文「您可以叫我 魔王大人 也可以叫我萱萱 萱师傅 或者...卡娅」；2026-11-24 片 semantictalk_980180_1227730_11242159 各家识别写轩叔/薛叔/玄素/谢师傅，主会话据此定为萱师傅。只作候选，逐处由声音和语境定。"
     }
    ],
    "formal_matches": [],
@@ -1006,6 +1193,24 @@
    "conflicts": []
   },
   {
+   "misheard": "端粒",
+   "standard": "东爱璃",
+   "evidence": [
+    {
+     "source": "assets/lidousha/entity_confusables.json",
+     "pointer": "/groups/14/entities/0/surfaces/4",
+     "origin": "entity_confusables",
+     "scope": {
+      "kind": "context",
+      "description": "人名位候选，逐处由声音和语境定，不全局替换。2026-10-23 片定稿「我说我不要跟东爱璃再续前缘了」，同一段各家识别写成段离/东爱离（assets/lidousha/reaction_publications/20261023-nanaliya/final_audio_gate/final-r5/01-kiss/final-audio-gate/01-kiss.subtitle-audio-witness.srt（段离）及 final-r6 对应文件（东爱离））；2026-11-24 片 semantictalk_980180_1227730_11242159 各家识别写段里/多里/端粒，主会话据此定为东爱璃。"
+     },
+     "authority": "人名位候选，逐处由声音和语境定，不全局替换。2026-10-23 片定稿「我说我不要跟东爱璃再续前缘了」，同一段各家识别写成段离/东爱离（assets/lidousha/reaction_publications/20261023-nanaliya/final_audio_gate/final-r5/01-kiss/final-audio-gate/01-kiss.subtitle-audio-witness.srt（段离）及 final-r6 对应文件（东爱离））；2026-11-24 片 semantictalk_980180_1227730_11242159 各家识别写段里/多里/端粒，主会话据此定为东爱璃。"
+    }
+   ],
+   "formal_matches": [],
+   "conflicts": []
+  },
+  {
    "misheard": "纹熊",
    "standard": "kmx",
    "evidence": [
@@ -1078,6 +1283,24 @@
    "conflicts": []
   },
   {
+   "misheard": "薛叔",
+   "standard": "萱师傅",
+   "evidence": [
+    {
+     "source": "assets/lidousha/entity_confusables.json",
+     "pointer": "/groups/15/entities/0/surfaces/1",
+     "origin": "entity_confusables",
+     "scope": {
+      "kind": "context",
+      "description": "萱师傅是萱萱卡娅（Kaya）的昵称。本人公开自我介绍 https://www.bilibili.com/opus/996270943414255636 原文「您可以叫我 魔王大人 也可以叫我萱萱 萱师傅 或者...卡娅」；2026-11-24 片 semantictalk_980180_1227730_11242159 各家识别写轩叔/薛叔/玄素/谢师傅，主会话据此定为萱师傅。只作候选，逐处由声音和语境定。"
+     },
+     "authority": "萱师傅是萱萱卡娅（Kaya）的昵称。本人公开自我介绍 https://www.bilibili.com/opus/996270943414255636 原文「您可以叫我 魔王大人 也可以叫我萱萱 萱师傅 或者...卡娅」；2026-11-24 片 semantictalk_980180_1227730_11242159 各家识别写轩叔/薛叔/玄素/谢师傅，主会话据此定为萱师傅。只作候选，逐处由声音和语境定。"
+    }
+   ],
+   "formal_matches": [],
+   "conflicts": []
+  },
+  {
    "misheard": "请问熊",
    "standard": "kmx",
    "evidence": [
@@ -1090,6 +1313,42 @@
       "description": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
      },
      "authority": "公开规则: kmx 的口播发音是「kimo熊」(ki-mo-xiong)，不是逐字母 k-m-x。ASR 反复把它听成「乒乓球」等远音词；真实乒乓球话题也存在，必须按本句音节、结构化弹幕和话题裁决，不得盲替，也不得因礼墨/Sumi 等其他名字在词表中就优先它们。2026-07-14 增误听面：纹熊。2026-07-18 增误听面：提莫熊、提莫的熊。2026-07-19 增误听面：提莫怂、请问熊、KY小红；这些只提高候选优先级，必须再有本句音节、结构化聊天、重复槽位或源时间真值支持。单字「提」和常用词「提防」禁止作为全局误听面。2026-07-19 增误听面（精心设计案，公开规则确认）：皮毛熊、K头小、K头头、Q我熊、给我修——「X是猪」排比、粉丝牌等级（31级）、被感动哭语境高发；同样只提高候选优先级，逐处仍须音频/结构化证据。 公开规则叹十七手案：新增语境关联召回（熊类关联词+kmx已在本片确认→句首杂段送强裁），误听面清单只是加速器不再是召回上限。 2026-07-25增误听面：KO熊/KO 熊（537_702案，kimo熊被打散成拉丁KO+熊，连带触发外语混排门）；同样只提候选优先级，逐处须音频证据。"
+    }
+   ],
+   "formal_matches": [],
+   "conflicts": []
+  },
+  {
+   "misheard": "谢师傅",
+   "standard": "萱师傅",
+   "evidence": [
+    {
+     "source": "assets/lidousha/entity_confusables.json",
+     "pointer": "/groups/15/entities/0/surfaces/3",
+     "origin": "entity_confusables",
+     "scope": {
+      "kind": "context",
+      "description": "萱师傅是萱萱卡娅（Kaya）的昵称。本人公开自我介绍 https://www.bilibili.com/opus/996270943414255636 原文「您可以叫我 魔王大人 也可以叫我萱萱 萱师傅 或者...卡娅」；2026-11-24 片 semantictalk_980180_1227730_11242159 各家识别写轩叔/薛叔/玄素/谢师傅，主会话据此定为萱师傅。只作候选，逐处由声音和语境定。"
+     },
+     "authority": "萱师傅是萱萱卡娅（Kaya）的昵称。本人公开自我介绍 https://www.bilibili.com/opus/996270943414255636 原文「您可以叫我 魔王大人 也可以叫我萱萱 萱师傅 或者...卡娅」；2026-11-24 片 semantictalk_980180_1227730_11242159 各家识别写轩叔/薛叔/玄素/谢师傅，主会话据此定为萱师傅。只作候选，逐处由声音和语境定。"
+    }
+   ],
+   "formal_matches": [],
+   "conflicts": []
+  },
+  {
+   "misheard": "轩叔",
+   "standard": "萱师傅",
+   "evidence": [
+    {
+     "source": "assets/lidousha/entity_confusables.json",
+     "pointer": "/groups/15/entities/0/surfaces/0",
+     "origin": "entity_confusables",
+     "scope": {
+      "kind": "context",
+      "description": "萱师傅是萱萱卡娅（Kaya）的昵称。本人公开自我介绍 https://www.bilibili.com/opus/996270943414255636 原文「您可以叫我 魔王大人 也可以叫我萱萱 萱师傅 或者...卡娅」；2026-11-24 片 semantictalk_980180_1227730_11242159 各家识别写轩叔/薛叔/玄素/谢师傅，主会话据此定为萱师傅。只作候选，逐处由声音和语境定。"
+     },
+     "authority": "萱师傅是萱萱卡娅（Kaya）的昵称。本人公开自我介绍 https://www.bilibili.com/opus/996270943414255636 原文「您可以叫我 魔王大人 也可以叫我萱萱 萱师傅 或者...卡娅」；2026-11-24 片 semantictalk_980180_1227730_11242159 各家识别写轩叔/薛叔/玄素/谢师傅，主会话据此定为萱师傅。只作候选，逐处由声音和语境定。"
     }
    ],
    "formal_matches": [],

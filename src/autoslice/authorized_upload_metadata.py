@@ -39,15 +39,18 @@ def validate_tag_policy_limits(policy: UploadTagPolicy) -> list[str]:
     return problems
 
 
-def validate_tags(tags: list[str]) -> list[str]:
+def validate_tags(
+    tags: list[str], *, policy: UploadTagPolicy | None = None
+) -> list[str]:
     """Return problems; empty means the tag list is manifest-worthy."""
 
     problems: list[str] = []
     if not isinstance(tags, list) or any(not isinstance(tag, str) for tag in tags):
         return ["tags must be a list of strings"]
-    from src.autoslice.upload_tag_policy import load_selected_upload_tag_policy
+    if policy is None:
+        from src.autoslice.upload_tag_policy import load_selected_upload_tag_policy
 
-    policy = load_selected_upload_tag_policy()
+        policy = load_selected_upload_tag_policy()
     max_tags = min(policy.max_tags_default, PLATFORM_MAX_TAGS)
     max_tag_chars = min(policy.max_tag_chars, PLATFORM_MAX_TAG_CHARS)
     cleaned = [tag.strip() for tag in tags]

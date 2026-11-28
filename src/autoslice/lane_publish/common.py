@@ -110,7 +110,8 @@ class Config:
 
 @dataclass(frozen=True)
 class Publish:
-    """lane_rules.json upload.publish: the archive policy of a new BV and how long to wait for Bilibili."""
+    """lane_rules.json upload.publish: the archive policy of a new BV (zone, declared type, repost source) and how long to
+    wait for Bilibili."""
 
     tid: int
     copyright: int
@@ -125,8 +126,31 @@ class Publish:
 
         try:
             doc = rules("upload")["publish"]
-            return cls(tid=int(doc["tid"]), copyright=int(doc["copyright"]), source=str(doc["source"]),
-                       public_wait_s=float(doc["public_wait_s"]), public_poll_s=float(doc["public_poll_s"]),
-                       new_part_wait_s=float(doc["new_part_wait_s"]))
+            policy = cls(tid=int(doc["tid"]), copyright=int(doc["copyright"]), source=str(doc["source"]),
+                         public_wait_s=float(doc["public_wait_s"]), public_poll_s=float(doc["public_poll_s"]),
+                         new_part_wait_s=float(doc["new_part_wait_s"]))
         except (KeyError, TypeError, ValueError) as exc:
             raise Refused(REFUSED, f"lane_rules.json upload.publish 不完整：{type(exc).__name__}: {exc}") from exc
+        if problem := archive_policy_problem({k: getattr(policy, k) for k in POLICY_FIELDS}):
+            raise Refused(REFUSED, f"lane_rules.json upload.publish 的投稿类型不成立：{problem}")
+        return policy
+
+    def archive_policy(self) -> dict[str, Any]:
+        """What a new BV is posted with, as a manifest carries it (`publish_policy`)."""
+        return {k: getattr(self, k) for k in POLICY_FIELDS}
+
+
+POLICY_FIELDS = ("tid", "copyright", "source")
+
+
+def archive_policy_problem(policy: object) -> str | None:
+    """Why `policy` ({tid, copyright, source}) is not one a new BV of ours is posted with, or None.  3 = no declared type,
+    which has no source; 2 = repost, which names one.  1 (自制) is never ours to claim."""
+    if not isinstance(policy, Mapping) or set(policy) != set(POLICY_FIELDS):
+        return f"要有且只有 {'、'.join(POLICY_FIELDS)}：{policy!r}"
+    tid, kind, source = (policy[k] for k in POLICY_FIELDS)
+    if type(tid) is not int or tid <= 0 or type(kind) is not int or not isinstance(source, str):
+        return f"类型不对：{dict(policy)!r}"
+    if not ((kind == 3 and source == "") or (kind == 2 and source.strip())):
+        return f"copyright={kind} source={source!r}（只认 3 且来源为空，或 2 且有来源；不投自制）"
+    return None

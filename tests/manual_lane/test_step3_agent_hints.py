@@ -417,3 +417,91 @@ def test_a_trimmed_clip_without_the_original_s_subtitles_is_not_subtitled_again(
     outcome = step.step3_subtitles(ctx)
     assert not outcome.ok and outcome.reason == 'TRIM_WITHOUT_ORIGINAL_SUBTITLES'
     assert not (ctx.clip_dir / 'subs/agent-trace.json').exists()          # no model was asked
+
+
+def test_weak_roster_and_shared_hints_get_neutral_source_while_table_and_participant_stay_unchanged(
+    tmp_path, monkeypatch
+):
+    # Ruling 4b & Ruling 6: roster/shared hits carry source='roster'|'shared' with neutral guidance;
+    # table/participant entries omit 'source' and merged participant keeps participant name & guidance.
+    from src.autoslice.manual_lane import name_match
+
+    monkeypatch.setattr(pb.mishearing, 'load_pairs', lambda *_a: [])
+    roster = tmp_path / 'roster.json'
+    roster.write_text(
+        '{"member_overrides": {'
+        '"kaya": {"canonical": "萱萱卡娅", "aliases": ["萱师傅"]}, '
+        '"tky": {"canonical": "婷卡娅", "aliases": []}'
+        '}}',
+        encoding='utf-8',
+    )
+    shared = tmp_path / 'nodes.jsonl'
+    shared.write_text(
+        '{"id": "s1", "kind": "term", "names": {"display": "三剪一"}, "aliases": []}\n',
+        encoding='utf-8',
+    )
+    monkeypatch.setattr(name_match, 'ROSTER_SOURCES', roster)
+    monkeypatch.setattr(name_match, 'SHARED_NODES', shared)
+    cpa = AgentCpa(rows('结果'), tools=[{'tool': 'hints'}])
+    ctx = context(
+        tmp_path,
+        monkeypatch,
+        cpa,
+        bcut='理解一下理解吧，轩叔说三减一和亭卡雅',
+        jianying='理解一下理解吧，轩叔说三减一和亭卡雅',
+        participants=[['萱师傅']],
+    )
+    ctx.adapters.danmaku.xml = (
+        '<i><d p="5,1,1">李姐李姐</d><d p="6,1,1">萱萱卡娅</d>'
+        '<d p="7,1,1">三剪一</d><d p="8,1,1">婷卡娅</d></i>'
+    ).encode()
+    assert step._step3_body(ctx).ok
+    res = results(ctx, 'hints')[0]
+    near = {n['name']: n for n in res['hints'][0]['near_names']}
+
+    assert 'source' not in near['李豆沙']
+    assert 'source' not in near['萱师傅']
+    assert '萱萱卡娅' in near['萱师傅']['spellings']
+    assert [r['text'] for r in near['萱师傅']['chat_near']] == ['萱萱卡娅']
+    assert near['婷卡娅']['source'] == 'roster'
+    assert near['三剪一']['source'] == 'shared'
+    assert 'roster' in res['note'] and 'shared' in res['note']
+
+    loaded = name_match.entries([['萱师傅']])
+    reasons_roster = name_match.detection_reasons('看亭卡雅来了', loaded, {'near_name': True, 'latin_unknown': False})
+    assert any(r.startswith('近音候选（roster）') and '音频和语境' in r and '婷卡娅' in r for r in reasons_roster)
+    assert not any('名字表里的「婷卡娅」' in r for r in reasons_roster)
+
+
+def test_visual_reference_hint_fires_for_on_screen_stickers_even_when_asr_agrees(tmp_path, monkeypatch):
+    from src.autoslice.manual_lane import playbook_evidence as pe
+
+    assert pe.visual_references(['我就发了一个内向的表情'])
+    assert pe.visual_references(['我发个这个'])
+    assert pe.visual_references(['这张图']) and pe.visual_references(['这个图']) and pe.visual_references(['这图'])
+    assert pe.visual_references(['我性格比较内向']) == []
+    for library_line in ('这图书馆没人', '这个图书馆', '这图书馆是我开的'):
+        assert pe.visual_references([library_line]) == [], library_line
+    assert 'visual_reference' in pe.HINTS_NOTE and 'frame' in pe.HINTS_NOTE
+
+    monkeypatch.setattr(pb.mishearing, 'load_pairs', lambda *_a: pb.mishearing.derive_pairs())
+    three_rows = answer_rows([
+        {'id': 'd001', 'state': 'ADOPT', 'final_text': '我就发了一个内向的表情', 'confidence': '高', 'affects_meaning': False},
+        {'id': 'd002', 'state': 'ADOPT', 'final_text': '我发个这个', 'confidence': '高', 'affects_meaning': False},
+        {'id': 'd003', 'state': 'ADOPT', 'final_text': '我性格比较内向', 'confidence': '高', 'affects_meaning': False},
+    ])
+    cpa = AgentCpa(three_rows, tools=[{'tool': 'hints'}])
+    ctx = context(tmp_path, monkeypatch, cpa)
+    srt = (
+        '1\n00:00:00,000 --> 00:00:02,000\n我就发了一个内向的表情\n\n'
+        '2\n00:00:02,000 --> 00:00:04,000\n我发个这个\n\n'
+        '3\n00:00:04,000 --> 00:00:06,000\n我性格比较内向\n'
+    )
+    (ctx.clip_dir / 'asr/bcut.srt').write_text(srt, encoding='utf-8')
+    (ctx.clip_dir / 'asr/jianying.srt').write_text(srt, encoding='utf-8')
+    assert step._step3_body(ctx).ok
+    by_id = {h['id']: h for h in results(ctx, 'hints')[0]['hints']}
+    assert by_id[1]['visual_reference']['t'] == 1.0 and by_id[1]['visual_reference']['phrases']
+    assert any('奈叶香' in line for line in by_id[1]['mishearing'])
+    assert by_id[2]['visual_reference']['t'] == 3.0 and '发个这个' in by_id[2]['visual_reference']['phrases']
+    assert 3 not in by_id

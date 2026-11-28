@@ -137,12 +137,20 @@ def choose(renderer, spec, style, route, job):
     this process already took are kept on the job (`background_taken`), so the routes of one process keep apart too."""
     if "frame" in spec:
         return panel(renderer, spec, style, route, job) if spec.get("panel") else None
+    sha = job.get("content_sha256") or renderer.default_content_sha256(spec)
+    record = ground(renderer, spec.get("stickers") or [], len(spec["lines"]), spec["face"][1], style, route, job, sha)
+    spec["bg"] = list(record["colors"])
+    return record
+
+
+def ground(renderer, stickers, n_lines, face_top, style, route, job, sha):
+    """The record of the ground chosen for these layers under `n_lines` lines above `face_top` (`choose` for a whole
+    pastel cover; cover_pack_guests for one person's panel, each call taking a hue family the others did not)."""
     taken = job.setdefault("background_taken", [])
     rules, table = job["rules"], job["rules"]["backgrounds"]
-    sha = job.get("content_sha256") or renderer.default_content_sha256(spec)
-    strip = (rules["text_zone_top_px"], max(rules["text_zone_top_px"] + 1, spec["face"][1] - rules["text_zone_gap_px"]))
-    samples = layer_samples(renderer, spec.get("stickers") or [])
-    rows = {e["id"]: evaluate(renderer, e, samples, style, len(spec["lines"]), strip, rules) for e in table}
+    strip = (rules["text_zone_top_px"], max(rules["text_zone_top_px"] + 1, face_top - rules["text_zone_gap_px"]))
+    samples = layer_samples(renderer, stickers)
+    rows = {e["id"]: evaluate(renderer, e, samples, style, n_lines, strip, rules) for e in table}
     passing = [e for e in table if rows[e["id"]]["ok"]]
     tier = "passes_all"
     if not passing:
@@ -156,7 +164,6 @@ def choose(renderer, spec, style, route, job):
     if level and tier == "passes_all":
         tier = "passes_all_but_recently_used"
     taken.append(picked["hue"])
-    spec["bg"] = list(picked["colors"])
     return {"id": picked["id"], "colors": list(picked["colors"]), "hue": picked["hue"], "tone": picked["tone"], "tier": tier,
             "style_id": style["style_id"], "route": route, "hue_walk": walk, "route_shift": shift,
             "hues_taken_by_other_routes": list(taken[:-1]), "recently_used": recent, "session_used": sorted(session),

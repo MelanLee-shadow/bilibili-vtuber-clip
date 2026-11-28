@@ -8,7 +8,7 @@ interval.  A step starts when the steps in DEPENDS[number] are done; steps that 
 
 from __future__ import annotations
 
-from . import stage_impl, stage_package
+from . import sound_events, stage_impl, stage_package
 from .runner import Step
 from .source_read import HOST_ENCODE
 
@@ -17,7 +17,7 @@ STEPS: tuple[Step, ...] = (
     Step(0, "dedupe", "外片查重", stage_impl.step0_dedupe),
     Step(2, "cut", "剪辑", stage_impl.step2_cut),
     Step(3, "subtitles", "字幕：ASR、听音证人、疑点，CPA 按上下文定字", stage_impl.step3_subtitles),
-    Step(4, "speaker", "说话人", stage_impl.step4_speaker),
+    Step(4, "speaker", "说话人", sound_events.with_who(stage_impl.step4_speaker)),
     Step(5, "burn", "片头与烧录", stage_impl.step5_burn),
     Step(6, "title_cover", "标题与封面", stage_impl.step6_title_cover),
     Step(7, "tags", "标签", stage_impl.step7_tags),
@@ -30,7 +30,8 @@ STEPS: tuple[Step, ...] = (
 #   1  the BCUT cues of the clip (state); fixes the cut interval in the clip's state
 #   0  reads that interval (clip start/end); a duplicate stops the clip before it is cut
 #   2  reads the interval (and snaps it, so it must come after the check that reads it); writes cut/cut.mp4
-#   3  cut.mp4; writes subs/final.srt   4  subs/final.srt, cut.mp4; writes speaker/speaker.srt
+#   3  cut.mp4; writes subs/final.srt, subs/sound_events.json
+#   4  subs/final.srt, cut.mp4; writes speaker/speaker.srt, the speakers of subs/sound_events.json
 #   5  speaker/speaker.srt, cut/cut.mp4; writes burn/final.mp4, burn/intro_result.json
 #   6  subs/final.srt, speaker/speaker.srt (subtitle_track), cut/cut.mp4; writes title/title.txt, cover/
 #   7  title/title.txt (step 6) and subs/final.srt; writes tags/tags.json

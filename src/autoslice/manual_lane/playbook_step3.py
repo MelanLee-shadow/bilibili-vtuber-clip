@@ -10,13 +10,12 @@ import time
 
 from . import (agent_frame, channel, doubt_policy, evidence_attach, mishearing, name_match, normalize, parallel,
                playbook_evidence as pe, playbook_vote, references, step3_materials,
-               step3_text_classes, work_context, work_lookup)
+               step3_read_time, step3_text_classes, subtitle_shape, work_context, work_lookup)
 from .lane_rules import rules
-from .srt_text import _json_from_text, format_srt
-from .step3_doubts import decided_doubt, doubt_entry, gated_outcome, lone_and_holds, write_subtitles
+from .srt_text import _json_from_text
+from .step3_doubts import decided_cues, decided_doubt, doubt_entry, gated_outcome, lone_and_holds, write_subtitles
 from .step3_evidence import ARGON, M38, _asr_window_pass, _asr_witnesses, _listen_pass, upload_listen_tools
-from .step_io import PROMPTS, _ask_cpa, _cpa_ok, _fail, _local, _write_atomic
-
+from .step_io import CpaVisionUnavailable, PROMPTS, _ask_cpa, _cpa_ok, _fail, _local, _write_atomic
 
 # These are runaway guards, not a target number of investigations. Usage includes both providers.
 MAX_TEXT_CALLS = 80
@@ -24,17 +23,24 @@ MAX_LISTEN_CALLS = 160
 MAX_TOOL_CALLS = 500
 MAX_TOTAL_TOKENS = 4_000_000
 HINTS_NOTE = pe.HINTS_NOTE
+TITLE = '|'.join(f'{re.escape(a)}[^{re.escape(b)}]*{re.escape(b)}' for a, b in subtitle_shape._PAIRS.items())
 UNSUBTITLED_NOTE = ('unsubtitled 里的时间段，识别器有成句的内容，而你的字幕在这段时间没有任何一行。这段话若已并入邻行，'
                     '接收行要用 parts 把它的时间带过去：有 source_words 的用 first_word/last_word；没有词时间的文字'
                     '（外语原声、被识别成怪音串的句子）用 {"text":"…","first_cue":a,"last_cue":b}，a、b 是 bcut 的 cue id，'
                     '含首尾，时间取这些 cue 的整段边界。这段若确实不该出字幕，在对应行的 reason 里写明它是什么声音，'
-                    '再原样交 final。')
+                    '并在 final 里加 "not_subtitled":[{"start_s":…,"end_s":…,"sound":"它是什么声音"}]，时间照抄 unsubtitled '
+                    '里的那一段。每一段二选一：既没有行带上它的时间、也没写进 not_subtitled 的段会再退回。')
+UNFIT_NOTE = ('unfit 里的行排不进字幕版式（why 写了原因）：书名号、「」里的标题在任何地方都不拆，比一行长的标题放不下。'
+              '逐句改到放得下：去掉这个标题的书名号照写（标题的字一个不少），或换一种写法；'
+              '不许为了放下而丢字、改意思。没改好的行会再退回。')
+READ_TIME_NOTE = ('read_too_fast 里的字幕文字相对停留时间异常多，不能仅按字数编造时长，也不要删改定稿文字。'
+                  '核对原识别稿、其他识别及词时间；若前后未盖住的是同一句，用 words 和 parts 把有证据的时间带入。'
+                  '不能确认时说明证据不足；未解决的行不能静默交稿。')
 SEGMENTS_NOTE = ('这些同场录像分段读取失败或无法对齐时钟，其中的 SC/礼物/舰长是未知，不是没有；'
                  '可再请求，或按其余证据判断，不得当作不存在。')
 SELF_CHECK_INSTRUCTION = ('交叉核对全部证据；需要时再请求工具，然后修订。附上的 hints 是流水线已算好的逐句机械候选，'
                           '可能有误，由你核对后决定。凡命中 readout_candidate 的句，若最终文字与原记录不同，'
                           '须在 self_check 里逐句写明偏离了哪些字、意思是否改变；意思改变的视为听错，改按原记录。')
-
 
 def _save(ctx, name, obj):
     path = _local(ctx, name)
@@ -83,6 +89,31 @@ def _agent_action(response):
 
 def _content(text):
     return ''.join(ch for ch in text if not ch.isspace())
+
+
+def _u138(lines):
+    """normalize.join_lone_chars over whole sentences (one speaker: the single-speaker playbook).  When the sentence a
+    lone character would join has no shape itself, nothing is joined here: unreleasable names that sentence first."""
+    try:
+        return normalize.join_lone_chars(lines, one_speaker=True)
+    except ValueError:
+        return list(lines), []
+
+
+def _without_own_lone(cues, dropped, whole):
+    """`cues` without the lone characters the release shape left out (`dropped`, join_lone_chars' rows), when each
+    of them is a sentence of the agent's by itself - a line of `whole` (the unsplit sentences) with just that text
+    over its time - so leaving it out is U138, not a lost word; None when one is only a piece of a longer sentence."""
+    left = list(cues)
+    for row in dropped:
+        def same(c):
+            return (_content(str(c['text'])) == _content(row['text'])
+                    and float(c['start_s']) < row['end_s'] and row['start_s'] < float(c['end_s']))
+        at = next((i for i, c in enumerate(left) if same(c)), None)
+        if at is None or not any(same(w) for w in whole):
+            return None
+        del left[at]
+    return left
 
 
 def _row_problem(rows, bcut):
@@ -151,17 +182,14 @@ class _Agent:
         self.identity = hashlib.sha256(identity.encode()).hexdigest()
         self.path = _local(ctx, f"subs/agent-trace{'.' + tag if tag else ''}.json")
         self.trace = {'input_sha256': self.identity, 'events': [], 'text_calls': 0, 'tool_calls': 0,
-                      'listening_calls': {'38m': 0, 'argon': 0}, 'total_tokens': 0,
+                      'listening_calls': {'38m': 0, 'argon': 0}, 'total_tokens': 0, 'status': 'RUNNING',
                       'limits': {'text_calls': MAX_TEXT_CALLS, 'listening_calls': MAX_LISTEN_CALLS,
-                                 'tool_calls': MAX_TOOL_CALLS,
-                                 'total_tokens': MAX_TOTAL_TOKENS}, 'status': 'RUNNING'}
+                                 'tool_calls': MAX_TOOL_CALLS, 'total_tokens': MAX_TOTAL_TOKENS}}
         for call in [*self.work['cpa'], *self.refs['cpa']]:   # the picture reading and the reference lookup are paid
             self.calls.append(call)
             self.charge(call.get('usage'))      # unknown usage here never refuses the clip: it is a lead, not evidence
         self.trace['events'].append({'event': 'work_context', 'status': self.work['status'], 'cpa': self.work['cpa'],
-                                     'references': self.refs['line'],
-                                     **({'run': tag} if tag else {})})   # a run's prompts are its own: an identical
-        # first prompt would be answered from the clip's answer cache with another run's plan
+                                     'references': self.refs['line'], **({'run': tag} if tag else {})})
 
     def save(self):
         self.trace['wall_seconds'] = round(time.monotonic() - self.started, 3)
@@ -335,8 +363,13 @@ class _Agent:
             near = list(dict.fromkeys(n for t in readings for n in (*name_match.near_names(t, names),
                                                                     *name_match.near_full_names(t, names))))
             if near:
+                near_sources = {
+                    n: ('work' if n in spelled_by_work else name_match.entry_source(names, n))
+                    for n in near
+                }
                 item['near_names'] = [dict({'name': n, 'spellings': spellings[n]},
-                                           **({'source': 'work'} if n in spelled_by_work else {}),
+                                           **({'source': near_sources[n]}
+                                              if near_sources[n] in ('work', 'roster', 'shared') else {}),
                                            **pe.said_in_chat_around(spellings[n], cue, rows))
                                       for n in near]
             lines = mishearing.render_lines(mishearing.relevant_pairs(pairs, readings))
@@ -350,6 +383,8 @@ class _Agent:
             alone = pe.written_by_one(cue['text'], [t for name, t in wrote[cue['id']].items() if name != 'bcut'])
             if alone:
                 item['only_one_recogniser_wrote'] = alone
+            if visual := pe.visual_references(readings):
+                item['visual_reference'] = {'phrases': visual, 't': round((cue['start_s'] + cue['end_s']) / 2, 2)}
             if len(item) > 1:
                 found.append(item)
         result = {'note': HINTS_NOTE, 'checked_cues': [c['id'] for c in cues], 'hints': found}
@@ -419,6 +454,9 @@ class _Agent:
                         return problem
                 else:
                     result = self.lookup(req)
+            except CpaVisionUnavailable as exc:
+                self.event('tool_result', request=req, result={'error': str(exc)})
+                return 'CPA_CALL_FAILED'
             except ValueError as exc:
                 result = {'error': str(exc)}
             except (RuntimeError, OSError) as exc:      # a lookup whose source cannot be read: unknown, not absent
@@ -576,23 +614,115 @@ class _Agent:
         (package_guards.gaps_with_speech), asked here while the agent can still give the sentence its time."""
         from .package_guards import gaps_with_speech
 
-        _rows, final, partitioned = self.partition(answers)
-        dropped = {d['cue_id'] for d in final if doubt_policy.is_dropped(d)}
-        shown = partitioned if partitioned is not None else [c for c in self.bcut if c['id'] not in dropped]
+        shown, _lone, _unsplit = self.layout(answers)
         return gaps_with_speech(sorted(shown, key=lambda c: (c['start_s'], c['end_s'])), list(self.bcut))
 
-    def final_stands(self, answers):
-        """Whether these final rows can be taken; when not, what is wrong has been recorded for the agent to answer."""
+    def _layout(self, answers):
+        """final.srt's lines as finish writes them, before the visual shape: (lines, join_lone_chars' rows, whether the
+        release shape was refused).  Without `parts` the rows' own lines (decided_cues).  With `parts` the times are
+        the agent's either way, the ones `unsubtitled` checked: a line that took in a neighbour's words covers that
+        neighbour's time, also where its words no longer resemble what the recogniser wrote there (foreign speech
+        restored from a mishearing), which merged_timing cannot see.  A sentence of the agent's that is one lone
+        character (the release check's verdict) goes the way it goes in every writer, normalize.join_lone_chars (U138):
+        into the touching sentence beside it, else not subtitled (subs/lone_dropped.json) - never joined across a
+        silence.  The release shape is refused when it would change or lose any other of CPA's words (a character its
+        cut leaves alone inside a longer sentence), or cannot lay out a line it joined: every sentence then stays one
+        line, uncut, and only the sentences that are one lone character take U138."""
+        _rows, final, partitioned = self.partition(answers)
+        if partitioned is None:
+            return (*_u138(decided_cues(self.bcut, final)[0]), False)
+        spelt = normalize.numeral_cues(partitioned)[0]           # as final.srt: a number spelt by U136 is no content change
+        whole = normalize.numeral_cues(step3_text_classes.unsplit(partitioned, final))[0]
+        try:
+            shaped, lone = normalize.release_shape(spelt, one_speaker=True)
+            kept = _without_own_lone(normalize._sequence(spelt), [r for r in lone if r['action'] == 'dropped'], whole)
+            if kept is not None and _content(''.join(c['text'] for c in kept)) == \
+                    _content(''.join(c['text'] for c in shaped)):
+                return shaped, lone, False
+        except ValueError:                                       # a line it joined has no shape (split_cue)
+            pass
+        return (*_u138(normalize._sequence(whole)), True)
+
+    def layout(self, answers):
+        """The actual decided layout, including evidence-bound correction of exceptional read times."""
+        lines, lone, unsplit = self._layout(answers)
+        sources = [('jianying_words', self.word_rows()), ('jianying', self.jianying),
+                   *self.others.items(), ('bcut', self.bcut)]
+        lines, self.read_time_repairs = step3_read_time.repair(lines, sources, self.cut_len)
+        return lines, lone, unsplit
+
+    def unreadable(self, answers):
+        """Exceptional reading rates on the same shaped lines that final.srt will contain."""
+        from src.autoslice.subtitle_validation import validate_srt_text
+
+        lines, _lone, _unsplit = self.layout(answers)
+        shaped_lines = []
+        for line in lines:
+            try:
+                shaped_lines.extend(dict(cue, id=line['id']) for cue in normalize.shape_decided_cues([line]))
+            except ValueError:  # unreleasable reports the shape error
+                continue
+        from .subtitle_track import format_blocks
+
+        text = format_blocks(shaped_lines, labels=False)
+        verdict = validate_srt_text(text, media_duration_ms=round(self.cut_len * 1000))
+        return [{**self._where(shaped_lines[problem['block'] - 1]), **problem}
+                for problem in verdict['errors'] if problem['code'] == 'SRT_CUE_READ_TOO_FAST']
+
+    def unreleasable(self, answers):
+        """The lines release would refuse in the final.srt these rows make because no shape fits them within the visual
+        limits (layout, then normalize.shape_decided_cues line by line): a bracketed title longer than a line is never
+        cut (subtitle_shape.legal_breaks).  Each item {id, start_s, end_s, text, why}; empty when it can go."""
+        audit = normalize._audit()
+        lines, _lone, _unsplit = self.layout(answers)
+        unfit = []
+        for line in lines:
+            try:
+                normalize.shape_decided_cues([line])
+            except ValueError:
+                long = [t for t in re.findall(TITLE, line['text']) if len(t) > audit.DEFAULT_MAX_VISUAL_LINE_CHARS]
+                why = (f"标题{'、'.join(long)}比一行长（每行最多 {audit.DEFAULT_MAX_VISUAL_LINE_CHARS} 字），标题不拆"
+                       if long else f'每条最多 {audit.DEFAULT_MAX_VISUAL_LINES} 行、每行最多 '
+                                    f'{audit.DEFAULT_MAX_VISUAL_LINE_CHARS} 字、行首不能是标点，这一行排不下')
+                unfit.append(dict(self._where(line), why=why))
+        return unfit
+
+    @staticmethod
+    def _where(line):
+        return {'id': f"d{int(line['id']):03d}", 'start_s': round(float(line['start_s']), 3),
+                'end_s': round(float(line['end_s']), 3), 'text': line['text']}
+
+    def final_stands(self, answers, not_subtitled):
+        """Whether these final rows can be taken; when not, what is wrong has been recorded for the agent to answer.
+        Every stretch of speech the rows leave without a line (`unsubtitled`) must be named in `not_subtitled`, the
+        answer's own list [{start_s, end_s, sound}] (the same stretch: package_guards.undecided_of).  A stretch that
+        is neither covered nor named goes back to the agent every time: the same rows handed in again decide nothing
+        - a sentence moved into its neighbour without its time looks exactly like that.  A line release would refuse
+        because no shape fits it (`unreleasable`) goes back the same way, line by line.  Each return is one more call,
+        inside the call and token guards like every other protocol error."""
+        from .package_guards import undecided_of
+
+        named = [] if not_subtitled is None else not_subtitled
+        if not isinstance(named, list) or not all(
+                isinstance(n, dict) and type(n.get('start_s')) in (int, float) and type(n.get('end_s')) in (int, float)
+                and n['start_s'] < n['end_s'] and isinstance(n.get('sound'), str) and n['sound'].strip() for n in named):
+            self.event('protocol_error', error='not_subtitled must be [{"start_s":…,"end_s":…,"sound":"…"}]')
+            return False
         try:
             gaps = self.unsubtitled(answers)
+            unfit = self.unreleasable(answers)
+            read_too_fast = self.unreadable(answers)
         except (ValueError, KeyError, TypeError) as exc:
             self.event('protocol_error', error=f'invalid selected parts: {exc}')
             return False
-        asked = [g for e in self.trace['events'] for g in e.get('unsubtitled') or []]
-        if gaps and not asked:                            # said once; then its answer stands
-            self.event('protocol_error', unsubtitled=gaps, error=UNSUBTITLED_NOTE)
+        left = undecided_of(gaps, named)
+        for key, found, note in (('unsubtitled', left, UNSUBTITLED_NOTE), ('unfit', unfit, UNFIT_NOTE),
+                                 ('read_too_fast', read_too_fast, READ_TIME_NOTE)):
+            if found:
+                self.event('protocol_error', **{key: found}, error=note)
+        if left or unfit or read_too_fast:
             return False
-        self.trace['unsubtitled_kept'] = asked            # asked by name and kept without a line: the package step reads this
+        self.trace['not_subtitled'] = named     # named by the agent and kept without a line: the package step reads this
         return True
 
     def partition(self, answers):
@@ -626,10 +756,10 @@ class _Agent:
         if (not finish and isinstance(old, dict) and old.get('status') == 'COMPLETE'
                 and old.get('input_sha256') == self.identity and not _row_problem(old.get('final_rows'), self.bcut)):
             self.trace = old              # one of several runs, finished in an earlier attempt of the step: its
-            if self.final_stands(old['final_rows']):      # recorded rows stand; nothing is asked or charged again
+            if self.final_stands(old['final_rows'], old.get('not_subtitled')):   # recorded rows stand; nothing is asked or charged again
                 return old['final_rows'], True, True
-            self.trace['status'] = 'RUNNING'              # ... unless they leave speech without a subtitle: the
-            del self.trace['final_rows']                  # conversation goes on from the note just recorded
+            self.trace['status'] = 'RUNNING'              # ... unless they leave speech without a subtitle or release
+            del self.trace['final_rows']                  # would refuse them: the conversation goes on from the note
             self.save()
             return None, True, True
         if not self.resume(old):
@@ -649,11 +779,8 @@ class _Agent:
                 or not str(answer.get('self_check') or '').strip()
                 or answer.get('rows') != self.trace['final_rows'] or _row_problem(answer['rows'], self.bcut)):
             return _fail('CPA_AGENT_EXISTING_TRACE', 'saved final does not match the recorded CPA self-check'), planned, drafted
-        try:
-            self.partition(answer['rows'])
-        except (ValueError, KeyError, TypeError) as exc:
+        if not self.final_stands(answer['rows'], answer.get('not_subtitled')):
             del self.trace['final_rows']
-            self.event('protocol_error', error=f'invalid selected parts: {exc}')
             return None, planned, drafted
         self.event('resume_final', note='verified recorded CPA final; no new model call')
         return self._settle(answer['rows'], finish), planned, drafted
@@ -701,7 +828,7 @@ class _Agent:
                         self.event('draft_recorded', instruction=SELF_CHECK_INSTRUCTION,
                                    hints=self.self_check_hints())
                     continue
-                if not self.final_stands(answer['rows']):
+                if not self.final_stands(answer['rows'], answer.get('not_subtitled')):
                     continue
                 self.trace['final_rows'] = answer['rows']
                 self.save()
@@ -714,27 +841,21 @@ class _Agent:
 
     def finish(self, answers):
         from .package_guards import record_decided
-        record_decided(self.ctx.clip_dir, self.unsubtitled(answers), self.trace.get('unsubtitled_kept') or [])
-        _rows, final, partitioned = self.partition(answers)
-        dp, fp, norm = write_subtitles(self.ctx, self.bcut, final, preserve_decisions=True)
-        retained_unsplit = False
-        if partitioned is not None:
-            partitioned = normalize.numeral_cues(partitioned)[0]     # as final.srt: a number spelt by U136 is no content change
-            shaped, lone = normalize.release_shape(partitioned, one_speaker=True)
-            before = _content(''.join(cue['text'] for cue in partitioned))
-            after = _content(''.join(cue['text'] for cue in shaped))
-            if not any(row['action'] == 'dropped' for row in lone) and before == after:
-                norm['lone_chars'] = lone
-                fp.write_text(format_srt(normalize.shape_decided_cues(shaped)), encoding='utf-8')
-            else:
-                retained_unsplit = True
+        record_decided(self.ctx.clip_dir, self.unsubtitled(answers), self.trace.get('not_subtitled') or [])
+        _rows, final, _partitioned = self.partition(answers)
+        lines, lone, retained_unsplit = self.layout(answers)     # final_stands checked these lines
+        dp, fp, norm = write_subtitles(self.ctx, self.bcut, final, decided=lines)
+        _save(self.ctx, 'subs/cue_read_time.json', self.read_time_repairs)
+        norm['lone_chars'] = lone
         accounting = {k: self.trace[k] for k in ('text_calls', 'listening_calls', 'total_tokens', 'wall_seconds')}
         accounting['holds'] = [{'id': d['id'], 'text': d['final_text'], 'current': d['current']}
                                for d in doubt_policy.holds(final)]
         _save(self.ctx, 'subs/playbook-accounting.json', accounting)
         process = [f'单人 CPA 代理自主取证与自查：{accounting}']
+        if self.read_time_repairs:
+            process.append(f'字幕时间按识别证据调整 {len(self.read_time_repairs)} 句（subs/cue_read_time.json）。')
         if retained_unsplit:
-            process.append('分句排版会改变或丢失 CPA 文字，保留其原有未分句结果。')
+            process.append('分句排版会改变或丢失 CPA 文字（或排不下它并成的一行），句内不拆；每句的时间仍按 CPA 给的 parts（并进来的句的时间照带）。')
         lone_and_holds(self.ctx, norm, final, process)
         return gated_outcome(self.ctx, final, self.calls, process,
                              products={'doubts': str(dp), 'final_srt': str(fp), 'agent_trace': str(self.path)},
@@ -777,7 +898,10 @@ def run(ctx, *, bcut, jianying, clip, cut_len):
         problem = _row_problem(rows, bcut)
         if problem:
             raise ValueError(problem)
-        lead.partition(rows)
+        unfit = lead.unreleasable(rows)
+        read_too_fast = lead.unreadable(rows)
+        if unfit or read_too_fast:
+            raise ValueError(f'release would refuse the majority: unfit {unfit}, read_too_fast {read_too_fast}')
     except (ValueError, KeyError, TypeError) as exc:       # the majority cannot be laid out: the lead's own rows stand
         rows, record['fallback_to_lead'] = done[record['lead']][1], str(exc)
     record['runs'] = [{'tag': agent.tag, 'status': agent.trace['status'], 'text_calls': agent.trace['text_calls'],

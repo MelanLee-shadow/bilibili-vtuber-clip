@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Sequence
 from difflib import SequenceMatcher
 import math
 import re
@@ -15,7 +16,8 @@ from .recorder_events import evidence_texts
 HINTS_NOTE = ('机械候选，可能有误，只是证据：readout_matches 是同期弹幕/SC 中可能被念出或回响的原记录'
               '（relation=readout_candidate 为句前或句内已发出）；near_names 是句中与名字表拼音相近而写法不同的名字（spellings 含她的自称和昵称）；'
               '带 chat_near 的，是句前一分半钟到句后 20 秒内有观众在弹幕里写了这个名字的某种写法：观众在回应或复述她刚说的称呼，'
-              '这一处多半就是这个名字，即使同音的普通词放在句里也讲得通，也写成名字；'
+              '这一处多半就是这个名字，即使同音的普通词放在句里也讲得通，也写成名字'
+              '（标有 source=roster 或 source=shared 的候选除外：它只是可能指这个名字，按音频和语境决定）；'
               'sender_of_message_read_next 是紧接着被念出正文的那条付费留言的发送者：她通常在念正文前或同一句里叫这个名字致谢，'
               '这一带若有一段听不成词、又与该名字音节数相近或部分同音的称呼，多半就是它（平台后缀不念）；'
               '若她清楚地叫的是另一个短称呼，照她叫的写；带 thanks_slot 的，是各家在“谢谢某某的”称呼那一格写的字（heard），'
@@ -34,6 +36,8 @@ HINTS_NOTE = ('机械候选，可能有误，只是证据：readout_matches 是�
               'nearby_word_sounds_alike 是句里某个字（written）和前后几句反复写到的另一个字（nearby_word，nearby_cues 是写到它的句子）'
               '只差一点读音（同声母、同声调、韵母差一个音）：这一带正在说那件事时，她多半说的是那个字'
               '；换成它放进句子讲不通、或复听明确听到原字时照原样写。'
+              'visual_reference 是句中指向画面上展示的内容（表情包/图片/屏幕所示），附该句中点秒数 t：'
+              '即使各识别器转写完全一致，也要先用 frame 看清画面配字与角色特征，再按需用 work/spelling 核对名称；'
               '由你核对后决定，系统不会替你改字。')
 
 def danmaku_evidence(ctx, duration: float) -> tuple[list[dict], list[dict]]:
@@ -62,6 +66,27 @@ def read_run(written: str, heard: str) -> int:
         return 0
     m = SequenceMatcher(None, a, b, autojunk=False).find_longest_match()
     return m.size if len(set(a[m.a:m.a + m.size])) >= 3 else 0   # one syllable said over and over is not a text
+
+
+_VISUAL_REF_RE = re.compile(
+    r'(?:这|那)(?:个|张|种)?(?:表情包?|图片|图(?![书案标形腾钉谋鉴表谱章])|照片|梗图|立绘|截图)'
+    r'|(?:发|放|贴|晒)(?:了)?(?:一?个|一张|张)?这(?:个|张)'
+    r'|(?:发|放|贴|晒)(?:了)?(?:一?张|张)(?:图片|图(?![书案标形腾钉谋鉴表谱章]))'
+    r'|(?:发|放|贴|晒)[^。！？!?\r\n]{0,16}?表情包?'
+    r'|(?:你看|看看|看一?下)(?:这|那)(?:个|张)(?:图片|图(?![书案标形腾钉谋鉴表谱章])|表情包?|画面)?'
+    r'|屏幕(?:上)?(?:的)?(?:这|那)(?:个|张)'
+)
+
+
+def visual_references(readings: Sequence[str]) -> list[str]:
+    """Screen-pointing phrases or sticker/image mentions whose referent can only be checked on a video frame."""
+    found: list[str] = []
+    for text in readings:
+        for match in _VISUAL_REF_RE.finditer(text or ''):
+            phrase = match.group(0).strip()
+            if phrase and phrase not in found:
+                found.append(phrase)
+    return found
 
 
 READ_RUN = 4   # syllables in a row: scattered shared characters are what any two sentences on one topic have
@@ -216,11 +241,12 @@ def said_in_chat_before(word: str, cue: dict, rows: list[dict], *, within_s: flo
 def said_in_chat_around(spellings: list[str], cue: dict, rows: list[dict], *, before_s: float = 90.0,
                         after_s: float = 20.0) -> dict:
     """{'chat_near': [...]} when viewers wrote one of a name's `spellings` in the chat from `before_s` before the cue ends
-    to `after_s` after it (they answer her, or echo the name she just said), else {}.  At most the two nearest."""
+    to `after_s` after it (they answer her, or echo the name she just said), else {}.  At most the two nearest.  A line
+    that holds the spelling only where another word is said twice (晚安晚安 for 安晚) does not write it (text_overlap.stands)."""
     keys = [k for k in (text_overlap.key(s).casefold() for s in spellings) if k]
     found = [{'sent_s': float(r['t_s']), 'text': r['text']} for r in rows
              if cue['end_s'] - before_s <= float(r['t_s']) <= cue['end_s'] + after_s
-             and any(k in text_overlap.key(r['text']).casefold() for k in keys)]
+             and any(text_overlap.stands(k, text_overlap.key(r['text']).casefold()) for k in keys)]
     found.sort(key=lambda r: abs(r['sent_s'] - cue['end_s']))
     return {'chat_near': sorted(found[:2], key=lambda r: r['sent_s'])} if found else {}
 
@@ -247,8 +273,7 @@ def written_by_one(text: str, others: list[str]) -> list[str]:
 
 TOPIC_WINDOW_CUES = 8      # cues on each side of the sentence
 TOPIC_MIN_CUES = 4         # a character written in at least this many of them is what this stretch is talking about
-COMMON_CHARS = frozenset("的地得了着过是不在有我你他她它们这那就都也还很吗呢吧啊呀哦嗯么什个一说要会能可到去来上下里看想没对好把被"
-                         "给让和跟与而又再才只人家大小多少")
+COMMON_CHARS = name_match.COMMON_CHARS   # one definition, read here and by the name matcher
 _INITIALS = ("zh", "ch", "sh", "b", "p", "m", "f", "d", "t", "n", "l", "g", "k", "h", "j", "q", "x", "r", "z", "c", "s",
              "y", "w")
 

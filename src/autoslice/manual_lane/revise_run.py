@@ -14,7 +14,8 @@ The successor starts where `trim`'s successor starts, at step 3, with what X had
   (step_import.record_import, `decided_by` as X's); a later `import-subtitles` replaces them.  With `fresh_speakers`
   the speakers are not taken over: step 4 decides them again by the code of today (a revision made because the
   speakers were wrong).  What step 3 decided not to subtitle (package_guards.DECIDED_FILE) goes with the subtitles, and
-  so do the owner's labels by name (guest_identity.OWNER_FILE) when the speakers are taken over;
+  so do the owner's labels by name (guest_identity.OWNER_FILE) and who X's step 4 named each guest line
+  (guest_identity.CARRIED_FILE) when the speakers are taken over;
 - when X's cut media is no longer on the media host (reclaimed after publication), step 2 is not taken over: the
   successor cuts again from the recording, at the same boundary;
 - an imported cover (cover_import) follows the manuscript: the record and its files are copied;
@@ -154,6 +155,12 @@ def _import_subtitles(task: Path, state_x: ClipState, state: ClipState, cid: str
     if owner and speakers and named and Path(named).is_file():      # who he said said each line, by name (same clock)
         (push / "speaker").mkdir(parents=True, exist_ok=True)
         shutil.copyfile(named, push / "speaker" / guest_identity.OWNER_FILE)
+    persons = xdir / "speaker/persons.json"
+    if speakers and persons.is_file():      # who X's step 4 named each guest line (same clock): the guests keep their colours
+        rows = guest_identity.carried_rows(json.loads(persons.read_text(encoding="utf-8")))
+        if rows:
+            (push / "speaker").mkdir(parents=True, exist_ok=True)
+            (push / "speaker" / guest_identity.CARRIED_FILE).write_text(json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
     edited = None
     if owner:       # the push is X's cues one for one: each keeps what is known of it (the owner edited it or not); the push has no baseline
         track = subtitle_track.parse_blocks((xdir / "subs/final.srt").read_text(encoding="utf-8"))

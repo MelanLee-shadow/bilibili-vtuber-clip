@@ -1,18 +1,17 @@
 """Community names (the community-name crawler's accepted relations) folded into the candidate knowledge graph.
 
-公开规则on the names the crawler reported: 「有进行查重吗以及，知道这些梗的来源？…海獭冲击竟然是今天才出来的
-新梗？明明都已经好久了。话说这些在知识图里吗，还是额外的？」. So, for every accepted relation of
+the channel's request (on the names the crawler reported).  So, for every accepted relation of
 state/community_names.json:
 
 - dedupe against the graph the lane reads (repository + runtime candidates): a spelling some other node already owns
- is reported as already known and not added again;
+  is reported as already known and not added again;
 - its time is the earliest video the crawler holds as evidence for it (state/community_name_state.json), and, when the
- web says so, the earliest date a search result states for it (`lookup_origins`); `first_seen_at`, the day the crawler
- first saw it, is never presented as the meme's age;
+  web says so, the earliest date a search result states for it (`lookup_origins`); `first_seen_at`, the day the crawler
+  first saw it, is never presented as the meme's age;
 - its meaning and origin come from a CPA reading of search results, kept in an origins file between runs;
 - it becomes a candidate node (term, or community for a fan name) with an edge to its person: alias_of, fan_name_of,
- or related_to for a meme / associated word. The person is the graph's node with the canonical spelling, else a
- candidate person node with the official space as source.
+  or related_to for a meme / associated word.  The person is the graph's node with the canonical spelling, else a
+  candidate person node with the official space as source.
 
 The news-event crawler, the one writer of the runtime graph, calls `fold` in its run.
 """

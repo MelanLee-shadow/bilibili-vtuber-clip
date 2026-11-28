@@ -16,6 +16,7 @@ import html
 import json
 import math
 import importlib
+import statistics
 from pathlib import Path
 import re
 import subprocess
@@ -27,12 +28,13 @@ from zoneinfo import ZoneInfo
 
 from src.autoslice.acoustic_pinyin import text_pinyin_tokens
 from src.autoslice.bilibili_wbi import signed_params
+from src.autoslice.chat_event_timing import recording_start_epoch_ms
 from src.autoslice.community_comment_discovery import fetch_wbi_mixin_key
 from src.autoslice.timely_term_crawler import BILIBILI_USER_AGENT, WHOLE_RANGE, BoundedHttpClient, CrawlError
 
 Json: TypeAlias = 'None | bool | int | float | str | list[Json] | dict[str, Json]'
 JsonMap: TypeAlias = dict[str, Json]
-Decision: TypeAlias = Literal['FULL_DUPLICATE', 'HAS_EXTRA', 'UNKNOWN']
+Decision: TypeAlias = Literal['FULL_DUPLICATE', 'HAS_EXTRA', 'NONE_FOUND', 'UNKNOWN']
 API = 'https://api.bilibili.com'
 _BVID = re.compile(r'BV[0-9A-Za-z]{10}\Z')
 _TIME = re.compile(r'(\d{2,}):(\d{2}):(\d{2})[,.](\d{3})')
@@ -44,6 +46,21 @@ MIN_INFORMATIVE_CHARACTERS = 6
 MAX_SUBSTITUTION_RUN = 2
 # A video this long is a stream recording or a day's compilation, not a clip of the moment: not transcribed, never "covers".
 LONGEST_CLIP_SECONDS = 1800.0
+# Timeline evidence for a clip someone edited (N8: on 11-24 another uploader cut 17 s out of the middle of the
+# moment we clipped, so no single offset fits and the clip stayed UNKNOWN).  The same free ASR on the same speech lines up sentence by
+# sentence at one offset; a cut or an insertion shows as a jump of that offset.  A run is at least MIN_RUN_SENTENCES
+# consecutive found sentences whose offsets agree within RUN_OFFSET_TOLERANCE_SECONDS (ASR sentence timing, both sides).
+RUN_OFFSET_TOLERANCE_SECONDS = 1.0
+MIN_RUN_SENTENCES = 3
+# With no run at all, the external clip holds none of our speech - if ours has this many sentences to be found, no more
+# than a stray few of them were found at all, and the external transcript is not near empty.  Found sentences that line up
+# at no single offset (a clip played faster, or with a cut between every sentence) are not absence: they stay UNKNOWN.
+# Calibrated on the 140 saved comparisons of 11-21..11-25: where the clip held none of ours, at most 6.4 % of our sentences
+# were found (common phrases) and the sparsest transcript, a song clip, had 1.03 characters a second.
+MIN_SENTENCES_FOR_ABSENCE = 10
+MAX_STRAY_FOUND_RATIO = 0.1
+MIN_EXTERNAL_CHARACTERS_PER_SECOND = 1.0
+SCHEMA_VERSION = 'external-duplicate-check.v2'   # v2: NONE_FOUND, overlap, unknown_reasons, timeline_runs, outside_sentences
 
 
 def duration_evidence(own_duration: float, external_duration: float) -> JsonMap:
@@ -268,6 +285,15 @@ class SentenceAlignment:
 
 
 @dataclass(frozen=True)
+class TimelineRun:
+    """Consecutive own sentences found in the external track at one offset (external time = own time + offset)."""
+    own_start: float
+    own_end: float
+    offset_seconds: float
+    sentences: int
+
+
+@dataclass(frozen=True)
 class Comparison:
     decision: Decision
     reason: str
@@ -281,6 +307,10 @@ class Comparison:
     character_coverage_ratio: float = 0.0
     sentence_alignments: tuple[SentenceAlignment, ...] = ()
     unmatched_seconds: float = 0.0
+    timeline_runs: tuple[TimelineRun, ...] = ()
+    shared_seconds: float = 0.0          # own seconds inside the runs: speech the external clip also has
+    outside_sentences: tuple[Cue, ...] = ()   # own sentences outside every run (not shown to be in the external clip)
+    outside_seconds: float = 0.0
 
 
 def _compare_exact(own: tuple[Cue, ...], own_duration: float, external: list[Cue], external_duration: float) -> Comparison:
@@ -389,6 +419,64 @@ def _cue_seconds(cues: list[Cue]) -> float:
     return round(seconds, 6)
 
 
+def _char_times(cues: list[Cue] | tuple[Cue, ...], keys: list[str]) -> list[float]:
+    """Each normalized character's time, spread evenly over its cue (ASR gives times per sentence, not per character)."""
+    times: list[float] = []
+    for cue, text in zip(cues, keys):
+        step = (cue.end - cue.start) / len(text) if text else 0.0
+        times.extend(cue.start + i * step for i in range(len(text)))
+    return times
+
+
+def timeline_runs(points: list[tuple[Cue, float]]) -> tuple[TimelineRun, ...]:
+    """The runs among found sentences (in own order, each with its offset): consecutive sentences at one offset; groups
+    shorter than MIN_RUN_SENTENCES are strays (a common phrase found elsewhere) and dropped, and the neighbours they parted
+    are joined again when their offsets agree."""
+    groups: list[list[tuple[Cue, float]]] = []
+    for point in points:
+        if groups and abs(point[1] - statistics.median(o for _, o in groups[-1])) <= RUN_OFFSET_TOLERANCE_SECONDS:
+            groups[-1].append(point)
+        else:
+            groups.append([point])
+    merged: list[list[tuple[Cue, float]]] = []
+    for group in (g for g in groups if len(g) >= MIN_RUN_SENTENCES):
+        if merged and abs(statistics.median(o for _, o in merged[-1]) - statistics.median(o for _, o in group)) <= RUN_OFFSET_TOLERANCE_SECONDS:
+            merged[-1].extend(group)
+        else:
+            merged.append(list(group))
+    return tuple(TimelineRun(g[0][0].start, g[-1][0].end, round(statistics.median(o for _, o in g), 3), len(g)) for g in merged)
+
+
+def extend_runs(runs: tuple[TimelineRun, ...], partial: list[tuple[Cue, float]]) -> tuple[TimelineRun, ...]:
+    """A sentence the two ASRs spelled too differently to count as found, whose matched characters still sit at the nearest
+    run's offset, is that run's too: the run's span grows to take it in.  Partial sentences never start a run."""
+    grown = list(runs)
+    for cue, offset in partial:
+        if not grown:
+            break
+        i = min(range(len(grown)), key=lambda n: max(grown[n].own_start - cue.end, cue.start - grown[n].own_end, 0.0))
+        run = grown[i]
+        if abs(offset - run.offset_seconds) <= RUN_OFFSET_TOLERANCE_SECONDS:
+            grown[i] = replace(run, own_start=min(run.own_start, cue.start), own_end=max(run.own_end, cue.end))
+    return tuple(grown)
+
+
+def timeline_gaps(runs: tuple[TimelineRun, ...], own_duration: float, external_duration: float) -> list[tuple[float, float, float]]:
+    """(own start, own end, seconds) of own media the external clip has no room for, even played MAX_EXTERNAL_SPEED faster:
+    before the first run, between two runs (an edit that cut the middle), after the last."""
+    gaps = []
+    own_at, ext_at = 0.0, 0.0
+    for run in (*runs, None):
+        own_next = own_duration if run is None else run.own_start
+        ext_next = external_duration if run is None else run.own_start + run.offset_seconds
+        missing = (own_next - own_at) - MAX_EXTERNAL_SPEED * max(0.0, ext_next - ext_at) - RUN_OFFSET_TOLERANCE_SECONDS
+        if missing > 0.001:
+            gaps.append((own_at, own_next, round(missing, 6)))
+        if run is not None:
+            own_at, ext_at = run.own_end, run.own_end + run.offset_seconds
+    return gaps
+
+
 def compare(own: tuple[Cue, ...], own_duration: float, external: list[Cue], external_duration: float) -> Comparison:
     """Add tolerant character coverage without relaxing the media/timing gates."""
     exact = _compare_exact(own, own_duration, external, external_duration)
@@ -407,7 +495,10 @@ def compare(own: tuple[Cue, ...], own_duration: float, external: list[Cue], exte
             pos += len(text)
             ends[pos] = cue.end
             char_cues.extend([cue] * len(text))
+    own_times, ext_times = _char_times(own, own_keys), _char_times(external, ext_keys)
     rows, covered, unmatched, anchors, informative = [], [], [], [], set()
+    points: list[tuple[Cue, float]] = []
+    partial: list[tuple[Cue, float]] = []
     pos = 0
     for cue, text in zip(own, own_keys):
         end = pos + len(text)
@@ -425,6 +516,7 @@ def compare(own: tuple[Cue, ...], own_duration: float, external: list[Cue], exte
                                       char_cues[aligned[-1]].end if aligned else None))
         if is_covered:
             covered.append(cue)
+            points.append((cue, statistics.median(ext_times[mapping[p]] - own_times[p] for p in range(pos, end) if p in mapping)))
             start_ext, end_ext = mapping.get(pos), mapping.get(end - 1)
             if start_ext is not None and start_ext in starts:
                 anchors.append(starts[start_ext] - cue.start)
@@ -434,19 +526,29 @@ def compare(own: tuple[Cue, ...], own_duration: float, external: list[Cue], exte
                 informative.add(text)
         else:
             unmatched.append(cue)
+            if matched >= 2:
+                partial.append((cue, statistics.median(ext_times[mapping[p]] - own_times[p] for p in range(pos, end) if p in mapping)))
         pos = end
     character_ratio = (len(mapping) - len(substituted)) / len(a)
+    runs = extend_runs(timeline_runs(points), partial)
+    external_density = len(b) / external_duration if external_duration > 0 else 0.0
+    spans = [(r.own_start, r.own_end) for r in runs]
+    outside = tuple(c for c in own if not any(c.start < e and c.end > s for s, e in spans))
     result = replace(exact, covered_sentences=len(covered), coverage_ratio=len(covered) / len(own),
                      unmatched_sentences=tuple(unmatched), character_coverage_ratio=character_ratio,
-                     sentence_alignments=tuple(rows), unmatched_seconds=_cue_seconds(unmatched))
+                     sentence_alignments=tuple(rows), unmatched_seconds=_cue_seconds(unmatched),
+                     timeline_runs=runs, shared_seconds=round(sum(e - s for s, e in spans), 6),
+                     outside_sentences=outside, outside_seconds=_cue_seconds(list(outside)))
     if exact.decision != 'UNKNOWN' or exact.reason == 'AMBIGUOUS_REPEATED_DIALOGUE':
         return result
     if len(informative) < 2 or len(anchors) < 2:
-        return replace(result, reason='INSUFFICIENT_UNIQUE_TIMING_ANCHORS')
+        return _timeline_decision(replace(result, reason='INSUFFICIENT_UNIQUE_TIMING_ANCHORS'), own, own_duration, external_duration,
+                                  external_density)
     low, high = min(anchors), max(anchors)
     result = replace(result, offset_range_seconds=(round(low, 6), round(high, 6)))
     if high - low > 0.25:
-        return replace(result, reason='EDITED_OR_INCONSISTENT_TIMELINE')
+        return _timeline_decision(replace(result, reason='EDITED_OR_INCONSISTENT_TIMELINE'), own, own_duration, external_duration,
+                                  external_density)
     extra_seconds = max(0.0, -high) + max(0.0, own_duration + low - external_duration)
     extra = tuple(c for c in unmatched if c.end + high <= 0 or c.start + low >= external_duration)
     if extra_seconds > 0.001 or extra:
@@ -464,6 +566,28 @@ def compare(own: tuple[Cue, ...], own_duration: float, external: list[Cue], exte
             and high - low < 0.000001 and low >= 0 and high + own_duration <= external_duration + 0.000001):
         return replace(result, decision='FULL_DUPLICATE', reason='CHARACTER_ALIGNED_ALL_SENTENCES_AND_WHOLE_INTERVAL_COVERED')
     return replace(result, reason='CAPTION_DIFFERENCE_OR_BOUNDARY_UNCERTAINTY')
+
+
+def _timeline_decision(result: Comparison, own: tuple[Cue, ...], own_duration: float, external_duration: float,
+                       external_density: float) -> Comparison:
+    """When no single offset fits: the runs still prove what of ours the external clip lacks (HAS_EXTRA), or, with no run in
+    a clip of ours long enough to be found, hardly any of it found and a transcript of the external clip that is not near
+    empty, that it holds none of our speech.  Otherwise the reason stands (UNKNOWN), or names what kept absence unproven."""
+    if not result.timeline_runs:
+        if len(own) < MIN_SENTENCES_FOR_ABSENCE:
+            return result
+        if result.covered_sentences > MAX_STRAY_FOUND_RATIO * len(own):
+            return replace(result, reason='FOUND_SENTENCES_WITHOUT_TIMELINE_RUN')
+        if external_density < MIN_EXTERNAL_CHARACTERS_PER_SECOND:
+            return replace(result, reason='EXTERNAL_TRANSCRIPT_TOO_SPARSE')
+        return replace(result, decision='HAS_EXTRA', reason='NO_SHARED_SPEECH', extra_sentences=own,
+                       extra_seconds=round(own_duration, 6))
+    gaps = timeline_gaps(result.timeline_runs, own_duration, external_duration)
+    if not gaps:
+        return result
+    return replace(result, decision='HAS_EXTRA', reason='TIMELINE_PROVES_EXTRA',
+                   extra_sentences=tuple(c for c in own if any(s <= c.start and c.end <= e for s, e, _ in gaps)),
+                   extra_seconds=round(sum(m for *_, m in gaps), 6))
 
 
 NAME_QUERY_PAGES = 3    # the host's bare name, newest first: other people's clips of a stream rarely carry its date
@@ -640,6 +764,54 @@ def duration_seconds(value: Json) -> float:
     return number(value)
 
 
+def source_moment(package: Package) -> float | None:
+    """When the package's earliest speech happened (its recording's start, from the recording's name, plus the offset), or
+    None when a recording's name does not tell its start.  A video published before then cannot hold any of it."""
+    moments = []
+    for interval in package.source_intervals:
+        start = recording_start_epoch_ms(string(interval.get('recording')))
+        if start is None:
+            return None
+        moments.append(start / 1000 + number(interval.get('start_seconds')))
+    return min(moments)
+
+
+def part_overlap(part: JsonMap) -> str:
+    """SOME: a timeline run (or the complete proof) shows the external part holds our speech; NONE: compared, no run at all;
+    UNDETERMINED: not compared (no transcript) or too little of ours to tell."""
+    if part.get('decision') == 'FULL_DUPLICATE' or part.get('timeline_runs'):
+        return 'SOME'
+    return 'NONE' if part.get('reason') == 'NO_SHARED_SPEECH' else 'UNDETERMINED'
+
+
+def overlap_summary(package: Package, videos: list[Json], *, search_complete: bool) -> JsonMap:
+    """Whether other people's clips already have this moment (20-selection §2b, N8):
+    OVERLAP names the clip that shares the most of ours; NO_OVERLAP and NONE_FOUND need the whole bounded search done and
+    every found clip compared; otherwise UNDETERMINED with each clip's reason."""
+    inspected = [obj(v, 'video') for v in videos if not obj(v, 'video').get('excluded')]
+    largest: JsonMap | None = None
+    for video in inspected:
+        parts = video.get('parts')
+        for value in parts if isinstance(parts, list) else []:
+            part = obj(value, 'part')
+            shared = number(part.get('shared_seconds') or 0)
+            if part_overlap(part) == 'SOME' and (largest is None or shared > number(largest['shared_seconds'])):
+                outside = part.get('outside_sentences')
+                largest = {'bvid': video['bvid'], 'title': video.get('title'), 'uploader': video.get('uploader'),
+                           'published_at': video.get('published_at'), 'shared_seconds': round(shared, 1),
+                           'own_seconds': package.duration_seconds,
+                           'outside_sentences': len(outside) if isinstance(outside, (list, tuple)) else None,
+                           'outside_seconds': part.get('outside_seconds'), 'extra_seconds': part.get('extra_seconds')}
+    undetermined = [{'bvid': v['bvid'], 'reason': v.get('reason')} for v in inspected if v.get('overlap') == 'UNDETERMINED']
+    if largest is not None:
+        verdict = 'OVERLAP'
+    elif not search_complete or undetermined:
+        verdict = 'UNDETERMINED'
+    else:
+        verdict = 'NO_OVERLAP' if inspected else 'NONE_FOUND'
+    return {'verdict': verdict, 'largest': largest, 'undetermined': cast(list[Json], undetermined)}
+
+
 def check(package: Package, api: PublicBilibili, *, max_videos: int = 20,
           audio_asr: PublicAudioASR | None = None) -> JsonMap:
     if not 1 <= max_videos <= 50:
@@ -649,6 +821,7 @@ def check(package: Package, api: PublicBilibili, *, max_videos: int = 20,
     searches: list[Json] = []
     host_keys = [key(alias) for alias in package.participants[0] if key(alias)]
     off_topic = 0
+    name_query_exhausted = False
     for query in queries(package):
         pages = NAME_QUERY_PAGES if query == package.participants[0][0] else 1
         for page in range(1, pages + 1):
@@ -662,22 +835,46 @@ def check(package: Package, api: PublicBilibili, *, max_videos: int = 20,
                 bvid = str(row.get('bvid', ''))
                 if not _BVID.fullmatch(bvid) or number(row.get('pubdate')) < earliest:
                     continue
-                # Search matches words apart (「花礼 20261118」 brought 朱一龙工作室): a clip of this host names her.
-                if not any(k in key(plain(str(row.get('title', '')))) for k in host_keys):
+                # Search matches words apart (「花礼 20261118」 brought 朱一龙工作室): a clip of this host names her, in its
+                # title or its tags (11-24: three clips of the stream carried her only in the tags, their titles a group name).
+                if not any(k in key(plain(f"{row.get('title', '')} {row.get('tag', '')}")) for k in host_keys):
                     off_topic += bvid not in discovered
                     continue
                 discovered.setdefault(bvid, row)
             if len(rows) < 20 or not rows or number(rows[-1].get('pubdate')) < earliest:
+                name_query_exhausted = name_query_exhausted or query == package.participants[0][0]
                 break
+    moment = source_moment(package)
     videos: list[Json] = []
     decisions: list[str] = []
-    for bvid, row in list(discovered.items())[:max_videos]:
-        item: JsonMap = {'bvid': bvid, 'url': f'https://www.bilibili.com/video/{bvid}/',
-                         'title': plain(str(row.get('title', ''))), 'uploader': row.get('author'),
-                         'uploader_mid': row.get('mid'), 'duration': row.get('duration'),
-                         'duration_seconds': None,
-                         'published_at': dt.datetime.fromtimestamp(number(row.get('pubdate')), dt.timezone.utc).isoformat(),
-                         'decision': 'UNKNOWN'}
+
+    def listed(bvid: str, row: JsonMap) -> JsonMap:
+        return {'bvid': bvid, 'url': f'https://www.bilibili.com/video/{bvid}/',
+                'title': plain(str(row.get('title', ''))), 'uploader': row.get('author'),
+                'uploader_mid': row.get('mid'), 'duration': row.get('duration'),
+                'duration_seconds': None,
+                'published_at': dt.datetime.fromtimestamp(number(row.get('pubdate')), dt.timezone.utc).isoformat(),
+                'decision': 'UNKNOWN', 'overlap': 'UNDETERMINED'}
+
+    # A video published before the moment happened cannot hold it: settled from the search's own publish time (the same one
+    # the broadcast-day filter above trusts), before max_videos, so earlier clips of the day never take the places of the
+    # clips that came after the moment (N8 review: 443680's 21st result was another stream's clip from the day before).
+    candidates: list[tuple[str, JsonMap]] = []
+    for bvid, row in discovered.items():
+        if moment is None or number(row.get('pubdate')) >= moment:
+            candidates.append((bvid, row))
+        elif row.get('mid') in package.own_uploader_mids:
+            videos.append({**listed(bvid, row), 'reason': 'EXCLUDED_OLD_OR_OWN_UPLOAD', 'excluded': True})
+        else:
+            videos.append({**listed(bvid, row), 'decision': 'HAS_EXTRA', 'reason': 'PUBLISHED_BEFORE_SOURCE_MOMENT',
+                           'overlap': 'NONE', 'published_at_source': 'public_search'})
+            decisions.append('HAS_EXTRA')
+    # Oldest first among the rest: clips of the moment come soonest after it, so a cut at max_videos drops the latest uploads.
+    for bvid, row in sorted(candidates, key=lambda kv: number(kv[1].get('pubdate')))[:max_videos]:
+        item = listed(bvid, row)
+        # A duration proof of extra (H62) decides HAS_EXTRA, but the clip is still compared: whether it already has our
+        # moment (overlap, 20-selection §2b) is only seen in its speech.
+        bound: tuple[JsonMap, str] | None = None
         try:
             try:
                 item['duration_seconds'] = duration_seconds(row.get('duration'))
@@ -685,21 +882,16 @@ def check(package: Package, api: PublicBilibili, *, max_videos: int = 20,
                 pass  # The authoritative view response can still provide it.
             # Search's aggregate duration remains useful if the details endpoint
             # is unavailable. It can only prove HAS_EXTRA under the stated cap.
-            search_bound = None
             try:
                 search_bound = duration_evidence(package.duration_seconds, number(item.get('duration_seconds')))
+                if search_bound['proves_extra']:
+                    bound = (search_bound, 'public_search')
             except ValueError:
                 pass
             try:
                 metadata = api.view(bvid)
             except (OSError, ValueError, CrawlError) as exc:
                 item['metadata_error'] = str(exc)
-                if search_bound is not None and search_bound['proves_extra']:
-                    item.update({'decision': 'HAS_EXTRA', 'reason': 'DURATION_LOWER_BOUND',
-                                 'duration_evidence': search_bound, 'duration_source': 'public_search'})
-                    decisions.append('HAS_EXTRA')
-                    videos.append(item)
-                    continue
                 if audio_asr is None:
                     raise
                 # Public pagelist can supply a CID without login; missing full
@@ -724,17 +916,18 @@ def check(package: Package, api: PublicBilibili, *, max_videos: int = 20,
                 continue
             confirmed = same_session(package, metadata)
             item['same_session_confirmed'] = confirmed
-            bound = duration_evidence(package.duration_seconds, number(item.get('duration_seconds')))
-            item['duration_evidence'] = bound
-            if bound['proves_extra']:
-                item.update({'decision': 'HAS_EXTRA', 'reason': 'DURATION_LOWER_BOUND',
-                             'duration_source': 'public_search' if 'metadata_error' in item else 'public_view'})
-                decisions.append('HAS_EXTRA')
+            view_bound = duration_evidence(package.duration_seconds, number(item.get('duration_seconds')))
+            item['duration_evidence'] = view_bound
+            if view_bound['proves_extra']:
+                bound = (view_bound, 'public_view' if 'metadata_error' not in item else 'public_search')
+            if number(item.get('duration_seconds')) > LONGEST_CLIP_SECONDS:
+                # 90-publish: a recording is not compared and is not someone's clip of the moment.
+                item.update({'reason': 'LONG_VIDEO_NOT_A_CLIP', 'excluded': True})
                 videos.append(item)
                 continue
-            if number(item.get('duration_seconds')) > LONGEST_CLIP_SECONDS:
-                item['reason'] = 'LONG_VIDEO_NOT_A_CLIP'
-                decisions.append('UNKNOWN')
+            if moment is not None and number(metadata.get('pubdate')) < moment:
+                item.update({'decision': 'HAS_EXTRA', 'reason': 'PUBLISHED_BEFORE_SOURCE_MOMENT', 'overlap': 'NONE'})
+                decisions.append('HAS_EXTRA')
                 videos.append(item)
                 continue
             pages = metadata.get('pages')
@@ -765,27 +958,57 @@ def check(package: Package, api: PublicBilibili, *, max_videos: int = 20,
                         part.update({'decision': 'UNKNOWN', 'reason': 'SESSION_OR_OWN_UPLOADER_UNCONFIRMED'})
                 except (OSError, ValueError, CrawlError) as exc:
                     part['reason'] = str(exc)
+                part['overlap'] = part_overlap(part)
                 comparisons.append(part)
             part_decisions = [obj(v, 'part').get('decision') for v in comparisons]
+            part_overlaps = [obj(v, 'part').get('overlap') for v in comparisons]
             decision = 'FULL_DUPLICATE' if 'FULL_DUPLICATE' in part_decisions else ('HAS_EXTRA' if part_decisions and all(d == 'HAS_EXTRA' for d in part_decisions) and len(pages) <= 4 else 'UNKNOWN')
-            item.update({'decision': decision, 'parts': comparisons, 'parts_truncated': len(pages) > 4})
+            overlap = 'SOME' if 'SOME' in part_overlaps else ('NONE' if all(o == 'NONE' for o in part_overlaps) and len(pages) <= 4 else 'UNDETERMINED')
+            item.update({'decision': decision, 'overlap': overlap, 'parts': comparisons, 'parts_truncated': len(pages) > 4})
+            if decision == 'UNKNOWN':
+                item['reason'] = '; '.join(str(obj(v, 'part').get('reason')) for v in comparisons)
         except (OSError, ValueError, CrawlError) as exc:
             item['reason'] = str(exc)
+        if bound is not None and item['decision'] != 'FULL_DUPLICATE':
+            item.update({'decision': 'HAS_EXTRA', 'reason': 'DURATION_LOWER_BOUND', 'duration_evidence': bound[0],
+                         'duration_source': bound[1]})
         decisions.append(str(item['decision']))
         videos.append(item)
-    decision = 'FULL_DUPLICATE' if 'FULL_DUPLICATE' in decisions else ('HAS_EXTRA' if decisions and all(d == 'HAS_EXTRA' for d in decisions) else 'UNKNOWN')
-    if decision == 'HAS_EXTRA' and (len(discovered) > max_videos or any('error' in obj(s, 'search') for s in searches)):
+    search_failed = any('error' in obj(s, 'search') for s in searches)
+    truncated = len(candidates) > max_videos
+    if 'FULL_DUPLICATE' in decisions:
+        decision = 'FULL_DUPLICATE'
+    elif decisions and all(d == 'HAS_EXTRA' for d in decisions) and not search_failed and not truncated:
+        decision = 'HAS_EXTRA'
+    elif not decisions and not search_failed and name_query_exhausted:
+        decision = 'NONE_FOUND'
+    else:
         decision = 'UNKNOWN'
+    unknown_reasons: list[Json] = []
+    if decision == 'UNKNOWN':
+        if search_failed:
+            unknown_reasons.append('SEARCH_FAILED')
+        if not name_query_exhausted and not search_failed:
+            unknown_reasons.append('SEARCH_WINDOW_NOT_EXHAUSTED')
+        if truncated:
+            unknown_reasons.append('VIDEOS_TRUNCATED')
+        unknown_reasons.extend(f"{obj(v, 'video')['bvid']}: {obj(v, 'video').get('reason')}" for v in videos
+                               if obj(v, 'video').get('decision') == 'UNKNOWN' and not obj(v, 'video').get('excluded'))
     return {
-        'schema_version': 'external-duplicate-check.v1', 'candidate_id': package.candidate_id,
+        'schema_version': SCHEMA_VERSION, 'candidate_id': package.candidate_id,
         'duration_policy': {'max_external_speed': MAX_EXTERNAL_SPEED, 'margin_seconds': DURATION_MARGIN_SECONDS},
         'checked_at': api.now.isoformat(), 'recording_date': package.recording_date.isoformat(),
         'subtitle_stage': package.subtitle_stage, 'subtitle_sha256': package.subtitle_sha256,
         'source_intervals': list(package.source_intervals), 'duration_seconds': package.duration_seconds,
         'decision': decision, 'block_upload': decision == 'FULL_DUPLICATE' and package.subtitle_stage == 'final',
-        'reason': 'SINGLE_EXTERNAL_CLIP_PROVES_FULL_COVERAGE' if decision == 'FULL_DUPLICATE' else ('EXTRA_PROVEN_AGAINST_EACH_INSPECTED_CLIP' if decision == 'HAS_EXTRA' else 'SEARCH_OR_PUBLIC_SUBTITLE_OR_ALIGNMENT_INCOMPLETE'),
-        'search_status': 'UNKNOWN' if any('error' in obj(s, 'search') for s in searches) else 'SUCCESS',
+        'reason': {'FULL_DUPLICATE': 'SINGLE_EXTERNAL_CLIP_PROVES_FULL_COVERAGE',
+                   'HAS_EXTRA': 'EXTRA_PROVEN_AGAINST_EACH_INSPECTED_CLIP',
+                   'NONE_FOUND': 'BOUNDED_SEARCH_FOUND_NO_OTHER_CLIP'}.get(decision, 'SEARCH_OR_PUBLIC_SUBTITLE_OR_ALIGNMENT_INCOMPLETE'),
+        'unknown_reasons': unknown_reasons,
+        'overlap': overlap_summary(package, videos, search_complete=not search_failed and not truncated and name_query_exhausted),
+        'search_status': 'UNKNOWN' if search_failed else 'SUCCESS',
+        'search_window_exhausted': name_query_exhausted,
         'searches': searches, 'videos': videos, 'discovered_videos': len(discovered), 'off_topic_results': off_topic,
-        'videos_truncated': len(discovered) > max_videos,
+        'videos_truncated': truncated,
         'scope': 'bounded public search; not an exhaustive inventory or upload authorization',
     }

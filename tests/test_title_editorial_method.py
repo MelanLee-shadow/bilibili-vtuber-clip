@@ -33,9 +33,11 @@ def _prompt(**overrides):
 
 def test_ordinary_prompt_actually_carries_editorial_method():
     prompt = _prompt()
-    assert "**笑点的来源**" in prompt
+    assert "**反常的来源**" in prompt
     method = title_editorial_method.load_title_editorial_method()
     assert method.sections in prompt and method.judge_rules in prompt and method.examples in prompt
+    assert method.hooks.startswith("## 三、") and method.hooks in prompt      # how the landings are found, before section 四
+    assert prompt.index(method.hooks) < prompt.index(method.sections)
     assert all(source.name in prompt and source.sha256 in prompt for source in method.sources)
     assert SRT in prompt and "重要作品仅作选题信号" in prompt
     assert all(x not in prompt for x in ("旧钩子不得作事实", "旧样本不得作事实", "旧上下文不得作事实",
@@ -296,3 +298,21 @@ def test_the_template_channels_carry_the_public_templates_writing_judge():
     for channel in ("sumi", "huali", "sumire"):
         if (REPO / "profiles" / channel).is_dir():
             assert (REPO / "assets" / channel / "title_method/references/quality-judge-prompt.md").read_bytes() == public
+
+
+def test_the_projection_carries_section_three_where_the_method_has_one(tmp_path):
+    """Section 三 is how the landings of a clip are found; the reading, the merge and the title prompt carry it.  A
+    method without that section (the template channels') has none, and loads."""
+    skill = tmp_path / "skill"
+    (skill / "references").mkdir(parents=True)
+    body = "## 四、标题\n正文\n## 五、封面\n封面\n## 六、画面\n3. **意思**：x\n\n   **判官守则**：y\n"
+    (skill / "references/examples.md").write_text("示例", encoding="utf-8")
+    (skill / "references/judge-prompt.md").write_text(JUDGE_FILE_TEXT, encoding="utf-8")
+    (skill / "references/quality-judge-prompt.md").write_text(QUALITY_FILE_TEXT, encoding="utf-8")
+    (skill / "SKILL.md").write_text("## 三、找钩子\n落点一组\n" + body, encoding="utf-8")
+    with_hooks = title_editorial_method.extract_title_editorial_method(skill)
+    assert with_hooks.hooks == "## 三、找钩子\n落点一组" and title_editorial_method.projection_data(with_hooks)["hooks"] == with_hooks.hooks
+    assert title_editorial_method.format_title_editorial_method(with_hooks).startswith("### skill skill 第三节（落点怎么找）\n## 三、找钩子")
+    (skill / "SKILL.md").write_text(body, encoding="utf-8")
+    without = title_editorial_method.extract_title_editorial_method(skill)
+    assert without.hooks == "" and "第三节" not in title_editorial_method.format_title_editorial_method(without)

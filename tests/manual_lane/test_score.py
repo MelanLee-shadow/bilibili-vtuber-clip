@@ -77,7 +77,7 @@ def test_exact_flat_does_not_depend_on_where_the_output_cuts_its_lines():
 
 
 def test_scorer_v3_drops_the_filler_words_on_both_sides_from_the_one_filler_list(monkeypatch):
-
+    # TASK-10 problem 5 (U137, the channel's request): v3 = v2 without fillers, the default; v1/v2 stay
     from src.autoslice.manual_lane import doubt_policy, score
 
     monkeypatch.delenv("MANUAL_LANE_SCORER", raising=False)

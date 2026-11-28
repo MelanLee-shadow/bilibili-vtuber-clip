@@ -21,9 +21,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict
 
-from src.autoslice.knowledge_graph import Graph
+from src.autoslice.knowledge_graph import Graph, JsonValue
+from src.autoslice.manual_lane.text_overlap import stands
 
 SEED_NODE_KINDS = ("group", "project", "event")
+WORK_SEEDS_FILE = "yuri_work_seeds.json"
+WORK_SEEDS_SCHEMA = "vtuber-slice.work-seeds.v1"
 MIN_SURFACE_CHARS = 2
 _EMOTE = re.compile(r"\[[^\[\]]{1,40}\]")
 
@@ -55,6 +58,44 @@ class Seed:
     node_id: str | None = None
 
 
+@dataclass(frozen=True)
+class WorkSeed:
+    name: str
+    aliases: tuple[str, ...] = ()
+    category: str = "yuri"
+
+
+def load_work_seeds(repo_root: Path) -> list[WorkSeed]:
+    """Optional class seed file for works (`yuri_work_seeds.json`); [] when the channel has none."""
+    path = repo_root / WORK_SEEDS_FILE
+    if not path.is_file():
+        return []
+    raw: JsonValue = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict) or raw.get("schema_version") != WORK_SEEDS_SCHEMA:
+        raise ValueError(f"{path} must be an object with schema_version {WORK_SEEDS_SCHEMA!r}")
+    category = str(raw.get("category") or "yuri").strip() or "yuri"
+    works = raw.get("works")
+    if not isinstance(works, list):
+        raise ValueError(f"{path} works must be a list")
+    out: list[WorkSeed] = []
+    seen: set[str] = set()
+    for idx, entry in enumerate(works):
+        raw_name = entry.get("name") if isinstance(entry, dict) else None
+        if not isinstance(entry, dict) or not isinstance(raw_name, str) or not raw_name.strip():
+            raise ValueError(f"{path} works[{idx}].name must be a non-empty string")
+        name = raw_name.strip()
+        if name in seen:
+            raise ValueError(f"{path} duplicate work name {name!r}")
+        seen.add(name)
+        raw_aliases = entry.get("aliases") or []
+        if not isinstance(raw_aliases, list) or any(not isinstance(a, str) for a in raw_aliases):
+            raise ValueError(f"{path} works[{idx}].aliases must be a list of strings")
+        alias_texts = [a.strip() for a in raw_aliases if isinstance(a, str)]
+        aliases = tuple(dict.fromkeys(a for a in alias_texts if a and a != name))
+        out.append(WorkSeed(name=name, aliases=aliases, category=category))
+    return out
+
+
 def clip_seed_names(path: Path | None) -> list[str]:
     """The names in the lane's reference seeds file (manual_lane/references.py writes it: a list of rows with `name`
     and `seen`), newest first; [] when there is no file or it cannot be read: the crawler has its other seeds."""
@@ -83,8 +124,9 @@ def dynamics_texts(dynamics: Dynamics | None) -> list[str]:
 
 
 def _mentioned(surface: str, haystacks: Iterable[str]) -> bool:
+    """The surface is written in one of the texts (the seam of another word said twice is not it: 晚安晚安 / 安晚)."""
     key = _key(surface)
-    return len(key) >= MIN_SURFACE_CHARS and any(key in _key(text) for text in haystacks)
+    return len(key) >= MIN_SURFACE_CHARS and any(stands(key, _key(text)) for text in haystacks)
 
 
 def _member_surfaces(member: Member) -> list[str]:
@@ -105,8 +147,8 @@ def owner_affiliations(registry: Registry | None, owner: str) -> set[str]:
 
 
 def _owner_ids(graph: Graph, owner: str) -> set[str]:
-    """The owner's node and every node that is one of the owner's other names (alias_of group)."""
-    start = {node.id for node in graph.find(owner)}
+    """The owner's accepted node and every accepted node that is one of the owner's other names (accepted alias_of group)."""
+    start = {node.id for node in graph.find(owner) if node.status == "accepted"}
     return {nid for group in graph.alias_groups() if start & set(group) for nid in group}
 
 

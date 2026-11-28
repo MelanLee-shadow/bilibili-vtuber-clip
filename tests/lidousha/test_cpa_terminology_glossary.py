@@ -63,7 +63,7 @@ def test_parse_glossary_terms_pairs_canon_with_its_mishearings():
     text = (
         "专名优先使用以下写法：\n"
         "- 人名：小室。不要写成小寺、小时、小师。\n"
-        "- 人名/ID：142（读音近“一四二”）。一律写成 142，不要写成一四二、伊索尔。\n"
+        "- 人名/ID：142（读音近“一四二”）。一律写成 142；不要写成一四二、伊索尔。\n"
     )
     terms = parse_glossary_terms(text)
 

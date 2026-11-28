@@ -14,11 +14,13 @@ import fcntl
 import hashlib
 import json
 import os
+import sys
 import threading
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
+from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict, cast
 
 if TYPE_CHECKING:
     from src.autoslice.cpa_gemini_client import JsonValue
@@ -32,6 +34,8 @@ if TYPE_CHECKING:
 
 SCHEMA = "manual-lane-clip.v2"
 DEFAULT_BCUT_SOURCE_ZERO_MS = 0
+CLIP_RUN_LOCK_BUSY = "CLIP_RUN_LOCK_BUSY"
+CLIP_RUN_LOCK_STALE = "CLIP_RUN_LOCK_STALE"
 
 
 class ClipProposal(TypedDict):
@@ -63,6 +67,8 @@ class ClipInfo(TypedDict, total=False):
     mac_bcut_srt: str
     bcut_source_zero_ms: int  # source-recording time corresponding to zero in the original BCUT file
     hook: str
+    selection_reason: str    # the selection's detailed reason for the candidate (clip_init.entry_reason)
+    peaks: list[dict[str, object]]   # the moments the selection says most deserve to be seen (clip_init.Peak); absent when it named none
     start_cue: int
     end_cue: int
     start_ms: int
@@ -108,6 +114,9 @@ class CpaEvent(TypedDict, total=False):
     attempted_models: list[str] | None
     reported_model: str | None
     status: str | None
+    fallback_from: str
+    fallback_reason: str
+    fallback_note: str
 
 
 class RejectedAnswer(TypedDict):
@@ -139,6 +148,7 @@ class UploadState(TypedDict):
 class ReviewedTags(TypedDict):
     kept: list[str]
     removed: list[str]
+    proper_noun_tags: NotRequired[list[str]]   # the kept tags that are proper nouns: evicted last on a re-run merge
 
 
 class ClipData(TypedDict, total=False):
@@ -167,6 +177,173 @@ class StateError(RuntimeError):
     """Raised when a state file is malformed or cannot be read."""
 
 
+class ClipRunLockError(StateError):
+    """Raised when a clip's run lock cannot be acquired; `code` separates live runs from stale locks."""
+
+    def __init__(self, code: str, message: str, *, lock_path: Path, owner_pid: int | None = None) -> None:
+        super().__init__(f"{code}: {message}")
+        self.code = code
+        self.lock_path = lock_path
+        self.owner_pid = owner_pid
+
+
+class ClipRunBusyError(ClipRunLockError):
+    """Raised when another live run holds the clip's run lock (`CLIP_RUN_LOCK_BUSY`)."""
+
+    def __init__(self, state_path: Path, lock_path: Path, *, owner_pid: int | None = None) -> None:
+        who = f", pid={owner_pid}" if owner_pid is not None else ""
+        super().__init__(
+            CLIP_RUN_LOCK_BUSY,
+            f"{state_path} is already being run by another process ({lock_path}{who})",
+            lock_path=lock_path,
+            owner_pid=owner_pid,
+        )
+
+
+class ClipRunStaleLockError(ClipRunLockError):
+    """Raised when a clip's run lock is still held via flock while its recorded owner is dead (`CLIP_RUN_LOCK_STALE`)."""
+
+    def __init__(self, state_path: Path, lock_path: Path, *, owner_pid: int | None = None, detail: str = "") -> None:
+        who = f"pid={owner_pid}" if owner_pid is not None else "unknown owner"
+        extra = f"; {detail}" if detail else ""
+        super().__init__(
+            CLIP_RUN_LOCK_STALE,
+            f"{state_path} has a stale run lock ({lock_path}, {who}{extra})",
+            lock_path=lock_path,
+            owner_pid=owner_pid,
+        )
+
+
+@dataclass(frozen=True)
+class ClipRunTakeover:
+    """Previous owner metadata overwritten when acquiring an unheld lock left by a terminated run."""
+
+    lock_path: Path
+    previous_pid: int | None = None
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class ClipRunLockStatus:
+    """Observed state of a clip's run lock: FREE (including unheld leftover), BUSY (live owner), or STALE (held with dead owner)."""
+
+    state: Literal["FREE", "BUSY", "STALE"]
+    code: str | None
+    lock_path: Path
+    owner_pid: int | None = None
+    detail: str = ""
+    leftover: bool = False
+
+
+def clip_run_lock_path(state_path: Path) -> Path:
+    return Path(state_path).with_name(Path(state_path).name + ".run.lock")
+
+
+def _proc_is_zombie(pid: int) -> bool:
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    _, sep, rest = stat.rpartition(")")
+    if not sep:
+        return False
+    parts = rest.split()
+    return bool(parts) and parts[0] == "Z"
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return not _proc_is_zombie(pid)
+
+
+def _read_fd_bytes(fd: int) -> bytes:
+    os.lseek(fd, 0, os.SEEK_SET)
+    chunks: list[bytes] = []
+    while True:
+        chunk = os.read(fd, 4096)
+        if not chunk:
+            break
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _parse_lock_owner_pid(raw: bytes) -> tuple[int | None, bool]:
+    if not raw.strip():
+        return None, False
+    try:
+        doc = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None, True
+    if isinstance(doc, dict) and type(doc.get("pid")) is int:
+        return cast(int, doc["pid"]), True
+    return None, True
+
+
+def _write_lock_owner(fd: int, state_path: Path) -> None:
+    payload = (json.dumps({"pid": os.getpid(), "started_at": utc_now(), "state_path": str(state_path)},
+                          ensure_ascii=False) + "\n").encode("utf-8")
+    os.ftruncate(fd, 0)
+    os.lseek(fd, 0, os.SEEK_SET)
+    view = memoryview(payload)
+    while view:
+        written = os.write(fd, view)
+        view = view[written:]
+
+
+def _classify_held_lock(fd: int, lock_path: Path) -> ClipRunLockStatus:
+    pid, _ = _parse_lock_owner_pid(_read_fd_bytes(fd))
+    if pid is not None and not _pid_alive(pid):
+        return ClipRunLockStatus(
+            state="STALE",
+            code=CLIP_RUN_LOCK_STALE,
+            lock_path=lock_path,
+            owner_pid=pid,
+            detail="flock still held while recorded owner is dead",
+        )
+    return ClipRunLockStatus(state="BUSY", code=CLIP_RUN_LOCK_BUSY, lock_path=lock_path, owner_pid=pid)
+
+
+def _classify_unheld_lock(fd: int, lock_path: Path) -> ClipRunLockStatus:
+    pid, has_metadata = _parse_lock_owner_pid(_read_fd_bytes(fd))
+    if not has_metadata:
+        return ClipRunLockStatus(state="FREE", code=None, lock_path=lock_path)
+    if pid is None:
+        detail = "unreadable leftover lock metadata with no active flock"
+    elif not _pid_alive(pid):
+        detail = "previous owner process is dead and did not release lock"
+    else:
+        detail = "previous run did not release lock and no active flock is held"
+    return ClipRunLockStatus(state="FREE", code=None, lock_path=lock_path, owner_pid=pid, detail=detail, leftover=True)
+
+
+def inspect_clip_run_lock(state_path: Path) -> ClipRunLockStatus:
+    """Inspect a clip's run lock without creating or modifying it."""
+    lock_path = clip_run_lock_path(state_path)
+    if not lock_path.exists():
+        return ClipRunLockStatus(state="FREE", code=None, lock_path=lock_path)
+    try:
+        fd = os.open(lock_path, os.O_RDWR)
+    except FileNotFoundError:
+        return ClipRunLockStatus(state="FREE", code=None, lock_path=lock_path)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return _classify_held_lock(fd, lock_path)
+        return _classify_unheld_lock(fd, lock_path)
+    finally:
+        os.close(fd)
+
+
 def bcut_source_zero_ms(clip: ClipInfo) -> int:
     """Read the explicit BCUT binding; older states use the source clock directly."""
     value = clip.get("bcut_source_zero_ms", DEFAULT_BCUT_SOURCE_ZERO_MS)
@@ -176,20 +353,44 @@ def bcut_source_zero_ms(clip: ClipInfo) -> int:
 
 
 @contextmanager
-def clip_run_lock(state_path: Path) -> Iterator[None]:
-    """Hold the clip's run lock (a file next to its state file) for a run; a second process asking for it stops with an error."""
-    if not Path(state_path).exists():
+def clip_run_lock(state_path: Path) -> Iterator[ClipRunTakeover | None]:
+    """Hold the clip's run lock (a file next to its state file) for a run.
+
+    Raises `ClipRunBusyError` (`CLIP_RUN_LOCK_BUSY`) when a live run holds it, and
+    `ClipRunStaleLockError` (`CLIP_RUN_LOCK_STALE`) when `flock` is still held while the recorded owner is dead.
+    When `flock` is acquired on a file with leftover metadata from a terminated run, takes over cleanly,
+    logs one stderr line naming the previous owner pid, overwrites the metadata, and yields `ClipRunTakeover`.
+    """
+    state_file = Path(state_path)
+    if not state_file.exists():
         raise StateError(f"cannot read state {state_path}: no such file")
-    lock_path = Path(state_path).with_name(Path(state_path).name + ".run.lock")
+    lock_path = clip_run_lock_path(state_file)
     fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    acquired = False
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
-            raise StateError(f"{state_path} is already being run by another process ({lock_path})") from exc
-        yield
+            status = _classify_held_lock(fd, lock_path)
+            if status.state == "STALE":
+                raise ClipRunStaleLockError(state_file, lock_path, owner_pid=status.owner_pid, detail=status.detail) from exc
+            raise ClipRunBusyError(state_file, lock_path, owner_pid=status.owner_pid) from exc
+        status = _classify_unheld_lock(fd, lock_path)
+        takeover: ClipRunTakeover | None = None
+        if status.leftover:
+            takeover = ClipRunTakeover(lock_path=lock_path, previous_pid=status.owner_pid, detail=status.detail)
+            who = f"pid={takeover.previous_pid}" if takeover.previous_pid is not None else "pid=unknown"
+            print(f"[clip_run_lock] took over unheld lock {lock_path} (previous owner {who}: {takeover.detail})",
+                  file=sys.stderr, flush=True)
+        _write_lock_owner(fd, state_file)
+        acquired = True
+        yield takeover
     finally:
-        os.close(fd)
+        try:
+            if acquired:
+                os.ftruncate(fd, 0)
+        finally:
+            os.close(fd)
 
 
 def sha256_file(path: Path) -> str:

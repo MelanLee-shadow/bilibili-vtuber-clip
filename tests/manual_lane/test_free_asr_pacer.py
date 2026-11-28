@@ -1,4 +1,4 @@
-"""U152 (公开规则11-02: 「剪映被限流可以等等。另外，也确实不应该发的太猛。」): the free ASR providers are paced by one
+"""频道的要求（(公开规则11-02）): the free ASR providers are paced by one
 rule (assets/manual_lane/remote/free_asr_paced.py), with the pacing read from the profile's manual_lane.json.
 
 A fake clock and sleep stand in for time: every call's start time is recorded, so the tests assert how many calls a

@@ -68,7 +68,7 @@ rsync -a --exclude=.venv --exclude=.git ./ <主机>:<autoslice_base>/current/rep
      `AUTOSLICE_PROFILE=<id> .venv/bin/python scripts/build_title_editorial_method.py`。
    - `subtitle_burn_style.json`：烧进成片的字幕样式，`host` 是主播的话、`guest` 是别人的话（ASS Style 的值，颜色写法
      `&HAABBGGRR`）。换成自己频道的颜色，不要沿用别的频道的主播颜色；没有这个文件第 5 步会停下。主播描边先用她的代表色
-     （应援色），代表色当描边看不清（比如白色）就取形象的主色，如眼睛颜色；开工检查要求字色和描边的对比至少 2。
+     （应援色），代表色当描边看不清（比如白色）就取形象的主色，如眼睛颜色；开工检查要求字色和描边的对比至少 2。联动里定到具体某人的嘉宾句用 `guest` 样式换上她自己的描边色（`assets/manual_lane/person_colours.v1.json`，各频道共用；没有登记的人用 `guest` 原样）。
    - `proper_nouns.json`（名字表）和 `mishearing_pairs.json`（误听对照）：第 3 步写字幕时查名字用。`init_channel_profile`
      已建好，名字表里只有主播一行；同圈主播、常提到的作品和人照那一行的格式往下加，加完运行
      `AUTOSLICE_PROFILE=<id> .venv/bin/python -m src.autoslice.manual_lane.mishearing` 重新生成误听对照。

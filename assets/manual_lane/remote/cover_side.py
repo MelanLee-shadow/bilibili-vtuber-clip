@@ -1,89 +1,89 @@
-"""A screenshot with the words in a column beside her, on a colour panel (step 6, 70-cover; cover_candidates.py).
+"""A screenshot framed by the cover's composition template: her beside the words (a column or a close-up, on a colour
+panel), or framed for the diagonal or bottom words (step 6, 70-cover; cover_candidates.py).
 
 Owner 2026-11-21: the covers of one stream were the same picture, one line top left and one line lower right, in one
-colour (「今天这个新切片全都是同一个标题封面……颜色太单一……总是左上一行，然后右下一行」; said before on 10-31, 11-02 and
+colour (同一场的封面全是同一个样子、同一种颜色; said before on 10-31, 11-02 and
 11-13).  The lane did take turns at layouts and backgrounds, but only for stickers on a pastel ground; the screenshot
 route had one composition (the face as large as the head allows, two lines over the hair), so when a stream shows her on
 one unchanging scene every free cover of the day was that picture.  The research the skill rests on (section 6, 同行封面)
 says what peers do: the person and the words are both large, the words take a third to a half of the picture, and the
 ground behind them is simple (a gradient, dots, a blurred frame).
 
-So a solo frame has a second composition: the window is moved until her face stands at the column's place
-(`column_face_center_x_frac`, or its mirror), the words stack on the other side, and that side gets a panel in one of
-the lane's background colours (the same table and the same turns as the pastel routes), which is what changes the
-colour of the cover from one clip to the next.  `plan` is plain geometry and says why when the frame has no such
-window; then the route keeps the two lines on top.
+So a solo frame is framed by the cover's composition template (cover_layout_templates.json): the window is moved and
+sized until her face has the template's height and stands at its place, the words go where the template says, and a
+column's side gets a panel in one of the lane's background colours (the same table and the same turns as the pastel
+routes).  `plan` is plain geometry (cover_layout_rotation.window, the skill renderer's own) and says why when the frame
+has no such window; then the template is refused and the run tries the next one.
 """
-import math
-
 from PIL import Image, ImageDraw, ImageFilter
 
 import cover_face_crop as crop_mod
+from cover_compose import layouts
 import cover_text_fit as text_fit
-from cover_layout import FACE_GAP, SAFE_X0, SAFE_X1
+from cover_layout import FACE_GAP
 
 FRAME_W, FRAME_H = 1920, 1080
 
 
-def plan(face, head_top, keep, rules, side, row_px):
-    """({crop, face, face_px, zone_px, target_px, limited_by}, None) for the window [x0, y0, width] of the live frame
-    with the words on `side` (left | right) and her on the other side, or (None, why).  `face` is her face in frame
-    pixels, `head_top` the top of her head, `keep` the other boxes that must stay in the window, `row_px` the width of
-    the widest punchline row at the floor size (it must fit between the safe edge and her face).  The window gives her
-    face the target height unless her head and chin need a wider one (never one that cuts them, never one that puts the
-    face under the veto floor), and her face centre stands at the column's place as far as the frame's edges allow."""
-    if head_top is None:
-        return None, "HEAD_TOP_UNMEASURED"
-    frac = rules["column_face_center_x_frac"] if side == "left" else 1 - rules["column_face_center_x_frac"]
-    cx, fh = (face[0] + face[2]) / 2, face[3] - face[1]
-    margin = round(rules["chin_margin_frac"] * fh)
-    top = max(0, min([head_top, *[b[1] for b in keep]]))
-    bottom = min(FRAME_H, max([face[3] + margin, *[b[3] for b in keep]]))
-    target = round(rules["face_target_frac"] * FRAME_H)
-    w_tall = math.ceil((bottom - top) * FRAME_W / FRAME_H)              # her head and chin fit in its height
-    w_floor = FRAME_W * fh / (rules["face_floor_frac"] * FRAME_H)       # wider than this the face is under the veto floor
-    w = min(FRAME_W, max(math.floor(FRAME_W * fh / target), w_tall))
-    if w > w_floor:
-        return None, "COLUMN_FACE_UNDER_FLOOR"
-    h = round(w * FRAME_H / FRAME_W)
-    wish = round(cx - frac * w)
-    x0 = min(max(wish, 0), FRAME_W - w)
-    y0 = min(FRAME_H - h, top)
-    if y0 + h < bottom or any(b[0] < x0 or b[2] > x0 + w for b in keep):
-        return None, "COLUMN_KEEPS_OUTSIDE"
-    out = crop_mod.frame_face(face, [x0, y0, w])
-    zone = out[0] - FACE_GAP - SAFE_X0 if side == "left" else SAFE_X1 - out[2] - FACE_GAP
-    if row_px > zone:
-        return None, "COLUMN_NO_ROOM"
-    limited = "FRAME_EDGE" if x0 != wish else None if out[3] - out[1] >= target - 1 else "HEAD_AND_CHIN"
-    return {"crop": [x0, y0, w], "face": out, "face_px": out[3] - out[1], "zone_px": zone, "target_px": target,
-            "limited_by": limited}, None
+def plan(face, head_top, keep, rules, template, src_w=FRAME_W, src_h=FRAME_H):
+    """({crop, face, face_px, target_px, limited_by, pad}, None) for the window [x0, y0, width] of the live frame that frames
+    her as `template` says (cover_layout_rotation.window: the skill renderer crops the same way), or (None, why).  A
+    template with a panel (the words on a plain ground beside her) may reach past the frame's edge on the words' side
+    (`pad`: the frame is extended there before the panel is painted).  Whether the words then fit is the renderer's."""
+    side = template["text"] if template["framing"].get("panel") and template["text"] in ("left", "right") else None
+    return layouts.window(face, head_top, keep, template["framing"], src_w=src_w, src_h=src_h,
+                          chin_margin_frac=rules["chin_margin_frac"], floor_frac=rules["face_floor_frac"], pad_side=side)
 
 
 def solo(run, spec, face, head_top, clock):
-    """Crop a solo frame for the screenshot route and record the plan: beside the column when it is this cover's turn and
-    the frame has such a window (then the spec carries the column's rows and asks for the panel), else as tight as the
-    head allows with the two lines on top."""
-    col = run.column
-    if col.side and len(col.rows) >= 2 and "screenshot" not in col.refused:
-        wide, size = col.punch_row(run)
-        made, why = plan(face, head_top, spec.get("keep") or [], run.rules, col.side, wide)
-        if made:
-            col.placed["screenshot"] = {"zone_px": made["zone_px"], "punch_row_px": wide, "at_size": size}
-            run.plans["screenshot"] = dict(made, head_top=head_top, text_layout=col.side)
-            crop_mod.apply_crop(spec, made["crop"])
-            spec.update(col.text("screenshot", spec["lines"]))
-            # the panel is the column's first look in a stream; a second column on the same side stands on the picture
-            if ["screenshot", col.side, "picture_panel"] not in (run.job.get("session_compositions") or []):
-                spec["panel"] = {"side": col.side, "edge": panel_edge(col.side, made["face"], run.rules)}
-            return
-        col.refused["screenshot"] = {"reason": why, "punch_row_px": wide, "at_size": size}
+    """Crop a solo frame for the screenshot route in the run's composition template and record the plan: the template's
+    window (and its panel for the words, cover_background.panel) when it frames her itself, else (the top template) as
+    tight as the head allows with the two lines on top.  A frame without the template's window refuses the template."""
+    comp = run.column
+    template = comp.template
+    if comp.free():
+        with Image.open(spec["frame"]) as im:
+            src_w, src_h = im.size
+        made, why = plan(face, head_top, spec.get("keep") or [], run.rules, template, src_w, src_h)
+        if made is None:
+            raise layouts.TemplateRefused(why)
+        run.plans["screenshot"] = dict(made, head_top=head_top, template_id=template["template_id"])
+        if made["pad"]:                 # the panel is painted on the extended frame (cover_background.panel, paint)
+            spec["pad"] = made["pad"]
+            shift = made["pad"]["px"] if made["pad"]["side"] == "left" else 0
+            for field in ("blur", "keep"):
+                spec[field] = [[b[0] + shift, b[1], b[2] + shift, b[3]] for b in spec.get(field) or []]
+        crop_mod.apply_crop(spec, made["crop"])
+        spec.update(comp.text("screenshot", spec["lines"]))
+        if made["pad"] or (template["framing"].get("panel") and ["screenshot", template["text"], "picture_panel"]
+                           not in (run.job.get("session_compositions") or [])):
+            spec["panel"] = {"side": template["text"], "edge": panel_edge(template["text"], made["face"], run.rules)}
+        return
     ink = run.text_ink(spec)[1]
     need = text_fit.need_face_top(ink, len(spec["lines"]), run.rules, run.rules["punch_floor_px"])
     with clock.phase("layout"):
         run.plans["screenshot"] = dict(crop_mod.plan_crop(face, head_top, spec.get("keep") or [], run.rules, need),
                                        head_top=head_top, text_top_wanted=need)
     crop_mod.apply_crop(spec, run.plans["screenshot"]["crop"])
+    spec.update(comp.text("screenshot", spec["lines"]))
+
+
+def pad_shift(spec):
+    """How far right the frame's own pixels sit in the extended frame (a pad on the left), else 0."""
+    pad = spec.get("pad") or {}
+    return int(pad["px"]) if pad.get("side") == "left" else 0
+
+
+def in_frame(spec, frame):
+    """The part of the cover's window that is the frame's own pixels, as a box in the frame (cover_dead_panel), or the
+    window itself when nothing is padded."""
+    if not spec.get("pad") or not spec.get("crop"):
+        return spec.get("crop")
+    x, y, w = (int(v) for v in spec["crop"][:3])
+    with Image.open(frame) as im:
+        src_w = im.width
+    x -= pad_shift(spec)
+    return [max(0, x), y, min(src_w, x + w), y + round(w * FRAME_H / FRAME_W)]
 
 
 def note(spec):
@@ -120,6 +120,11 @@ def paint(frame, spec, colors, rules, out):
     h = round(w * FRAME_H / FRAME_W)
     side, edge = spec["panel"]["side"], spec["panel"]["edge"]
     picture = Image.open(frame).convert("RGB")
+    if spec.get("pad"):         # the window reaches past the frame on the words' side: the frame is extended there first
+        px, pad_side = int(spec["pad"]["px"]), spec["pad"]["side"]
+        wider = Image.new("RGB", (picture.width + px, picture.height), tuple(int(colors[0][i:i + 2], 16) for i in (1, 3, 5)))
+        wider.paste(picture, (px if pad_side == "left" else 0, 0))
+        picture = wider
     c0, c1 = ([int(c[i:i + 2], 16) for i in (1, 3, 5)] for c in colors)
     column = Image.new("RGB", (1, h))
     column.putdata([tuple(round(c0[i] + (c1[i] - c0[i]) * y / max(1, h - 1)) for i in range(3)) for y in range(h)])
@@ -145,4 +150,5 @@ def paint(frame, spec, colors, rules, out):
     picture.save(out)
     covered = (lambda b: (b[0] + b[2]) / 2 < edge) if side == "left" else (lambda b: (b[0] + b[2]) / 2 > edge)
     spec.update(frame=out, composition="picture_panel", blur=[b for b in spec.get("blur") or [] if not covered(b)])
+    spec.pop("pad", None)       # the picture written is the extended one
     return shape

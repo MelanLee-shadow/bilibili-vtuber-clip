@@ -9,7 +9,8 @@ Waiting is part of the step.  `run` answers 6 (still in progress): the same comm
 `upload.wait.poll_interval_s`, at most `max_polls` times; then the step stops at UPLOAD_WAITING_LIVE and the next `run` only
 polls on (the plan is never made again).  An upload refused for quota (8) stops at UPLOAD_WAITING_QUOTA with the earliest time to
 retry; one refused because another upload holds the tool's lock is run again after the interval (UPLOAD_WAITING_LOCK when the polls
-are used up).  Any other unexpected return code fails the step with the tool's own words.  Progress is kept in upload/upload_state.json:
+are used up).  A manifest the tool refuses as made under an earlier archive policy (its type is no longer the rule's, nothing
+sent) stops at UPLOAD_MANIFEST_STALE and the next `run` makes and verifies the manifest again.  Any other unexpected return code fails the step with the tool's own words.  Progress is kept in upload/upload_state.json:
 the phases done, the commands run with their return codes and times, the road, and the package seal it was started for.
 
 Before anything is sent: lane_rules `upload` filled in (UPLOAD_RULES_UNSET), no hold on the clip (UPLOAD_HELD: `<clip>/upload/HOLD`,
@@ -29,10 +30,23 @@ from typing import TYPE_CHECKING, Any
 
 from . import step10_commands as commands
 from . import step10_readback as readback
-from . import step10_route
+from . import step10_route, title_acceptance
 from .adapters import RemoteResult
 from .runner import Ctx, StepOutcome
-from .step10_check import PLAN_MISMATCH, Stop, cover_material, held, plan_problems, read_json, sealed, sha, stamp, stop, tail
+from .step10_check import (
+    PLAN_MISMATCH,
+    Stop,
+    cover_material,
+    guests_current,
+    held,
+    plan_problems,
+    read_json,
+    sealed,
+    sha,
+    stamp,
+    stop,
+    tail,
+)
 from .step10_route import FIRST, NONE, Route, RouteRefused
 from .step10_rules import RULES_UNSET, UploadRules, UploadRulesUnset
 from .step10_rules import load as load_rules
@@ -55,6 +69,8 @@ READBACK_MISMATCH = "UPLOAD_READBACK_MISMATCH"
 NOT_ON_HOST = "UPLOAD_PACKAGE_NOT_ON_MEDIA_HOST"
 DUPLICATE = "UPLOAD_EXTERNAL_FULL_DUPLICATE"
 RECHECK_UNREADY = "UPLOAD_RECHECK_UNREADY"
+MANIFEST_STALE = "UPLOAD_MANIFEST_STALE"
+STALE_POLICY = "清单的投稿类型不是现行规则"    # lane_publish.first.STALE_POLICY: refused before anything was sent
 
 _sleep = time.sleep         # a test replaces these two
 _epoch = time.time
@@ -88,6 +104,11 @@ class _Run:
             stop(said.reason or "TITLE_NOT_ACCEPTED", said.note)
         if said:
             self.notes.append(said)
+
+    def _title_objections(self) -> list[str]:
+        """What is against the published title a revision keeps (title_acceptance.objections): it goes out unchanged
+        (60-title), and the reasons go with the step's record so they reach the owner."""
+        return title_acceptance.objections(self.ctx.clip_dir)
 
     # ----- state and commands ------------------------------------------------------------------------------------------
     def _save(self) -> None:
@@ -255,7 +276,7 @@ class _Run:
         self.state["recheck"] = {"decision": result.get("decision"), "block_upload": result.get("block_upload"),
                                  "videos": [{k: v.get(k) for k in ("bvid", "title", "decision")} for v in result.get("videos", [])
                                             if not v.get("excluded")],
-                                 "covering": covering_clip(result)}
+                                 "covering": covering_clip(result), "overlap": result.get("overlap")}
         self._save()
         if result.get("block_upload"):
             full = [v for v in result.get("videos", []) if v.get("decision") == "FULL_DUPLICATE"]
@@ -276,6 +297,10 @@ class _Run:
                          "以上传工具的 ledger 为准查清后处理")
                 self._recheck(job)
                 rc, words = self._send(job)
+                if rc == 3 and STALE_POLICY in words:
+                    state["done"] = [p for p in state["done"] if p not in ("mk", "verify")]
+                    self._save()
+                    stop(MANIFEST_STALE, f"上传清单是按旧的投稿类型做的，没有投出：{words[-300:]}；下次 run 按现行规则重做清单再投")
                 if rc == 7 and resumes:
                     stop(WAITING_LIVE, f"已投出、还没公开（多半在审核）：{words[-300:]}；下次 run 再发同一条 upload，从账本里的 BV 接着核对")
                 if rc == 8:
@@ -308,7 +333,8 @@ class _Run:
                "package_seal_sha256": self.state.get("seal_sha256"), "flags": list(route.flags),
                "authorization": {"by": auth.by, "quote": auth.quote, "rule_date": auth.rule_date},
                "artifacts": {k: {"path": str(p), "sha256": sha(p), "bytes": p.stat().st_size} for k, p in files.items() if p.is_file()},
-               "commands": self.state["commands"], "readback": record, "problems": problems}
+               "commands": self.state["commands"], "readback": record, "problems": problems,
+               "title_objections": self._title_objections()}
         path = self.out / ONLINE_FILE
         self.out.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -317,6 +343,7 @@ class _Run:
     def process(self) -> list[str]:
         route = self.route
         lines = [f"路线：{route.why}", *(f"【注意·不拦】{flag}" for flag in route.flags)] if route else []
+        lines += [f"【注意·不拦】沿用的线上标题有异议，不换题，换不换由频道主定：{why}" for why in self._title_objections()]
         return lines + self.notes + [f"{c['command']}：返回码 {c['rc']}，{c['started']} → {c['finished']}" for c in self.state["commands"]]
 
     def execute(self) -> StepOutcome:
@@ -330,6 +357,7 @@ class _Run:
             self.job = commands.Job(NONE, route.bvid, self.package, self.out, "", "", None, "", "", (), ())
             path = self._online(route, record=None, problems=[])
             return StepOutcome(True, products={"online": str(path)}, note=f"无需上线：{route.why}", process=self.process())
+        guests_current(self.ctx)
         cover_material(self.ctx)
         self._title_current()
         self.job = self._job(route)
@@ -348,7 +376,8 @@ class _Run:
             stop(READBACK_MISMATCH, "回读与应上线的内容不一致（线上已改，不回滚；online.json 记下了读到的）：" + "；".join(problems))
         self._mark("readback")
         return StepOutcome(True, products={"online": str(path)}, process=self.process(), cpa=self.cpa,
-                           note=f"已上线并回读核对：{route.kind}，{self.job.bvid}；{self._streak()}")
+                           note=f"已上线并回读核对：{route.kind}，{self.job.bvid}；{self._streak()}"
+                           + (f"；沿用的线上标题有 {n} 条异议，交频道主" if (n := len(self._title_objections())) else ""))
 
     def _streak(self) -> str:
         """The unattended-upload count after this upload (review_streak.json beside the task's state; owner)."""
@@ -368,4 +397,4 @@ def run(ctx: Ctx, package: Path) -> StepOutcome:
     try:
         return job.execute()
     except Stop as stop_:
-        return _fail(stop_.reason, stop_.note, process=job.process())
+        return _fail(stop_.reason, stop_.note, cpa=job.cpa, process=job.process())

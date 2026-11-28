@@ -101,7 +101,8 @@ def test_step_4_asks_cpa_only_about_the_undecided_cues_and_unsure_is_the_guest(t
 def test_without_clusters_v8_stands_and_no_cpa_is_asked(tmp_path):
     ctx = make_ctx(tmp_path, remote=FakeRemote(), cpa=None)
     rows, calls, process = si._speaker_clusters(ctx, [{"text": "a"}] * 3, _cues(), _v8_rows())
-    assert [r["speaker"] for r in rows] == [r["speaker"] for r in _v8_rows()] and calls == [] and process == []
+    assert [r["speaker"] for r in rows] == [r["speaker"] for r in _v8_rows()] and calls == []
+    assert process == ["到达时间证据：没找到嘉宾当天的公开录播，说话人照旧按声纹"]
 
 
 def test_an_answer_the_step_cannot_read_is_not_kept_in_the_cache(tmp_path):
@@ -143,9 +144,9 @@ def test_without_a_voiceprint_naming_of_moss_v8_labels_and_mai_only_flags(tmp_pa
 
 
 def test_with_more_than_two_people_moss_does_not_label_and_v8_does(tmp_path):
-    """11-23 (公开规则：上传的视频字幕归属全是错的): a three-person voice collab where MOSS heard two clusters. The
- cluster closest to the host's voiceprint also held a guest, and 8c1 burned every line of it as the host. With
- fewer clusters than the session's people MOSS does not label: v8 does, and the process says why."""
+    """11-23 (the channel's request): a three-person voice collab where MOSS heard two clusters.  The
+    cluster closest to the host's voiceprint also held a guest, and 8c1 burned every line of it as the host.  With
+    fewer clusters than the session's people MOSS does not label: v8 does, and the process says why."""
     embedded = []
 
     def script(name, body, remote):

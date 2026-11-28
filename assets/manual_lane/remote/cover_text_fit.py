@@ -64,11 +64,11 @@ def need_face_top(ink, n_lines, rules, goal_px):
 
 def plan_text(ink, n_lines, face_top, style, rules):
     """Size the lines of a top-layout cover whose face begins at `face_top`.  Returns the plan: punch_px (what the
-    renderer will reach), floor_met, first_px (None for one line), the strip, and `layout`: `top`, or `auto` when top
-    cannot reach the floor so the renderer may try the other layouts.  Never raises: a floor that cannot be reached is
-    reported as floor_met=False with the size that is reached."""
-    if n_lines > 2:      # a column's rows (cover_layout.Column): the renderer sizes them beside the face, not in the strip
-        return {"column": True, "floor_px": rules["punch_floor_px"], "first_px": None, "layout": None}
+    renderer will reach), floor_met, first_px (None for one line), the strip.  Never raises: a floor that cannot be
+    reached is reported as floor_met=False with the size that is reached (the composition template is then passed
+    over by the selector, cover_layout_rotation.select; the words are never made smaller to keep it)."""
+    if n_lines > 2:      # a column's rows: the renderer sizes them beside the face, not in the strip
+        return {"column": True, "floor_px": rules["punch_floor_px"], "first_px": None}
     last = n_lines - 1
     strip = face_top - rules["text_zone_top_px"] - rules["text_zone_gap_px"]
     shares = rules["text_line_share"] if n_lines == 2 else [1.0]
@@ -76,7 +76,6 @@ def plan_text(ink, n_lines, face_top, style, rules):
     punch, _ = _largest(ink, last, rules["punch_start_px"], 60, safe, strip * shares[-1])
     plan = {"strip_px": strip, "punch_px": punch, "floor_px": rules["punch_floor_px"], "first_px": None,
             "floor_met": punch >= rules["punch_floor_px"]}
-    plan["layout"] = "top" if plan["floor_met"] else "auto"
     if n_lines == 2:
         room = min(strip * shares[0], strip - ink(last, punch)[1])      # line 1 keeps to what the punchline leaves
         start = min(rules["first_line_max_px"], punch)
@@ -86,10 +85,8 @@ def plan_text(ink, n_lines, face_top, style, rules):
 
 
 def apply_plan(spec, plan):
-    """Pin line 1's computed size (a hand-written size is the author's and stays) and, when the top layout cannot give
-    the punchline its floor, let the renderer choose the layout."""
+    """Pin line 1's computed size (a hand-written size is the author's and stays).  The layout is the composition
+    template's and is not changed here."""
     if plan["first_px"] is not None and not spec["lines"][0].get("size"):
         spec["lines"][0]["size"] = plan["first_px"]
-    if spec.get("layout") == "top":
-        spec["layout"] = plan["layout"]
     return spec

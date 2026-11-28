@@ -31,12 +31,16 @@ def spoken(rows: Sequence[Row]) -> str:
 
 
 def _replace(text: str, start: int, end: int, new: str) -> str | None:
-    """`text` with its letters [start, end) replaced by `new` (punctuation inside the stretch goes with it)."""
+    """`text` with its letters [start, end) replaced by `new` (punctuation inside the stretch goes with it).  Letters
+    taken off the start of the sentence take the punctuation after them too: 「嗯，怎么样」 less 「嗯」 is 「怎么样」, not
+    「，怎么样」 (a line opening with punctuation is refused on release)."""
     said, where = letters(text)
     if not 0 <= start <= end <= len(said):
         return None
     a = where[start] if start < len(said) else len(text)
     b = where[end - 1] + 1 if end > start else a
+    if start == 0 and end > 0 and not new and end < len(said):
+        a, b = 0, where[end]
     return text[:a] + new + text[b:]
 
 

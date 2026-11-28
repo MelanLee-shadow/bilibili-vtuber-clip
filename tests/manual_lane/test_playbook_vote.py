@@ -163,3 +163,35 @@ def test_every_sentence_carries_how_many_runs_wrote_it_and_the_riskiest_are_list
     assert len(line) == 1 and line[0].index("d003") < line[0].index("d002") and "d001" not in line[0]
     rows, _record = pv.merge([a, b])                                  # fewer than three runs: no majority, no count
     assert all("runs_same" not in x for x in rows) and pv.risk_lines([r(1, "甲", state="KEEP", confidence="高")]) == []
+
+
+
+def test_a_majority_release_would_refuse_leaves_the_leads_own_rows(tmp_path, monkeypatch):
+    # every run's own final passed the hand-in check; the majority written into the lead is checked the same way
+    real = pv.merge
+
+    def into_a_long_title(runs):
+        rows, record = real(runs)
+        rows = copy.deepcopy(rows)
+        rows[0]["final_text"] = "《LoveLive! Sunshine!!》吗？"
+        return rows, record
+
+    monkeypatch.setattr(pb.playbook_vote, "merge", into_a_long_title)
+    cpa = _TaggedCpa({"": "甲写法", "b": "甲写法", "c": "甲写法"})
+    ctx = _clip(tmp_path, monkeypatch, cpa)
+    out = step._step3_body(ctx)
+    assert out.ok and "甲写法" in (ctx.clip_dir / "subs/final.srt").read_text(encoding="utf-8")
+    vote = json.loads((ctx.clip_dir / "subs/agent-vote.json").read_text(encoding="utf-8"))
+    assert "unfit" in vote["fallback_to_lead"] and any("沿用底稿" in line for line in out.process)
+
+
+def test_letters_taken_off_the_start_take_the_punctuation_after_them():
+    # 298620 (host measurement): the lead wrote 「嗯，怎么样」, two runs 「怎么样」; the majority left
+    # 「，怎么样」, a line the release check refuses (SRT_TEXT_LEADING_PUNCTUATION)
+    assert pv._replace("嗯，怎么样", 0, 1, "") == "怎么样"
+    assert pv._replace("嗯，怎么样", 0, 1, "啊") == "啊，怎么样"           # a wording written over it keeps the comma
+    lead = [r(1, "嗯，怎么样"), r(2, "若不是你突然闯进我"), r(3, "结果还是绿色")]
+    b = [r(1, "怎么样"), r(2, "若不是你突然闯进我"), r(3, "结果还是绿色吧")]
+    c = [r(1, "怎么样"), r(2, "若不是你突然闯入我"), r(3, "结果还是绿色")]
+    rows, record = pv.merge([lead, b, c])
+    assert record["lead"] == 0 and texts(rows) == ["怎么样", "若不是你突然闯进我", "结果还是绿色"]

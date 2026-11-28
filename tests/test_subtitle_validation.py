@@ -227,3 +227,25 @@ def test_standalone_sound_exception_does_not_admit_content_fragments():
         result = validate_srt_text(text)
         assert result["status"] == "FAIL"
         assert {item["code"] for item in result["errors"]} == {"SRT_SINGLE_CJK_CHARACTER"}
+
+
+def test_read_rate_counts_only_visible_text_and_uses_the_measured_threshold():
+    at_limit = '1\n00:00:00,000 --> 00:00:00,500\n[李豆沙] 123456\n'
+    above_limit = '1\n00:00:00,000 --> 00:00:00,500\n[李豆沙] 1234567\n'
+    assert not any(e['code'] == 'SRT_CUE_READ_TOO_FAST' for e in validate_srt_text(at_limit)['errors'])
+    errors = [e for e in validate_srt_text(above_limit, media_duration_ms=1500)['errors'] if e['code'] == 'SRT_CUE_READ_TOO_FAST']
+    assert len(errors) == 1 and errors[0]['characters'] == 7 and errors[0]['characters_per_second'] == 14
+
+
+def test_fast_cue_packed_gap_and_owner():
+    packed = ('1\n00:00:00,000 --> 00:00:01,000\n前一句话\n\n'
+              '2\n00:00:01,000 --> 00:00:01,405\n然后自己在那\n\n'
+              '3\n00:00:01,405 --> 00:00:02,500\n后一句话\n')
+    verdict = validate_srt_text(packed)
+    assert verdict['status'] == 'PASS'
+    assert verdict['warnings'][0]['code'] == 'SRT_CUE_READ_FAST_PACKED'
+    gap = packed.replace('00:00:01,405 --> 00:00:02,500', '00:00:02,405 --> 00:00:03,500')
+    assert any(e['code'] == 'SRT_CUE_READ_TOO_FAST' for e in validate_srt_text(gap)['errors'])
+    owner = validate_srt_text(gap, owner_cue_numbers={2})
+    assert owner['status'] == 'PASS'
+    assert owner['warnings'][0]['code'] == 'SRT_CUE_READ_FAST_OWNER'

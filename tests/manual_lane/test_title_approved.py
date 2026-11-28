@@ -23,8 +23,8 @@ OWN_COMMENT = "这片的原话乙丙"
 
 
 def _cand(body, *, check_ok=True):
-    return {"title_body": body, "on_stage": ["李豆沙"], "punchline_person": "她越长大越讨厌看那种有规矩的",
-            "swap_check": {"holds_with_other_host": not check_ok, "reason": "换主播不成立"}}
+    """A candidate; `check_ok=False` leaves out a participant it says the title is misread without (a check fails)."""
+    return {"title_body": body, "on_stage": ["李豆沙"], "involved": [] if check_ok else ["雾深Girimi"]}
 
 
 def _answer(*cands, recommended=0):
@@ -135,7 +135,7 @@ def test_a_picked_title_that_fails_the_checks_is_still_used_and_the_process_says
     assert not any(c.startswith("title-judge") for c in cpa.calls)       # the other candidates were never tried
     assert _record(ctx)["forced"] is True
     line = next(line for line in picked[2] if line.startswith("频道主选定的标题未过检查："))
-    assert "换主播自检未通过" in line and "未送判官" in line and "行政亲审前请处理" in line
+    assert "标题里没有这个人的名字，少了会读歪：雾深Girimi" in line and "未送判官" in line and "行政亲审前请处理" in line
     assert not any(line.startswith("候选全部未通过") for line in picked[2])
 
 

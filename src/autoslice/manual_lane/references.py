@@ -28,7 +28,7 @@ import hashlib
 import json
 from pathlib import Path
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 from . import channel_facts
 from .lane_rules import rules
@@ -43,13 +43,15 @@ if TYPE_CHECKING:
     from .state import CpaEvent
 
 STORE = "context/references.json"
+SCHEMA_VERSION = "references.v3"
 SPOT_CALL = "reference-spot"
 LOOKUP_CALL = "reference-context"
 SUBTITLES, TITLE = "subtitles", "title"
 
 
 class SubtitleReferences(TypedDict):
-    leads: list[dict[str, Any]]      # what the subtitle agent is shown: the references that were found
+    leads: list[dict[str, Any]]      # what the subtitle agent is shown: verified references
+    clues: NotRequired[list[dict[str, Any]]]  # unverified candidate leads (never canonical wording)
     cpa: list[CpaEvent]              # the model calls this made (none when the store answered)
     line: str                        # PROCESS
 
@@ -160,44 +162,82 @@ def _leads(found: Sequence[TermContext]) -> list[dict[str, Any]]:
              "sources": list(dict.fromkeys(_domain(u) for u in t["sources"]))} for t in found if t["status"] == FOUND]
 
 
-def _graph_lead(graph: Any, row: dict[str, Any], name: str) -> dict[str, Any]:
-    """What the knowledge graph says of a reference the draft makes, as a lead of the same shape as a looked-up one."""
-    nodes = [n for n in graph.graph.find(name) if n.status != "retired"]
+def _graph_clue(graph: Any, row: dict[str, Any], name: str) -> dict[str, Any]:
+    """What candidate knowledge-graph material says about a reference, never reading accepted nodes or canonical wording."""
+    nodes = [n for n in graph.graph.find(name) if n.status == "candidate"]
     ids = {n.id for n in nodes}
-    about = [line.text for line in graph.lines if ids & set(line.ids)]
-    other = bool(nodes) and name not in nodes[0].names.values()      # a nickname stays as it was said: the name is in `is`
+    about = [line.text for line in graph.lines if not line.verified and (ids & set(line.ids))]
+    other = bool(nodes) and name not in nodes[0].names.values()
+    alias_note = f"{name}可能是{nodes[0].names['display']}的另一个叫法（未核实）" if other else ""
     return {"heard": row["term"], "cues": row["cues"],
-            "is": "；".join([*([f"{name}是{nodes[0].names['display']}的另一个叫法"] if other else []), *about])[:300],
-            "wording": name if other or not nodes else nodes[0].names["display"], "sources": ["知识图"]}
+            "is": "；".join([*([alias_note] if alias_note else []), *about])[:300],
+            "wording": "", "verified": False, "status": "candidate", "sources": ["知识图（未核实候选）"]}
+
+
+def _graph_lead(graph: Any, row: dict[str, Any], name: str) -> dict[str, Any]:
+    """What the knowledge graph says of a reference the draft makes, keeping verified and candidate material apart."""
+    accepted = [n for n in graph.graph.find(name) if n.status == "accepted"]
+    if not accepted:
+        return _graph_clue(graph, row, name)
+    ids = {n.id for n in accepted}
+    about = [line.text for line in graph.lines if line.verified and (ids & set(line.ids))]
+    other = name not in accepted[0].names.values()      # a nickname stays as it was said: the name is in `is`
+    alias_note = f"{name}是{accepted[0].names['display']}的另一个叫法" if other else ""
+    wording = name if other else accepted[0].names["display"]
+    return {"heard": row["term"], "cues": row["cues"],
+            "is": "；".join([*([alias_note] if alias_note else []), *about])[:300],
+            "wording": wording, "verified": True, "status": "accepted", "sources": ["知识图（已认可）"]}
 
 
 def for_subtitles(ctx: Ctx, draft: Sequence[SrtCue]) -> SubtitleReferences:
-    """The references of the recognisers' draft, for the subtitle agent.  A store made from this very draft is read back
-    (no call); otherwise the draft is read, the graph and the web are asked, and the store is written."""
+    """The references of the recognisers' draft, for the subtitle agent.  A cache entry under `subtitles` hits only for
+    the exact `draft_sha256` at `SCHEMA_VERSION` (returning the exact leads and clues computed for that draft); in every
+    other case everything is recomputed and looked up from scratch without cross-draft reuse."""
     from . import circle_context, graph_context
 
     numbered = {int(c["id"]): f"{c['id']} {' '.join(str(c['text']).split())}" for c in draft}
     sha = hashlib.sha256("\n".join(numbered.values()).encode()).hexdigest()
     doc = _read(ctx)
-    if doc.get("draft_sha256") == sha:
-        found = [t for t in load(ctx).values() if t.get("stage") == SUBTITLES]
-        return {"leads": [*doc.get("graph_leads", []), *_leads(found)], "cpa": [], "line": doc.get("line", "")}
+    cached = doc.get("subtitles")
+    if (isinstance(cached, dict)
+            and cached.get("schema_version") == SCHEMA_VERSION
+            and cached.get("draft_sha256") == sha
+            and isinstance(cached.get("leads"), list)
+            and isinstance(cached.get("clues"), list)):
+        return {"leads": list(cached["leads"]), "clues": list(cached["clues"]),
+                "cpa": [], "line": str(cached.get("line", ""))}
     calls: list[CpaEvent] = []
     spotted, why_none = _spot(ctx, numbered, calls)
-    # the graph (repository + the news crawler's candidates) is asked under the draft's writing and the reader's guess
+    # the graph (repository + the news crawler's candidates) is asked under the draft's writing and the reader's guess;
+    # only accepted entries (`graph.covers`) suppress web lookup, while candidate entries pass along as unverified clues
     graph = graph_context.read(ctx, [*numbered.values(), *(row.get("likely", "") for row in spotted)])
-    known: dict[str, str] = {}                     # the draft's writing -> the name the graph knows it under
+    known: dict[str, str] = {}                     # the draft's writing -> the accepted name the graph knows it under
+    cand_known: dict[str, str] = {}                # the draft's writing -> candidate name (clue only, still searched)
     for row in spotted:
         for name in (row["term"], row.get("likely", "").strip()):
             if name and graph.covers(name):
                 known.setdefault(row["term"], name)
+        if row["term"] not in known and graph.graph is not None:
+            for name in (row["term"], row.get("likely", "").strip()):
+                if name and any(n.status == "candidate" for n in graph.graph.find(name)):
+                    cand_known.setdefault(row["term"], name)
+                    break
     asked = [circle_context.TermContext(term=row["term"], cues=row["cues"], why=row.get("why", ""), queries=[], status="",
                                         note="", sources=[], reason="", likely=row.get("likely", "").strip(),
                                         kind=row.get("kind", ""), same_initials=graph.same_initials(row["term"]))
              for row in spotted if row["term"] not in known]
     circle_context.look_up(ctx, asked, numbered, calls, LOOKUP_CALL)
     from_graph = [_graph_lead(graph, row, known[row["term"]]) for row in spotted if row["term"] in known]
+    from_clues = [clue for row in spotted if row["term"] in cand_known
+                  if (clue := _graph_clue(graph, row, cand_known[row["term"]]))["is"]]
+    clue_terms = [str(clue["heard"]) for clue in from_clues]
+    leads = [*from_graph, *_leads(asked)]
     line = ("外部指称：" + ("、".join(f"{t['term']}（{circle_context._outcome(t)}）" for t in asked) or "底稿里没有需要另查的指称")
-            + (f"；知识图已有：{'、'.join(known)}" if known else "") + (f"；未能读底稿（{why_none}）" if why_none else ""))
-    remember(ctx, asked, SUBTITLES, draft_sha256=sha, line=line, graph=graph.record(list(known)), graph_leads=from_graph)
-    return {"leads": [*from_graph, *_leads(asked)], "cpa": calls, "line": line}
+            + (f"；知识图已有：{'、'.join(known)}" if known else "")
+            + (f"；候选线索：{'、'.join(clue_terms)}" if clue_terms else "")
+            + (f"；未能读底稿（{why_none}）" if why_none else ""))
+    remember(ctx, asked, SUBTITLES, schema_version=SCHEMA_VERSION,
+             graph=graph.record(list(known)),
+             subtitles={"schema_version": SCHEMA_VERSION, "draft_sha256": sha,
+                        "leads": leads, "clues": from_clues, "line": line})
+    return {"leads": leads, "clues": from_clues, "cpa": calls, "line": line}

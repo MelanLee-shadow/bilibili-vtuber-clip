@@ -6,7 +6,7 @@ from pathlib import Path
 from functools import lru_cache
 from dataclasses import dataclass
 import re
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from src.autoslice.review_evidence import SourceCue
 from src.autoslice.speaker_label_display import speaker_display
@@ -65,6 +65,9 @@ def _parse_time_ms(value: str) -> int:
     return ((hours * 60 + minutes) * 60 + seconds) * 1000 + int(millis[:3].ljust(3, "0"))
 
 
+PERSON_STYLE_PREFIX = "GUEST-"   # a guest's own style: the guest style with her colour (manual_lane.person_colours)
+
+
 @dataclass(frozen=True)
 class BurnedAssCue:
     start_ms: int
@@ -73,6 +76,7 @@ class BurnedAssCue:
     speaker: str | None = None
     layer: int = 0
     placement: str = "main"
+    style: str | None = None        # a guest line's own style (PERSON_STYLE_PREFIX) over the label's; the label still keys the layout
 
 
 @dataclass(frozen=True)
@@ -115,7 +119,10 @@ def render_burned_ass(
                  if lane.preserve_cue_layout else
                  _layout_cue_sequence_for_display(rows, continuity_keys=keys,
                                                   max_chars=lane.max_chars_per_line))
-    styles = {display.style for display in displays}
+    chosen = [cue.style or display.style for cue, display in zip(cues, displays, strict=True)]
+    if any(cue.style and display.style != "GUEST" for cue, display in zip(cues, displays, strict=True)):
+        raise ValueError("a person's style is a guest line's only")
+    styles = set(chosen)
     if not styles <= dict(lane.styles).keys():
         raise ValueError("ASS lane lacks a required speaker style")
     events = []
@@ -125,7 +132,7 @@ def render_burned_ass(
         text = _escape_burned_ass_text(text, lane.escaping)
         events.append(
             f"Dialogue: {cue.layer},{_format_ass_time(start_ms)},{_format_ass_time(end_ms)},"
-            f"{displays[index].style},,0,0,{margin_v},,{text}"
+            f"{chosen[index]},,0,0,{margin_v},,{text}"
         )
     return "\n".join([
         "[Script Info]", "ScriptType: v4.00+",
@@ -143,7 +150,10 @@ def render_burned_ass(
 
 def _write_sapphire_ass_from_srt(
     srt_path: Path, ass_path: Path, *, max_chars_per_line: int | None = None,
+    person_styles: Mapping[str, str] | None = None, cue_styles: Sequence[str | None] | None = None,
 ) -> None:
+    """`person_styles`: {style name: ASS style value} of the guests told apart (PERSON_STYLE_PREFIX); `cue_styles`: per
+    cue of the SRT, the person's style of a guest line, or None (the label's style)."""
     # The final SRT is the input authority for this display-only projection.
     # Discovering a new lexicon here could silently disagree with that file
     # (or a later operator correction) while leaving its recorded hash intact.
@@ -157,11 +167,17 @@ def _write_sapphire_ass_from_srt(
     # .agent/skills/song-lyrics-timeline-aligner/scripts/align_timed_lyrics.py
     # write_ass at --play-res 1920x1080: Fontsize 72 belongs to the 1080p
     # PlayRes with margins 60,60,40, Shadow 2, BackColour &H70000000
+    cue_styles = list(cue_styles) if cue_styles is not None else [None] * len(cues)
+    if len(cue_styles) != len(cues):
+        raise ValueError(f"{len(cue_styles)} person styles for {len(cues)} cues")
+    if any(not name.startswith(PERSON_STYLE_PREFIX) for name in person_styles or {}):
+        raise ValueError(f"a person's style is named {PERSON_STYLE_PREFIX}<id>")
     ass_path.write_text(render_burned_ass(
-        [BurnedAssCue(c.source_start_ms, c.source_end_ms, c.text) for c in cues],
+        [BurnedAssCue(c.source_start_ms, c.source_end_ms, c.text, style=style) for c, style in zip(cues, cue_styles, strict=True)],
         host_speaker=HOST_SPEAKER,
         lane=AssLaneStyle(styles=(("Default", styles["host"]),
-                                 ("LDS", styles["host"]), ("GUEST", styles["guest"])),
+                                 ("LDS", styles["host"]), ("GUEST", styles["guest"]),
+                                 *sorted((person_styles or {}).items())),
                           max_chars_per_line=max_chars_per_line),
     ), encoding="utf-8")
 

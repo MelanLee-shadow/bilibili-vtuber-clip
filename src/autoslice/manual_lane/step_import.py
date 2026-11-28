@@ -36,7 +36,8 @@ IMPORT_FILES = {"final.srt": "subs/final.srt", "speaker.srt": "speaker/speaker.s
                 "cut.srt": "subs/cut.srt",      # cut.srt: the sentences the owner marked 删 (cut-clock times); trim_run cuts them from the video
                 "baseline.srt": "subs/baseline.srt",    # baseline.srt: the subtitles as the owner saw them before he edited (owner_edits)
                 "not_subtitled.json": "subs/not_subtitled.json",   # lines the owner decided to leave unsubtitled (package_guards.record_owner_decided)
-                "speakers.json": "speaker/speakers.json"}   # who the owner says said each line, by name (guest_identity.owner_lines)
+                "speakers.json": "speaker/speakers.json",   # who the owner says said each line, by name (guest_identity.owner_lines)
+                "guest_names.json": "speaker/guest_names.json"}   # a successor: who its predecessor named each guest line (guest_identity.carried_lines)
 # what an import replaces: step 3 and everything after it is produced again from the import (ordinary path)
 IMPORT_REDO = ("subtitles", "speaker", "burn", "title_cover", "tags", "package", "review", "upload")
 
@@ -73,7 +74,11 @@ def owner_decided(ctx: Ctx) -> bool:
     """True when the import was decided sentence by sentence by the channel owner himself (`import-subtitles
     --decided-by owner`, imported["decided_by"]): after step 3 no machine step may change the words or speakers he
     edited (imported["owner_edited"]; review_owner), and the review's objections to them need a disposition."""
-    rec = imported(ctx)
+    return decided_by_owner(imported(ctx))
+
+
+def decided_by_owner(rec: ImportRecord | None) -> bool:
+    """owner_decided on an import record (state.imported) read without a Ctx."""
     return rec is not None and rec.get("decided_by") == "owner"
 
 
@@ -143,6 +148,7 @@ def record_import(state: ClipState, clip_dir: Path, src: Path, *, source: str, a
         from . import outcomes
 
         outcomes.record(state, clip_dir, src)
+        outcomes.record_speakers(state, clip_dir, src)
     dest.mkdir(parents=True, exist_ok=True)
     files = {}
     for name, rel in IMPORT_FILES.items():

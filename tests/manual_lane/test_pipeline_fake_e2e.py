@@ -136,12 +136,16 @@ def test_steps_1_to_9_run_in_order_on_fakes_and_step_10_stays_behind_the_switch(
     assert [c for c in cpa.calls if not c.startswith("adjudicate")] == ["boundary", *UNDERSTANDING_CALLS, "title", "title-judge-r0-1", "title-judge-r0-2", "title-judge-r0-q1", "title-judge-r0-q2", "cover-brief", "cover-emote", "review"]   # nothing re-asked
 
 
-def _covering(total, covered, unmatched_seconds, **video):
-    return {"decision": "UNKNOWN", "block_upload": False, "videos": [{
+def _covering(total, covered, unmatched_seconds, *, runs=True, **video):
+    """A receipt whose one part has `covered` of our `total` sentences inside its timeline runs (runs=False: found
+    character by character only, at no single offset)."""
+    part = {"decision": "UNKNOWN", "total_sentences": total, "covered_sentences": covered if not runs else 0,
+            "unmatched_seconds": unmatched_seconds if not runs else 99.0, "timeline_runs": [{"own_start": 0.0}] if runs else [],
+            "outside_sentences": [{"text": "我方多出的一句"}] * (total - covered if runs else total),
+            "outside_seconds": unmatched_seconds if runs else 99.0}
+    return {"schema_version": "external-duplicate-check.v2", "decision": "UNKNOWN", "block_upload": False, "videos": [{
         "bvid": "BV1other", "title": "【李豆沙】别人的切片", "uploader": "别人", "published_at": "2026-10-24T15:00:00+00:00",
-        "duration_seconds": 300.0, "decision": "UNKNOWN", **video,
-        "parts": [{"decision": "UNKNOWN", "total_sentences": total, "covered_sentences": covered,
-                   "unmatched_seconds": unmatched_seconds}]}]}
+        "duration_seconds": 300.0, "decision": "UNKNOWN", **video, "parts": [part]}]}
 
 
 def test_step_0_stops_a_window_another_uploader_already_clipped_without_anything_new(tmp_path):
@@ -151,6 +155,38 @@ def test_step_0_stops_a_window_another_uploader_already_clipped_without_anything
     report = run_clip(ctx, STEPS)
     assert report.stopped_at == 0 and report.reason == "COVERED_BY_EXTERNAL_CLIP"
     assert "BV1other" in (ctx.clip_dir / "PROCESS.md").read_text(encoding="utf-8")
+
+
+def test_step_0_stops_a_covered_window_whose_sentences_are_found_at_no_single_offset(tmp_path):
+    """N8 review: a clip played 1.4x faster has every sentence found but no timeline run; the found count still covers it."""
+    ctx = make_ctx(tmp_path, remote=_remote(_covering(30, 30, 0.0, runs=False)), cpa=ScriptedCpa({
+        "boundary": json.dumps({"verdict": "ACCEPT", "start_cue": 6, "end_cue": 40, "reason": "完整"})}))
+    report = run_clip(ctx, STEPS)
+    assert report.stopped_at == 0 and report.reason == "COVERED_BY_EXTERNAL_CLIP"
+
+
+def test_step_0_stops_on_a_compared_part_from_an_older_checker(tmp_path):
+    """The checker runs on the media host: a receipt whose compared part lacks the timeline counts is refused, not read
+    as 'covers nothing'."""
+    old = _covering(29, 28, 2.6)
+    old.pop("schema_version")
+    for key in ("timeline_runs", "outside_sentences", "outside_seconds"):
+        old["videos"][0]["parts"][0].pop(key)
+    ctx = make_ctx(tmp_path, remote=_remote(old), cpa=ScriptedCpa({
+        "boundary": json.dumps({"verdict": "ACCEPT", "start_cue": 6, "end_cue": 40, "reason": "完整"})}))
+    report = run_clip(ctx, STEPS)
+    assert report.stopped_at == 0 and report.reason == "STEP_EXCEPTION:ValueError"
+
+
+def test_step_0_records_whether_another_uploader_already_has_the_moment(tmp_path):
+    """N8 (11-25): the record says 撞了 / 没撞 / 查不清 and why, not only the H62 decision."""
+    from src.autoslice.manual_lane.gates import overlap_line
+    largest = {"bvid": "BV1other", "title": "别人的切片", "uploader": "别人", "shared_seconds": 87.8, "own_seconds": 107.18,
+               "outside_sentences": 8, "outside_seconds": 17.6}
+    assert overlap_line({"overlap": {"verdict": "OVERLAP", "largest": largest}}).startswith("撞了：BV1other")
+    assert overlap_line({"overlap": {"verdict": "NONE_FOUND"}}).startswith("没撞")
+    line = overlap_line({"overlap": {"verdict": "UNDETERMINED", "undetermined": [{"bvid": "BV1x", "reason": "AUDIO_ASR_FAILED"}]}})
+    assert line == "撞没撞查不清：BV1x：AUDIO_ASR_FAILED"
 
 
 def test_a_window_with_a_more_complete_arc_or_only_our_own_upload_goes_on(tmp_path):

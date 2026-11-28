@@ -286,7 +286,7 @@ def _days(tmp_path, statuses):
 
 
 def test_a_days_recordings_are_released_once_its_clips_are_online_or_kept_back(tmp_path):
-
+    # the channel's request
     for cid, date, steps in (("on", "2026-11-15", {"upload": {"status": "DONE"}}),
                              ("held", "2026-11-15", {"review": {"status": "DONE"}}),
                              ("making", "2026-11-16", {"review": {"status": "DONE"}})):
@@ -363,3 +363,26 @@ def test_a_released_days_videos_go_only_once_115_has_them_and_the_spool_let_go(t
     assert sorted(p.name for p in (direct / date).iterdir()) == ["done.xml", "early.flv", "stub.flv"]
     assert not list((direct / after).iterdir())
     assert ar.reclaim_recordings(tmp_path, ledger, FakeRemote(on_script=host)) == []
+
+
+def test_a_reviewed_clip_not_online_whose_days_guests_grew_is_run_again_by_a_round_that_does_not_upload(tmp_path):
+    """, publishing paused: the day's reviewed clips were finished for the round, so the ones named before
+    安晚awa joined the day's list were never redone.  Only reviewed clips that are not online, not kept back and named
+    from the day's record are looked at."""
+    for cid in ("named", "named_ok", "by_hand", "online", "kept"):
+        clip(tmp_path, cid, {"review": {"status": "DONE"}, **({"upload": {"status": "DONE"}} if cid == "online" else {})})
+        if cid != "by_hand":
+            state = ClipState.load(tmp_path / "state" / f"{cid}.json")
+            state.data["session"] = {**state.data["session"], "guest_evidence": {"guests": ["礼墨Sumi"]}}
+            state.save()
+    hold = tmp_path / "clips/kept/upload/HOLD"
+    hold.parent.mkdir(parents=True)
+    hold.write_text("the owner picked its title")
+    asked = []
+
+    def lagging(cids):
+        asked.append(list(cids))
+        return [c for c in cids if c == "named"]
+    result = ar.auto_round(tmp_path, discover_days=lambda: {"days": []}, run_clips=lambda cids: 0, upload=False, lagging=lagging)
+    assert asked == [["named", "named_ok"]] and result["ran"] == ["named"]
+    assert ar.pending(tmp_path, ar._load(tmp_path), upload=False)[0] == []        # without the check: as before

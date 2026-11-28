@@ -10,8 +10,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, TypedDict, cast
 
-from .adapters import CPA_JUDGE_MODEL, remote_python, root_script
-from .step_io import REMOTE_TOOLS, _local, _render, _run_remote
+from .adapters import remote_python, root_script
+from .step_io import REMOTE_TOOLS, _local, _render, _run_remote, raise_if_vision_unavailable, vision_models
 
 if TYPE_CHECKING:
     from .runner import Ctx
@@ -51,7 +51,9 @@ def read_thumb(result: dict[str, object] | None, rc: int, width: int) -> ThumbVe
 def check_thumb(ctx: Ctx, cid: str, *, width: int, lines: list[str], identity: str) -> tuple[ThumbVerdict, list[CpaEvent]]:
     """Shrink candidate `cid` on the media host and read it.  Returns the verdict and one cpa record per reading."""
     rd = ctx.remote_dir
-    job = {"out": f"{rd}/cover/cand", "id": cid, "width": width, "judge_model": CPA_JUDGE_MODEL,
+    vision_model, fb_model, fb_effort = vision_models()
+    job = {"out": f"{rd}/cover/cand", "id": cid, "width": width, "judge_model": vision_model,
+           "fallback_model": fb_model, "fallback_effort": fb_effort,
            "question": _render("cover_thumb.md", lines=" / ".join(lines), identity=identity)}
     local_job = _local(ctx, f"cover/thumb-{cid}.job.json")
     local_job.write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -60,6 +62,7 @@ def check_thumb(ctx: Ctx, cid: str, *, width: int, lines: list[str], identity: s
     res = _run_remote(ctx, f"s6-cover-thumb-{cid}", root_script(
         remote_python(f"{rd}/cover/cover_thumb.py {rd}/cover/thumb-{cid}.job.json"), env=["cpa"],
         owned=f"{rd}/cover", recursive=True), timeout=900)
+    raise_if_vision_unavailable(res.stdout + "\n" + res.stderr)
     result: dict[str, object] | None = None
     try:
         path = _local(ctx, f"cover/cand/{cid}.thumb.result.json")
@@ -70,11 +73,15 @@ def check_thumb(ctx: Ctx, cid: str, *, width: int, lines: list[str], identity: s
         pass
     verdict = read_thumb(result, res.rc, width)
     calls = cast("list[dict[str, object]]", (result or {}).get("calls") or [])
+    if fb_notes := list(dict.fromkeys(str(c["fallback_note"]) for c in calls if c.get("fallback_note"))):
+        verdict["reason"] = f"{verdict.get('reason', '')}（{'；'.join(fb_notes)}）".lstrip("；")
     spent = [cast(float, c["elapsed_s"]) for c in calls if isinstance(c.get("elapsed_s"), (int, float))]
     verdict["elapsed_s"] = round(sum(spent), 1) if spent else None
     verdict["readings"] = len(cast("list[object]", (result or {}).get("readings") or [])) or len(calls)
     records = [cast("CpaEvent", {"call_id": f"cover-thumb-{cid}" + (f"-{n}" if n > 1 else ""), "kind": "vision",
-                                 "model": CPA_JUDGE_MODEL, "rc": c.get("rc", res.rc), "elapsed_s": c.get("elapsed_s"),
-                                 "usage": c.get("usage")}) for n, c in enumerate(calls, 1)]
-    return verdict, records or [cast("CpaEvent", {"call_id": f"cover-thumb-{cid}", "kind": "vision", "model": CPA_JUDGE_MODEL,
+                                 "model": c.get("model") or vision_model, "rc": c.get("rc", res.rc),
+                                 "elapsed_s": c.get("elapsed_s"), "usage": c.get("usage"),
+                                 **({k: c[k] for k in ("fallback_from", "fallback_reason", "fallback_note") if k in c})})
+               for n, c in enumerate(calls, 1)]
+    return verdict, records or [cast("CpaEvent", {"call_id": f"cover-thumb-{cid}", "kind": "vision", "model": vision_model,
                                                   "rc": res.rc, "elapsed_s": None, "usage": None})]

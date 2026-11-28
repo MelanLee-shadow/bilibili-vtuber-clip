@@ -24,7 +24,7 @@ set +a
 ## CPA：真实文字与视觉流程
 
 `CPA_BASE_URL` 和 `CPA_API_KEY` 指向自己的网关。包装器和内容质量阶段默认
-`gpt-6-sol`，健康探针使用 `gpt-6-luna`；`gpt-6-astra` 不作默认或自动回退（手推线不用这组默认，见上）。
+`gpt-6.2-sol`（主路由明确额度不足时回退 `gemini-4-neon`），健康探针使用 `gpt-6-luna`；`gpt-6-astra` 不作默认或自动回退（手推线具体配置见 `assets/manual_lane/lane_rules.json` 的 `cpa` 一节）。
 部分调用点显式指定模型和 effort，不全部服从包装器环境覆盖。
 文字校对和图像裁判需要相应能力，单次文字请求成功不证明图像请求也可用。
 

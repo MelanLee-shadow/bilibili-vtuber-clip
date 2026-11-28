@@ -107,7 +107,8 @@ def process_text(step: Step, outcome: StepOutcome, rerun_for: Step | None = None
         # pick_frame.py / cover_candidates.py on OCI3, not through _ask_cpa: they are not text calls and have no tier,
         # so the line says that instead of implying nobody registered them.
         tier = call.get("effort") or ("非文本调用（无思考档位）" if call.get("kind") else "未记录")
-        lines.append(f"- CPA 调用 `{call.get('call_id')}`：模型 {call.get('model')}，"
+        fb = f"（{call['fallback_note']}）" if call.get("fallback_note") else ""
+        lines.append(f"- CPA 调用 `{call.get('call_id')}`：模型 {call.get('model')}{fb}，"
                      f"档位 {tier}，返回码 {call.get('rc')}，"
                      f"耗时 {call.get('elapsed_s')} s")
         if call.get("effort_note"):

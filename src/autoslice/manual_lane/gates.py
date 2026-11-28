@@ -17,14 +17,22 @@ if TYPE_CHECKING:
 
 DOUBT_STATES = frozenset({"KEEP", "ADOPT", "FIT_CONTEXT", "UNRESOLVED"})
 # Common-sense bounds for a finished clip (boundary sanity, not a judgement of the content).
-CLIP_MIN_SECONDS = 60.0   # TASK-5 item 9 (gap report P1: a talk clip is at least 60 s)
+CLIP_MIN_SECONDS = 60.0   # the channel's request (SEL-07; it replaced the 45 s of 07-19), 30-boundary.md
 CLIP_MAX_SECONDS = 600.0
+# a must-cut clip whose whole story is shorter than CLIP_MIN_SECONDS: not dropped, queued for the evening's compilation
+# of its draw (short_queue.py; 30-boundary.md 不足 60 秒的必切片)
+BOUNDARY_SHORT_QUEUED = "BOUNDARY_SHORT_QUEUED"
+# the boundary judge rejected the proposal and the retry budget ran out without an accepted or validly corrected cut
+BOUNDARY_NOT_ACCEPTED = "BOUNDARY_NOT_ACCEPTED"
 LABEL_ANCHOR_TOLERANCE_S = 0.5   # ASR timing may move a little when the cut moves; the anchor is still the same speech
 
 
 class DedupeResult(TypedDict, total=False):
+    schema_version: str
     decision: str | None
     videos: list[dict[str, Any]]
+    overlap: dict[str, Any]
+    unknown_reasons: list[str]
 
 
 class CutProbe(TypedDict, total=False):
@@ -92,32 +100,57 @@ def dedupe_gate(result: DedupeResult) -> Verdict:
     return Verdict.passed(decision=decision)
 
 
-
-
+# 20-selection §2b (the channel's request): a covered window is new only with a more complete arc,
+# 「约 30 秒以上，或 3 句以上完整句」 that the other clip does not have.
 NEW_ARC_SECONDS = 30.0
 NEW_ARC_SENTENCES = 3
 
 
 def covering_clip(result: DedupeResult) -> dict[str, Any] | None:
     """The other uploader's clip that already covers this one, from the duplicate checker's receipt, or None: one part of one
-    clip in which all but fewer than NEW_ARC_SENTENCES of our sentences, and less than NEW_ARC_SECONDS of them, are found.
-    Our own uploads (excluded) and recordings (LONG_VIDEO_NOT_A_CLIP: never compared) are not in the running."""
+    clip that has all but fewer than NEW_ARC_SENTENCES of our sentences and less than NEW_ARC_SECONDS of them, counted either
+    way the checker shows a sentence is there: inside its timeline runs (the same speech at one offset; a sentence the two
+    ASRs spelled differently is still there - 11-24: another uploader's clip held 241.6 of our 250.9 s, 30 of the sentences
+    spelled apart), or found character by character (a clip played faster or cut between sentences has no run).
+    Our own uploads and recordings (excluded: never compared) are not in the running.
+    A compared part without the timeline counts is from an older checker (it runs on the media host): refused, not skipped."""
     best: dict[str, Any] | None = None
     for item in result.get("videos") or []:
         if item.get("excluded"):
             continue
         for part in item.get("parts") or []:
-            total, covered = part.get("total_sentences"), part.get("covered_sentences")
-            if not isinstance(total, int) or not isinstance(covered, int) or total < NEW_ARC_SENTENCES:
+            total = part.get("total_sentences")
+            if not isinstance(total, int) or total < NEW_ARC_SENTENCES:
+                continue    # not compared (no transcript): nothing shown to be there
+            if "timeline_runs" not in part:
+                raise ValueError(f"duplicate-check receipt {result.get('schema_version')!r} has no timeline counts: the media "
+                                 "host's checker is older than this lane (external-duplicate-check.v2)")
+            ways = [(int(part["covered_sentences"]), float(part["unmatched_seconds"]))]
+            if part["timeline_runs"]:
+                ways.append((total - len(part["outside_sentences"]), float(part["outside_seconds"])))
+            fits = [(c, s) for c, s in ways if total - c < NEW_ARC_SENTENCES and s < NEW_ARC_SECONDS]
+            if not fits:
                 continue
-            new_seconds = float(part.get("unmatched_seconds") or 0)
-            if total - covered >= NEW_ARC_SENTENCES or new_seconds >= NEW_ARC_SECONDS:
-                continue
+            covered, new_seconds = max(fits)
             if best is None or covered / total > best["covered_sentences"] / best["total_sentences"]:
                 best = {"bvid": item.get("bvid"), "title": item.get("title"), "uploader": item.get("uploader"),
                         "published_at": item.get("published_at"), "duration_seconds": item.get("duration_seconds"),
                         "covered_sentences": covered, "total_sentences": total, "new_seconds": round(new_seconds, 2)}
     return best
+
+
+def overlap_line(result: DedupeResult) -> str:
+    """The checker's answer to 「这段别人是否已经发过」 (its `overlap`), in one line for the process record."""
+    overlap = result.get("overlap") or {}
+    verdict, top = overlap.get("verdict"), overlap.get("largest")
+    if verdict == "OVERLAP" and top:
+        return (f"撞了：{top['bvid']}「{top['title']}」（{top['uploader']}）有本片 {top['shared_seconds']}/{top['own_seconds']} 秒，"
+                f"我方在它之外 {top['outside_sentences']} 句 {top['outside_seconds']} 秒")
+    if verdict in ("NO_OVERLAP", "NONE_FOUND"):
+        return "没撞：" + ("找到的他人视频都不含本片的话" if verdict == "NO_OVERLAP" else "检索到直播日开始，没有他人切片")
+    reasons = "；".join(f"{u.get('bvid')}：{u.get('reason')}" for u in overlap.get("undetermined") or []) or "；".join(
+        result.get("unknown_reasons") or []) or "回执没有 overlap"
+    return f"撞没撞查不清：{reasons}"
 
 
 def coverage_gate(result: DedupeResult) -> Verdict:
@@ -140,7 +173,8 @@ def boundary_sanity(cues: Sequence[SrtCue], *, start_cue: int, end_cue: int) -> 
         return Verdict.failed("BOUNDARY_OUTSIDE_SEGMENT", f"cut {start_cue}-{end_cue} not in this segment")
     duration = float(by_id[end_cue]["end_s"]) - float(by_id[start_cue]["start_s"])
     if not CLIP_MIN_SECONDS <= duration <= CLIP_MAX_SECONDS:
-        return Verdict.failed("BOUNDARY_LENGTH_UNREASONABLE", f"{duration:.2f}s outside {CLIP_MIN_SECONDS:.0f}s-{CLIP_MAX_SECONDS:.0f}s")
+        return Verdict.failed("BOUNDARY_LENGTH_UNREASONABLE", f"{duration:.2f}s outside {CLIP_MIN_SECONDS:.0f}s-{CLIP_MAX_SECONDS:.0f}s",
+                              duration_s=round(duration, 3))
     return Verdict.passed(duration_s=round(duration, 3))
 
 

@@ -319,7 +319,7 @@ prepare 工作。一个被阻候选不得阻断其它候选。
   非 operator authority 自升 active 的新行，防止旧机器 ledger 覆盖已经正确的 CPA 结果。
 - 最终 SRT 先过 `lidousha-srt-release-policy.v1`：每个 block 必须被严格解析，连续编号、
   合法且正向的时间、至少 300ms、单调无 overlap、非空/非孤立标点/非孤立实词单字、媒体边界
-  合法。独立语气词/拟声词仅按 `subtitle_validation.py` 的有限集合（包括“噗”）判断；已有
+  合法；字母数字每秒超过 12 个且前后紧邻至少 1 秒无字幕空档的非 owner 锁定句报 `SRT_CUE_READ_TOO_FAST`；紧贴邻句或 owner 锁定句只记 FLAG。独立语气词/拟声词仅按 `subtitle_validation.py` 的有限集合（包括“噗”）判断；已有
   相邻呼名回声与“有”的完整回答例外保留，不能推广为任意单字放行，也不能为凑字数跨静音
   并句或添加字幕。该结构分类不签发声学/语义 PASS；最终文字、时间轴与音频证据仍须通过
   各自的既有门。producer、package auditor 与 uploader 各自重跑，不能复用一次自报结果。

@@ -16,7 +16,7 @@ from typing import Any, Mapping
 
 from src.autoslice.channel_profile import LABEL_RE, load_channel_profile
 from src.autoslice.speaker_label_display import speaker_display
-from src.autoslice.subtitle_rendering import ASS_SAFE_DISPLAY_CHARS, _layout_cue_sequence_for_display
+from src.autoslice.subtitle_rendering import ASS_SAFE_DISPLAY_CHARS, PERSON_STYLE_PREFIX, _layout_cue_sequence_for_display
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -484,7 +484,11 @@ def _pair_issues(
     for index, (actual, wanted) in enumerate(
         zip(events, expected, strict=False), start=1
     ):
-        if actual.style != wanted.style:
+        # A guest named by step 4 is burned in her own colour (owner): GUEST-<id>, the guest style with
+        # her outline (subtitle_rendering.PERSON_STYLE_PREFIX).
+        if actual.style != wanted.style and not (
+            wanted.style == "GUEST" and actual.style.startswith(PERSON_STYLE_PREFIX)
+        ):
             issues.append(
                 ReviewPackageAssIssue(
                     "SUBTITLE_ASS_SPEAKER_SRT_STYLE_MISMATCH",

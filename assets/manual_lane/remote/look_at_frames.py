@@ -71,8 +71,8 @@ def main(argv):
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
         rows = list(pool.map(lambda item: look(base, key, cut, frame_dir, doc["question"], item), doc["frames"]))
     with open(out_json, "w", encoding="utf-8") as fh:
-        json.dump({"question": doc["question"], "model": pick_frame.MODEL, "frames": rows, "calls": pick_frame.CALLS},
-                  fh, ensure_ascii=False, indent=1)
+        json.dump({"question": doc["question"], "model": pick_frame.answered_model(), "frames": rows,
+                   "calls": pick_frame.CALLS}, fh, ensure_ascii=False, indent=1)
     print(f"{out_json}: frames={len(rows)} ok={sum(1 for r in rows if r['ok'])}")
     return 0
 

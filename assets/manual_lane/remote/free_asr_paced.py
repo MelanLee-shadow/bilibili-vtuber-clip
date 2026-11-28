@@ -2,17 +2,17 @@
 """free_asr_paced.py CUT ASR_DIR STATE_DIR MIN_INTERVAL_S COOLDOWN_S ATTEMPTS RATE_LIMIT_ATTEMPTS PROVIDER... :
 whole-clip BCUT / jianying recognition through the deployed repo's scripts/free_asr_client.py, paced (U152).
 
-公开规则11-02: 「剪映被限流可以等等。另外，也确实不应该发的太猛。」 Inside one call the client itself waits out bcut's
+the channel's request  Inside one call the client itself waits out bcut's
 throttling under the host's shared cooldown (scripts/free_asr_client.py, 11-23: every caller, not only this tool);
 this is the one pace for every clip and process on the host:
 - one call per provider at a time (an flock per provider under STATE_DIR), at least MIN_INTERVAL_S after that
- provider's previous call ended, whichever clip made it;
+  provider's previous call ended, whichever clip made it;
 - a rate-limited answer (HTTP 429/412, BCUT code -509, or the client's AsrThrottled after its own waiting) sets that provider's next call COOLDOWN_S ahead; after
- RATE_LIMIT_ATTEMPTS rate-limited answers the provider is given up for this clip (no short-interval re-sends);
+  RATE_LIMIT_ATTEMPTS rate-limited answers the provider is given up for this clip (no short-interval re-sends);
 - any other failure is retried up to ATTEMPTS calls in all, 10 s x attempt apart (the old shell loop's steps).
-The providers run side by side (each paced on its own). For each provider that succeeds: ASR_DIR/<p>.srt and <p>.json,
-written as free_asr_client.main writes them; every attempt is logged to ASR_DIR/<p>.log. The repo comes from
-MANUAL_LANE_REMOTE_REPO; nothing is written into it. Prints FREE_ASR <p> OK|FAILED|RATE_LIMITED per provider.
+The providers run side by side (each paced on its own).  For each provider that succeeds: ASR_DIR/<p>.srt and <p>.json,
+written as free_asr_client.main writes them; every attempt is logged to ASR_DIR/<p>.log.  The repo comes from
+MANUAL_LANE_REMOTE_REPO; nothing is written into it.  Prints FREE_ASR <p> OK|FAILED|RATE_LIMITED per provider.
 """
 from __future__ import annotations
 

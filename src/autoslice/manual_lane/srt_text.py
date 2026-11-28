@@ -153,11 +153,12 @@ def _json_from_text(text: str) -> Any:
             continue                      # a bracket inside prose, not the start of a value
         try:
             value, _ = decoder.raw_decode(text[start:])
-        except json.JSONDecodeError as exc:
+        except (ValueError, RecursionError) as exc:
             head = f"{text[start:start + 80]!r}"
             if not _value_closes(text, start):
                 raise JSONTruncated(f"the JSON value at {start} is not finished: {head}") from None
-            raise JSONMalformed(f"the JSON value at {start} does not parse ({exc.msg}): {head}") from None
+            detail = exc.msg if isinstance(exc, json.JSONDecodeError) else str(exc)
+            raise JSONMalformed(f"the JSON value at {start} does not parse ({detail}): {head}") from None
         return value
     raise JSONNotFound("no JSON object found in CPA response")
 

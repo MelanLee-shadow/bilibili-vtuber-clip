@@ -264,6 +264,9 @@ def _init_successor(task: Path, ctx: Ctx, successor: str, result: compilation.Co
         "start_cue": int(card["start_cue"]), "end_cue": int(card["end_cue"]),
         "proposal": {"start_cue": int(card["start_cue"]), "end_cue": int(card["end_cue"])},
         "hook": str(entry.get("hook", "")), "mac_bcut_srt": str(result.bcut_srt), "bcut_source_zero_ms": 0,
+        # the trimmed clip is the same selection: what the selection said of X goes with it (the title step reads it)
+        **({"selection_reason": x["selection_reason"]} if "selection_reason" in x else {}),
+        **({"peaks": x["peaks"]} if "peaks" in x else {}),
         "remote_dir": f"{remote_root}/{successor}", "source_dir": f"{remote_root}/sources",     # the joined file's directory
         "selection_file": str(entry_file),
         "selection_sha256": sha256_file(entry_file),
@@ -342,6 +345,18 @@ def _build(task: Path, ctx: Ctx, mat: _Material, passed: list[trim.Span], adapte
         (push / "speaker" / guest_identity.OWNER_FILE).write_text(json.dumps(
             [{"start_s": c["start_s"], "end_s": c["end_s"], "text": c["text"], "speaker": c["owner"]} for c in kept if c.get("owner")],
             ensure_ascii=False, indent=1), encoding="utf-8")
+    if (persons := ctx.clip_dir / "speaker/persons.json").is_file():    # who X's step 4 named each guest line, moved with the cues Y keeps
+        rows = guest_identity.carried_rows(json.loads(persons.read_text(encoding="utf-8")))
+        # the name rides in the cue's speaker field through moved/shifted: what is written is {start_s, end_s, text, speaker: name}
+        by_name: list[subtitle_track.TrackCue] = [
+            {"start_s": c["start_s"], "end_s": c["end_s"], "text": c["text"], "speaker": n}
+            for c, n in zip(mat.speaker_cues, guest_identity.names_by_overlap(mat.speaker_cues, rows), strict=True)]
+        kept = [c for c in trim.shifted(trim.moved(by_name, passed, measured), offset, length) if c.get("speaker")]
+        if kept:
+            (push / "speaker").mkdir(exist_ok=True)
+            (push / "speaker" / guest_identity.CARRIED_FILE).write_text(json.dumps(
+                [{"start_s": c["start_s"], "end_s": c["end_s"], "text": c["text"], "speaker": c["speaker"]} for c in kept],
+                ensure_ascii=False, indent=1), encoding="utf-8")
     if (canon := ctx.clip_dir / writing_canon.FILE).is_file():    # X's verdicts on its words: Y takes them over
         shutil.copyfile(canon, push / writing_canon.FILE)
     from .step_import import IMPORT_DIR, imported, owner_decided, record_import

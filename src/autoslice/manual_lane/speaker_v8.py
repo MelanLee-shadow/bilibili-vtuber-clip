@@ -77,6 +77,7 @@ class SpeakerDecision(MillisecondSpan, AcousticRow, total=False):
     on_screen: float             # the share of the cue's letters those subtitles show around it
     burned_from: str             # a host cue partly on the screen: its text, and the text that is burned instead
     burned_text: str
+    interjections: list[dict[str, object]]      # a phrase said into another person's sentence (step4_speaker._adopt_interjections)
 
 
 class IvanSpeakerLabel(TypedDict):
@@ -122,6 +123,9 @@ class ClusterCue(TypedDict):
     speaker: str
     spans: bool
     ms: dict[str, int]
+    note: NotRequired[str]                  # the arrival (arrival.cue_clusters): who is heard when in a line it calls mixed,
+    parts: NotRequired[list[SpeakerPart]]   # a line it cuts between two people by their words,
+    times: NotRequired[list[int]]           # and a line's time it moves to where its speaker stops
 
 
 class Centroid(TypedDict):
@@ -369,25 +373,47 @@ def name_by_voiceprint(centroids: Mapping[str, Centroid]) -> dict[str, ClusterNa
             for k, v in centroids.items()}
 
 
+DECISIVE = ("arrival",)     # label engines no other route outvotes: each cluster is one sound path by construction (arrival.py)
+
+
+def host_voice_against(label: str, v8_speaker: str, v8_mid: str) -> bool:
+    """The one doubt another route raises about a DECISIVE label: the label is a guest and the host's voiceprint labels
+    the cue the host (at the session's host threshold, outside its mid band).  The arrival gives a short line of the
+    host's to the guests' path when their side is loud at that moment, and v8 saying the host was right on every such
+    line of the owner's 11-23 names (arrival.py)."""
+    return label != HOST and v8_speaker == HOST and not v8_mid
+
+
 def fuse(decided: Sequence[SpeakerDecision], engines: Mapping[str, Sequence[ClusterCue | None]],
          primary: str = "moss") -> list[SpeakerDecision]:
     """The label is the primary engine's voiceprint-named cluster (8c1: held-out 7 older clips 491/556 against v8
     455/556, test three 239/279 against 234/279; thin: the test gain comes from one clip); v8 where that engine has no
     cluster for the cue.  A cue is "低" and carries why, for CPA to read with the context, when the label and v8
     disagree, when an engine hears two people inside it, or when another engine's cluster (MAI: an auxiliary signal
-    only, never a label) disagrees with the label."""
+    only, never a label) disagrees with the label.  Under a DECISIVE primary (the arrival groups) the reasons are its
+    own hearing of two people inside the cue, its silence on the cue, and host_voice_against: v8 hears a third of the
+    host's lines in a trio as someone else, so v8 saying a guest is not a doubt about the arrival, v8 saying the host
+    is -- except on a cue the engine cut between two people by their words (`parts`): v8's one probability for the whole
+    cue is of both of them, so it says nothing against either part, and the cut stands unreviewed."""
     out: list[SpeakerDecision] = []
+    decisive = primary in DECISIVE
     for i, row in enumerate(decided):
         here = {name: cast(ClusterCue, rows[i]) for name, rows in engines.items() if rows[i] is not None}
         lead = here.get(primary)
         label = lead["speaker"] if lead else row["speaker"]
+        others = not decisive or lead is None      # whether the other routes are heard on this cue
         why = []
         if lead is None and primary in engines:
             why.append(f"{primary} 簇没有覆盖本句，按 v8")
-        elif lead is not None and lead["speaker"] != row["speaker"]:
+        elif lead is not None and lead["speaker"] != row["speaker"] and not decisive:
             why.append(f"{primary} 簇（按主播声纹定名）判为{lead['speaker']}，v8 判为{row['speaker']}")
-        why += [f"{k} 簇判为{v['speaker']}" for k, v in here.items() if k != primary and v["speaker"] != label]
-        why += [f"{k} 簇显示本句里有两个人（{v['ms']} 毫秒）" for k, v in here.items() if v["spans"]]
+        elif lead is not None and "parts" not in lead and host_voice_against(label, row["speaker"], str(row.get("v8_mid") or "")):
+            why.append(f"{primary} 判为{label}，主播声纹（v8）判为{HOST}（概率 {row.get('host_prob')}）：{HOST}的短句和嘉宾那边的"
+                       f"声音同时出现时，{primary} 会把它算给嘉宾")
+        if others:
+            why += [f"{k} 簇判为{v['speaker']}" for k, v in here.items() if k != primary and v["speaker"] != label]
+        why += [f"{k} 显示本句里不止一个人（{v['note']}）" if "note" in v else f"{k} 簇显示本句里有两个人（{v['ms']} 毫秒）"
+                for k, v in here.items() if v["spans"] and (k == primary or others)]
         out.append(cast(SpeakerDecision, dict(row, speaker=label, v8_speaker=row["speaker"], clusters={k: v["speaker"] for k, v in here.items()},
                         label_from=primary if lead else "v8",
                         speaker_confidence="低" if why else "高", speaker_why="；".join(why))))
@@ -407,6 +433,8 @@ def acoustic_votes(row: AcousticRow) -> list[str]:
     """The acoustic routes heard for one fused cue: the label's own route (8c1 MOSS cluster, or v8 when MOSS gave none),
     v8 beside a cluster label, and every other engine's cluster (MAI)."""
     votes = [str(row["speaker"])]
+    if row.get("label_from") in DECISIVE:     # v8 is heard beside it only as host_voice_against
+        return [*votes, HOST] if host_voice_against(votes[0], str(row.get("v8_speaker") or ""), str(row.get("v8_mid") or "")) else votes
     if row.get("label_from", "v8") != "v8":
         votes.append(str(row.get("v8_speaker") or row["speaker"]))
     votes += [str(v) for k, v in dict(row.get("clusters") or {}).items() if k != row.get("label_from")]

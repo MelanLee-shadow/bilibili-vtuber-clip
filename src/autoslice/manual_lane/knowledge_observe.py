@@ -1,6 +1,6 @@
 """After a clip is sealed: the names it uses that the channel knowledge graph does not have yet.
 
-Owner ("这种切片过程中补知识图的过程也很重要，李李一听就知道是李豆沙的昵称"): a nickname heard in a clip,
+Owner (做片时顺带补知识图很重要（比如听出某个叫法是她的昵称）): a nickname heard in a clip,
 a person or a work it names, is knowledge the next clip needs.  The accepted graph (assets/<id>/knowledge/) changes
 only by a commit; what the clips show in between is kept here, with the lane's task, as persona_observe keeps traits:
 

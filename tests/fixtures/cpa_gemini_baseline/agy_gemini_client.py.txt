@@ -1,7 +1,6 @@
 """One client for the whole ``AGY -> Gemini`` witness chain.
 
-公开规则逐字裁定：「我认为这些地方不应该分散，反而是防止代码屎山的
-重要决策，需要调用AGY->gemini 这条链的，全都复用一种接口才好」。
+the channel's request。
 
 Before this module seven call sites each re-derived "where is agy", "did the
 call fail and how", and "which Gemini key may I use next".  Coverage was
@@ -468,14 +467,13 @@ def quota_fastpath_paid_gate(
 ) -> tuple[bool, str] | None:
     """Same-round paid admission after a fully quota-class free chain.
 
- 公开规则：先调用AGY订阅，然后用免费key，最后用付费key「付费key不能加
- 冷却期」; 2026-07-20: a free chain that came back entirely HTTP 429 is
- deterministic quota exhaustion, so the paid key steps in within the same
- round (the >= 3 strikes rule only applies to non-quota failures).
- Returns ``None`` when the chain was not purely quota-class; otherwise the
- ``gemini_backup_policy`` gate decision. The caller ledgers every paid call
- with ``record_paid_use`` before dispatch.
- """
+    the channel's request; 2026-07-20: a free chain that came back entirely HTTP 429 is
+    deterministic quota exhaustion, so the paid key steps in within the same
+    round (the >= 3 strikes rule only applies to non-quota failures).
+    Returns ``None`` when the chain was not purely quota-class; otherwise the
+    ``gemini_backup_policy`` gate decision. The caller ledgers every paid call
+    with ``record_paid_use`` before dispatch.
+    """
 
     flags = list(quota_flags or [])
     if not flags or not all(flags):

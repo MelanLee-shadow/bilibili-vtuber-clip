@@ -99,19 +99,19 @@ class ScoreResult(TypedDict):
     summary: ScoreSummary
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+# Scorer versions (TASK-6 item 6, U133: the scoring definition is fixed before any score is compared).
+# v1: the frozen TASK-5 definition.  v2 corrects three biases of v1, applied to truth and pipeline alike:
+#  - laughter: v1 said "laughter is dropped on both sides" but removed only （笑）; laughter written as a sound (哈哈哈)
+#    and other bracketed non-speech notes in the truth (（哼唧）) stayed and counted as missing text (U112: not subtitled);
+#  - numerals: 1 and 一, 0 and 零 are one spoken word written two ways; v1 counted the writing as a wrong sentence;
+#  - alignment: v1 gave a truth window only the pipeline cues lying >= 50 % inside it, so a cue split differently from
+#    the truth (an interjection on its own line, a sentence cut at another point) lost its text to no window.  v2 gives
+#    every pipeline cue to the truth window it overlaps most (the same max-overlap rule as evidence_attach).
+# v3 (U137, the channel's request): v2, and on both sides the filler characters are removed
+#  before comparing.  The list is doubt_policy.FILLERS (the one sim_key uses); production subtitles keep them as said.
+# v4 (U138, the channel's request): v3, and on both sides the
+#  isolated single characters go through the subtitle writers' own rule (normalize.join_lone_chars, the release check's
+#  definition): joined into the touching same-speaker sentence, or not counted.  Only isolated single characters.
 SCORER_VERSIONS = ("v1", "v2", "v3", "v4")
 DEFAULT_SCORER = "v3"
 _NOTE_RE = re.compile(r"[（(][^（()）]{0,12}[)）]")

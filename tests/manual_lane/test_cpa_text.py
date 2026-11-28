@@ -72,7 +72,7 @@ def test_legacy_unknown_attempts_are_counted_and_exhaustion_survives_resume(tmp_
     monkeypatch.setattr(cpa_text.time, "sleep", lambda _delay: None)
     prompt, out, journal = tmp_path / "prompt.txt", tmp_path / "reply.json", tmp_path / "journal"
     prompt.write_text("问题\n", encoding="utf-8")
-    old = {"model": "gpt-6.1-sol", "effort": "medium", "stream": True,
+    old = {"model": "gpt-6.2-sol", "effort": "medium", "stream": True,
            "prompt_sha256": hashlib.sha256(prompt.read_bytes()).hexdigest(), "complete": False,
            "reason": "ERROR TimeoutError", "attempts": 4,
            "http_log": [{"attempt": i, "error": "TimeoutError"} for i in range(1, 5)]}
@@ -106,7 +106,7 @@ def test_legacy_quota_refusals_survive_and_do_not_exhaust_resume(tmp_path, monke
     reason = "TERMINAL error: " + json.dumps(error, ensure_ascii=False)
     old_rows = [{"attempt": i, "status": "FINISHED", "http": 200, "complete": False, "chars": 0,
                  "reason": reason} for i in range(1, 11)]
-    old = {"model": "gpt-6.1-sol", "effort": "medium", "stream": True,
+    old = {"model": "gpt-6.2-sol", "effort": "medium", "stream": True,
            "prompt_sha256": hashlib.sha256(prompt.read_bytes()).hexdigest(), "complete": False,
            "reason": reason, "attempts": 10, "http_log": old_rows}
     out.write_text(json.dumps(old), encoding="utf-8")
@@ -120,7 +120,7 @@ def test_legacy_quota_refusals_survive_and_do_not_exhaust_resume(tmp_path, monke
 
     def response(req, timeout):
         calls.append(req.get_header("Idempotency-key"))
-        event = ({"type": "error", "error": error} if len(calls) <= 10 else
+        event = ({"type": "error", "error": error} if len(calls) == 1 else
                  {"type": "response.completed", "response": {"status": "completed", "output_text": "完整"}})
         return io.BytesIO(("data: " + json.dumps(event) + "\n").encode())
 
@@ -128,15 +128,15 @@ def test_legacy_quota_refusals_survive_and_do_not_exhaust_resume(tmp_path, monke
     args = [str(prompt), str(out), "--stream", "--journal-dir", str(journal), "--logical-id", "a" * 64]
     assert cpa_text.main(args) == 1
     failed = json.loads(out.read_text())
-    assert len(calls) == 10 and failed["attempts"] == 20 and failed["budget_attempts"] == 0
-    assert "QUOTA" in failed["reason"]
+    assert len(calls) == 1 and failed["attempts"] == 11 and failed["budget_attempts"] == 0
+    assert failed["reason"].startswith("CPA_QUOTA_REFUSED:")
     assert all(row["quota_refusal"] is True for row in failed["http_log"])
     assert (journal / (hashlib.sha256(original).hexdigest() + ".legacy-output.json")).read_bytes() == original
     assert cpa_text.main(args) == 0
     finished = json.loads(out.read_text())
-    assert len(calls) == 11 and len(set(calls)) == 1 and finished["attempts"] == 21
+    assert len(calls) == 2 and len(set(calls)) == 1 and finished["attempts"] == 12
     assert finished["complete"] is True and finished["text"] == "完整"
-    assert cpa_text.main(args) == 0 and len(calls) == 11
+    assert cpa_text.main(args) == 0 and len(calls) == 2
 
 
 def test_message_text_alone_does_not_exempt_unknown_attempts(tmp_path, monkeypatch):
@@ -147,7 +147,7 @@ def test_message_text_alone_does_not_exempt_unknown_attempts(tmp_path, monkeypat
     reason = 'TERMINAL error: {"code":"server_error","type":"server_error","message":"insufficient_quota"}'
     rows = [{"attempt": i, "status": "FINISHED", "http": 200, "complete": False, "chars": 0,
              "reason": reason} for i in range(1, 11)]
-    out.write_text(json.dumps({"model": "gpt-6.1-sol", "effort": "medium", "stream": True,
+    out.write_text(json.dumps({"model": "gpt-6.2-sol", "effort": "medium", "stream": True,
                                "prompt_sha256": hashlib.sha256(prompt.read_bytes()).hexdigest(),
                                "complete": False, "attempts": 10, "http_log": rows}))
     monkeypatch.setattr(cpa_text.urllib.request, "urlopen", lambda *_a, **_kw: pytest.fail("budget bypass"))
@@ -175,18 +175,21 @@ def test_mixed_quota_and_unknown_attempts_remain_bounded_across_resumes(tmp_path
 
     def response(req, timeout):
         calls.append(req.get_header("Idempotency-key"))
-        if len(calls) % 2 == 0:
+        if len(calls) % 2 == 1:
             raise urllib.error.URLError("timeout")
         event = {"type": "error", "error": {"code": "insufficient_quota", "type": "insufficient_quota"}}
         return io.BytesIO(("data: " + json.dumps(event) + "\n").encode())
 
     monkeypatch.setattr(cpa_text.urllib.request, "urlopen", response)
     args = [str(prompt), str(out), "--stream", "--journal-dir", str(journal), "--logical-id", "c" * 64]
-    assert cpa_text.main(args) == 1
-    assert len(calls) == 10 and json.loads(out.read_text())["budget_attempts"] == 5
-    assert cpa_text.main(args) == 1
-    assert len(calls) == 20 and json.loads(out.read_text())["budget_attempts"] == 10
-    assert cpa_text.main(args) == 1 and len(calls) == 20
+    for expected_budget in range(1, 11):
+        assert cpa_text.main(args) == 1
+        doc = json.loads(out.read_text())
+        assert doc["budget_attempts"] == expected_budget
+        if expected_budget < 10:
+            assert doc["reason"].startswith("CPA_QUOTA_REFUSED:")
+    assert len(calls) == 19
+    assert cpa_text.main(args) == 1 and len(calls) == 19
     assert json.loads(out.read_text())["reason"] == "CPA_TEXT_RETRY_EXHAUSTED"
     assert len(set(calls)) == 1
 
@@ -195,7 +198,8 @@ def test_mixed_quota_and_unknown_attempts_remain_bounded_across_resumes(tmp_path
 def test_structured_http_quota_error_is_recorded_and_does_not_spend_budget(tmp_path, monkeypatch, status):
     monkeypatch.setenv("CPA_BASE_URL", "https://cpa.invalid/v1")
     monkeypatch.setenv("CPA_API_KEY", "test-only")
-    monkeypatch.setattr(cpa_text.time, "sleep", lambda _delay: None)
+    slept = []
+    monkeypatch.setattr(cpa_text.time, "sleep", slept.append)
     prompt, out, journal = tmp_path / "prompt", tmp_path / "out", tmp_path / "journal"
     prompt.write_text("http quota")
     calls = []
@@ -204,15 +208,43 @@ def test_structured_http_quota_error_is_recorded_and_does_not_spend_budget(tmp_p
         calls.append(1)
         payload = {"error": {"message": "x" * 400, "code": "organization_spend_limit_exceeded",
                              "type": "insufficient_quota"}}
-        raise urllib.error.HTTPError(req.full_url, status, "quota", {}, io.BytesIO(json.dumps(payload).encode()))
+        raise urllib.error.HTTPError(
+            req.full_url, status, "quota", {"Retry-After": "7200"}, io.BytesIO(json.dumps(payload).encode())
+        )
 
     monkeypatch.setattr(cpa_text.urllib.request, "urlopen", response)
     assert cpa_text.main([str(prompt), str(out), "--stream", "--journal-dir", str(journal),
                           "--logical-id", "d" * 64]) == 1
     result = json.loads(out.read_text())
-    assert len(calls) == (10 if status == 429 else 1)
-    assert result["budget_attempts"] == 0 and "QUOTA" in result["reason"]
+    assert len(calls) == 1 and slept == []
+    assert result["budget_attempts"] == 0 and result["reason"].startswith("CPA_QUOTA_REFUSED:")
     assert all(row["quota_refusal"] is True for row in result["http_log"])
+
+
+def test_midstream_sse_quota_exhaustion_fast_breaks_as_quota_refused(tmp_path, monkeypatch):
+    monkeypatch.setenv("CPA_BASE_URL", "https://cpa.invalid/v1")
+    monkeypatch.setenv("CPA_API_KEY", "test-only")
+    slept = []
+    monkeypatch.setattr(cpa_text.time, "sleep", slept.append)
+    prompt, out, journal = tmp_path / "prompt", tmp_path / "out", tmp_path / "journal"
+    prompt.write_text("midstream quota")
+    calls = []
+
+    def response(req, timeout):
+        calls.append(1)
+        lines = [
+            b'data: {"type":"response.output_text.delta","delta":"\xe5\x8d\x8a\xe5\x8f\xa5"}\n',
+            b'data: {"type":"error","error":{"code":"credit_balance_exhausted","type":"insufficient_quota"}}\n',
+        ]
+        return io.BytesIO(b"".join(lines))
+
+    monkeypatch.setattr(cpa_text.urllib.request, "urlopen", response)
+    assert cpa_text.main([str(prompt), str(out), "--stream", "--journal-dir", str(journal),
+                          "--logical-id", "e" * 64]) == 1
+    result = json.loads(out.read_text())
+    assert len(calls) == 1 and slept == []
+    assert result["partial_chars"] == 2 and result["budget_attempts"] == 1
+    assert result["reason"].startswith("CPA_QUOTA_REFUSED: TERMINAL error:")
 
 
 def test_completed_stream_is_reused_across_directories(tmp_path, monkeypatch):
@@ -277,8 +309,8 @@ def test_a_live_stream_can_outlast_its_socket_idle_timeout(tmp_path, monkeypatch
         server.server_close()
 
 
-def test_judge_constants_are_streaming_medium_on_gpt_6_1_sol():
-    assert adapters.CPA_JUDGE_MODEL == "gpt-6.1-sol"
+def test_judge_constants_are_streaming_medium_on_gpt_6_2_sol():
+    assert adapters.CPA_JUDGE_MODEL == "gpt-6.2-sol"
     assert adapters.CPA_JUDGE_EFFORT == "medium"
 
 
@@ -292,7 +324,7 @@ def test_judge_adapter_sends_stream_and_medium_effort(monkeypatch):
         def run_script(self, *, name, body, timeout):
             if name == "cpa-read-s-test":
                 payload = {"text": "判定结果", "complete": True, "attempts": 1, "http_log": [{"attempt": 1, "http": 200}],
-                           "model": "gpt-6.1-sol", "effort": "medium", "stream": True,
+                           "model": "gpt-6.2-sol", "effort": "medium", "stream": True,
                            "prompt_sha256": hashlib.sha256("问题\n".encode()).hexdigest()}
                 return RemoteResult(0, json.dumps(payload, ensure_ascii=False), "")
             seen["body"] = body
@@ -308,7 +340,7 @@ def test_judge_adapter_sends_stream_and_medium_effort(monkeypatch):
     assert "cpa_text.py" in body
     assert "--stream" in body
     assert "--effort medium" in body
-    assert "--model gpt-6.1-sol" in body
+    assert "--model gpt-6.2-sol" in body
     assert seen["timeout"] is None
     assert record["response_text"] == "判定结果"
     assert record["stream"] is True and record["effort"] == "medium" and record["rc"] == 0
@@ -324,7 +356,7 @@ def test_judge_adapter_binds_the_requested_output_budget(receipt_budget, accepte
 
         def run_script(self, *, name, body, timeout):
             if name == 'cpa-read-agent-001':
-                payload = {'text': '{}', 'complete': True, 'model': 'gpt-6.1-sol', 'effort': 'high',
+                payload = {'text': '{}', 'complete': True, 'model': 'gpt-6.2-sol', 'effort': 'high',
                            'max_output_tokens': receipt_budget, 'stream': True,
                            'prompt_sha256': hashlib.sha256('prompt\n'.encode()).hexdigest()}
                 return RemoteResult(0, json.dumps(payload), '')

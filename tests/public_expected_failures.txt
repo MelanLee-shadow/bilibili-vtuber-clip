@@ -15,3 +15,9 @@ tests/manual_lane/test_task11_speaker_clusters.py::test_the_session_keyword_reac
 tests/manual_lane/test_title_authority_guard.py::test_the_title_prompt_carries_the_skill_the_style_note_and_the_corpus_with_their_sha256 | pins wording of the title method that the export sanitises
 tests/manual_lane/test_title_authority_guard.py::test_the_review_prompt_carries_the_skills_title_rules_and_hash | pins wording of the title method that the export sanitises
 tests/manual_lane/test_owner_marks.py::test_the_default_channel_names_its_own_account | the channel owner's account id (owner_marks.json) is private; the public asset has none
+tests/manual_lane/test_compilation_steps.py::test_both_review_prompts_share_compilation_context_and_ordinary_bytes | pins the bytes of the review prompt, whose wording the export sanitises
+tests/manual_lane/test_references.py::test_changed_draft_re_looks_up_same_term_instead_of_reusing_prior_draft_result | reads a subtitle fixture of one channel's clip that is not part of this tree
+tests/manual_lane/test_references.py::test_removed_term_from_earlier_draft_does_not_return_on_cache_hit | reads a subtitle fixture of one channel's clip that is not part of this tree
+tests/manual_lane/test_task37_effort_tiers.py::test_every_registered_purpose_names_a_tier_and_says_why | the export replaces a rule source that quotes the channel's maintainer, so its requirement number is gone
+tests/manual_lane/test_who_said_inputs.py::test_a_guest_with_a_channel_profile_has_her_persona_and_one_without_has_none | the guests' persona files are private; the public assets are empty
+tests/test_cover_layout_rotation.py::test_the_lane_stops_before_it_sends_a_renderer_older_than_the_table | names the private title-cover skill; this tree ships it under another name

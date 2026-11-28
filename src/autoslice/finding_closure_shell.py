@@ -335,7 +335,8 @@ class FinalReviewCall:
         return Route(self.provider,'text',RetainedObject.from_value(identity),self.key_id)
 
     def raw_call(self, route: Route, *, dispatch: bool = False) -> Callable[[str],str]:
-        if route.model not in self.models:
+        from .cpa_model_ladder import CPA_QUOTA_FALLBACK_MODEL
+        if route.model not in (*self.models, CPA_QUOTA_FALLBACK_MODEL):
             raise ClosureContractError('FINDING_CLOSURE_ROUTE_OUTSIDE_CANONICAL_LADDER')
         with self.condition:
             if route.model not in self.calls:
@@ -349,11 +350,10 @@ class FinalReviewCall:
         ensure_provider_calls_allowed()
         selected=_SELECTED_ROUTE.get()
         route=selected or self.route(self.models[0])
-        call=self.raw_call(route,dispatch=True)
         if selected is not None:
-            return call(prompt)  # Admission belongs to this routed attempt.
-        with _routed_admission(self.controller, route):
-            return call(prompt)
+            return self.raw_call(route,dispatch=True)(prompt)
+        from .producer_final_review_transport import closure_call_with_quota_fallback
+        return closure_call_with_quota_fallback(self,route,prompt,_routed_admission)
 
     def drain(self) -> None:
         for executor in tuple(self.executors):
@@ -416,14 +416,10 @@ class FinalReviewCall:
             # No dispatch if either canonical route already has the raw answer.
             return present[0][1],True,checkpoints[present[0][0].model]
         ensure_provider_calls_allowed()
-        # A requested top model is currently expanded by the canonical bridge
-        # into a fallback chain. Do not silently dispatch two routes that can
-        # both reach the same actual model/key. Existing raw hits above remain
-        # readable; a missing transport pin is an engineering dependency.
         self.raw_call(primary,dispatch=True)
         self.raw_call(alternate,dispatch=True)
         directory.mkdir(parents=True,exist_ok=True)
-        lock=Condition()
+        lock,quota_failed=Condition(),set()
         timing=first.root/'finding-closure-routing'/'time-spans.jsonl'
         def record(receipt: AttemptReceipt, *, stage: str = invocation.stage) -> None:
             from .review_evidence_store import persist_document
@@ -435,17 +431,16 @@ class FinalReviewCall:
             document=RetainedObject.from_value({**asdict(receipt),'requested_model':receipt.route.model})
             _legacy(persist_document,directory/(document.sha256+'.json'),document.read_view())
             with lock:
-                install_first_document(selection,document)
+                if not (receipt.status=='FAILED' and receipt.route.model in quota_failed):
+                    install_first_document(selection,document)
                 span=RetainedObject.from_value({'schema_version':'run-time-span.v1',
                     'span_id':receipt.effect_key,'kind':'wait','name':'ruling.'+stage,
                     'started_utc':receipt.started_utc,'ended_utc':receipt.ended_utc,
                     'wait_reason':'CANONICAL_PROVIDER_OWNER','status':receipt.status,
-                    'model':receipt.answering_model,'stage':stage,
-                    'cache_hit':receipt.cache_hit})
+                    'model':receipt.answering_model,'stage':stage,'cache_hit':receipt.cache_hit})
                 with timing.open('ab') as stream:
                     stream.write((span.json_text+'\n').encode());stream.flush();os.fsync(stream.fileno())
         executor=HedgedExecutor(controller=self.controller,record=record,retention=retention)
-        # p95 comes from retained run-time-span.v1 pairs, not audio duration.
         if timing.exists():
             from .run_time_ledger import timestamp
             for line in timing.read_text().splitlines():
@@ -459,6 +454,7 @@ class FinalReviewCall:
         with self.condition:
             self.executors.append(executor)
         def send(route: Route) -> str:
+            from .cpa_model_ladder import is_definite_quota_exception
             cp=checkpoint(route)
             if cp is None:
                 raise ClosureContractError('FINDING_CLOSURE_CANONICAL_CHECKPOINT_REQUIRED')
@@ -467,15 +463,16 @@ class FinalReviewCall:
                 token=_SELECTED_ROUTE.set(route)
                 try:
                     effective=call
-                    recorder=getattr(call,'_semantic_attempt_recorder',None)
-                    wrap=getattr(recorder,'wrap',None)
+                    wrap=getattr(getattr(call,'_semantic_attempt_recorder',None),'wrap',None)
                     if callable(wrap):
-                        # The ordinary recorder captures model identity in its
-                        # closure. Bind each route through that same owner so
-                        # two attempts cannot overwrite one primary-model row.
                         effective=_legacy(wrap,self.raw_call(route,dispatch=True))
                     return cast(str,_legacy(call_json,effective,prompt,response_schema=invocation.response_schema,
                                             name=invocation.name,reuse=False))
+                except BaseException as exc:
+                    if is_definite_quota_exception(exc):
+                        with lock:
+                            quota_failed.add(route.model)
+                    raise
                 finally:
                     _SELECTED_ROUTE.reset(token)
             return cp.response(owned,preserve_raw=True)
@@ -487,10 +484,15 @@ class FinalReviewCall:
             view = cp._binding_view() if hasattr(cp, '_binding_view') else cp.binding
             return RetainedObject.from_value(_legacy(_request_material_binding,view,invocation.prompt)).sha256
         material=_input_materials(invocation.inputs) or invocation.inputs
-        answer=executor.invoke(materials=material,channel=invocation.stage,primary=primary,
-            alternate=alternate,call=send,key_for_route=effect)
-        # The durable first observation is authoritative for routing even if
-        # another thread was scheduled first while Futures were being read.
+        from .llm_client import CpaCompletion
+        from .producer_final_review_transport import closure_invoke_with_quota_fallback
+        answer,fb_res=closure_invoke_with_quota_fallback(
+            self,lambda:executor.invoke(materials=material,channel=invocation.stage,primary=primary,
+                alternate=alternate,call=send,key_for_route=effect),
+            send,checkpoints,_routed_admission,lambda s,m:cast(str,_legacy(CpaCompletion,s,m)))
+        if fb_res is not None:
+            return fb_res
+        assert answer is not None
         chosen=RetainedObject(selection.read_text().removesuffix('\n')).value()
         if chosen.get('status')!='REPLIED':
             raise ClosureContractError('FINDING_CLOSURE_PRIOR_TRANSPORT_RECOVERY_REQUIRED')
@@ -500,9 +502,6 @@ class FinalReviewCall:
             chosen_raw=chosen_cp.load() if chosen_cp else None
             if chosen_raw is None or core.sha(chosen_raw)!=chosen['raw_sha256']:
                 raise ClosureContractError('FINDING_CLOSURE_ROUTED_RAW_MISSING')
-            # Preserve live-vs-cache provenance: this was a real completed
-            # attempt, even though its canonical bytes are read once here.
-            from .llm_client import CpaCompletion
             answer=cast(str,_legacy(CpaCompletion,str(chosen_raw),selected_model))
         model=getattr(answer,'answering_model',None)
         requested=_text(chosen['requested_model'])

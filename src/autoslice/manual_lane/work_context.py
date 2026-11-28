@@ -60,6 +60,9 @@ class BannerRecord(TypedDict):
     elapsed_s: JsonValue
     kind: str
     usage: JsonValue
+    fallback_from: NotRequired[str]
+    fallback_reason: NotRequired[str]
+    fallback_note: NotRequired[str]
 
 
 class WorkContext(TypedDict):
@@ -154,8 +157,13 @@ def agent_view(context: WorkContext) -> AgentView:
 
 
 def _record(doc: dict[str, JsonValue]) -> BannerRecord:
-    return {"call_id": "work-banner-1", "model": doc.get("model"), "rc": doc.get("rc"),
-            "elapsed_s": doc.get("elapsed_s"), "kind": "vision", "usage": doc.get("usage")}
+    out: BannerRecord = {"call_id": "work-banner-1", "model": doc.get("model"), "rc": doc.get("rc"),
+                         "elapsed_s": doc.get("elapsed_s"), "kind": "vision", "usage": doc.get("usage")}
+    for key in ("fallback_from", "fallback_reason", "fallback_note"):
+        val = doc.get(key)
+        if isinstance(val, str) and val:
+            out[key] = val
+    return out
 
 
 def _read_banner(ctx: Ctx, cut_len: float, out: WorkContext) -> bool:

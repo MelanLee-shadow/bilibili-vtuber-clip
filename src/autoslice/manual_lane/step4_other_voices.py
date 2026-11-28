@@ -28,7 +28,7 @@ from .adapters import remote_python, root_script
 from .lane_rules import rules
 from .runner import Ctx
 from .srt_text import SrtCue
-from .step_io import REMOTE_TOOLS, _local, _run_remote
+from .step_io import REMOTE_TOOLS, _local, _run_remote, vision_fatal_detail, vision_models
 
 if TYPE_CHECKING:
     from .state import CpaEvent
@@ -115,7 +115,10 @@ def read_frames(ctx: Ctx, mode: str, requests: Sequence[FrameRequest], *, script
         earlier = json.loads(reading_local.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         earlier = None
-    if earlier and earlier.get("stamp") == stamp and all(f["ok"] for f in earlier["frames"]):
+    vision_model, _fb_model, _fb_effort = vision_models()
+    if (earlier and earlier.get("stamp") == stamp and all(f["ok"] for f in earlier["frames"])
+            and earlier.get("model") in (None, vision_model)
+            and not any(isinstance(c, dict) and c.get("fallback_from") for c in (earlier.get("calls") or []))):
         return Readings(cast("list[FrameReading]", earlier["frames"]), [],
                         f"看图 {len(requests)} 帧（{mode}）沿用上次同一批帧的读数，未再调用")
     frames_local = _local(ctx, f"speaker/{mode}-frames.json")
@@ -134,7 +137,8 @@ def read_frames(ctx: Ctx, mode: str, requests: Sequence[FrameRequest], *, script
         doc = json.loads(reading_local.read_text(encoding="utf-8"))
     except (RuntimeError, OSError, ValueError) as exc:
         reading_local.unlink(missing_ok=True)
-        return Readings(error=f"看图（{mode}）没有结果：rc={res.rc} {type(exc).__name__} {res.stderr[-160:]}")
+        detail = vision_fatal_detail(res.stdout + "\n" + res.stderr) or res.stderr[-300:]
+        return Readings(error=f"看图（{mode}）没有结果：rc={res.rc} {type(exc).__name__} {detail}")
     frames = cast("list[FrameReading]", doc["frames"])
     calls = call_records(mode, doc.get("calls") or [], purpose)
     doc["stamp"] = stamp
@@ -151,9 +155,11 @@ def read_frames(ctx: Ctx, mode: str, requests: Sequence[FrameRequest], *, script
 def call_records(mode: str, calls: Sequence[dict[str, object]], purpose: str = SCREEN_PURPOSE) -> list[CpaEvent]:
     """The vision requests the tool made (it calls CPA directly, not through _ask_cpa) as cpa records for the state
     and PROCESS: every paid call of a step is in its record (TASK-9), as cover_vision_calls does."""
-    return [cast("CpaEvent", {"call_id": f"speaker-{mode}-{i}", "model": c.get("model"), "effort": VISION_EFFORT,
+    return [cast("CpaEvent", {"call_id": f"speaker-{mode}-{i}", "model": c.get("model"),
+                              "effort": str(c.get("effort") or VISION_EFFORT),
                               "purpose": purpose, "rc": c.get("rc"), "elapsed_s": c.get("elapsed_s"),
-                              "kind": "vision", "usage": c.get("usage")})
+                              "kind": "vision", "usage": c.get("usage"),
+                              **({k: c[k] for k in ("fallback_from", "fallback_reason", "fallback_note") if k in c})})
             for i, c in enumerate(calls, 1)]
 
 

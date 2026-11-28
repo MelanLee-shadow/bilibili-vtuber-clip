@@ -13,14 +13,14 @@ import json
 import os
 import shutil
 import tempfile
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import TypeVar
 
 from src.autoslice.knowledge_graph import (
     NODES_FILE, Edge, Graph, JsonValue, Node, Source, dump_graph, load_graph)
 from src.autoslice.crawl_window import CrawlWindow
-from src.autoslice.news_event_judge import Finding
+from src.autoslice.news_event_judge import Finding, WorkResult
 from src.autoslice.combined_knowledge_graph import load_combined as load_combined
 
 SOURCES_PER_ITEM = 5
@@ -35,12 +35,15 @@ class Collision(ValueError):
     """A finding names something whose id is already taken by a retired node."""
 
 
-def _resolve(known: Graph, *, node_id: str | None, name: str) -> Node | None:
-    """An existing node: the id CPA gave if the graph has it, else the one node with that spelling (an accepted node
-    wins over a candidate of the same spelling)."""
+def _resolve(known: Graph, *, node_id: str | None, name: str, kind: str | None = None) -> Node | None:
+    """An existing node: the id CPA gave if it matches the requested kind, else the one node of that kind with that
+    spelling (an accepted node wins over a candidate of the same spelling)."""
     if node_id and node_id in known.nodes:
-        return known.nodes[node_id]
-    hits = [n for n in known.find(name) if n.status != "retired"]
+        node = known.nodes[node_id]
+        if node.status != "retired" and (kind is None or node.kind == kind):
+            return node
+        return None
+    hits = [n for n in known.find(name) if n.status != "retired" and (kind is None or n.kind == kind)]
     for status in ("accepted", "candidate"):
         same = [n for n in hits if n.status == status]
         if same:
@@ -130,6 +133,114 @@ def candidates_from(findings: Iterable[Finding], known: Graph, repo_edges: set[s
             _put(nodes, key, node, _merge_node)
         for key, edge in more_edges.items():
             _put(edges, key, edge, _merge_edge)
+    return (nodes, edges), left_out
+
+
+def _work_key(text: str) -> str:
+    return "".join(ch for ch in text.casefold() if ch.isalnum())
+
+
+def resolve_work_seed(known: Graph, *, name: str, aliases: Sequence[str] = ()) -> Node | None:
+    """Resolve a work node strictly from the seed: accepted work nodes by name/aliases, or candidate work nodes
+    by canonical seed name/id alone (never by candidate aliases)."""
+    seed_key = _work_key(name)
+    seed_keys = {_work_key(s) for s in (name, *aliases) if _work_key(s)}
+    if not seed_keys:
+        return None
+    accepted_hits = [
+        node for node in known.nodes.values()
+        if node.kind == "work" and node.status == "accepted"
+        and any(_work_key(surface) in seed_keys for surface in node.surfaces())
+    ]
+    if accepted_hits:
+        return accepted_hits[0] if len(accepted_hits) == 1 else None
+    candidate_hits = [
+        node for node in known.nodes.values()
+        if node.kind == "work" and node.status == "candidate"
+        and (node.id == f"work:{name}" or (bool(seed_key) and _work_key(node.names["display"]) == seed_key))
+    ]
+    if candidate_hits:
+        return candidate_hits[0] if len(candidate_hits) == 1 else None
+    return None
+
+
+def candidates_from_work(work: WorkResult, known: Graph, repo_edges: set[str], *, now: str,
+                         seed_name: str | None = None, seed_aliases: Sequence[str] = (),
+                         resolved_work: Node | None = None) -> tuple[Candidates, int]:
+    """Turn a judged work and its characters into candidate nodes and `character_of` edges (`valid=None`).
+
+    The work node is resolved strictly from the seed's own name and aliases (never from model-invented names or
+    returned aliases), and every character edge attaches solely to that seed work node.
+    """
+    nodes: dict[str, Node] = {}
+    edges: dict[str, Edge] = {}
+    left_out = 0
+
+    def upsert_character(char_name: str, *, url: str, aliases: tuple[str, ...] = (),
+                         summary: str = "", pronoun: str | None = None) -> str:
+        found = _resolve(known, node_id=None, name=char_name, kind="character")
+        if found is not None and found.status == "accepted":
+            return found.id
+        if found is None and f"character:{char_name}" in known.nodes:
+            raise Collision(f"character:{char_name}")
+        base = found or Node(id=f"character:{char_name}", kind="character", names={"display": char_name},
+                             aliases=(), summary="", status="candidate", sources=(Source("search", url, now),))
+        display = base.names["display"]
+        others = tuple(dict.fromkeys(a for a in (*aliases, char_name) if a != display))
+        fresh = Node(id=base.id, kind=base.kind, names=base.names, aliases=others, summary=summary,
+                     status="candidate", sources=(Source("search", url, now),), valid=None,
+                     pronoun=pronoun or base.pronoun)
+        _put(nodes, fresh.id, fresh, _merge_node)
+        return fresh.id
+
+    def node_kind(nid: str) -> str | None:
+        node = nodes.get(nid) or known.nodes.get(nid)
+        return node.kind if node is not None else None
+
+    target_name = seed_name or work.name
+    seed_work = resolved_work if resolved_work is not None else resolve_work_seed(
+        known, name=target_name, aliases=seed_aliases)
+    if seed_work is not None:
+        if seed_work.kind != "work":
+            return ({}, {}), 1
+        if seed_work.status == "accepted":
+            work_id = seed_work.id
+        else:
+            display = seed_work.names["display"]
+            aliases = tuple(dict.fromkeys(a for a in seed_aliases if a != display))
+            fresh_work = Node(
+                id=seed_work.id, kind="work", names=seed_work.names, aliases=aliases,
+                summary=work.summary, status="candidate", sources=(Source("search", work.url, now),),
+                valid=None, pronoun=seed_work.pronoun)
+            _put(nodes, fresh_work.id, fresh_work, _merge_node)
+            work_id = fresh_work.id
+    else:
+        candidate_id = f"work:{target_name}"
+        if candidate_id in known.nodes:
+            return ({}, {}), 1
+        aliases = tuple(dict.fromkeys(a for a in seed_aliases if a != target_name))
+        fresh_work = Node(
+            id=candidate_id, kind="work", names={"display": target_name}, aliases=aliases,
+            summary=work.summary, status="candidate", sources=(Source("search", work.url, now),), valid=None)
+        _put(nodes, fresh_work.id, fresh_work, _merge_node)
+        work_id = fresh_work.id
+
+    if node_kind(work_id) != "work":
+        return ({}, {}), 1
+    for char in work.characters:
+        try:
+            char_id = upsert_character(char.name, url=char.url, aliases=char.aliases,
+                                       summary=char.summary, pronoun=char.pronoun)
+        except Collision:
+            left_out += 1
+            continue
+        if node_kind(char_id) != "character":
+            left_out += 1
+            continue
+        edge_id = f"{char_id}|character_of|{work_id}"
+        if char_id != work_id and edge_id not in repo_edges:
+            _put(edges, edge_id, Edge(id=edge_id, type="character_of", from_id=char_id, to_id=work_id,
+                                      status="candidate", sources=(Source("search", char.url, now),)), _merge_edge)
     return (nodes, edges), left_out
 
 

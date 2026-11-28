@@ -14,6 +14,7 @@ EXAMPLES_FILE = "references/examples.md"
 JUDGE_FILE = "references/judge-prompt.md"
 QUALITY_FILE = "references/quality-judge-prompt.md"     # section 八 item 4: how the title is written (section 四)
 SKILL_TITLE_SECTIONS = (("## 四、", "## 五、"), ("## 五、", "## 六、"))
+SKILL_HOOK_SECTION = ("## 三、", "## 四、")     # finding the landings, before the title is written; a method may have none
 JUDGE_RULES_START = "3. **意思**"
 JUDGE_RULES_LAST = "**判官守则**"
 JUDGE_TEMPLATE_SLOT = "@@RULES@@"
@@ -40,6 +41,7 @@ class SourceRecord(TypedDict):
 
 
 class ProjectionData(TypedDict):
+    hooks: str
     sections: str
     judge_rules: str
     examples: str
@@ -106,6 +108,7 @@ def judge_template(judge_file_text: str, name: str = "judge-prompt.md") -> str:
 
 @dataclass(frozen=True)
 class EditorialMethod:
+    hooks: str                    # skill section 三 (finding the landings); "" when the method has no such section
     sections: str                 # skill sections 四 and 五, joined by a blank line
     judge_rules: str
     examples: str
@@ -140,7 +143,9 @@ def extract_title_editorial_method(root: Path) -> EditorialMethod:
     examples, s_examples = _read(f"{name}/{EXAMPLES_FILE}", root / EXAMPLES_FILE)
     judge, s_judge = _read(f"{name}/{JUDGE_FILE}", root / JUDGE_FILE)
     quality, s_quality = _read(f"{name}/{QUALITY_FILE}", root / QUALITY_FILE)
+    has_hooks = any(line.startswith(SKILL_HOOK_SECTION[0]) for line in skill.splitlines())
     return EditorialMethod(
+        hooks=_between(skill, *SKILL_HOOK_SECTION, where="SKILL.md") if has_hooks else "",
         sections="\n\n".join(_between(skill, a, b, where="SKILL.md") for a, b in SKILL_TITLE_SECTIONS),
         judge_rules=judge_rules(skill),
         examples=examples.strip(),
@@ -153,8 +158,10 @@ def extract_title_editorial_method(root: Path) -> EditorialMethod:
 
 
 def format_title_editorial_method(method: EditorialMethod) -> str:
+    name = method.sources[0].name.split('/', 1)[0]
     return "\n\n".join([
-        f"### {method.sources[0].name.split('/', 1)[0]} skill 第四、五节\n" + method.sections,
+        *([f"### {name} skill 第三节（落点怎么找）\n" + method.hooks] if method.hooks else []),
+        f"### {name} skill 第四、五节\n" + method.sections,
         "### skill 第八节第 3 条（事实核与修辞的判法，标题写完后会按它验收）\n" + method.judge_rules,
         "### skill 示范写法（references/examples.md）\n" + method.examples,
     ])
@@ -170,7 +177,7 @@ def projection_data(method: EditorialMethod) -> ProjectionData:
                                   "sha256": method.judge_source.sha256}
     quality_source: SourceRecord = {"name": method.quality_source.name, "path": QUALITY_FILE,
                                     "sha256": method.quality_source.sha256}
-    return {"sections": method.sections, "judge_rules": method.judge_rules, "examples": method.examples,
+    return {"hooks": method.hooks, "sections": method.sections, "judge_rules": method.judge_rules, "examples": method.examples,
             "sources": sources, "judge_template": method.judge_template, "judge_source": judge_source,
             "quality_template": method.quality_template, "quality_source": quality_source}
 
@@ -194,13 +201,15 @@ def load_title_editorial_method() -> EditorialMethod:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise AuthorityError(f"title editorial method unreadable: {path}: {exc}") from exc
-    keys = {"sections", "judge_rules", "examples", "sources", "judge_template", "judge_source", "quality_template",
-            "quality_source"}
+    keys = {"hooks", "sections", "judge_rules", "examples", "sources", "judge_template", "judge_source",
+            "quality_template", "quality_source"}
     if not isinstance(payload, dict) or set(payload) != keys:
         raise AuthorityError(f"title editorial method malformed: {path}: expected {', '.join(sorted(keys))}")
     sections, rules, examples, template, quality = (payload[key] for key in ("sections", "judge_rules", "examples",
                                                                               "judge_template", "quality_template"))
+    hooks = payload["hooks"]
     if (not all(isinstance(value, str) and value.strip() for value in (sections, rules, examples, template, quality))
+            or not isinstance(hooks, str) or (hooks and not hooks.startswith(SKILL_HOOK_SECTION[0]))
             or not sections.startswith(SKILL_TITLE_SECTIONS[0][0])
             or f"\n\n{SKILL_TITLE_SECTIONS[1][0]}" not in sections
             or not rules.startswith(JUDGE_RULES_START) or JUDGE_RULES_LAST not in rules
@@ -214,4 +223,5 @@ def load_title_editorial_method() -> EditorialMethod:
     second = _source_record(raw_sources[1], skill, EXAMPLES_FILE, path)
     judge_source = _source_record(payload["judge_source"], skill, JUDGE_FILE, path)
     quality_source = _source_record(payload["quality_source"], skill, QUALITY_FILE, path)
-    return EditorialMethod(sections, rules, examples, (first, second), template, judge_source, quality, quality_source)
+    return EditorialMethod(hooks, sections, rules, examples, (first, second), template, judge_source, quality,
+                           quality_source)

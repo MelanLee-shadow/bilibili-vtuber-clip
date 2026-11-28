@@ -7,7 +7,8 @@
 # Optional argv 3/4 (维护者): pin a per-stage model chain + reasoning
 # effort at the call site (callers shlex-split the template, so a quoted chain
 # stays one argument).  Precedence: explicit arg > CPA_CHAT_MODELS env > default.
-# Current model policy: GPT-6.1 Sol is the quality default; probes use GPT-6 Luna.
+# Current model policy: GPT-6.2 Sol is the quality default (with Gemini 4 Neon as
+# definite-quota fallback); probes use GPT-6 Luna.
 # Explicit stage effort remains separate and must be tested before lowering it.
 # Older dated incident comments below are historical evidence, not current routing.
 #
@@ -31,7 +32,9 @@ repo_python() {
 # No implicit downgrade to GPT-5.6/5.5/5.4 and no automatic Astra escalation.
 # A top-model pin still uses the shared ladder; explicit experimental routes stay pinned.
 POLICY="$(dirname "$0")/../src/autoslice/cpa_model_ladder.py"
+EXACT_MODEL_PIN=0
 if [ "${6:-}" = --exact-model ]; then
+  EXACT_MODEL_PIN=1
   MODELS="$(python3 "$POLICY" exact-model "${3:-}")"
 elif [ -n "${6:-}" ]; then
   echo "unknown CPA model routing option" >&2; exit 2
@@ -165,6 +168,11 @@ group_capability_body() {
  -- "$RESP_FILE"
 }
 
+quota_refusal_code() {
+  [[ -s "$RESP_FILE" ]] || return 1
+  python3 "$POLICY" is-quota-file "$RESP_FILE"
+}
+
 # Service-class failures are worth waiting out; everything else is not.
 transient_failure() {
   local http_code="$1" curl_exit="$2" empty_completion="$3" group_cap="${4:-0}"
@@ -277,7 +285,13 @@ local_failure() {
 MODEL_INDEX=0
 MODEL_LIMIT="$ATTEMPTS_PER_MODEL"
 [[ "$TRANSIENT_ATTEMPTS_PER_MODEL" -le "$MODEL_LIMIT" ]] || MODEL_LIMIT="$TRANSIENT_ATTEMPTS_PER_MODEL"
-for MODEL in $MODELS; do
+MODEL_QUEUE=($MODELS)
+QUOTA_FALLBACK_TRIED=0
+PRIMARY_QUOTA_NOTE=""
+QUEUE_IDX=0
+while (( QUEUE_IDX < ${#MODEL_QUEUE[@]} )); do
+MODEL="${MODEL_QUEUE[$QUEUE_IDX]}"
+QUEUE_IDX=$((QUEUE_IDX + 1))
 MODEL_INDEX=$((MODEL_INDEX + 1))
 if [[ "$OUTER_ATTEMPT" -gt 0 && "$MODEL_INDEX" -lt "$MODEL_COUNT" && "$OUTER_ATTEMPT" -gt $((MODEL_INDEX * MODEL_LIMIT)) ]]; then
   continue
@@ -303,6 +317,7 @@ while :; do
   CURL_EXIT=0
   EMPTY_COMPLETION=0
   GROUP_CAP=0
+  QUOTA_CODE=""
   UPSTREAM_NOTE=""
   # curl 只在真的收到响应体时才写 -o；连接阶段就死掉的那一枪会把上一次尝试的
   # 正文原样留在文件里。分组抽签判据要读这个文件，所以每枪先清空，杜绝拿上一
@@ -356,8 +371,28 @@ PY
   if [[ "$HTTP_CODE" == "400" ]] && group_capability_body; then
     GROUP_CAP=1
     UPSTREAM_NOTE=" upstream_code=group_capability_unavailable"
+  elif QUOTA_CODE="$(quota_refusal_code 2>/dev/null)"; then
+    UPSTREAM_NOTE=" upstream_code=${QUOTA_CODE}"
   fi
   echo "[cpa] model=${MODEL} attempt=${attempt} http=${HTTP_CODE} curl_exit=${CURL_EXIT} empty_completion=${EMPTY_COMPLETION} body_bytes=$(body_bytes) result=failed${UPSTREAM_NOTE}" >&2
+  if [[ -n "$QUOTA_CODE" ]]; then
+    if [[ "${AUTOSLICE_CPA_DEFER_QUOTA_FALLBACK:-0}" != "1" && "$EXACT_MODEL_PIN" == "0" && "$QUOTA_FALLBACK_TRIED" == "0" ]]; then
+      FB_MODEL="$(python3 "$POLICY" quota-fallback)"
+      if [[ -n "$FB_MODEL" && "$FB_MODEL" != "$MODEL" ]]; then
+        QUOTA_FALLBACK_TRIED=1
+        PRIMARY_QUOTA_NOTE="${MODEL} http=${HTTP_CODE} ${QUOTA_CODE}"
+        MODEL_QUEUE=("${MODEL_QUEUE[@]:0:$QUEUE_IDX}" "$FB_MODEL")
+        echo "[cpa] model=${MODEL} quota exhausted (${QUOTA_CODE}), falling back to ${FB_MODEL}" >&2
+        break
+      fi
+    fi
+    if [[ -n "$PRIMARY_QUOTA_NOTE" ]]; then
+      echo "CPA /responses quota fallback failed: primary ${PRIMARY_QUOTA_NOTE}; fallback ${MODEL} http=${HTTP_CODE} ${QUOTA_CODE}" >&2
+    else
+      echo "[cpa] model=${MODEL} deterministic quota refusal http=${HTTP_CODE} (${QUOTA_CODE})" >&2
+    fi
+    exit 1
+  fi
   if transient_failure "$HTTP_CODE" "$CURL_EXIT" "$EMPTY_COMPLETION" "$GROUP_CAP"; then
     if [[ "$OUTER_ATTEMPT" -gt 0 ]]; then
       echo "[cpa-retry] transient=1" >&2
@@ -368,7 +403,11 @@ PY
       max_attempts="$TRANSIENT_ATTEMPTS_PER_MODEL"
     fi
   else
-    echo "[cpa] model=${MODEL} deterministic http=${HTTP_CODE}, no retry or fallback" >&2
+    if [[ -n "$PRIMARY_QUOTA_NOTE" ]]; then
+      echo "CPA /responses quota fallback failed: primary ${PRIMARY_QUOTA_NOTE}; fallback ${MODEL} deterministic http=${HTTP_CODE}" >&2
+    else
+      echo "[cpa] model=${MODEL} deterministic http=${HTTP_CODE}, no retry or fallback" >&2
+    fi
     exit 1
   fi
   if [[ "$attempt" -ge "$max_attempts" ]]; then
@@ -378,5 +417,9 @@ PY
   backoff_sleep "$attempt"
 done
 done
-echo "CPA /responses failed on all models: $MODELS" >&2
+if [[ -n "$PRIMARY_QUOTA_NOTE" ]]; then
+  echo "CPA /responses quota fallback failed: primary ${PRIMARY_QUOTA_NOTE}; fallback ${MODEL} also failed" >&2
+else
+  echo "CPA /responses failed on all models: ${MODEL_QUEUE[*]}" >&2
+fi
 exit 1
