@@ -9,6 +9,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import json
+import shlex
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, TypedDict, cast
@@ -32,6 +33,7 @@ from .adapters import remote_python
 from .layout import layout
 from .runner import Ctx, StepOutcome
 from .srt_text import SrtCue, _context_lines, parse_srt
+from .state import TRANSCRIPT_CUT_MISMATCH as TRANSCRIPT_CUT_MISMATCH, is_recut_pending
 from .step3_adjudicate import (
     STRICT_RULES,
     _adjudicate_all,
@@ -69,8 +71,11 @@ from .step3_evidence import (
 from .step4_speaker import _mixed_by_cue, _speaker_chunks
 from .step_import import _step3_import, imported
 from .step_io import REMOTE_TOOLS, _ask_cpa, _clip, _fail, _local, _run_remote, linked_session, two_speaker_doubts
+from .transcript_cut_guard import transcript_cut_guard, transcript_cut_mismatch
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from .state import ClipInfo, CpaEvent
     from .step3_evidence import CueEvidence, IvanLabel, IvanSection
 
@@ -98,6 +103,8 @@ def step3_subtitles(ctx: Ctx) -> StepOutcome:
         if stop is not None:
             return dataclasses.replace(outcome, ok=False, reason=stop[0], note=stop[1])
     outcome = writing_canon.settle_step3(ctx, outcome, verbatim=bool(rec and rec.get("verbatim")))
+    if outcome.ok and (why := transcript_cut_mismatch(ctx.clip_dir)):
+        return dataclasses.replace(outcome, ok=False, reason=TRANSCRIPT_CUT_MISMATCH, note=why)
     if outcome.ok:          # beside the decided subtitles, which it does not change
         sound_events.settle(ctx, outcome.process)
     return outcome
@@ -142,38 +149,138 @@ def _step3_decided(ctx: Ctx) -> StepOutcome:
 
 FREE_ASR_TOOL = REMOTE_TOOLS / "free_asr_paced.py"
 FREE_ASR_PROVIDERS = ("bcut", "jianying")
+ASR_STAMP = "asr/interval.json"
+
+
+def _asr_stamp(clip: ClipInfo) -> dict[str, str | int]:
+    return {"source_name": str(clip["source_name"]), "start_ms": int(clip["start_ms"]), "end_ms": int(clip["end_ms"])}
+
+
+def _asr_stamp_text(stamp: Mapping[str, str | int]) -> str:
+    return json.dumps(stamp, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _stamp_from_output(stdout: str) -> dict[str, object] | None:
+    for line in stdout.splitlines():
+        if line.startswith("ASR_STAMP "):
+            try:
+                doc = json.loads(line.removeprefix("ASR_STAMP ").strip())
+            except ValueError:
+                return None
+            if isinstance(doc, dict):
+                return doc
+    return None
+
+
+def _has_nonempty_srt(path: Path) -> bool:
+    return path.is_file() and path.stat().st_size > 0
+
+
+def _asr_stamp_matches(clip_dir: Path, expected: dict[str, str | int]) -> bool | None:
+    """Return True if `asr/interval.json` equals `expected`, None if missing, False if differing/corrupt."""
+    stamp_path = clip_dir / ASR_STAMP
+    if not stamp_path.is_file():
+        return None
+    try:
+        doc = json.loads(stamp_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return (isinstance(doc, dict)
+            and doc.get("source_name") == expected["source_name"]
+            and type(doc.get("start_ms")) is int and doc.get("start_ms") == expected["start_ms"]
+            and type(doc.get("end_ms")) is int and doc.get("end_ms") == expected["end_ms"])
 
 
 def free_asr_body(rd: str, *, media: str | None = None,
-                  providers: Sequence[str] = FREE_ASR_PROVIDERS) -> tuple[str, int]:
-    """The whole-clip BCUT / jianying recognition on the media host, paced (U152; free_asr_paced.py, the pacing in
-    the profile's manual_lane.json free_asr).  Returns (body, timeout): the timeout covers the rate-limit cooldowns.
-    `media` and `providers` default to the clip's cut and both providers; a same-session compilation (compilation.py)
-    names its own media file and asks for BCUT only."""
+                  providers: Sequence[str] = FREE_ASR_PROVIDERS,
+                  stamp: Mapping[str, str | int] | None = None) -> tuple[str, int]:
+    """The whole-clip BCUT / jianying recognition on the media host, paced (U152; free_asr_paced.py).
+    When `stamp` is supplied, the remote script itself checks `<rd>/asr/interval.json`: on mismatch or absence it
+    removes stale provider outputs and writes the stamp before fetching only non-empty-missing providers."""
     pace = layout().free_asr
+    base_cmd = (f"{rd}/tools/free_asr_paced.py {media or f'{rd}/cut/cut.mp4'} {rd}/asr "
+                f"{layout().free_asr_state_dir} "
+                f"{pace.min_interval_s:g} {pace.rate_limit_cooldown_s:g} {pace.attempts} "
+                f"{pace.rate_limit_attempts}")
+    if stamp is None:
+        body = (f"mkdir -p {rd}/asr {rd}/tools\n"
+                + remote_python(f"{base_cmd} {' '.join(providers)}") + "\n"
+                + "if " + " && ".join(f"test -s {rd}/asr/{p}.srt" for p in providers)
+                + "; then echo ASR_OK; else echo ASR_MISSING; fi\n")
+        return body, 3600 + int(pace.rate_limit_attempts * pace.rate_limit_cooldown_s)
+
+    want_stamp = _asr_stamp_text(stamp)
+    all_stale = " ".join(f"{rd}/asr/{p}.srt {rd}/asr/{p}.json" for p in FREE_ASR_PROVIDERS)
     body = (f"mkdir -p {rd}/asr {rd}/tools\n"
-            + remote_python(f"{rd}/tools/free_asr_paced.py {media or f'{rd}/cut/cut.mp4'} {rd}/asr "
-                            f"{layout().free_asr_state_dir} "
-                            f"{pace.min_interval_s:g} {pace.rate_limit_cooldown_s:g} {pace.attempts} "
-                            f"{pace.rate_limit_attempts} {' '.join(providers)}") + "\n"
+            f"want_stamp={shlex.quote(want_stamp)}\n"
+            f"stamp_file={shlex.quote(f'{rd}/{ASR_STAMP}')}\n"
+            'if [ ! -f "$stamp_file" ] || [ "$(cat "$stamp_file" 2>/dev/null)" != "$want_stamp" ]; then\n'
+            f"  rm -f {all_stale}\n"
+            '  printf \'%s\\n\' "$want_stamp" > "$stamp_file"\n'
+            "fi\n"
+            'printf \'ASR_STAMP %s\\n\' "$want_stamp"\n'
+            'missing=""\n'
+            f"for p in {' '.join(providers)}; do\n"
+            f'  if [ ! -s {shlex.quote(rd)}/asr/"$p".srt ]; then\n'
+            '    missing="${missing:+$missing }$p"\n'
+            "  fi\n"
+            "done\n"
+            'if [ -n "$missing" ]; then\n'
+            "  " + remote_python(f"{base_cmd} $missing") + "\n"
+            "fi\n"
             + "if " + " && ".join(f"test -s {rd}/asr/{p}.srt" for p in providers)
             + "; then echo ASR_OK; else echo ASR_MISSING; fi\n")
     return body, 3600 + int(pace.rate_limit_attempts * pace.rate_limit_cooldown_s)
 
 
 def _fetch_free_asr(ctx: Ctx) -> StepOutcome | None:
-    """BCUT and jianying for the whole clip, reused when their products are already here (the cut is fixed by then).
-    Both are required: a provider that is given up (rate limited) or fails stops the step (ASR_MISSING_SOURCE)."""
+    """BCUT and jianying for the whole clip: accumulate non-empty outputs across attempts for the same remote/local
+    interval stamp, reuse an unstamped legacy pair when no re-cut is pending, and restamp locally only after remote execution."""
     rd = ctx.remote_dir
-    if all(_local(ctx, f"asr/{p}.srt").exists() for p in FREE_ASR_PROVIDERS):
+    expected = _asr_stamp(_clip(ctx))
+    stamp_match = _asr_stamp_matches(ctx.clip_dir, expected)
+    pending = is_recut_pending(ctx.state.data)
+    if stamp_match is None and not pending and all(_has_nonempty_srt(ctx.clip_dir / f"asr/{p}.srt") for p in FREE_ASR_PROVIDERS):
         return None
+    keep_existing = (stamp_match is True and not pending)
+    if keep_existing:
+        missing = [p for p in FREE_ASR_PROVIDERS if not _has_nonempty_srt(ctx.clip_dir / f"asr/{p}.srt")]
+        for name in missing:
+            (ctx.clip_dir / f"asr/{name}.srt").unlink(missing_ok=True)
+            (ctx.clip_dir / f"asr/{name}.json").unlink(missing_ok=True)
+        if not missing:
+            return None
+        providers: tuple[str, ...] = tuple(missing)
+    else:
+        for name in FREE_ASR_PROVIDERS:
+            (ctx.clip_dir / f"asr/{name}.srt").unlink(missing_ok=True)
+            (ctx.clip_dir / f"asr/{name}.json").unlink(missing_ok=True)
+        (ctx.clip_dir / ASR_STAMP).unlink(missing_ok=True)
+        providers = FREE_ASR_PROVIDERS
     ctx.adapters.remote.put(FREE_ASR_TOOL, f"{rd}/tools/free_asr_paced.py")
-    body, timeout = free_asr_body(rd)
+    body, timeout = free_asr_body(rd, providers=providers, stamp=expected)
     res = _run_remote(ctx, "s3-asr", body, timeout=timeout)
+    remote_stamp = _stamp_from_output(res.stdout)
+    if remote_stamp is not None and remote_stamp != expected:
+        return _fail("ASR_MISSING_SOURCE", f"remote stamp mismatch: got={remote_stamp!r} want={expected!r}")
     if "ASR_OK" not in res.stdout:
+        if remote_stamp == expected:
+            _local(ctx, ASR_STAMP).write_text(_asr_stamp_text(expected) + "\n", encoding="utf-8")
+        for name in providers:
+            if f"FREE_ASR {name} OK" in res.stdout:
+                dest = _local(ctx, f"asr/{name}.srt")
+                ctx.adapters.remote.get(f"{rd}/asr/{name}.srt", dest)
+                if not _has_nonempty_srt(dest):
+                    dest.unlink(missing_ok=True)
         return _fail("ASR_MISSING_SOURCE", f"rc={res.rc} stdout={res.stdout[-200:]} stderr={res.stderr[-300:]}")
-    for name in FREE_ASR_PROVIDERS:
-        ctx.adapters.remote.get(f"{rd}/asr/{name}.srt", _local(ctx, f"asr/{name}.srt"))
+    for name in providers:
+        dest = _local(ctx, f"asr/{name}.srt")
+        ctx.adapters.remote.get(f"{rd}/asr/{name}.srt", dest)
+        if not _has_nonempty_srt(dest):
+            dest.unlink(missing_ok=True)
+    if not all(_has_nonempty_srt(ctx.clip_dir / f"asr/{p}.srt") for p in FREE_ASR_PROVIDERS):
+        return _fail("ASR_MISSING_SOURCE", "recogniser returned an empty transcript")
+    _local(ctx, ASR_STAMP).write_text(_asr_stamp_text(expected) + "\n", encoding="utf-8")
     return None
 
 
@@ -181,6 +288,8 @@ def _step3_body(ctx: Ctx) -> StepOutcome:
     failure = _fetch_free_asr(ctx)
     if failure is not None:
         return failure
+    if mismatch := transcript_cut_guard(ctx.clip_dir, include_final=False):
+        return mismatch
     bcut = parse_srt(_local(ctx, "asr/bcut.srt").read_text(encoding="utf-8"))
     jianying = parse_srt(_local(ctx, "asr/jianying.srt").read_text(encoding="utf-8"))
     clip = _clip(ctx)

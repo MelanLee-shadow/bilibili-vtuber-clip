@@ -692,7 +692,7 @@ class SameDirRemote(LocalRemote):
     does is scripted as with FakeRemote (`on_script(name, body, remote)`; `remote.files[path] = data` writes the file where
     the script would have), and nothing is executed: no ffmpeg, no ssh."""
 
-    REAL_SCRIPTS = ("revise-copy-cut", "redo-replace-source", "redo-discard-source", "compile-clean")      # plain mkdir/cp/mv/rm
+    REAL_SCRIPTS = ("revise-copy-cut", "redo-replace-source", "redo-discard-source", "redo-clean-remote", "compile-clean")      # plain mkdir/cp/mv/rm
 
     def __init__(self, scripts_dir: str, on_script=None):
         super().__init__(scripts_dir=scripts_dir)

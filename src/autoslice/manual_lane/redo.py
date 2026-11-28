@@ -37,6 +37,8 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
+import shlex
 import shutil
 import uuid
 from collections.abc import Mapping, MutableMapping, Sequence
@@ -48,7 +50,7 @@ from .reselect import SUPERSEDED
 from .runner import Ctx, Step
 from .stage_package import forget_review, package_dir
 from .stages import DEPENDS, STEPS
-from .state import ClipState, StateError
+from .state import RECUT_PENDING, ClipState, StateError
 from .step_import import IMPORT_DIR
 from .trim_run import AdaptersFor
 
@@ -57,6 +59,10 @@ if TYPE_CHECKING:
 
 RESIDUE_DIRS = {"package": ("pkg", "fmr", "fmr_source")}     # built by the step, found and reused by it, not recorded
 KEPT_DIRS = (IMPORT_DIR, cover_import.IMPORT_DIR)             # the owner's finished subtitles and cover
+REMOTE_RECUT_DIRS = ("asr", "listen", "witness", "speaker", "burn", "cover", "tags", "fmr", "pkg")
+LOCAL_RECUT_DIRS = ("asr", "listen", "witness")
+REMOTE_CLEAN_SCRIPT = "redo-clean-remote"
+_PLAIN_CID_RE = re.compile(r"[A-Za-z0-9_.-]+")
 
 
 class RedoResult(TypedDict):
@@ -67,6 +73,7 @@ class RedoResult(TypedDict):
     not_recorded: list[str]   # of those, the steps that had no record (never run, or already forgotten): nothing to clear
     summary: str
     deleted_files: int
+    remote_removed: list[str]
     source_rebuilt: bool
     fresh_title: bool
     backup: str
@@ -95,16 +102,25 @@ def _inside(path: Path, clip_dir: Path) -> bool:
     return target.is_relative_to(root) and not any(target.is_relative_to(root / kept) for kept in KEPT_DIRS)
 
 
-def _delete_products(state: ClipState, steps: list[Step], clip_dir: Path) -> int:
+def _collect_products(state: ClipState, steps: Sequence[Step]) -> list[Path]:
+    return [Path(value) for step in steps for value in (state.step(step.key).get("products") or {}).values()]
+
+
+def _delete_products(product_paths: Sequence[Path], steps: list[Step], clip_dir: Path) -> int:
     deleted = 0
+    for path in product_paths:
+        if path.is_file() and _inside(path, clip_dir):
+            path.unlink()
+            deleted += 1
     for step in steps:
-        for value in (state.step(step.key).get("products") or {}).values():
-            path = Path(value)
-            if path.is_file() and _inside(path, clip_dir):
-                path.unlink()
-                deleted += 1
         for name in RESIDUE_DIRS.get(step.key, ()):
-            shutil.rmtree(clip_dir / name, ignore_errors=True)
+            residue = clip_dir / name
+            if not residue.exists():
+                continue
+            try:      # a directory the step finds and reuses: one that cannot be removed would be reused for the new clip
+                shutil.rmtree(residue)
+            except OSError as exc:
+                raise StateError(f"cannot remove {residue}: {exc}") from exc
     return deleted
 
 
@@ -166,6 +182,89 @@ def _carry_receipt_involved(clip_dir: Path, *, step6_status: str) -> str:
     return ""
 
 
+def _validate_remote_recut(cid: str, clip_cid: object, remote_dir: object) -> str:
+    """Validate clip id and remote work directory before any recut deletion."""
+    if not isinstance(cid, str) or cid in (".", "..") or not _PLAIN_CID_RE.fullmatch(cid):
+        raise StateError(f"invalid clip id for recut cleanup: {cid!r}")
+    if clip_cid != cid:
+        raise StateError(f"clip.cid {clip_cid!r} does not match state id {cid!r}")
+    if not isinstance(remote_dir, str) or not remote_dir or any(ch in remote_dir for ch in "\x00\r\n"):
+        raise StateError(f"invalid remote_dir for recut cleanup: {remote_dir!r}")
+    parts = remote_dir.split("/")
+    if not remote_dir.startswith("/") or "" in parts[1:] or "." in parts or ".." in parts or parts[-1] != cid:
+        raise StateError(f"remote_dir {remote_dir!r} does not end with clip id {cid!r}")
+    return remote_dir
+
+
+def _validate_local_recut_dirs(clip_dir: Path) -> None:
+    root = clip_dir.resolve()
+    for name in LOCAL_RECUT_DIRS:
+        target = clip_dir / name
+        if target.is_symlink() or (target.exists() and not target.resolve().is_relative_to(root)):
+            raise StateError(f"refusing to delete local directory outside clip_dir: {target}")
+
+
+def _clean_remote_for_recut(ctx: Ctx, rd: str) -> list[str]:
+    dirs = " ".join(REMOTE_RECUT_DIRS)
+    body = (
+        "set -e\n"
+        f"rd={shlex.quote(rd)}\n"
+        'if [ -d "$rd" ]; then\n'
+        f"  for d in {dirs}; do\n"
+        '    if [ -e "$rd/$d" ] || [ -L "$rd/$d" ]; then\n'
+        '      rm -rf -- "$rd/$d"\n'
+        "      printf 'REMOVED %s\\n' \"$d\"\n"
+        "    fi\n"
+        "  done\n"
+        "fi\n"
+    )
+    res = ctx.adapters.remote.run_script(name=REMOTE_CLEAN_SCRIPT, body=body, timeout=300)
+    if res.rc != 0:
+        raise StateError(f"remote recut cleanup failed: rc={res.rc} {res.stderr[-300:]}")
+    return [line.removeprefix("REMOVED ").strip()
+            for line in res.stdout.splitlines()
+            if line.startswith("REMOVED ") and line.removeprefix("REMOVED ").strip()]
+
+
+def invalidate_for_recut(ctx: Ctx) -> tuple[int, list[str], bool]:
+    """Run all local invalidation, compilation/trim source rebuild, and remote cleanup idempotently from `recut_pending`."""
+    clip = ctx.state.data["clip"]
+    rd = _validate_remote_recut(ctx.state.path.stem, clip.get("cid"), clip.get("remote_dir"))
+    _validate_local_recut_dirs(ctx.clip_dir)
+    marker = ctx.state.data.get(RECUT_PENDING)
+    if isinstance(marker, Mapping):
+        raw_products = marker.get("products")
+        product_paths = [Path(str(p)) for p in raw_products] if isinstance(raw_products, list) else []
+        needs_rebuild = bool(marker.get("rebuild"))
+    else:
+        product_paths = []
+        needs_rebuild = compilation.load_manifest(ctx.clip_dir) is not None
+
+    recut_steps = closure(resolve_step("cut"))
+    deleted = _delete_products(product_paths, recut_steps, ctx.clip_dir)
+    for name in LOCAL_RECUT_DIRS:
+        if (p := ctx.clip_dir / name).is_dir():
+            shutil.rmtree(p)
+    with ctx.state.lock:
+        deleted += forget_review(ctx.state, ctx.clip_dir)
+        cast("MutableMapping[str, JsonValue]", ctx.state.data).pop("reviewed_tags", None)
+        ctx.state.save()
+
+    rebuilt = False
+    if needs_rebuild:
+        compilation.rebuild_media(clip_dir=ctx.clip_dir, remote_dir=rd, remote=ctx.adapters.remote)
+        rebuilt = True
+        with ctx.state.lock:
+            cast("MutableMapping[str, JsonValue]", ctx.state.data)[RECUT_PENDING] = {"cleaned": False, "rebuild": False}
+            ctx.state.save()
+
+    remote_removed = _clean_remote_for_recut(ctx, rd)
+    with ctx.state.lock:
+        cast("MutableMapping[str, JsonValue]", ctx.state.data)[RECUT_PENDING] = {"cleaned": True, "rebuild": False}
+        ctx.state.save()
+    return deleted, remote_removed, rebuilt
+
+
 def redo_clip(*, task: Path, cid: str, start: str, adapters_for: AdaptersFor,
               fresh_title: bool = False) -> RedoResult:
     """Forget step `start` of clip `cid` and its dependants (see the module docstring).  StateError with the reason when it
@@ -190,9 +289,10 @@ def redo_clip(*, task: Path, cid: str, start: str, adapters_for: AdaptersFor,
               adapters=adapters_for(clip["remote_dir"]))
     if "package" in keys and (refused := package_guards.protected(ctx, package_dir(ctx))) is not None:
         raise StateError(f"{refused.reason}: {refused.note}")
-    rebuilt = "cut" in keys and compilation.load_manifest(clip_dir) is not None
-    if rebuilt:
-        compilation.rebuild_media(clip_dir=clip_dir, remote_dir=clip["remote_dir"], remote=ctx.adapters.remote)
+    recut = "cut" in keys
+    if recut:
+        _validate_remote_recut(cid, clip.get("cid"), clip.get("remote_dir"))
+        _validate_local_recut_dirs(clip_dir)
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     backup = clip_dir / "redo" / f"state-{stamp}.json"
     backup.parent.mkdir(parents=True, exist_ok=True)
@@ -201,6 +301,7 @@ def redo_clip(*, task: Path, cid: str, start: str, adapters_for: AdaptersFor,
     not_recorded = [key for key in keys if key not in cleared]
     summary = (f"范围内的步骤（closure）：{', '.join(keys)}；实际清掉记录的步骤（cleared）：{', '.join(cleared) or '无'}；"
                f"范围内但本来就没有记录、无需清的步骤（not_recorded）：{', '.join(not_recorded) or '无'}")
+    product_paths = _collect_products(state, steps)
     prev_title = ""
     prev_attempt = 0
     carry_note = ""
@@ -221,27 +322,58 @@ def redo_clip(*, task: Path, cid: str, start: str, adapters_for: AdaptersFor,
         carry_note = _carry_receipt_involved(clip_dir, step6_status=step6_status)
     if carry_note:
         summary = f"{summary}；{carry_note}"
-    deleted = _delete_products(state, steps, clip_dir)
+    fresh_payload: dict[str, JsonValue] | None = None
     if fresh_title:
-        receipt = clip_dir / title_acceptance.RECEIPT
-        if receipt.is_file() and _inside(receipt, clip_dir):
-            receipt.unlink()
-            deleted += 1
-        fresh_payload: dict[str, JsonValue] = {"request": f"{stamp}-{uuid.uuid4().hex[:8]}", "attempt": prev_attempt}
+        fresh_payload = {"request": f"{stamp}-{uuid.uuid4().hex[:8]}", "attempt": prev_attempt}
         if prev_title:
             fresh_payload["previous_title"] = prev_title
-        cast("MutableMapping[str, JsonValue]", state.data)[title_acceptance.FRESH_TITLE_KEY] = fresh_payload
-    for key in cleared:
-        state.data["steps"].pop(key)
-    if "review" in keys:
-        deleted += forget_review(state, clip_dir)
-        if "tags" in keys:
-            cast("MutableMapping[str, JsonValue]", state.data).pop("reviewed_tags", None)
-    state.save()
+    remote_removed: list[str] = []
+    rebuilt = False
+    if recut:
+        needs_rebuild = compilation.load_manifest(clip_dir) is not None
+        pending_products = [str(p) for p in product_paths]
+        if fresh_payload is not None:
+            pending_products.append(str(clip_dir / title_acceptance.RECEIPT))
+            cast("MutableMapping[str, JsonValue]", state.data)[title_acceptance.FRESH_TITLE_KEY] = fresh_payload
+        # One atomic pre-invalidation save persists pending products, rebuild flag, and drops step records from cut
+        # onward so any interrupted rebuild or cleanup is safely resumed by invalidate_for_recut before cutting.
+        cast("MutableMapping[str, JsonValue]", state.data)[RECUT_PENDING] = {
+            "cleaned": False,
+            "products": cast("list[JsonValue]", pending_products),
+            "rebuild": needs_rebuild,
+        }
+        imported_rec = state.data.get("imported")
+        if (isinstance(imported_rec, dict)
+                and "cut_start_ms" not in imported_rec
+                and "cut_end_ms" not in imported_rec
+                and isinstance(clip.get("start_ms"), int)
+                and isinstance(clip.get("end_ms"), int)):
+            imported_rec["cut_start_ms"] = clip["start_ms"]
+            imported_rec["cut_end_ms"] = clip["end_ms"]
+        for key in cleared:
+            state.data["steps"].pop(key)
+        state.save()
+        deleted, remote_removed, rebuilt = invalidate_for_recut(ctx)
+        summary = f"{summary}；主机已清派生目录：{', '.join(remote_removed) if remote_removed else '无'}"
+    else:
+        deleted = _delete_products(product_paths, steps, clip_dir)
+        if fresh_payload is not None:
+            receipt = clip_dir / title_acceptance.RECEIPT
+            if receipt.is_file() and _inside(receipt, clip_dir):
+                receipt.unlink()
+                deleted += 1
+            cast("MutableMapping[str, JsonValue]", state.data)[title_acceptance.FRESH_TITLE_KEY] = fresh_payload
+        for key in cleared:
+            state.data["steps"].pop(key)
+        if "review" in keys:
+            deleted += forget_review(state, clip_dir)
+            if "tags" in keys:
+                cast("MutableMapping[str, JsonValue]", state.data).pop("reviewed_tags", None)
+        state.save()
     with (clip_dir / "PROCESS.md").open("a", encoding="utf-8") as fh:
         fh.write(f"\n## 重做 · 从 {keys[0]} · {stamp}\n\n- {summary}；"
                  f"状态备份 {backup}；{'拼接源已按记录的方案重新生成' if rebuilt else '画面不来自拼接源，未重建'}"
                  + ("；要求重起标题（已清除原有过判记录）" if fresh_title else "") + "\n")
     return {"cid": cid, "start": keys[0], "closure": keys, "cleared": cleared, "not_recorded": not_recorded, "summary": summary,
-            "deleted_files": deleted,
+            "deleted_files": deleted, "remote_removed": remote_removed,
             "source_rebuilt": rebuilt, "fresh_title": fresh_title, "backup": str(backup)}

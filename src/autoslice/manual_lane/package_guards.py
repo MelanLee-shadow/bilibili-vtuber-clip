@@ -34,7 +34,13 @@ from . import doubt_policy, normalize, package_audio, revision_authority, subtit
 from .publication_id import publication_cid
 from .runner import Ctx, StepOutcome
 from .srt_text import SrtCue, parse_srt
+from .state import TRANSCRIPT_CUT_MISMATCH as TRANSCRIPT_CUT_MISMATCH
 from .step_io import _fail
+from .transcript_cut_guard import (
+    CUT_DURATION_TOLERANCE_S as CUT_DURATION_TOLERANCE_S,
+    transcript_cut_guard as transcript_cut_guard,
+    transcript_cut_mismatch as transcript_cut_mismatch,
+)
 
 SPEECH_WITHOUT_SUBTITLES = "SPEECH_WITHOUT_SUBTITLES"
 PUBLISHED_PACKAGE_PROTECTED = "PUBLISHED_PACKAGE_PROTECTED"
@@ -193,6 +199,8 @@ def check(ctx: Ctx, old_package: Path) -> tuple[StepOutcome | None, list[str]]:
     notes = [*notes, *audio_notes]
     if why := title_acceptance.problem(ctx.clip_dir):      # the title went out only if both judges passed (skill 八.3-4)
         return _fail(title_acceptance.NOT_ACCEPTED, why), []
+    if refused := transcript_cut_guard(ctx.clip_dir):
+        return refused, []
     dictation_file = ctx.clip_dir / "asr/bcut.srt"
     if not dictation_file.is_file():
         return None, [*notes, "没有机器听写（asr/bcut.srt），未做有声无字幕检查"]

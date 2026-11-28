@@ -914,7 +914,7 @@ def _cover_lines_ok(lines: Sequence[str]) -> bool:
     return _cover_lines_shape_ok(lines) and not cover_lines_overflow(lines)
 
 
-def _cover_regions(boxes: Mapping[str, list[list[int]]] | None) -> tuple[list[list[int]], list[list[int]]]:
+def _cover_regions(boxes: Mapping[str, list[list[int]] | None] | None) -> tuple[list[list[int]], list[list[int]]]:
     """The regions to blur (danmaku, avoiding people and faces) and the other people's boxes to keep."""
     danmaku = boxes.get("danmaku") if boxes else None
     person = boxes.get("person") if boxes else None
@@ -977,7 +977,7 @@ def _short_for_many(ctx: Ctx, title: str, cover_lines: list[str], names: Sequenc
     and the frame are made, which are made for the words that go out."""
     table = cover_layout_rotation.load_table(cover_layout_table())
     limit, least = int(table["short_punch_chars"]), int(table["short_punch_chars_people_min"])
-    people = 1 + len(cover_guests.roster(ctx, names, None, cover_lines)["needed_on_cover"])
+    people = 1 + len(cover_guests.roster(ctx, names, None, cover_lines, title=title)["needed_on_cover"])
     if people < least or len(cover_lines[-1]) <= limit:
         return cover_lines, False
     _track, context, srt_text = title_inputs(ctx, names)
@@ -1587,7 +1587,7 @@ def cover_batch_lock(ctx: Ctx) -> Iterator[None]:
 
 def _cover_held(ctx: Ctx, cues: Sequence[SrtCue], cover_lines: list[str], brief: CoverBrief, names: Sequence[str], title: str,
                 title_path: Path, cands_path: Path, frame_t: float, frame_s: float, blur: list[list[int]], keep: list[list[int]],
-                boxes: Mapping[str, list[list[int]]] | None, cpa_calls: list[CpaEvent], process: list[str], *,
+                boxes: Mapping[str, list[list[int]] | None] | None, cpa_calls: list[CpaEvent], process: list[str], *,
                 wordy: bool = False) -> StepOutcome:
     """step6_title_cover from the cover plan on, under cover_batch_lock.  `wordy`: _short_for_many's."""
     plan = cover_plan(ctx, cover_lines, brief, names)

@@ -265,5 +265,203 @@ def test_the_judge_is_asked_whether_the_picture_adds_an_object_the_source_does_n
     # 475420 (11-14): a sticker drew her holding a lit cigarette; in the clip she only mimed it.  The judge's
     # source_faithful axis names that case, and its no vetoes the picture (the test above).
     from src.autoslice.manual_lane.step_io import PROMPTS
-    line = next(l for l in (PROMPTS / "cover_judge.md").read_text(encoding="utf-8").splitlines() if "source_faithful" in l)
+    line = next(row for row in (PROMPTS / "cover_judge.md").read_text(encoding="utf-8").splitlines() if "source_faithful" in row)
     assert "多出源画面里看不到的物件" in line
+
+
+def test_contaminated_pack_frame_tries_alternate_frame_with_measured_boxes_before_emote_or_stop(tmp_path):
+    names = ["李豆沙", "礼墨Sumi", "安晚awa"]
+    alt_boxes = {"person": [[720, 0, 1350, 1080]], "face": [[930, 310, 1315, 590]],
+                 "guest": [[120, 450, 720, 1080], [1350, 545, 1875, 1080]], "danmaku": []}
+    from src.autoslice.manual_lane import step6_cover_round
+
+    def _pack_verdict():
+        v = cover_verdict(people=names)
+        v["people"]["expected"] = list(names)
+        return v
+
+    def _run_pack_cover(root, rounds, *, boxes_r2=None, include_emote=True, frames_times=(10.0, 20.0)):
+        jobs = []
+
+        def on_script(name, body, remote):
+            if name.startswith("s6-cover-redo-boxes-"):
+                n = name.rsplit("-", 1)[-1]
+                remote.files[f"{RD}/cover/boxes-r{n}.json"] = json.dumps({"boxes": boxes_r2}).encode()
+                return RemoteResult(0, "", "")
+            if not name.startswith("s6-cover-job"):
+                return RemoteResult(0, "", "")
+            job_name = re.search(r"cover/(job-[^ ]+)\.json", body).group(1)
+            job = json.loads(remote.files[f"{RD}/cover/{job_name}.json"])
+            jobs.append(dict(job, name=job_name))
+            idx = len(jobs) - 1
+            plan = rounds[min(idx, len(rounds) - 1)]
+            wanted = [r for r in job["routes"] if r in plan]
+            pack_extra = {"guests_on_cover": [{"name": "礼墨Sumi"}, {"name": "安晚awa"}],
+                          "guest_faces_measured": [[100, 300, 400, 650], [700, 300, 1000, 650]],
+                          "expected_guest_count": 2, "face_measured": [1300, 300, 1600, 650]}
+            fake_cover(remote, RD, rows=[(r, plan[r]) for r in wanted if not isinstance(plan[r], tuple)],
+                       body=body, extra={r: pack_extra for r in wanted if not isinstance(plan[r], tuple)})
+            result_path = f"{RD}/cover/cand/{job['result']}"
+            result = json.loads(remote.files[result_path])
+            result["rows"] += [{"id": r, "route": r, "failure": plan[r][1]} for r in wanted if isinstance(plan[r], tuple)]
+            remote.files[result_path] = json.dumps(result).encode()
+            for r in wanted:
+                if not isinstance(plan[r], tuple):
+                    remote.files[f"{RD}/cover/cand/{r}.png"] = f"png-{r}-{len(jobs)}".encode()
+            return RemoteResult(0, "", "")
+
+        remote = FakeRemote(on_script=on_script)
+        ctx = make_ctx(root, remote=remote, cpa=FakeCpa([]))
+        (ctx.clip_dir / "subs").mkdir(parents=True, exist_ok=True)
+        (ctx.clip_dir / "subs/final.srt").write_text(srt(3), encoding="utf-8")
+        (ctx.clip_dir / "cover").mkdir(parents=True, exist_ok=True)
+        (ctx.clip_dir / "cover/frames.json").write_text(json.dumps({"checked": []}), encoding="utf-8")
+        roster = {"present": ["礼墨Sumi", "安晚awa"], "mentioned": [], "needed_on_cover": ["礼墨Sumi", "安晚awa"],
+                  "source": "pack", "layers": [{"name": "礼墨Sumi"}, {"name": "安晚awa"}], "missing": [],
+                  "required": ["礼墨Sumi", "安晚awa"], "line_speakers": ["李豆沙", "李豆沙"], "line": ""}
+        plan = {"recent": {"last_five_main_emotes": [], "source_session_main_emotes": [], "recent_style_ids": [],
+                           "recent_background_ids": [], "session_background_ids": [], "template_history": [],
+                           "template_session_history": []},
+                "rotation": {"template_history": [], "template_session_history": []},
+                "emote": {"id": "14", "label": "什么", "hd": "/x/hd.png", "mask": "/x/m.png"} if include_emote else None,
+                "fans_emote": None, "line": "测试", "participants": ["李豆沙", "礼墨Sumi", "安晚awa"],
+                "brief": {"action": "talking"}, "wordy": False,
+                "peers": {"peers": True, "names": ["李豆沙", "礼墨Sumi", "安晚awa"]}, "roster": roster}
+        job = {"frame": f"{RD}/cover/frame.png", "screenshot_spec": f"{RD}/cover/spec.json", "out": f"{RD}/cover/cand",
+               "guest_assets": roster["layers"], "guest_boxes": [], "guest_box": None,
+               "source_person_boxes": [[1351, 548, 1875, 1080]],
+               "source_guest_boxes": [[124, 451, 721, 1080]], "source_guest_boxes_unknown": True,
+               "needed_on_cover": ["礼墨Sumi", "安晚awa"],
+               "lines": ["我们是团队", "真的很好笑"], "brief": {"action": "talking"}, "styles": "s.json",
+               "recent_style_ids": [], "content_sha256": "0" * 64}
+        cv = step6_cover_round.Cover(
+            ctx=ctx, job=job, spec={"frame": f"{RD}/cover/frame.png"}, plan=plan,
+            routes=["screenshot", "emote"] if include_emote else ["screenshot"],
+            times=list(frames_times), budget=cover_redo.RetryBudget(2), frame_remote=f"{RD}/cover/frame.png",
+        )
+        return cv, jobs, remote
+
+    # Scenario A: alternate frame succeeds after round-1 contamination
+    cv_a, jobs_a, remote_a = _run_pack_cover(
+        tmp_path / "a",
+        [{"screenshot": ("fail", "PACK_FRAME_CONTAINS_OTHER_PERSON"), "emote": _pack_verdict()},
+         {"screenshot": _pack_verdict()}],
+        boxes_r2=alt_boxes,
+    )
+    _runs, raw, inf = cv_a.make(cv_a.job, ["screenshot"], {})
+    emote_stub = {"id": "emote", "route": "emote", "status": "RENDERED",
+                  "verdict": _pack_verdict(),
+                  "face_measured": [1300, 300, 1600, 650],
+                  "guests_on_cover": [{"name": "礼墨Sumi"}, {"name": "安晚awa"}],
+                  "guest_faces_measured": [[100, 300, 400, 650], [700, 300, 1000, 650]],
+                  "expected_guest_count": 2, "punch_font_size": 210, "render": {"measured_lines": []}}
+    cv_a.log.add_round(1, 10.0, ["screenshot", "emote"],
+                       [*cv_a.score(raw, 10.0), *cv_a.score([emote_stub], 10.0)],
+                       raw, infeasible=inf, stage="free")
+    cv_a.redo()
+    assert any(n == "s6-cover-redo-frame-2" for n, _ in remote_a.scripts)
+    assert any(n == "s6-cover-redo-boxes-2" for n, _ in remote_a.scripts)
+    assert jobs_a[1]["source_guest_boxes_unknown"] is False
+    assert jobs_a[1]["source_guest_boxes"] == alt_boxes["guest"]
+    assert step6_cover_round.pick_free(cv_a, ["我们是团队", "真的很好笑"], "熊猫耳").chosen == "screenshot"
+
+    # Scenario B: all alternate frames fail -> host emote route wins cleanly without AI generation
+    cv_b, jobs_b, _ = _run_pack_cover(
+        tmp_path / "b",
+        [{"screenshot": ("fail", "PACK_FRAME_CONTAINS_OTHER_PERSON")},
+         {"screenshot": ("fail", "PACK_FRAME_CONTAINS_OTHER_PERSON")}],
+        boxes_r2=None,
+    )
+    _runs, raw_b, inf_b = cv_b.make(cv_b.job, ["screenshot"], {})
+    emote_row = cv_b.score([{
+        "id": "emote", "route": "emote", "status": "RENDERED",
+        "verdict": _pack_verdict(),
+        "face_measured": [1300, 300, 1600, 650],
+        "guests_on_cover": [{"name": "礼墨Sumi"}, {"name": "安晚awa"}],
+        "guest_faces_measured": [[100, 300, 400, 650], [700, 300, 1000, 650]],
+        "expected_guest_count": 2, "punch_font_size": 210, "render": {"measured_lines": []},
+    }], 10.0)[0]
+    cv_b.log.add_round(1, 10.0, ["screenshot", "emote"], [*cv_b.score(raw_b, 10.0), emote_row], raw_b, infeasible=inf_b, stage="free")
+    cv_b.redo()
+    assert len(jobs_b) >= 2
+    picked_b = step6_cover_round.pick_free(cv_b, ["我们是团队", "真的很好笑"], "熊猫耳")
+    assert picked_b is not None and picked_b.chosen == "emote"
+
+    # Scenario C: all frames fail and no emote/host stock route -> reaches existing stop COVER_NO_ELIGIBLE_CANDIDATE
+    cv_c, _jobs_c, _ = _run_pack_cover(
+        tmp_path / "c",
+        [{"screenshot": ("fail", "PACK_FRAME_CONTAINS_OTHER_PERSON")},
+         {"screenshot": ("fail", "PACK_FRAME_CONTAINS_OTHER_PERSON")}],
+        boxes_r2=None, include_emote=False,
+    )
+    _runs, raw_c, inf_c = cv_c.make(cv_c.job, ["screenshot"], {})
+    cv_c.log.add_round(1, 10.0, ["screenshot"], cv_c.score(raw_c, 10.0), raw_c, infeasible=inf_c, stage="free")
+    cv_c.redo()
+    stopped = step6_cover_round.pick_cover(cv_c, ["我们是团队", "真的很好笑"], TITLE, "熊猫耳")
+    assert not stopped.ok and stopped.reason == "COVER_NO_ELIGIBLE_CANDIDATE"
+
+
+def test_c8_redo_alternate_frame_box_reading_records_calls_and_propagates_quota_refusal(tmp_path):
+    from src.autoslice.manual_lane import step6_cover_round
+    from src.autoslice.manual_lane.step_io import CpaVisionUnavailable
+
+    def _setup_cv(root, on_script):
+        remote = FakeRemote(on_script=on_script)
+        ctx = make_ctx(root, remote=remote, cpa=FakeCpa([]))
+        (ctx.clip_dir / "subs").mkdir(parents=True, exist_ok=True)
+        (ctx.clip_dir / "subs/final.srt").write_text(srt(3), encoding="utf-8")
+        (ctx.clip_dir / "cover").mkdir(parents=True, exist_ok=True)
+        (ctx.clip_dir / "cover/frames.json").write_text(json.dumps({"checked": []}), encoding="utf-8")
+        roster = {"present": ["礼墨Sumi"], "mentioned": [], "needed_on_cover": ["礼墨Sumi"],
+                  "source": "pack", "layers": [{"name": "礼墨Sumi"}], "missing": [],
+                  "required": ["礼墨Sumi"], "line_speakers": ["李豆沙", "李豆沙"], "line": ""}
+        plan = {"recent": {"last_five_main_emotes": [], "source_session_main_emotes": [], "recent_style_ids": [],
+                           "recent_background_ids": [], "session_background_ids": [], "template_history": [],
+                           "template_session_history": []},
+                "rotation": {"template_history": [], "template_session_history": []},
+                "emote": None, "fans_emote": None, "line": "测试", "participants": ["李豆沙", "礼墨Sumi"],
+                "brief": {"action": "talking"}, "wordy": False,
+                "peers": {"peers": True, "names": ["李豆沙", "礼墨Sumi"]}, "roster": roster}
+        job = {"frame": f"{RD}/cover/frame.png", "screenshot_spec": f"{RD}/cover/spec.json", "out": f"{RD}/cover/cand",
+               "guest_assets": roster["layers"], "guest_boxes": [], "guest_box": None,
+               "source_person_boxes": [[100, 100, 500, 900]], "source_guest_boxes": [[400, 400, 900, 1080]],
+               "source_guest_boxes_unknown": False, "needed_on_cover": ["礼墨Sumi"],
+               "lines": ["甲", "乙"], "brief": {"action": "talking"}, "styles": "s.json",
+               "recent_style_ids": [], "content_sha256": "0" * 64}
+        cv = step6_cover_round.Cover(
+            ctx=ctx, job=job, spec={"frame": f"{RD}/cover/frame.png"}, plan=plan,
+            routes=["screenshot"], times=[10.0, 20.0], budget=cover_redo.RetryBudget(2),
+            frame_remote=f"{RD}/cover/frame.png",
+        )
+        raw = [{"id": "screenshot", "route": "screenshot", "failure": "PACK_FRAME_CONTAINS_OTHER_PERSON"}]
+        cv.log.add_round(1, 10.0, ["screenshot"], cv.score(raw, 10.0), raw, stage="free")
+        return cv, remote
+
+    boxes_calls = [{"kind": "boxes", "model": "gpt-6.2-sol", "rc": 0, "elapsed_s": 1.3,
+                    "usage": {"input_tokens": 110, "output_tokens": 40}}]
+
+    def on_script_calls(name, body, remote):
+        if name.startswith("s6-cover-redo-boxes-"):
+            n = name.rsplit("-", 1)[-1]
+            remote.files[f"{RD}/cover/boxes-r{n}.json"] = json.dumps({
+                "boxes": {"person": [[100, 100, 500, 900]], "guest": []},
+                "calls": boxes_calls,
+                "frame_size": [1920, 1080],
+            }).encode()
+        return RemoteResult(0, "", "")
+
+    cv_ok, _ = _setup_cv(tmp_path / "calls", on_script_calls)
+    frame_t, moved = cv_ok.new_frame(2, {"screenshot": cv_ok.log.rows[0]})
+    assert frame_t == 20.0 and moved["source_guest_boxes_unknown"] is False
+    assert any(c.get("call_id", "").startswith("cover-redo-boxes-r2-") and c.get("model") == "gpt-6.2-sol" for c in cv_ok.calls)
+
+    for idx, fatal_err in enumerate(("RuntimeError: CPA_QUOTA_REFUSED: insufficient_quota",
+                                      "RuntimeError: CPA_FALLBACK_FAILED: primary exhausted")):
+        def on_script_quota(name, body, remote, msg=fatal_err):
+            if name.startswith("s6-cover-redo-boxes-"):
+                return RemoteResult(1, "", msg)
+            return RemoteResult(0, "", "")
+
+        cv_quota, _ = _setup_cv(tmp_path / f"quota-{idx}", on_script_quota)
+        with pytest.raises(CpaVisionUnavailable):
+            cv_quota.redo()

@@ -111,3 +111,99 @@ def apply_crop(spec, crop):
         spec[field] = moved
     spec["crop"] = list(crop)
     return spec
+
+
+def _checked_boxes(boxes, src_w, src_h):
+    """Return clipped `[x0, y0, x1, y1]` boxes, or None if `boxes` is missing/invalid/empty-after-clipping.
+
+    Unlike a permissive filter, an unparseable or out-of-frame box never gets dropped silently into `[]`.
+    """
+    if not isinstance(boxes, list):
+        return None
+    out = []
+    for box in boxes:
+        if not (isinstance(box, (list, tuple)) and len(box) == 4
+                and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in box)):
+            return None
+        bx0, by0, bx1, by1 = (round(v) for v in box)
+        if bx0 >= bx1 or by0 >= by1:
+            return None
+        x0 = max(0, min(src_w, bx0))
+        y0 = max(0, min(src_h, by0))
+        x1 = max(0, min(src_w, bx1))
+        y1 = max(0, min(src_h, by1))
+        if x0 >= x1 or y0 >= y1:
+            return None
+        out.append([x0, y0, x1, y1])
+    return out
+
+
+def clean_rects(face, exclude_boxes, src_w=FRAME_W, src_h=FRAME_H):
+    """Maximal axis-aligned rectangles inside [0, 0, src_w, src_h] holding `face` and disjoint from `exclude_boxes`.
+
+    Returns rectangles sorted largest-area first (then wider first), or [] when any exclusion box overlaps `face`.
+    """
+    fx0, fy0, fx1, fy1 = (int(round(v)) for v in face)
+    if fx0 >= fx1 or fy0 >= fy1 or fx0 < 0 or fy0 < 0 or fx1 > src_w or fy1 > src_h:
+        return []
+    if not exclude_boxes:
+        return [[0, 0, src_w, src_h]]
+    excludes = _checked_boxes(list(exclude_boxes), src_w, src_h)
+    if excludes is None:
+        return []
+    for bx0, by0, bx1, by1 in excludes:
+        if bx0 < fx1 and bx1 > fx0 and by0 < fy1 and by1 > fy0:
+            return []
+    rects = [[0, 0, src_w, src_h]]
+    for bx0, by0, bx1, by1 in excludes:
+        next_rects = []
+        for rx0, ry0, rx1, ry1 in rects:
+            if not (bx0 < rx1 and bx1 > rx0 and by0 < ry1 and by1 > ry0):
+                next_rects.append([rx0, ry0, rx1, ry1])
+                continue
+            if bx1 <= fx0:
+                next_rects.append([max(rx0, bx1), ry0, rx1, ry1])
+            if bx0 >= fx1:
+                next_rects.append([rx0, ry0, min(rx1, bx0), ry1])
+            if by1 <= fy0:
+                next_rects.append([rx0, max(ry0, by1), rx1, ry1])
+            if by0 >= fy1:
+                next_rects.append([rx0, ry0, rx1, min(ry1, by0)])
+        unique = []
+        for cand in next_rects:
+            if cand[0] < cand[2] and cand[1] < cand[3] and cand not in unique:
+                unique.append(cand)
+        rects = [cand for cand in unique if not any(
+            other != cand and other[0] <= cand[0] and other[1] <= cand[1]
+            and other[2] >= cand[2] and other[3] >= cand[3] for other in unique)]
+    rects.sort(key=lambda r: (-(r[2] - r[0]) * (r[3] - r[1]), -(r[2] - r[0]), r))
+    return rects
+
+
+def source_guest_preflight(job):
+    """Return `PACK_FRAME_GUESTS_UNCHECKED` if `job` lacks checked person/guest fields or is marked unknown, else None."""
+    if not isinstance(job.get("source_guest_boxes_unknown"), bool) or job["source_guest_boxes_unknown"]:
+        return "PACK_FRAME_GUESTS_UNCHECKED"
+    if not isinstance(job.get("source_person_boxes"), list) or not isinstance(job.get("source_guest_boxes"), list):
+        return "PACK_FRAME_GUESTS_UNCHECKED"
+    return None
+
+
+def other_person_boxes(job, host_face, src_w=FRAME_W, src_h=FRAME_H):
+    """(boxes of other people in the source frame, error_code) for a frame checked against `host_face`.
+
+    Refuses jobs lacking checked fields or with unknown/out-of-frame boxes (`PACK_FRAME_GUESTS_UNCHECKED`),
+    and reclassifies any `source_person_boxes` entry not containing `host_face`'s centre as another person.
+    """
+    if err := source_guest_preflight(job):
+        return None, err
+    others = _checked_boxes(job["source_guest_boxes"], src_w, src_h)
+    persons = _checked_boxes(job["source_person_boxes"], src_w, src_h)
+    if others is None or persons is None:
+        return None, "PACK_FRAME_GUESTS_UNCHECKED"
+    fcx = (host_face[0] + host_face[2]) / 2
+    fcy = (host_face[1] + host_face[3]) / 2
+    for box in persons:
+        if not (box[0] <= fcx <= box[2] and box[1] <= fcy <= box[3]) and box not in others:
+            others.append(box)
+    return others, None

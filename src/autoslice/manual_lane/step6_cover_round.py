@@ -14,6 +14,7 @@ from functools import partial
 from typing import TYPE_CHECKING, cast
 
 from . import cover_guests, cover_redo
+from .adapters import remote_python, root_script
 from .cover_emote_pick import pick_emote
 from .cover_pick import background_process_lines, candidate_record, choose_checked, rank
 from .cover_redo import RedoLog, RetryBudget
@@ -30,9 +31,9 @@ from .cover_thumb import ThumbVerdict
 from .lane_rules import rules
 from .step6_cover import (
     COVER_AI_ROUTES,
-    base_frame,
     _scored_rows,
     _thumb,
+    base_frame,
     cover_calls_line,
     cover_candidate_calls,
     cover_composition_key,
@@ -40,10 +41,11 @@ from .step6_cover import (
     cover_looks_repeated,
     cover_repeats,
     on_action,
+    source_guest_state,
     utc_now_iso,
 )
 from .step6_cover_types import CoverCandidate, CoverPlan, CoverRenderResult, CoverRoute, FrameCall
-from .step_io import _local, _run_remote, vision_models
+from .step_io import _local, _run_remote, raise_if_vision_unavailable, vision_cpa_event, vision_models
 
 if TYPE_CHECKING:
     from src.autoslice.cpa_gemini_client import JsonValue
@@ -96,6 +98,8 @@ class Cover:
         self.calls.extend(made)
         self.emote_pick.update(cast("dict[str, JsonValue]", pick))
         if emote is None:
+            if self.job.get("host_asset") and self.job.get("guest_assets"):
+                return {"emote": None, "host_asset": self.job["host_asset"]}
             raise RouteInfeasible("没有主表情包：" + str(pick.get("reason") or "说明里没有一张对得上封面字"))
         return {"emote": emote}
 
@@ -147,10 +151,12 @@ class Cover:
         log, ctx = self.log, self.ctx
         while self.budget.left() > 0 and (todo := cover_redo.redo_routes(log.current(), log.rows, self.routes)):
             number = len(log.rounds) + 1
+            frame_t, moved = self.new_frame(number, todo)
+            if not moved and not any(r in cover_redo.DRAWN for r in todo):
+                break
             self.budget.spend()
             routes = list(todo)
             texts = {route: cover_redo.rejection_text(row) for route, row in todo.items()}
-            frame_t, moved = self.new_frame(number, todo)
             for new in log.supersede(ctx.clip_dir / "cover/cand", routes):
                 for ext in ("png", "jpg"):      # the pictures of the round replaced stay choosable (the fallback reads them there)
                     if (kept := ctx.clip_dir / f"cover/cand/{new}.{ext}").exists():
@@ -192,8 +198,49 @@ class Cover:
         local_spec.write_text(json.dumps(dict(self.spec, frame=frame), ensure_ascii=False, indent=2), encoding="utf-8")
         ctx.adapters.remote.put(local_spec, f"{rd}/cover/spec-r{number}.json")
         self.frame_remote = frame
-        return t, {"frame": frame, "screenshot_spec": f"{rd}/cover/spec-r{number}.json",
-                   "source_guest_boxes_unknown": bool(self.job.get("guest_assets"))}
+        moved: dict[str, JsonValue] = {"frame": frame, "screenshot_spec": f"{rd}/cover/spec-r{number}.json"}
+        if self.job.get("guest_assets"):
+            boxes_remote = f"{rd}/cover/boxes-r{number}.json"
+            boxes_local = _local(ctx, f"cover/boxes-r{number}.json")
+            box_run = _run_remote(
+                ctx, f"s6-cover-redo-boxes-{number}",
+                root_script(remote_python(f"{rd}/cover/pick_frame.py --boxes-only {frame} {boxes_remote}"),
+                            env=["cpa"], owned=f"{rd}/cover", recursive=True),
+                timeout=600,
+            )
+            raise_if_vision_unavailable(box_run.stdout + "\n" + box_run.stderr)
+            boxes_doc: Mapping[str, list[list[int]] | None] | None = None
+            frame_size: tuple[int, int] | None = None
+            if box_run.rc == 0:
+                try:
+                    ctx.adapters.remote.get(boxes_remote, boxes_local)
+                    doc = json.loads(boxes_local.read_text(encoding="utf-8"))
+                    vision_model = vision_models()[0]
+                    for idx, call in enumerate(doc.get("calls") or [], 1):
+                        if isinstance(call, Mapping):
+                            kind = str(call.get("kind") or "boxes")
+                            self.calls.append(vision_cpa_event(
+                                f"cover-redo-boxes-r{number}-{idx}-{kind}",
+                                cast("FrameCall", call), vision_model,
+                            ))
+                    raw_size = doc.get("frame_size")
+                    if (isinstance(raw_size, list) and len(raw_size) == 2
+                            and all(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in raw_size)):
+                        frame_size = (int(raw_size[0]), int(raw_size[1]))
+                    parsed = doc.get("boxes")
+                    if isinstance(parsed, Mapping):
+                        boxes_doc = cast("Mapping[str, list[list[int]] | None]", parsed)
+                except (RuntimeError, OSError, ValueError):
+                    boxes_doc = None
+            roster = self.plan.get("roster")
+            state = source_guest_state(boxes_doc, roster, self.plan.get("participants") or (), frame_size=frame_size)
+            moved.update(state)
+            hosts = cast("list[list[int]]", state["source_person_boxes"])
+            if hosts:
+                moved["host_box"] = max(hosts, key=lambda b: (b[2] - b[0]) * (b[3] - b[1]))
+        else:
+            moved["source_guest_boxes_unknown"] = False
+        return t, moved
 
 
 def _retry_brief(brief: Mapping[str, object], rejected: str) -> dict:
@@ -244,7 +291,9 @@ def pick_cover(cv: Cover, cover_lines: Sequence[str], title: str, identity: str)
     from .step6_cover_fallback import choose_vetoed
     clean, rendered = cover_redo.fallback_pool(rows)
     if not rendered:
-        return CoverRenderResult(False, reason="COVER_NO_ELIGIBLE_CANDIDATE", note="no rendered image", cpa=calls, process=process)
+        codes = list(dict.fromkeys(str(r.get("failure") or v) for r in rows for v in ([r.get("failure")] if r.get("failure") else cover_redo.vetoes_of(r))))
+        detail = f"no rendered image ({'、'.join(codes)})" if codes else "no rendered image"
+        return CoverRenderResult(False, reason="COVER_NO_ELIGIBLE_CANDIDATE", note=detail, cpa=calls, process=process)
     vetoed = "全部候选被代码否决：" + "；".join(f"{r['id']}（{'、'.join(r['score'].get('vetoes') or [])}）" for r in rows)
     if not clean:
         best = cover_redo.fewest_vetoes(rendered)
@@ -266,7 +315,7 @@ def pick_cover(cv: Cover, cover_lines: Sequence[str], title: str, identity: str)
                    {**cv.thumbs, chosen: cv.thumb(chosen, cover_lines, identity)}, fallback, None)
 
 
-def record_cover(cv: Cover, picked: Picked, cover_lines: Sequence[str], boxes: Mapping[str, list[list[int]]] | None,
+def record_cover(cv: Cover, picked: Picked, cover_lines: Sequence[str], boxes: Mapping[str, list[list[int]] | None] | None,
                   *, frame_s: float | None, thumb_s: float, started: float) -> CoverRenderResult:
     """choose.json (every round's candidates and why the next round was made), the contact sheet, cover.png, the route record
     and the PROCESS lines of the chosen cover."""

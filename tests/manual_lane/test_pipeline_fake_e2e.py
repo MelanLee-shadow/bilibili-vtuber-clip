@@ -93,7 +93,7 @@ def _remote(dedupe=None):
                 ensure_ascii=False).encode()
         return OK
     remote = FakeRemote(on_script=script)
-    text = srt(40).encode()
+    text = srt(35).encode()
     remote.files[f"{RD}/asr/bcut.srt"] = text
     remote.files[f"{RD}/cut/cut.mp4"] = b"cut"
     remote.files[f"{RD}/asr/jianying.srt"] = text

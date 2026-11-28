@@ -32,8 +32,10 @@ if TYPE_CHECKING:
 # the judge's axes whose "no" says the picture is not the person / event of the source frame
 JUDGE_AXES = ("identity", "source_faithful", "no_fabrication")
 # the routes' own recorded failures that say no usable host face came out of the picture (cover_candidates.py)
+PACK_FRAME = frozenset({"PACK_FRAME_CONTAINS_OTHER_PERSON", "PACK_FRAME_GUESTS_UNCHECKED"})
 NO_FACE = frozenset({"HOST_FACE_NOT_FOUND", "HOST_FACE_NOT_IN_FRAME", "HOST_FACE_NOT_ON_HER_FIGURE",
-                     "STICKER_HOST_FACE_UNAVAILABLE", "PEOPLE_FACE_OUTSIDE_MASK", "PEOPLE_LAYERS_UNAVAILABLE"})
+                     "STICKER_HOST_FACE_UNAVAILABLE", "PEOPLE_FACE_OUTSIDE_MASK", "PEOPLE_LAYERS_UNAVAILABLE",
+                     *PACK_FRAME})
 MATERIAL = frozenset({"HOST_MISSING", *(f"CPA_VETO:{axis}" for axis in JUDGE_AXES)})
 ROSTER = "ROSTER_INCOMPLETE"      # cover_guests.ROSTER_INCOMPLETE: a guest the cover must show is not on it
 DRAWN = ("ai_sticker", "ai_scene")             # the routes whose prompt can carry the reviewer's words
@@ -103,10 +105,17 @@ def alternate_frame(times: Sequence[float], used: Sequence[float], checked: Sequ
 def redo_routes(current: Sequence[CoverCandidate], everything: Sequence[CoverCandidate], routes: Sequence[str]
                 ) -> dict[str, CoverCandidate]:
     """route -> its row, for the routes to make again: nothing at all is eligible (anywhere) and the route's latest row is
-    vetoed on its material.  `routes` is the stage's order."""
-    if any(r["score"]["status"] == "ELIGIBLE" for r in everything):
-        return {}
+    vetoed on its material.  When only an emote is eligible while screenshot failed because another person overlapped
+    in the source frame, screenshot is still retried on alternate candidate frames before settling on the emote.
+    `routes` is the stage's order."""
+    eligible = [r for r in everything if r["score"]["status"] == "ELIGIBLE"]
     latest = {r["route"]: r for r in current}
+    if eligible:
+        if (all(r["route"] == "emote" for r in eligible)
+                and "screenshot" in routes and "screenshot" in latest
+                and any(v in PACK_FRAME for v in vetoes_of(latest["screenshot"]))):
+            return {"screenshot": latest["screenshot"]}
+        return {}
     return {route: latest[route] for route in routes
             if route in latest and route not in NOT_REDONE and material_vetoes(latest[route])}
 

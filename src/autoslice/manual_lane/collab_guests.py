@@ -32,11 +32,17 @@ them to the day's record (`clip_evidence`, no model):
 - peers: the titles other uploaders gave their clips of the same session (step 0's dedup/result.json), where a 【】
   that names the host names her too.
 
-A person these name by two routes (`decide`; the numbers and what they were measured on are lane_rules collab_guests)
-joins the day's guests beside the judge's.  The list only grows: it is read again by every such clip at step 4, before
-the speakers are told apart, and at step 6; a clip whose session was named from an earlier, shorter list takes the
-missing people (`name_guests`), and one already past these steps adds its evidence and is found `behind` when it is
-run on again (cli run --refresh-guests, every unattended round), then redone from the speaker step.  A list written by hand (participants.json) is not touched.
+A person these name by `routes_needed` routes (`decide`; the numbers and what they were measured on are lane_rules
+collab_guests) is confirmed on the day's list.  The chat judge's answer (`chat_guests`) is a hypothesis, not proof
+from chat talk alone: a person it names is confirmed only when something other than chat talk backs her — a tie in the
+dynamics or live room title (`linked`), or at least one of the three measured routes (counting the clip being processed
+for voice, so the first clip of a real collab day is not run as solo).  Once confirmed, a guest is recorded in
+`confirmed` and stays permanently on the day's list (`confirmed` guests only grow, whatever later recomputation or
+clip revisions show); unconfirmed judge candidates stay in `chat_guests` and `routes` so later clips can confirm them,
+and are not written into any clip's session.  Legacy records without `confirmed` migrate on first read: guests that
+pass the rule now are recorded in `confirmed`, while never-confirmed candidates come off the list.  Clips whose session
+disagrees with the day's list are found `behind` / `lacking` and redone from the speaker step (`catch_up`, cli run
+--refresh-guests, every unattended round).  A list written by hand (participants.json) is not touched.
 
 Two guests on one sound path (`path_voices`, `decide`): where step 4 found the clip in a guest's own recording
 (arrival.py), each lag group that is not the host's is one sound path, and the classifier's guest classes on it say
@@ -292,6 +298,7 @@ class GuestsUnknown(RuntimeError):
 # ----- what a clip itself shows of who is in the call (no model) -------------------------------------------------
 
 VOICE, SUBTITLES, PEERS = "voice", "subtitles", "peers"       # the routes read from the lane's own products
+LINKED = "linked"                                              # a dynamics or room-title tie to the host
 CHAT = "chat"                                                  # the judge's answer on the chat and the dynamics
 VOICE_PREDS = "speaker/chunks-pred.json"       # the frozen classifier's probabilities of every class for each chunk
 VOICE_UNITS = "speaker/chunks-units.json"      # where each chunk lies in the clip
@@ -415,45 +422,65 @@ def clip_evidence(ctx: Ctx, known: Mapping[str, Sequence[str]]) -> dict[str, Any
 
 
 def decide(clips: Mapping[str, Mapping[str, Any]], chat: Sequence[str],
-           guests: Sequence[str]) -> tuple[dict[str, dict[str, Any]], list[str], list[list[str]]]:
-    """From the clips' evidence (`clip_evidence` by clip id), the judge's guests `chat` and the day's guests so far:
-    ({person: what each route holds of her}, the day's guests, the sound paths two of them share).
+           guests: Sequence[str] = (), *,
+           links: Mapping[str, Sequence[str]] | None = None,
+           confirmed: Mapping[str, Any] | Sequence[str] = ()) -> tuple[dict[str, dict[str, Any]], list[str], list[list[str]]]:
+    """From the clips' evidence (`clip_evidence` by clip id), the judge's guests `chat`, the day's guests so far,
+    the dynamics/room-title ties `links`, and already-confirmed guests `confirmed`: ({person: what each route holds of
+    her}, the confirmed day's guests, the sound paths two of them share).
 
-    A route names a person when (lane_rules collab_guests): voice - `voice_min_clips` clips each hold `voice_min_chunks`
-    confident chunks of her class; subtitles - the host named her and a guest answered `answered_min` times over
-    `answered_min_clips` clips; peers - `peer_min_videos` videos.  The judge's guests stay; a person `routes_needed` of
-    these routes name is added; nobody is taken off.  The voice counts only on a day where everyone the other routes
-    and the judge name is a class of the classifier (its classes are a closed set: with a guest it does not know in
-    the call, her voice is counted as one of them).
+    A route names a person when (lane_rules collab_guests): linked - `links[name]` is non-empty (only confirms a judge
+    candidate, never counts toward `routes_needed` for someone unnamed by the judge); voice - `voice_min_clips` clips
+    (or 1 clip when named in `chat`) each hold `voice_min_chunks` confident chunks of her class; subtitles - the host
+    named her and a guest answered `answered_min` times over `answered_min_clips` clips; peers - `peer_min_videos`
+    videos.  A person in `chat` is confirmed when at least one non-chat-talk route (linked or a measured route) backs
+    her; an unnamed person needs `routes_needed` measured routes.  Anyone in `confirmed` stays permanently on the
+    day's guests; unconfirmed candidates stay in `routes` with `chat=True` and `routes=[]`, and are not on the list.
+    The voice counts only on a day where everyone the other routes, the judge, and `confirmed` name is a class of the
+    classifier (its classes are a closed set: with a guest it does not know in the call, her voice is counted as one of
+    them).
     Two guests share a path when, in `shared_path_min_clips` clips, one guests' path holds both: the lesser of the two
     with `shared_path_min_chunks` confident chunks and `shared_path_min_share` of the path's."""
     cfg = rules("collab_guests")
+    links = links or {}
+    chat_set = set(chat)
+    prior = list(confirmed)
+    prior_set = set(prior)
     seen: dict[str, dict[str, Any]] = {}
 
     def row(name: str) -> dict[str, Any]:
-        return seen.setdefault(name, {CHAT: name in chat, VOICE: 0, SUBTITLES: [0, 0], PEERS: [], "routes": []})
+        return seen.setdefault(name, {CHAT: name in chat_set, LINKED: list(links.get(name) or []),
+                                        VOICE: 0, SUBTITLES: [0, 0], PEERS: [], "routes": []})
 
-    classes = {name for ev in clips.values() for name in ev[VOICE]}
+    classes = {name for ev in clips.values() for name in (ev.get(VOICE) or {})}
     for ev in clips.values():
-        for name, n in ev[VOICE].items():
+        for name, n in (ev.get(VOICE) or {}).items():
             row(name)[VOICE] += n >= int(cfg["voice_min_chunks"])
-        for name, n in ev[SUBTITLES].items():
+        for name, n in (ev.get(SUBTITLES) or {}).items():
             row(name)[SUBTITLES] = [row(name)[SUBTITLES][0] + n, row(name)[SUBTITLES][1] + 1]
-        for bvid, video in ev[PEERS].items():
+        for bvid, video in (ev.get(PEERS) or {}).items():
             for name in video["names"]:
                 row(name)[PEERS] = sorted({*row(name)[PEERS], bvid})
-    for name in [*guests, *chat]:      # everyone on the list has a row, also one whose evidence has gone since (a clip
-        row(name)                      # that held it trimmed or redone): the list only grows, and its people are read by name
+    for name in [*prior, *guests, *chat]:
+        row(name)
     need = int(cfg["routes_needed"])
 
     def named(*, voice: bool) -> list[str]:
-        for got in seen.values():
+        active = set(prior_set)
+        for name, got in seen.items():
+            is_chat = bool(got[CHAT])
             got["routes"] = [route for route, rings in (
-                (VOICE, voice and got[VOICE] >= int(cfg["voice_min_clips"])),
+                (LINKED, is_chat and bool(got[LINKED])),
+                (VOICE, voice and got[VOICE] >= (1 if is_chat else int(cfg["voice_min_clips"]))),
                 (SUBTITLES, got[SUBTITLES][0] >= int(cfg["answered_min"]) and got[SUBTITLES][1] >= int(cfg["answered_min_clips"])),
                 (PEERS, len(got[PEERS]) >= int(cfg["peer_min_videos"]))) if rings]
-        kept = list(guests) + [n for n in chat if n not in guests]
-        return kept + sorted(n for n, got in seen.items() if n not in kept and len(got["routes"]) >= need)
+            if len(got["routes"]) >= (1 if is_chat else need):
+                active.add(name)
+        ordered: list[str] = []
+        for n in (*prior, *guests, *chat, *sorted(active)):
+            if n in active and n not in ordered:
+                ordered.append(n)
+        return ordered
 
     out = named(voice=False)
     if set(out) <= classes:       # everyone named without the voice is a class of the classifier: its classes count
@@ -461,7 +488,7 @@ def decide(clips: Mapping[str, Mapping[str, Any]], chat: Sequence[str],
     together: dict[tuple[str, str], int] = {}
     for ev in clips.values():
         pairs = set()
-        for path in ev["paths"]:
+        for path in ev.get("paths") or ():
             on = sorted(((n, name) for name, n in path.items() if name in out), reverse=True)[:2]
             if (len(on) == 2 and on[1][0] >= int(cfg["shared_path_min_chunks"])
                     and on[1][0] >= float(cfg["shared_path_min_share"]) * sum(path.values())):
@@ -519,9 +546,7 @@ def _task(ctx: Ctx) -> Path:
     return ctx.clip_dir.parent.parent
 
 
-def _published_without(task: Path, date: str, names: Sequence[str]) -> list[str]:
-    """The day's clips that went online named from the day's record while it lacked one of `names` (their titles are
-    the owner's to change, not the lane's)."""
+def _published_matching(task: Path, date: str, pred: Callable[[list[str]], bool]) -> list[str]:
     out = []
     for path in sorted((task / "state").glob("*.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -529,9 +554,21 @@ def _published_without(task: Path, date: str, names: Sequence[str]) -> list[str]
         if (session.get("recording_date") == date and session.get("guest_evidence") is not None
                 and data["clip"].get("status") != "SUPERSEDED"
                 and (data.get("steps") or {}).get("upload", {}).get("status") == "DONE"
-                and any(n not in [g[0] for g in session.get("participants") or [] if g] for n in names)):
+                and pred([str(g[0]) for g in session.get("participants") or [] if g])):
             out.append(str(data["clip"]["cid"]))
     return out
+
+
+def _published_without(task: Path, date: str, names: Sequence[str]) -> list[str]:
+    """The day's clips that went online named from the day's record while it lacked one of `names` (their titles are
+    the owner's to change, not the lane's)."""
+    return _published_matching(task, date, lambda have: any(n not in have for n in names))
+
+
+def _published_with(task: Path, date: str, names: Sequence[str]) -> list[str]:
+    """The day's clips that went online named from the day's record while it held one of `names` (their titles are
+    the owner's to change, not the lane's)."""
+    return _published_matching(task, date, lambda have: any(n in have for n in names))
 
 
 @contextmanager
@@ -545,61 +582,165 @@ def _day_lock(cache: Path) -> Iterator[None]:
         yield
 
 
+def _recompute(record: dict[str, Any], task: Path, *, clip: str | None = None) -> bool:
+    """Recompute routes, confirmed guests, and shared_path on `record` under the current rule; returns whether changed."""
+    from .state import utc_now
+    from .step_io import superseded
+
+    before = [str(g) for g in record.get("guests") or []]
+    had_chat = "chat_guests" in record
+    had_confirmed = "confirmed" in record
+    chat = [str(g) for g in record.setdefault("chat_guests", before)]
+    raw_confirmed = record.get("confirmed")
+    confirmed: dict[str, dict[str, Any]] = (
+        {str(k): dict(v) for k, v in raw_confirmed.items() if isinstance(v, Mapping)}
+        if isinstance(raw_confirmed, Mapping) else {}
+    )
+    live = {c: ev for c, ev in (record.get("clips") or {}).items() if not superseded(task, c)}
+    links = (record.get("dynamics") or {}).get("linked") or {}
+    routes, guests, shared = decide(live, chat, before, links=links, confirmed=confirmed)
+    new_confirmed = dict(confirmed)
+    now: str | None = None
+    for g in guests:
+        if g not in new_confirmed:
+            if now is None:
+                now = utc_now()
+            got = routes[g]
+            new_confirmed[g] = {"by": [*([CHAT] if got[CHAT] else []), *got["routes"]], "at": now, "clip": clip}
+    changed = (not had_chat or not had_confirmed or record.get("confirmed") != new_confirmed
+               or record.get("routes") != routes or record.get("guests") != guests
+               or record.get("shared_path") != shared)
+    record["confirmed"] = new_confirmed
+    record["routes"], record["guests"], record["shared_path"] = routes, guests, shared
+    return changed
+
+
+def _read_record(task: Path, cache: Path, *, persist: bool = False, persist_migration: bool = False) -> dict[str, Any]:
+    """Read a stored day record under its lock and recompute it under the current rule; persist if requested."""
+    from .step_io import _write_atomic
+
+    with _day_lock(cache):
+        record = cast(dict[str, Any], json.loads(cache.read_text(encoding="utf-8")))
+        migrating = "confirmed" not in record
+        changed = _recompute(record, task)
+        if changed and (persist or (persist_migration and migrating)):
+            _write_atomic(cache, json.dumps(record, ensure_ascii=False, indent=1))
+        return record
+
+
+def migrate_day_record(task: Path, date: str) -> None:
+    """If the day's record exists without `confirmed` (pre-G1 format), migrate and persist it before a clip is superseded."""
+    if not date:
+        return
+    cache = task / CACHE.format(date=date)
+    if cache.exists():
+        _read_record(task, cache, persist_migration=True)
+
+
 def _day_record(ctx: Ctx, cache: Path, date: str, ask: Callable[[str, str], dict[str, Any] | None]) -> dict[str, Any]:
     """The day's record after this clip: read from the task directory (the judge asked first when there is none),
     this clip's evidence put in place of what it gave before, and the guests decided again.  All of it while holding
     the day's lock, so the clips of one day that arrive together wait for the first instead of sending the same
     prompt side by side, and none loses another's evidence."""
     from .state import utc_now
-    from .step_io import _write_atomic, superseded
+    from .step_io import _write_atomic
 
     with _day_lock(cache):
+        existed = cache.exists()
         known = streamers(ctx)
-        record = (cast(dict[str, Any], json.loads(cache.read_text(encoding="utf-8"))) if cache.exists()
+        record = (cast(dict[str, Any], json.loads(cache.read_text(encoding="utf-8"))) if existed
                   else _chat_record(ctx, date, known, ask))
         before = [str(g) for g in record.get("guests") or []]
-        record.setdefault("chat_guests", before)        # a record kept before the routes: its guests were the judge's
         cid = str(ctx.state.data["clip"]["cid"])
+        if existed and "confirmed" not in record:
+            # a record kept before confirmations were recorded: who its own evidence confirms is settled first, from
+            # the record as it was read, before this clip's evidence (made under today's list) replaces what it held
+            _recompute(record, _task(ctx))
         record.setdefault("clips", {})[cid] = clip_evidence(ctx, known)
-        live = {c: ev for c, ev in record["clips"].items() if not superseded(_task(ctx), c)}
-        record["routes"], record["guests"], record["shared_path"] = decide(live, record["chat_guests"], before)
+        _recompute(record, _task(ctx), clip=cid)
         added = [g for g in record["guests"] if g not in before]
-        if added and cache.exists():      # the list grew after it was first kept: who was named without them
+        removed = [g for g in before if g not in record["guests"]]
+        if added and existed:      # the list grew after it was first kept: who was named without them
             record.setdefault("added", []).append({
                 "at": utc_now(), "clip": cid, "guests": added, "by": {g: record["routes"][g]["routes"] for g in added},
                 "judge_said_not": [g for g in added if g in ((record.get("answer") or {}).get("not_in_call") or [])],
                 "published_without": _published_without(_task(ctx), date, added)})
+        if removed and existed:    # unconfirmed candidates came off the list on recompute
+            record.setdefault("removed", []).append({
+                "at": utc_now(), "clip": cid, "guests": removed,
+                "published_with": _published_with(_task(ctx), date, removed)})
         _write_atomic(cache, json.dumps(record, ensure_ascii=False, indent=1))
         return record
 
 
+def _is_host_group(group: Sequence[Any]) -> bool:
+    return any(str(s).strip() == HOST for s in group)
+
+
+def _session_guests(session: Mapping[str, Any]) -> list[str]:
+    """Named guests currently in `session["participants"]` (excluding the host and anonymous placeholders)."""
+    from .config import unknown_participant
+
+    groups = [g for g in session.get("participants") or () if g]
+    has_host = any(_is_host_group(g) for g in groups)
+    out: list[str] = []
+    for i, group in enumerate(groups):
+        if _is_host_group(group) or (not has_host and i == 0):
+            continue
+        name = str(group[0]).strip()
+        if name and not unknown_participant(name):
+            out.append(name)
+    return out
+
+
+def _evidence_by(g: str, routes: Mapping[str, Any] | None, confirmed: Mapping[str, Any]) -> list[str]:
+    if routes is not None and g in routes and routes[g].get("routes"):
+        return [*([CHAT] if routes[g].get(CHAT) else []), *routes[g]["routes"]]
+    if isinstance(confirmed.get(g), Mapping) and confirmed[g].get("by"):
+        return [str(r) for r in confirmed[g]["by"]]
+    if routes is not None and g in routes and routes[g].get(CHAT):
+        return [CHAT]
+    return []
+
+
 def _apply(ctx: Ctx, record: Mapping[str, Any], name: str) -> list[str]:
-    """Write the day's guests the clip's session lacks, and the day's shared sound paths, into the session; returns
-    the guests added."""
-    from .config import participant_names
+    """Sync the clip's session with the day's confirmed guests (adding missing ones and dropping stale unconfirmed
+    ones) and shared sound paths; returns the guests added or removed."""
+    from .config import unknown_participant
 
     session = cast(dict[str, Any], ctx.session)
-    guests = [str(g) for g in record.get("guests") or []]
-    missing = [g for g in guests if g not in participant_names(ctx.session)]
+    have = _session_guests(session)
+    want = [str(g) for g in record.get("guests") or []]
+    added = [g for g in want if g not in have]
+    removed = [g for g in have if g not in want]
+    changed = [*added, *removed]
     shared = [list(p) for p in record.get("shared_path") or []]
-    routes = record.get("routes")       # absent in a record kept before the routes: its guests were the judge's
-    evidence = {"source": "collab_guests", "record": name, "guests": guests,
-                "by": {g: [CHAT] if routes is None else [*([CHAT] if routes[g][CHAT] else []), *routes[g]["routes"]]
-                       for g in guests}}
-    if not missing and session.get("guest_evidence") == evidence and (session.get("shared_path") or []) == shared:
+    routes = record.get("routes")
+    confirmed = record.get("confirmed") if isinstance(record.get("confirmed"), Mapping) else {}
+    evidence = {"source": "collab_guests", "record": name, "guests": want,
+                "by": {g: _evidence_by(g, routes, confirmed) for g in want}}
+    prev_groups = list(session.get("participants") or [])
+    has_host = any(g and _is_host_group(g) for g in prev_groups)
+    is_base = [not g or _is_host_group(g) or (not has_host and i == 0) or unknown_participant(str(g[0]))
+               for i, g in enumerate(prev_groups)]
+    keep_base = [g for g, base in zip(prev_groups, is_base) if base]
+    by_name = {str(g[0]).strip(): g for g, base in zip(prev_groups, is_base) if not base}
+    new_participants = [*keep_base, *(by_name.get(g, [g]) for g in want)]
+    if (not changed and session.get("participants") == new_participants
+            and session.get("guest_evidence") == evidence and (session.get("shared_path") or []) == shared):
         return []
-    session["participants"] = [*(session.get("participants") or []), *([g] for g in missing)]
+    session["participants"] = new_participants
     session["guest_evidence"] = evidence
     if shared or "shared_path" in session:
         session["shared_path"] = shared
     ctx.state.save()
-    return missing
+    return changed
 
 
 def name_guests(ctx: Ctx, ask: Callable[[str, str], dict[str, Any] | None], *, heard: bool | None = None) -> list[str]:
-    """When `needed`: put this clip's evidence into the day's record, and the day's guests the clip's session lacks
-    into the session; returns the names added.  `ask` sends the judge's prompt and returns the parsed answer, None
-    when the call failed (GuestsUnknown); it is asked once a day (_day_record)."""
+    """When `needed`: put this clip's evidence into the day's record, and sync the clip's session with the day's
+    confirmed guests; returns the names added or removed.  `ask` sends the judge's prompt and returns the parsed answer,
+    None when the call failed (GuestsUnknown); it is asked once a day (_day_record)."""
     if not needed(ctx, heard=heard):
         return []
     date = str(ctx.session.get("recording_date") or "")
@@ -607,39 +748,46 @@ def name_guests(ctx: Ctx, ask: Callable[[str, str], dict[str, Any] | None], *, h
     return _apply(ctx, _day_record(ctx, cache, date, ask), cache.name)
 
 
-def process_line(ctx: Ctx, added: Sequence[str]) -> str:
-    """The PROCESS line of a clip whose session took guests from the day's record: who, by which routes, and what the
-    record says of people sharing a sound path."""
+def process_line(ctx: Ctx, changed: Sequence[str]) -> str:
+    """The PROCESS line of a clip whose session synced guests with the day's record: who was added or removed, by which
+    routes, and what the record says of people sharing a sound path."""
     evidence = ctx.session.get("guest_evidence") or {}
-    said = {CHAT: "整场弹幕与动态的判断", VOICE: "声纹分类", SUBTITLES: "字幕里主播点名后嘉宾接话", PEERS: "同场他人切片标题"}
-    # a guest none of whose routes stands now was named earlier, by clips trimmed or redone since: the list only grows
-    who = "、".join(f"{g}（{'＋'.join(said[r] for r in evidence['by'][g]) or '当天名单早先认定，现有片的证据已不够'}）" for g in added)
-    line = f"本场连线：本片场次写进 {who}；当天名单 {'、'.join(evidence['guests'])}（{evidence['record']}）"
+    said = {CHAT: "整场弹幕与动态的判断", LINKED: "动态或直播间标题关联", VOICE: "声纹分类",
+            SUBTITLES: "字幕里主播点名后嘉宾接话", PEERS: "同场他人切片标题"}
+    listed = set(evidence.get("guests") or ())
+    added = [g for g in changed if g in listed]
+    removed = [g for g in changed if g not in listed]
+    parts = []
+    if added:
+        by = evidence.get("by") or {}
+        who = "、".join(f"{g}（{'＋'.join(said.get(r, r) for r in by.get(g, ())) or '当天名单早先认定，现有片的证据已不够'}）"
+                       for g in added)
+        parts.append(f"写进 {who}")
+    if removed:
+        parts.append(f"移出未证实候选 {'、'.join(removed)}")
+    now = "、".join(evidence.get("guests") or ()) or "无"
+    line = f"本场连线：本片场次{'、'.join(parts) or '未改'}；当天名单 {now}（{evidence.get('record', '')}）"
     shared = cast("dict[str, Any]", ctx.session).get("shared_path") or []
     return line + "".join(f"；{'、'.join(p)} 共用一路声音" for p in shared)
 
 
 def lacking(ctx: Ctx) -> list[str]:
-    """The day's guests the session of a clip named from the day's record lacks, as the record stands; [] for a clip
-    that never asked the record, one whose people were written by hand, and a day without a record.  Nothing is read
-    from the clip's products and nothing is written."""
-    from .config import participant_names
-
+    """Guests the day's confirmed record and the clip's session disagree on (guests to add first, then stale
+    never-confirmed guests to remove); [] for a clip that never asked the record, one whose people were written by hand,
+    and a day without a record.  Migrates a legacy record without `confirmed` on first read; otherwise read-only."""
     cache = _task(ctx) / CACHE.format(date=str(ctx.session.get("recording_date") or ""))
     if ctx.session.get("guest_evidence") is None or not cache.exists():
         return []
-    with _day_lock(cache):
-        record = json.loads(cache.read_text(encoding="utf-8"))
-    named = participant_names(ctx.session)
-    return [str(g) for g in record.get("guests") or [] if g not in named]
+    record = _read_record(_task(ctx), cache, persist_migration=True)
+    have = _session_guests(ctx.session)
+    want = [str(g) for g in record.get("guests") or []]
+    return [*(g for g in want if g not in have), *(g for g in have if g not in want)]
 
 
 def behind(ctx: Ctx) -> list[str]:
     """For a clip whose session was named from the day's record (its steps may all be done by now): put what its
-    products show today into the record, and return the day's guests its session lacks (`lacking`).  Nobody is asked.
-    This is how a day made before a guest was recognised catches up: each clip run on again adds its evidence, and the
-    clips named from the shorter list are then redone (cli._refresh_guests); an unattended round looks at the reviewed
-    clips that are not online too (auto_run.pending `lagging`), so a day whose clips all wait for the upload catches up."""
+    products show today into the record (or recompute and persist the stored record when subtitles are being remade),
+    and return the guests its session disagrees on (`lacking`).  Nobody is asked."""
     date = str(ctx.session.get("recording_date") or "")
     cache = _task(ctx) / CACHE.format(date=date)
     if ctx.session.get("guest_evidence") is None or not cache.exists():
@@ -649,14 +797,14 @@ def behind(ctx: Ctx) -> list[str]:
         raise AssertionError("the day's record exists: the judge is not asked again")
     if (ctx.clip_dir / "subs/final.srt").exists():
         _day_record(ctx, cache, date, not_asked)
-    # else its subtitles are being made again (redo from an earlier step): it has nothing to add until they are
+    else:
+        _read_record(_task(ctx), cache, persist=True)
     return lacking(ctx)
 
 
 def catch_up(ctx: Ctx) -> list[str]:
-    """Write the day's guests into the session of a clip that is `behind`; returns the guests added.  Nobody is asked
-    and no evidence is added: the clip adds its own when its steps run again."""
+    """Sync the session of a clip that is `behind` with the recomputed day's record; returns the guests added or
+    removed.  Nobody is asked and no clip evidence is added: the clip adds its own when its steps run again."""
     cache = _task(ctx) / CACHE.format(date=str(ctx.session.get("recording_date") or ""))
-    with _day_lock(cache):
-        record = json.loads(cache.read_text(encoding="utf-8"))
+    record = _read_record(_task(ctx), cache, persist=True)
     return _apply(ctx, record, cache.name)

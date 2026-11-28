@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import math
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, MutableMapping, Sequence
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from . import (
@@ -28,6 +28,7 @@ from .source_read import (
     source_cut_script,
 )
 from .srt_text import SrtCue, _context_lines, _json_from_text, format_srt, window_cues
+from .state import RECUT_CLEANUP_FAILED, RECUT_PENDING, StateError, recut_cleanup_needed
 from .step_io import (
     ROOM_ID,
     _ask_cpa,
@@ -674,6 +675,17 @@ def _snap_cut_points(ctx: Ctx, src: str) -> dict[str, str]:
 
 
 def step2_cut(ctx: Ctx) -> StepOutcome:
+    if recut_cleanup_needed(ctx.state.data):
+        from .redo import invalidate_for_recut
+
+        try:
+            invalidate_for_recut(ctx)
+        except compilation.CompilationError as exc:
+            return _fail(exc.code, str(exc))
+        except SourceMissing as exc:
+            return _fail("SOURCE_RECORDING_MISSING", str(exc))
+        except StateError as exc:
+            return _fail(RECUT_CLEANUP_FAILED, str(exc))
     clip = _clip(ctx)
     rd = ctx.remote_dir
     try:
@@ -701,6 +713,10 @@ def step2_cut(ctx: Ctx) -> StepOutcome:
     verdict = gates.cut_gate(probe=summary, expected_seconds=dur)
     if not verdict.ok:
         return _fail(verdict.reason_code, verdict.detail, process=snap_process)
+    if ctx.state.data.get(RECUT_PENDING):
+        with ctx.state.lock:
+            cast("MutableMapping[str, Any]", ctx.state.data).pop(RECUT_PENDING, None)
+            ctx.state.save()
     return StepOutcome(True, products={"cut_probe": str(local_probe)},
                        note=f"cut {summary['duration']:.3f}s {summary['width']}x{summary['height']} on OCI3 {cut}",
                        process=snap_process + [f"剪出 {summary['duration']:.3f}s，{summary['width']}x{summary['height']}"

@@ -92,14 +92,24 @@ def cover_material(ctx: Ctx) -> None:
 
 
 def guests_current(ctx: Ctx) -> None:
-    """The day's list of who is in the call (collab_guests) gained people after this clip was named from it: its
-    session, speakers, title prefix and cover were made without them, so it is not sent; `run --refresh-guests` redoes
-    it from the speaker step (every unattended round does so before it gets here)."""
+    """The day's list of who is in the call (collab_guests) changed (gained confirmed people or dropped unconfirmed
+    candidates) after this clip was named from it: its session, speakers, title prefix and cover were made for that
+    earlier list, so it is not sent; `run --refresh-guests` redoes it from the speaker step (every unattended round
+    does so before it gets here)."""
     from . import collab_guests
+    from .config import participant_names
 
-    if missing := collab_guests.lacking(ctx):
+    before = set(participant_names(ctx.session))
+    if changed := collab_guests.lacking(ctx):
         cid = ctx.state.data["clip"]["cid"]
-        stop(GUESTS_BEHIND, f"当天连线名单后来补进了 {'、'.join(missing)}，本片的场次、说话人、标题前缀和封面是按之前的名单做的："
+        added = [g for g in changed if g not in before]
+        removed = [g for g in changed if g in before]
+        if added and not removed:
+            what = f"后来补进了 {'、'.join(added)}"
+        else:
+            parts = ([f"补进了 {'、'.join(added)}"] if added else []) + ([f"移出了未证实候选 {'、'.join(removed)}"] if removed else [])
+            what = "、".join(parts)
+        stop(GUESTS_BEHIND, f"当天连线名单{what}，本片的场次、说话人、标题前缀和封面是按之前的名单做的："
                             f"不发；先 `run --refresh-guests {cid}` 从说话人一步起重做")
 
 

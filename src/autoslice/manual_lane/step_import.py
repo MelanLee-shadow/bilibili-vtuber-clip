@@ -20,6 +20,7 @@ from . import (
 )
 from .runner import Ctx, StepOutcome
 from .srt_text import TimedText, _json_from_text
+from .state import is_recut_pending
 from .step3_adjudicate import hold_line, lone_char_line, record_lone
 from .step_io import _ask_cpa, _cpa_ok, _fail, _local, _log, _render, linked_session
 
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
 
 # ----- imported subtitles (U130: the training pair is pushed by hand; the push is a formal input of step 3) --------
 IMPORT_DIR = "import"
+IMPORT_CUT_MISMATCH = "IMPORT_CUT_MISMATCH"
 
 
 IMPORT_FILES = {"final.srt": "subs/final.srt", "speaker.srt": "speaker/speaker.srt", "review.tsv": "subs/review.tsv",
@@ -43,6 +45,7 @@ IMPORT_REDO = ("subtitles", "speaker", "burn", "title_cover", "tags", "package",
 
 
 ImportRecord = TypedDict("ImportRecord", {"source": str, "from": str, "authority": str, "files": dict[str, str], "at": str,
+                                          "cut_start_ms": NotRequired[int], "cut_end_ms": NotRequired[int],
                                           "verbatim": NotRequired[bool], "decided_by": NotRequired[str],
                                           "owner_edited": NotRequired[list[int] | None]})
 
@@ -82,6 +85,19 @@ def decided_by_owner(rec: ImportRecord | None) -> bool:
     return rec is not None and rec.get("decided_by") == "owner"
 
 
+def _import_cut_mismatch(state_data: Mapping[str, object], rec: ImportRecord) -> str:
+    clip = cast("Mapping[str, object]", state_data["clip"])
+    stored_start, stored_end = rec.get("cut_start_ms"), rec.get("cut_end_ms")
+    if stored_start is not None or stored_end is not None:
+        if (stored_start, stored_end) != (clip["start_ms"], clip["end_ms"]):
+            return (f"导入字幕对应切点 {stored_start}-{stored_end} ms，"
+                    f"与当前切点 {clip['start_ms']}-{clip['end_ms']} ms 不一致；请对新剪辑重新执行 import-subtitles")
+        return ""
+    if is_recut_pending(state_data):
+        return "导入字幕未记录切点且存在待重剪标记；请对新剪辑重新执行 import-subtitles"
+    return ""
+
+
 def import_redo(state: ClipState, clip_dir: Path, src: Path, *, verbatim: bool = False,
                 decided_by: str | None = None) -> str:
     """What `record_import` does with the steps: "review_only" when the clip already holds an import whose files are
@@ -89,6 +105,8 @@ def import_redo(state: ClipState, clip_dir: Path, src: Path, *, verbatim: bool =
     added or removed: nothing but the review depends on it); otherwise "from_step_3"."""
     prior = state.data.get("imported")
     if prior is None or prior.get("decided_by") == decided_by or bool(prior.get("verbatim")) != verbatim:
+        return "from_step_3"
+    if _import_cut_mismatch(state.data, prior):
         return "from_step_3"
     names = {n for n, rel in IMPORT_FILES.items() if (src / rel).exists()}
     same = set(prior["files"]) == names and all(
@@ -159,6 +177,15 @@ def record_import(state: ClipState, clip_dir: Path, src: Path, *, source: str, a
                 shutil.copyfile(src / rel, dest / name)
             files[name] = str(dest / name)
     rec: ImportRecord = {"source": source, "from": str(src), "authority": authority, "files": files, "at": utc_now()}
+    prior = state.data.get("imported")
+    if not review_only:
+        rec["cut_start_ms"] = int(clip["start_ms"])
+        rec["cut_end_ms"] = int(clip["end_ms"])
+    elif prior is not None:
+        if "cut_start_ms" in prior:
+            rec["cut_start_ms"] = prior["cut_start_ms"]
+        if "cut_end_ms" in prior:
+            rec["cut_end_ms"] = prior["cut_end_ms"]
     if verbatim:
         rec["verbatim"] = True
     if decided_by is not None:
@@ -271,6 +298,8 @@ def _step3_import(ctx: Ctx, rec: ImportRecord) -> StepOutcome:
     own assembly apply (no laughter, canon, shape, no overlap: normalize_cues); nothing is listened
     to and nothing is re-decided.  Speakers go to step 4 through subs/import_speakers.json (one label per final cue).
     A verbatim push (`rec["verbatim"]`) skips those rules and is written as it is."""
+    if why := _import_cut_mismatch(ctx.state.data, rec):
+        return _fail(IMPORT_CUT_MISMATCH, why)
     from . import subtitle_track as st
 
     base = ctx.clip_dir / IMPORT_DIR
