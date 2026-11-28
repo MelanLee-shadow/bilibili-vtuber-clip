@@ -153,9 +153,11 @@ def check(manifest_path: Path, doc: Mapping[str, Any], rows: Sequence[Mapping[st
         if not isinstance(reconciliation, Mapping):
             _refuse("出版登记的公开记录格式不明")
         # A newer first-publication reconciliation from another uploader is not in this ledger's ordering.
-        if (entry.get("bvid") != bvid and reconciliation.get("status") == "VERIFIED_PUBLIC"
-                and _time(reconciliation.get("reconciled_at")) >= stamp):
-            _refuse("另一个投稿入口有更新的公开记录，需要先核对真实顺序")
+        if entry.get("bvid") != bvid and reconciliation.get("status") == "VERIFIED_PUBLIC":
+            if not reconciliation.get("reconciled_at"):
+                _refuse(f"出版登记里 {entry.get('bvid')} 的公开核对没有记时间，无法确定它与上一稿的先后")
+            if _time(reconciliation.get("reconciled_at")) >= stamp:
+                _refuse("另一个投稿入口有更新的公开记录，需要先核对真实顺序")
     registered = [r for r in published if r.get("bvid") == bvid]
     if len(registered) != 1:
         _refuse("上一稿在出版登记中不是唯一的公开稿")
